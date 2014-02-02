@@ -1,0 +1,47 @@
+to run:
+qemu -fda image.img
+
+mount image.im in linux enviroment:
+
+sudo losetup  /dev/loop0 image.img 
+sudo mount -t ext2 /dev/loop0 /mnt/osdrive
+
+to create bootable floppy from file:
+(we need 2 floppy, one with filesystem second without)
+
+dd if=/dev/zero of=image.img bs=1024 count=1475
+dd if=/dev/zero of=auxiliary.img bs=1024 count=1475
+
+sudo losetup  /dev/loop0 image.img 
+sudo losetup  /dev/loop1 auxiliary.img 
+
+sudo dd if=stage1 of=/dev/loop1 bs=512 count=1
+sudo dd if=stage2 of=/dev/loop1 bs=512 seek=1
+
+sudo mkfs -t ext2 -m 1 -v /dev/loop0
+
+sudo mount -t ext2 /dev/loop0 /mnt/osdrive
+
+copy stage1 and stage2 to /mnt/osdrive/boot/
+qemu -fda auxiliary.img
+
+wait for grub
+
+ctr+alt+shift+2
+
+change floppy0 image.img
+
+ctr+alt+shift+1
+
+install (fd0)/boot/stage1 (fd0) (fd0)/boot/stage2 (fd0)/boot/menu.cfg
+
+create /boot/menu.cfg
+____________________________
+title   MyOS
+root    (fd0)
+kernel  /boot/kernel.bin
+____________________________
+
+
+
+coppy kernel.bin to /boot/
