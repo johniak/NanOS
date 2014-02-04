@@ -1,4 +1,4 @@
-SOURCES=kmain.o Kernel.o loader.o Console.o IOPort.o
+SOURCES=kmain.o Kernel.o loader.o Console.o IOPort.o Idt.o irq.o isr.o Interrupt.o Keyboard.o
 
 CXX=i586-elf-gcc
 LD=i586-elf-gcc
@@ -17,6 +17,8 @@ link:
 
 .s.o:
 	i586-elf-as $(ASFLAGS) $< -o $(BINFOLDER)$@
+.S.o:
+	nasm -f elf $< -o $(BINFOLDER)$@
 
 .cpp.o:
 	$(CXX) -c $(CXXFLAGS) $< -o $(BINFOLDER)$@
