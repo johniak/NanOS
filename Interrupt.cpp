@@ -22,6 +22,7 @@ extern "C" void isr_handler(kernel::Registers regs)
 {
    kernel::Console::write("recieved isr: ");
    kernel::Console::writeLine((int)regs.int_no);
+   kernel::Console::writeLine((int)regs.edi);
 }
 
 //called from irq.S asm

@@ -23,7 +23,7 @@ static void kb_handler(Registers reg) {
 	char kbd_scancode;
 	kbd_scancode = IOPort::inb(0x60);
 	if (kbd_scancode > 0) {
-		key = scancode_ascii[kbd_scancode];
+		key = scancode_ascii[(int)kbd_scancode];
 		Console::write(key);
 	}
 }

@@ -1,4 +1,5 @@
-SOURCES=kmain.o Kernel.o loader.o Console.o IOPort.o Idt.o irq.o isr.o Interrupt.o Keyboard.o
+SOURCES=kmain.o Kernel.o loader.o Console.o IOPort.o Idt.o irq.o isr.o
+SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o Ext2Filesystem.o
 
 CXX=i586-elf-gcc
 LD=i586-elf-gcc
