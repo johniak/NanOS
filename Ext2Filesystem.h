@@ -71,27 +71,34 @@ struct Ext2BlockGroupDescriptor {
 };
 
 class Ext2Filesystem {
-	char superblockBuff[100];
+	char superblockBuff[1024];
+	char commonBuff[4096];
 	Ext2BaseSuperblockFields baseSuperBlock;
 	Ext2ExtendedSuperblockFields extendedSuperblock;
-	Ext2BlockGroupDescriptor blockGroupDescriptor[256];
+	Ext2BlockGroupDescriptor blockGroupDescriptor[100];
 	int blockGroupsCount;
 	int partitionLba;
 	int BgdtSector;
+	int blockSize;
 public:
 	void initialize(int partitionLba) {
 		this->partitionLba = partitionLba;
 		Hdd::readSectors(this->partitionLba + 2, 2, superblockBuff);
 		memcpy((void*) &baseSuperBlock, (void*) superblockBuff, sizeof(Ext2BaseSuperblockFields));
 		memcpy((void*) &extendedSuperblock, (void*) superblockBuff, sizeof(Ext2ExtendedSuperblockFields));
-		blockGroupsCount= (int)ceil(((float)baseSuperBlock.totalBlocks)/((float)baseSuperBlock.blockInGroup));
+		initBgdt();
 		printInfo();
 	}
 	void initBgdt(){
+		blockGroupsCount= (int)ceil(((float)baseSuperBlock.totalBlocks)/((float)baseSuperBlock.blockInGroup));
+		blockSize =1024<<baseSuperBlock.log2BlockSize;
 
+		int sectorCount= ceil(((float)(blockGroupsCount*sizeof(Ext2BlockGroupDescriptor)))/512.0);
+		Hdd::readSectors(this->partitionLba + 2+2, sectorCount, commonBuff);
+		Console::writeLine(sectorCount);
+		memcpy((void*) &blockGroupDescriptor, (void*) commonBuff, sizeof(Ext2BlockGroupDescriptor)*blockGroupsCount);
 	}
 	void printInfo(){
-		int blockSize =baseSuperBlock.log2BlockSize<<10;
 		Console::write("Block size: ");
 		Console::writeLine(blockSize);
 		Console::write("Total inodes: ");
@@ -100,6 +107,9 @@ public:
 		Console::writeLine(baseSuperBlock.totalBlocks);
 		Console::write("Total blocksGroups: ");
 		Console::writeLine(blockGroupsCount);
+		Console::writeLine(blockGroupDescriptor[0].NumberOfDirectoriesInGroup);
+		Console::writeLine(blockGroupDescriptor[1].NumberOfDirectoriesInGroup);
+		Console::writeLine(blockGroupDescriptor[61].NumberOfDirectoriesInGroup);
 	}
 };
 
