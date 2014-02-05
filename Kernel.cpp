@@ -4,6 +4,8 @@
 #include "Keyboard.h"
 #include "Hdd.h"
 #include "Ext2Filesystem.h"
+#include "List.h"
+#include "String.h"
 char buf[1024];
 
 
@@ -15,16 +17,20 @@ namespace kernel {
 void Kernel::start() {
 	Console::clearScreen();
 	Console::writeLine("NanoOS initialize...");
+
+
+
 	Idt idt = Idt();
 	idt.initialize();
 	Keyboard keyboard = Keyboard();
 	keyboard.initialize();
 	Console::writeLine("");
-	char* bb = buf;
+//	char* bb = buf;
 
 	Ext2Filesystem ext2Filesystem=Ext2Filesystem();
 	ext2Filesystem.initialize(2048);
-
+	String str =String("repeat");
+	Console::writeLine(S"yolo"+S"rower"+10);
 //	for (int i = 0; i < 512; i++) {
 //		int s = (int) buf[i];
 //		s &= 0x000000FF;
@@ -32,6 +38,8 @@ void Kernel::start() {
 //		if ((i + 1) % 27 != 0)
 //			Console::write(" ");
 //	}
+
+
 	while (1) {
 		this->loop();
 	}
