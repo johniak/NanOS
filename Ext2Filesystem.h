@@ -9,6 +9,7 @@
 #include "Console.h"
 #include "string.h"
 #include "List.h"
+#include "String.h"
 #ifndef EXT2FILESYSTEM_H_
 #define EXT2FILESYSTEM_H_
 
@@ -114,8 +115,6 @@ struct Ext2DirectoryEntry {
 	char name[256];
 };
 
-
-
 class Ext2Filesystem {
 	char superblockBuff[1024];
 	char commonBuff[4096];
@@ -137,21 +136,23 @@ public:
 		initBgdt();
 		printInfo();
 
-//		for (int i = 1; i < 6; i++) {
-//			Ext2Inode inode = readInode(i);
-//			Console::writeLine(inode.dbp0);
-//			Console::writeHex(inode.typeAndPermisions);
-//			Console::writeLine("");
-//		}
-		Ext2Inode inode = readInode(2);
-		List<Ext2DirectoryEntry> dirs= getDirectoriesEntries(inode);
-//		Console::write("dir len: ");
-//		Console::writeLine((int) dirs.entries[0].nameLowLenght);
-//		Console::writeLine( dirs.entries[0].name);
-//		Console::write("dir len: ");
-//		Console::writeLine((int) dirs.entries[1].nameLowLenght);
-		for(int i=0;i<dirs.getCount();i++)
-			Console::writeLine( dirs[i].name);
+////		for (int i = 1; i < 6; i++) {
+////			Ext2Inode inode = readInode(i);
+////			Console::writeLine(inode.dbp0);
+////			Console::writeHex(inode.typeAndPermisions);
+////			Console::writeLine("");
+////		}
+//		Ext2Inode inode = getInode(2);
+//		List<Ext2DirectoryEntry> dirs = getDirectoriesEntries(inode);
+////		Console::write("dir len: ");
+////		Console::writeLine((int) dirs.entries[0].nameLowLenght);
+////		Console::writeLine( dirs.entries[0].name);
+////		Console::write("dir len: ");
+////		Console::writeLine((int) dirs.entries[1].nameLowLenght);
+//		for (int i = 0; i < dirs.getCount(); i++)
+//			Console::writeLine(dirs[i].name);
+
+		ls("/boot/grub");
 
 	}
 	void initBgdt() {
@@ -178,7 +179,7 @@ public:
 		Console::writeLine(blockGroupsCount);
 		;
 	}
-	Ext2Inode readInode(int inodeNumber) {
+	Ext2Inode getInode(int inodeNumber) {
 		int blockGroupNumber = (inodeNumber - 1) / baseSuperBlock.inodesInGroup;
 		int inodeIndex = (inodeNumber - 1) % baseSuperBlock.inodesInGroup;
 		Ext2Inode inode;
@@ -186,29 +187,20 @@ public:
 				blockGroupDescriptors[blockGroupNumber].StartingBlockAddressOfInodeTable
 						+ ((inodeIndex * 128) / blockSize);
 		int blockOffset = (inodeIndex * 128) % blockSize;
-		Console::write("inode block: ");
-		Console::writeLine(blockAddress);
-		Console::write("inode block offset: ");
-		Console::writeLine(blockOffset);
+		//Console::write("inode block: ");
+		//Console::writeLine(blockAddress);
+		//Console::write("inode block offset: ");
+		//Console::writeLine(blockOffset);
 		Hdd::readSectors(this->partitionLba + blockAddress * (blockSize / 512),
-				1, commonBuff);
+				2, commonBuff);
 		memcpy(&inode, commonBuff + blockOffset, 128);
+		Console::writeLine(S" "+inodeNumber+"::"+(blockOffset+128));
 		return inode;
 	}
 	int getFileType(short typeAndPermisions) {
 		int type = 0;
 		type = (int) typeAndPermisions & 0x0000F000;
 		return type;
-	}
-	Ext2DirectoryEntry getDirectoryEntry(int block) {
-		Ext2DirectoryEntry dir;
-		Hdd::readSectors(this->partitionLba + block * (blockSize / 512), 1,
-				commonBuff);
-
-		memcpy(&dir, commonBuff, sizeof(dir) - 256);
-		memcpy(&dir.name, commonBuff + sizeof(dir) - 256, dir.nameLowLenght);
-		dir.name[255] = 0;
-		return dir;
 	}
 
 	List<Ext2DirectoryEntry> getDirectoriesEntries(Ext2Inode inode) {
@@ -220,16 +212,69 @@ public:
 				commonBuff);
 		while (offset < inode.lowerSize) {
 			dirs.add(Ext2DirectoryEntry());
-			memcpy(&dirs[index], commonBuff+offset,
+			memcpy(&dirs[index], commonBuff + offset,
 					sizeof(Ext2DirectoryEntry) - 256);
-			int tmp= offset + sizeof(Ext2DirectoryEntry) - 256;
+			int tmp = offset + sizeof(Ext2DirectoryEntry) - 256;
 
-			memcpy(&dirs[index].name, commonBuff + tmp, dirs[index].nameLowLenght);
-			offset+=dirs[index].entrySize;
+			memcpy(&dirs[index].name, commonBuff + tmp,
+					dirs[index].nameLowLenght);
+			offset += dirs[index].entrySize;
 			index++;
-			Console::writeLine(inode.lowerSize);
+			//Console::writeLine(inode.lowerSize);
 		}
 		return dirs;
+	}
+	Ext2Inode* getInodeByPath(String path) {
+		if (!path.startsWith("/"))
+			return (Ext2Inode*) 0;
+
+		path = path.substring(1);
+		List<String> pathSplited = path.split('/');
+		Ext2Inode parentInode = getInode(2);
+		for (int i = 0; i < pathSplited.getCount(); i++) {
+			if(pathSplited[i].getLenght()==0)
+				continue;
+			Console::writeLine(S"aaaa: "+pathSplited[i]+S""+pathSplited.getCount());
+			Ext2Inode* inode = getChildrenInode(parentInode, pathSplited[i]);
+			if (inode == 0) {
+				return (Ext2Inode*) 0;
+			}
+			parentInode = *inode;
+		}
+		return &parentInode;
+	}
+	Ext2Inode* getChildrenInode(Ext2Inode inode, String name) {
+		if (!isDirectory(inode))
+			return (Ext2Inode*) 0;
+		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
+		for (int i = 0; i < entries.getCount(); i++) {
+			if (name.compareTo(entries[i].name) == 0) {
+
+				Ext2Inode childInode = getInode(entries[i].inode);
+				return &childInode;
+			}
+		}
+		return (Ext2Inode*) 0;
+	}
+	bool isDirectory(Ext2Inode inode) {
+		return (inode.typeAndPermisions & 0xF000) == 0x4000;
+	}
+	void ls(String path) {
+		Ext2Inode* inode = getInodeByPath(path);
+		if (inode == 0) {
+			Console::writeLine("ERROR :: Wrong path");
+			return;
+		}
+		if (!isDirectory(*inode)) {
+			Console::writeHex(inode->typeAndPermisions);
+			Console::writeLine("ERROR :: Path does not lead to the directory");
+			return;
+		}
+		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(*inode);
+		for (int i = 0; i < entries.getCount(); i++) {
+			Console::writeLine(entries[i].name);
+		}
+
 	}
 };
 

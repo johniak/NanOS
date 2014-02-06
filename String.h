@@ -7,6 +7,7 @@
 #include <string.h>
 #include "memory_manager.h"
 #include "List.h"
+#include "Console.h"
 #ifndef STRING_H_
 #define STRING_H_
 
@@ -90,6 +91,9 @@ public:
 		int count = ptr - textArray;
 		return count;
 	}
+	int compareTo(String str){
+		return strcmp(textArray,str.textArray);
+	}
 	List<String> split(char separator){
 		List<String> strs= List<String>();
 		int last=0;
@@ -118,6 +122,9 @@ public:
 		newArr[end-start]=0;
 		memcpy(newArr,textArray+start,end-start);
 		return newArr;
+	}
+	bool startsWith(String str){
+		return indexOf(str)==0;
 	}
 	operator char*() {
 		return textArray;
