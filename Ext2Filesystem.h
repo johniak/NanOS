@@ -85,18 +85,7 @@ struct Ext2Inode {
 	int sectorsCount;
 	int flags;
 	int osSpecific;
-	int dbp0;
-	int dbp1;
-	int dbp2;
-	int dbp3;
-	int dbp4;
-	int dbp5;
-	int dbp6;
-	int dbp7;
-	int dbp8;
-	int dbp9;
-	int dbp10;
-	int dbp11;
+	int directBlocks[12];
 	int indirectPtr;
 	int doubleIndirectPtr;
 	int tripleIndirectPtr;
@@ -125,6 +114,7 @@ class Ext2Filesystem {
 	int partitionLba;
 	int BgdtSector;
 	int blockSize;
+	char textBuf[128];
 public:
 	void initialize(int partitionLba) {
 		this->partitionLba = partitionLba;
@@ -152,7 +142,18 @@ public:
 //		for (int i = 0; i < dirs.getCount(); i++)
 //			Console::writeLine(dirs[i].name);
 
-		ls("/boot/grub");
+		ls("/");
+		Ext2Inode inode = *getInodeByPath("/pan.txt");
+		int readed;
+		int i=0;
+		while((readed=this->readFile(inode, 128, 128*i, textBuf))==128){
+			Console::writeLine(textBuf);
+			i++;
+		}
+		if(readed>0&&readed!=128){
+			textBuf[readed]=0;
+			Console::writeLine(textBuf);
+		}
 
 	}
 	void initBgdt() {
@@ -187,14 +188,9 @@ public:
 				blockGroupDescriptors[blockGroupNumber].StartingBlockAddressOfInodeTable
 						+ ((inodeIndex * 128) / blockSize);
 		int blockOffset = (inodeIndex * 128) % blockSize;
-		//Console::write("inode block: ");
-		//Console::writeLine(blockAddress);
-		//Console::write("inode block offset: ");
-		//Console::writeLine(blockOffset);
 		Hdd::readSectors(this->partitionLba + blockAddress * (blockSize / 512),
 				2, commonBuff);
 		memcpy(&inode, commonBuff + blockOffset, 128);
-		Console::writeLine(S" "+inodeNumber+"::"+(blockOffset+128));
 		return inode;
 	}
 	int getFileType(short typeAndPermisions) {
@@ -204,7 +200,7 @@ public:
 	}
 
 	List<Ext2DirectoryEntry> getDirectoriesEntries(Ext2Inode inode) {
-		int block = inode.dbp0;
+		int block = inode.directBlocks[0];
 		int index = 0;
 		int offset = 0;
 		List<Ext2DirectoryEntry> dirs;
@@ -232,9 +228,8 @@ public:
 		List<String> pathSplited = path.split('/');
 		Ext2Inode parentInode = getInode(2);
 		for (int i = 0; i < pathSplited.getCount(); i++) {
-			if(pathSplited[i].getLenght()==0)
+			if (pathSplited[i].getLenght() == 0)
 				continue;
-			Console::writeLine(S"aaaa: "+pathSplited[i]+S""+pathSplited.getCount());
 			Ext2Inode* inode = getChildrenInode(parentInode, pathSplited[i]);
 			if (inode == 0) {
 				return (Ext2Inode*) 0;
@@ -275,6 +270,53 @@ public:
 			Console::writeLine(entries[i].name);
 		}
 
+	}
+
+	int readFile(Ext2Inode inode, unsigned size, unsigned offset, void* buff) {
+		if (offset >= inode.lowerSize) {
+			return -1;
+		}
+		if (offset + size > inode.lowerSize) {
+			size = inode.lowerSize - offset;
+		}
+
+		unsigned startBlock = offset / blockSize;
+		unsigned offsetStartBlock = offset % blockSize;
+		unsigned endBlock = (offset + size) / (blockSize + 1);
+		unsigned sizeInEndBlock = (offset + size) % (blockSize + 1);
+		unsigned directBlockEnd = endBlock > 11 ? 11 : endBlock;
+		for (unsigned i = startBlock; i < directBlockEnd + 1; i++) {
+			unsigned blockAddress = inode.directBlocks[i];
+			Hdd::readSectors(
+					this->partitionLba + blockAddress * (blockSize / 512),
+					(blockSize / 512), commonBuff);
+			if (i == startBlock && i == endBlock) {
+				memcpy(buff, commonBuff + offsetStartBlock, size);
+			} else if (i == startBlock) {
+				memcpy(buff, commonBuff + offsetStartBlock,
+						blockSize - offsetStartBlock);
+			} else if (i == endBlock) {
+				int startInBuf = blockSize - offset;
+				startInBuf += (i - startBlock - 2) * blockSize;
+				memcpy(buff + startInBuf, commonBuff, sizeInEndBlock);
+			} else {
+				int startInBuf = blockSize - offset;
+				startInBuf += (i - startBlock - 2) * blockSize;
+				memcpy(buff + startInBuf, commonBuff, blockSize);
+			}
+		}
+
+
+
+//		unsigned indirect = inode.indirectPtr;
+//		Hdd::readSectors(
+//							this->partitionLba + indirect * (blockSize / 512),
+//							(blockSize / 512), commonBuff);
+//		int* ttt=(int*)commonBuff;
+//		for(int i=0;i<10;i++){
+//			Console::writeLine(ttt[i]);
+//		}
+		return size;
 	}
 };
 
