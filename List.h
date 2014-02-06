@@ -12,7 +12,6 @@
 
 #define S (String)
 
-namespace kernel {
 template<class T>
 class List {
 	T* array;
@@ -64,5 +63,4 @@ public:
 		free(array);
 	}
 };
-}
 #endif /* LIST_H_ */

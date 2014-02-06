@@ -6,6 +6,7 @@
  */
 #include <string.h>
 #include "memory_manager.h"
+#include "List.h"
 #ifndef STRING_H_
 #define STRING_H_
 
@@ -21,7 +22,7 @@ public:
 		textArray[length] = 0;
 	}
 	String(int dec) {
-		char* text=itoa(dec,10);
+		char* text = itoa(dec, 10);
 		length = strlen(text);
 		textArray = (char*) malloc(length + 1);
 		memcpy(textArray, text, length);
@@ -76,6 +77,48 @@ public:
 		return result;
 
 	}
+	int indexOf(String str) {
+		return indexOf(str, 0);
+	}
+
+	int indexOf(String str, int start) {
+		if (start >= length)
+			return -1;
+		char* ptr = strstr(textArray + start, str.textArray);
+		if (ptr == 0)
+			return -1;
+		int count = ptr - textArray;
+		return count;
+	}
+	List<String> split(char separator){
+		List<String> strs= List<String>();
+		int last=0;
+		for(int i=0;i<length;i++){
+			if(textArray[i]==separator){
+				strs.add(this->substring(last,i));
+				last=i+1;
+			}
+		}
+		if(last!=length){
+			strs.add(this->substring(last,length));
+		}
+		return strs;
+	}
+	String substring(int start){
+		return substring(start,length);
+	}
+	String substring(int start,int end){
+		if(start>=end){
+			return "";
+		}
+		if(end>length)
+			return "";
+		String str="";
+		char* newArr=(char*)malloc(end-start+1);
+		newArr[end-start]=0;
+		memcpy(newArr,textArray+start,end-start);
+		return newArr;
+	}
 	operator char*() {
 		return textArray;
 	}
@@ -88,9 +131,12 @@ public:
 		return *this;
 	}
 	String operator+(int dec) {
-			this->append(String(dec));
-			return *this;
-		}
+		this->append(String(dec));
+		return *this;
+	}
+	char operator[](const int index) {
+		return textArray[index];
+	}
 	virtual ~String();
 };
 String operator+(String str1, const char* str2);

@@ -31,6 +31,13 @@ void Kernel::start() {
 	ext2Filesystem.initialize(2048);
 	String str =String("repeat");
 	Console::writeLine(S"yolo"+S"rower"+10);
+	String test = "Ala ma ma kota";
+	Console::writeLine(S"indexOf: "+test.substring(test.indexOf("ma",5)));
+	List<String> strs= test.split(' ');
+	for(int i=0;i<strs.getCount();i++){
+		//Console::writeLine(strs[i]);
+		Console::writeLine(S""+strs[i]);
+	}
 //	for (int i = 0; i < 512; i++) {
 //		int s = (int) buf[i];
 //		s &= 0x000000FF;
