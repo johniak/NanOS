@@ -1,10 +1,10 @@
 SOURCES=kmain.o Kernel.o loader.o Console.o IOPort.o Idt.o irq.o isr.o
 SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o Ext2Filesystem.o 
-SOURCES+= memory_manager.o List.o String.o
+SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o
 
 CXX=i586-elf-gcc
 LD=i586-elf-gcc
-CXXFLAGS=-nostdlib -nostdinc++ -Wall --no-exceptions --no-rtti 
+CXXFLAGS=-nostdlib -nostdinc++ -Wall --no-exceptions --no-rtti -fno-leading-underscore
 LDFLAGS=-Tlinker.ld -nostdinc++ -nostartfiles
 BINFOLDER=bin/
 ASFLAGS=

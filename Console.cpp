@@ -1,23 +1,52 @@
 #include "Console.h"
 #include "IOPort.h"
+#include "string.h"
 namespace kernel {
 
 unsigned short Console::cursorX = 0;
 unsigned short Console::cursorY = 0;
 volatile unsigned short *Console::videoram = (unsigned short *) 0xB8000;
+unsigned char attributeByte = (0 << 4) | (15 & 0x0F);
+unsigned short blank = ' ' | (attributeByte << 8);
+char clearline[] = { ' ', attributeByte, ' ', attributeByte, ' ', attributeByte,
+		' ', attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte, ' ', attributeByte, ' ',
+		attributeByte, ' ', attributeByte };
 void Console::scroll() {
-
-	unsigned char attributeByte = (0 << 4) | (15 & 0x0F);
-	unsigned short blank = ' ' | (attributeByte << 8);
 
 	if (cursorY >= 25) {
 		int i;
-		for (i = 0 * 80; i < 24 * 80; i++) {
-			videoram[i] = videoram[i + 80];
-		}
-		for (i = 24 * 80; i < 25 * 80; i++) {
-			videoram[i] = blank;
-		}
+//		for (i = 0 * 80; i < 24 * 80; i++) {
+//			videoram[i] = videoram[i + 80];
+//		}
+		memcpy((void*) videoram, ((void*) videoram) + 160, 24 * 80 * 2);
+//		for (i = 24 * 80; i < 25 * 80; i++) {
+//			videoram[i] = blank;
+//		}
+		memcpy((void*) (videoram + (24 * 80)), clearline, 160);
 		cursorY = 24;
 	}
 }
@@ -70,10 +99,10 @@ void Console::write(int d) {
 }
 
 void Console::writeHex(int hex) {
-	char * ss=itoa(hex, 16);
-	if(ss[1]==0){
-		ss[1]=ss[0];
-		ss[0]='0';
+	char * ss = itoa(hex, 16);
+	if (ss[1] == 0) {
+		ss[1] = ss[0];
+		ss[0] = '0';
 	}
 	write(ss);
 }

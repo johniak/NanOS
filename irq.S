@@ -29,7 +29,7 @@ IRQ   15,    47
 [EXTERN irq_handler]
 
 irq_common_stub:
-   pusha              
+   pushad
 
    mov ax, ds            
    push eax                
@@ -48,7 +48,7 @@ irq_common_stub:
    mov fs, bx
    mov gs, bx
 
-   popa                    
+  popad
    add esp, 8     
    sti
    iret           

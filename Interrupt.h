@@ -27,7 +27,7 @@ struct Registers
    unsigned eip, cs, eflags, useresp, ss; // Pushed by the processor automatically.
 };
 
-typedef void (*IsrHandler)(Registers);
+typedef void (*IsrHandler)(Registers*);
 class Interrupt{
 public:
 	static void registerInterruptHandler(unsigned char n, IsrHandler handler);

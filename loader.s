@@ -15,7 +15,7 @@
 
 # reserve initial kernel stack space
 stack_bottom:
-.skip 163840                             # reserve 16 KiB stack
+.skip 1638400                             # reserve 16 KiB stack
 stack_top:
 .comm  mbd, 4                           # we will use this in kmain
 .comm  magic, 4                         # we will use this in kmain

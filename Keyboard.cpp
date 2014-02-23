@@ -18,7 +18,7 @@ KBD_SPECIAL, KBD_SPECIAL, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-',
 		'n', 'm', ',', '.', '/', KBD_SPECIAL, KBD_SPECIAL, KBD_SPECIAL, ' ',
 		KBD_SPECIAL, F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12, PAUSE,
 		KBD_SPECIAL, KBD_SPECIAL, };
-static void kb_handler(Registers reg) {
+static void kb_handler(Registers* reg) {
 	char key;
 	char kbd_scancode;
 	kbd_scancode = IOPort::inb(0x60);

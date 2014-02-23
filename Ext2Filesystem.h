@@ -142,18 +142,18 @@ public:
 //		for (int i = 0; i < dirs.getCount(); i++)
 //			Console::writeLine(dirs[i].name);
 
-		ls("/");
-		Ext2Inode inode = *getInodeByPath("/pan.txt");
-		int readed;
-		int i=0;
-		while((readed=this->readFile(inode, 128, 128*i, textBuf))==128){
-			Console::writeLine(textBuf);
-			i++;
-		}
-		if(readed>0&&readed!=128){
-			textBuf[readed]=0;
-			Console::writeLine(textBuf);
-		}
+//		ls("/");
+//		Ext2Inode inode = *getInodeByPath("/pan.txt");
+//		int readed;
+//		int i=0;
+//		while((readed=this->readFile(inode, 128, 128*i, textBuf))==128){
+//			Console::writeLine(textBuf);
+//			i++;
+//		}
+//		if(readed>0&&readed!=128){
+//			textBuf[readed]=0;
+//			Console::writeLine(textBuf);
+//		}
 
 	}
 	void initBgdt() {
@@ -178,7 +178,7 @@ public:
 		Console::writeLine(baseSuperBlock.totalBlocks);
 		Console::write("Total blocksGroups: ");
 		Console::writeLine(blockGroupsCount);
-		;
+		Console::writeLine("Ext2fs initialized");
 	}
 	Ext2Inode getInode(int inodeNumber) {
 		int blockGroupNumber = (inodeNumber - 1) / baseSuperBlock.inodesInGroup;
@@ -270,6 +270,10 @@ public:
 			Console::writeLine(entries[i].name);
 		}
 
+	}
+	int readFile(String filename, unsigned size, unsigned offset, void* buff) {
+		Ext2Inode inode = *getInodeByPath(filename);
+		return readFile(inode,size,offset,buff);
 	}
 
 	int readFile(Ext2Inode inode, unsigned size, unsigned offset, void* buff) {

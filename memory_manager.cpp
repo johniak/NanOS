@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-void* memory_heap_top=(void*)104857601;
+void* memory_heap_top=(void*)123456789;
 
 struct AlocatedStruct{
 	void* start;
