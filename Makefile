@@ -148,9 +148,9 @@ TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
 TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp lib/String.cpp
-TEST_MODULES+= mm/MultibootMmap.cpp
+TEST_MODULES+= mm/MultibootMmap.cpp mm/FrameAllocator.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/NxeLoader.*" "*/MultibootMmap.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/NxeLoader.*" "*/MultibootMmap.*" "*/FrameAllocator.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
