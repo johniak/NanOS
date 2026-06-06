@@ -1,5 +1,5 @@
 #include "Exec.h"
-#include "ExeLoader.h"
+#include "NxeLoader.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"
 #include "String.h"
@@ -68,7 +68,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	unsigned span = h->bssEnd - h->loadBase;   // region incl. bss/IAT
 
 	unsigned entry = 0;
-	int rc = ExeLoader::loadImage(image, span, resolveExport, &entry);
+	int rc = NxeLoader::loadImage(image, span, resolveExport, &entry);
 	if (rc < 0)
 		return rc;
 

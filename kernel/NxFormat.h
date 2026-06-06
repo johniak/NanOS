@@ -1,8 +1,14 @@
 /*
  * NxFormat.h
  *
- * The NanOS executable format (.nx). Shared by the kernel loader and the user
- * runtime. Plain C (no namespace) so the user-side C files can include it too.
+ * The NanOS binary format family (magic "NXE"). Same header + import-by-name
+ * mechanism is shared by:
+ *   .nxe   Nano Executable        (programs — implemented)
+ *   .ndl   Nano Dynamic Library   (shared libraries — planned)
+ *   .nkext Nano Kernel Extension  (loadable kernel modules — planned)
+ *
+ * Shared by the kernel loader and the user runtime. Plain C (no namespace) so
+ * the user-side C files can include it too.
  *
  * Layout on disk (and in memory when loaded at header.loadBase):
  *   [ NxHeader | code | NxImport[] | data | (bss, not stored) ]

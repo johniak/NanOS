@@ -67,10 +67,10 @@ void Kernel::start() {
 	const char* msg = "syscall write OK\n";
 	sys3(SYS_write, 1, (int) msg, 17);
 
-	// Load and run the first userspace program (.nx) via the dynamic loader.
-	Console::writeLine("--- exec /bin/init.nx ---");
-	int rc = execProgram(vfs, "/bin/init.nx");
-	Console::write("init.nx exited with code ");
+	// Load and run the first userspace program (.nxe) via the dynamic loader.
+	Console::writeLine("--- exec /bin/init.nxe ---");
+	int rc = execProgram(vfs, "/bin/init.nxe");
+	Console::write("init.nxe exited with code ");
 	Console::writeLine(rc);
 
 	Interrupt::registerInterruptHandler(3, &interrupt3);

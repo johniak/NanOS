@@ -1,5 +1,5 @@
 /*
- * ExeLoader.h
+ * NxeLoader.h
  *
  * Host-testable core of the .nx loader: validates the header, zeroes bss, and
  * binds the Import Address Table by resolving each import name via a callback.
@@ -13,7 +13,7 @@ namespace kernel {
 // Resolve an import name to a function address (0 = not found).
 typedef void* (*ExportResolver)(const char* name);
 
-class ExeLoader {
+class NxeLoader {
 public:
 	// `image` points to the loaded .nx bytes (at header.loadBase in the kernel,
 	// or anywhere on the host — absolute addresses are translated relative to the

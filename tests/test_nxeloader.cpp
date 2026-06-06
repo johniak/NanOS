@@ -1,5 +1,5 @@
 #include "doctest.h"
-#include "ExeLoader.h"
+#include "NxeLoader.h"
 #include <cstring>
 
 using namespace kernel;
@@ -35,11 +35,11 @@ static void buildImage(char* buf) {
 	buf[0x100] = 0x55; buf[0x13F] = 0x55;   // dirty bss to verify zeroing
 }
 
-TEST_CASE("ExeLoader binds imports, zeroes bss, returns entry") {
+TEST_CASE("NxeLoader binds imports, zeroes bss, returns entry") {
 	char buf[512];
 	buildImage(buf);
 	unsigned entry = 0;
-	CHECK(ExeLoader::loadImage(buf, 512, fakeResolve, &entry) == 0);
+	CHECK(NxeLoader::loadImage(buf, 512, fakeResolve, &entry) == 0);
 	CHECK(entry == A(0x40));
 	CHECK(*(void**) (buf + 0x180) == (void*) 0x11110000);   // write slot
 	CHECK(*(void**) (buf + 0x188) == (void*) 0x22220000);   // exit slot
@@ -47,32 +47,32 @@ TEST_CASE("ExeLoader binds imports, zeroes bss, returns entry") {
 	CHECK(buf[0x13F] == 0);
 }
 
-TEST_CASE("ExeLoader rejects a bad magic") {
+TEST_CASE("NxeLoader rejects a bad magic") {
 	char buf[512];
 	buildImage(buf);
 	((NxHeader*) buf)->magic = 0xDEAD;
 	unsigned entry = 0;
-	CHECK(ExeLoader::loadImage(buf, 512, fakeResolve, &entry) < 0);
+	CHECK(NxeLoader::loadImage(buf, 512, fakeResolve, &entry) < 0);
 }
 
-TEST_CASE("ExeLoader fails when an import cannot be resolved") {
+TEST_CASE("NxeLoader fails when an import cannot be resolved") {
 	char buf[512];
 	buildImage(buf);
 	strcpy(buf + 0xC8, "nope");   // second import no longer resolvable
 	unsigned entry = 0;
-	CHECK(ExeLoader::loadImage(buf, 512, fakeResolve, &entry) == -2);
+	CHECK(NxeLoader::loadImage(buf, 512, fakeResolve, &entry) == -2);
 }
 
-TEST_CASE("ExeLoader rejects an out-of-range import table") {
+TEST_CASE("NxeLoader rejects an out-of-range import table") {
 	char buf[512];
 	buildImage(buf);
 	((NxHeader*) buf)->importTable = BASE + 0x100000;   // way past the image
 	unsigned entry = 0;
-	CHECK(ExeLoader::loadImage(buf, 512, fakeResolve, &entry) == -3);
+	CHECK(NxeLoader::loadImage(buf, 512, fakeResolve, &entry) == -3);
 }
 
-TEST_CASE("ExeLoader rejects a too-small buffer") {
+TEST_CASE("NxeLoader rejects a too-small buffer") {
 	char buf[8] = {0};
 	unsigned entry = 0;
-	CHECK(ExeLoader::loadImage(buf, 8, fakeResolve, &entry) < 0);
+	CHECK(NxeLoader::loadImage(buf, 8, fakeResolve, &entry) < 0);
 }

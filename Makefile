@@ -1,7 +1,7 @@
 SOURCES=loader.o kmain.o Kernel.o Console.o IOPort.o Gdt.o Idt.o irq.o isr.o
 SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o ExtFilesystem.o
 SOURCES+= AtaBlockDevice.o RamBlockDevice.o DeviceManager.o Vfs.o
-SOURCES+= Syscall.o SyscallDispatch.o ExeLoader.o Exec.o nxjmp.o
+SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o nxjmp.o
 SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o string_funcs.o
 
 BINFOLDER=bin/
@@ -97,7 +97,7 @@ _grub2-image:
 _image: _all _userland _grub2-image
 	printf "rm /boot/kernel.bin\nwrite $(BINFOLDER)kernel.bin /boot/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	-printf "mkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
-	printf "rm /bin/init.nx\nwrite $(BINFOLDER)init.nx /bin/init.nx\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /bin/init.nxe\nwrite $(BINFOLDER)init.nxe /bin/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub
@@ -116,7 +116,7 @@ _clean:
 	$(CXX) -c $(CXXFLAGS) $< -o $(BINFOLDER)$@
 
 # ----------------------------------------------------------------------------
-# Userland: build /bin/init.nx (own linker script/base, NOT in kernel SOURCES).
+# Userland: build /bin/init.nxe (own linker script/base, NOT in kernel SOURCES).
 # No <string.h> is included by user code, so it builds in place safely.
 # ----------------------------------------------------------------------------
 USER_CFLAGS=-ffreestanding -nostdlib -nostdinc -Ikernel -Iuser -Wall -fno-pic
@@ -129,7 +129,7 @@ _userland:
 	$(CXX) $(USER_CFLAGS) -c user/libnanos.c -o $(BINFOLDER)libnanos.o
 	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
 	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)init.elf $(USER_OBJS)
-	$(CROSS)objcopy -O binary $(BINFOLDER)init.elf $(BINFOLDER)init.nx
+	$(CROSS)objcopy -O binary $(BINFOLDER)init.elf $(BINFOLDER)init.nxe
 
 # ----------------------------------------------------------------------------
 # Host-compiled test suite (doctest) + coverage gate.
@@ -146,9 +146,9 @@ TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
-TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp kernel/Syscall.cpp kernel/ExeLoader.cpp lib/String.cpp
+TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp lib/String.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/ExeLoader.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/NxeLoader.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes

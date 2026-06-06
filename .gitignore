@@ -3,7 +3,7 @@
 
 # Build artifacts
 bin/kernel.bin
-bin/*.nx
+bin/*.nxe
 bin/*.elf
 disk/image.img
 disk/image-grub2.img

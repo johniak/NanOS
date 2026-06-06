@@ -1,4 +1,4 @@
-#include "ExeLoader.h"
+#include "NxeLoader.h"
 #include <string.h>
 
 namespace kernel {
@@ -11,7 +11,7 @@ static bool inImage(unsigned abs, unsigned sz, unsigned base, unsigned len) {
 	return off + sz <= len && off + sz >= off;
 }
 
-int ExeLoader::loadImage(void* image, unsigned len, ExportResolver resolve,
+int NxeLoader::loadImage(void* image, unsigned len, ExportResolver resolve,
 		unsigned* entryOut) {
 	if (len < sizeof(NxHeader))
 		return -1;
