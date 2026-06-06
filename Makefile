@@ -94,8 +94,10 @@ _link:
 _grub2-image:
 	./scripts/create-grub2-image.sh
 
-_image: _all _grub2-image
+_image: _all _userland _grub2-image
 	printf "rm /boot/kernel.bin\nwrite $(BINFOLDER)kernel.bin /boot/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	-printf "mkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	printf "rm /bin/init.nx\nwrite $(BINFOLDER)init.nx /bin/init.nx\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub
@@ -112,6 +114,22 @@ _clean:
 	nasm -f elf $< -o $(BINFOLDER)$@
 .cpp.o:
 	$(CXX) -c $(CXXFLAGS) $< -o $(BINFOLDER)$@
+
+# ----------------------------------------------------------------------------
+# Userland: build /bin/init.nx (own linker script/base, NOT in kernel SOURCES).
+# No <string.h> is included by user code, so it builds in place safely.
+# ----------------------------------------------------------------------------
+USER_CFLAGS=-ffreestanding -nostdlib -nostdinc -Ikernel -Iuser -Wall -fno-pic
+USER_OBJS=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)libnanos.o $(BINFOLDER)init.o
+
+_userland:
+	@mkdir -p $(BINFOLDER)
+	nasm -f elf user/crt0.S -o $(BINFOLDER)crt0.o
+	$(CXX) $(USER_CFLAGS) -c user/nxhdr.c -o $(BINFOLDER)nxhdr.o
+	$(CXX) $(USER_CFLAGS) -c user/libnanos.c -o $(BINFOLDER)libnanos.o
+	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
+	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)init.elf $(USER_OBJS)
+	$(CROSS)objcopy -O binary $(BINFOLDER)init.elf $(BINFOLDER)init.nx
 
 # ----------------------------------------------------------------------------
 # Host-compiled test suite (doctest) + coverage gate.
