@@ -1,4 +1,4 @@
-SOURCES=loader.o kmain.o Kernel.o Console.o IOPort.o Idt.o irq.o isr.o
+SOURCES=loader.o kmain.o Kernel.o Console.o IOPort.o Gdt.o Idt.o irq.o isr.o
 SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o Ext2Filesystem.o
 SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o string_funcs.o
 

@@ -1,5 +1,6 @@
 #include "Kernel.h"
 #include "Console.h"
+#include "Gdt.h"
 #include "Idt.h"
 #include "Interrupt.h"
 #include "Keyboard.h"
@@ -21,6 +22,11 @@ namespace kernel {
 void Kernel::start() {
 	Console::clearScreen();
 	Console::writeLine("NanoOS initialize...");
+
+	// Install our own GDT first: the IDT gates use code selector 0x08, which
+	// is only valid once we control the GDT layout (bootloaders differ).
+	Gdt gdt = Gdt();
+	gdt.initialize();
 
 	Idt idt = Idt();
 	idt.initialize();
