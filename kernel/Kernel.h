@@ -5,6 +5,7 @@ namespace kernel{
 	public:
 		void start();
 	protected:
-		void loop(); 
+		void loop();
+		void initPaging();   // frame allocator + identity map + enable CR0.PG
 	};
 };
