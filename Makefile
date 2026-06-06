@@ -33,9 +33,23 @@ run: image
 run-iso: iso
 	qemu-system-i386 -cdrom nanos.iso
 
+# Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
+# they need only g++/lcov, not the cross toolchain or GRUB.
+TEST_IMAGE=nanos-test
+TEST_DOCKER_RUN=docker run --rm -v $(CURDIR):/src -w /src $(TEST_IMAGE)
+
+test-image:
+	docker build -t $(TEST_IMAGE) -f docker/Dockerfile.test docker/
+
+test: test-image
+	$(TEST_DOCKER_RUN) make _test
+
+coverage: test-image
+	$(TEST_DOCKER_RUN) make _coverage
+
 clean:
 	$(DOCKER_RUN) make _clean
-	-rm -rf iso/ nanos.iso $(IMAGE_GRUB2)
+	-rm -rf iso/ nanos.iso $(IMAGE_GRUB2) coverage/
 
 else
 # ============================================================================
@@ -78,5 +92,44 @@ _clean:
 	nasm -f elf $< -o $(BINFOLDER)$@
 .cpp.o:
 	$(CXX) -c $(CXXFLAGS) $< -o $(BINFOLDER)$@
+
+# ----------------------------------------------------------------------------
+# Host-compiled test suite (doctest) + coverage gate.
+# The storage stack is pure software, so we run it natively (host g++) against an
+# in-memory RamBlockDevice. Memory/string come from libc (we do NOT link
+# memory_manager/string_funcs); Console is stubbed by tests/host_shims.cpp.
+# ----------------------------------------------------------------------------
+HOST_CXX=g++
+HOST_CXXFLAGS=-std=c++17 -O0 -g -I. -Wall --coverage
+TEST_BIN=/tmp/nanos_tests
+TEST_SRCS=$(wildcard tests/*.cpp)
+# Modules under test (grown as layers are added). Header-only modules contribute
+# coverage via the .h patterns below.
+TEST_MODULES=RamBlockDevice.cpp DeviceManager.cpp String.cpp
+# lcov patterns selecting the modules whose coverage is gated (String is support).
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*"
+COV_INFO=/tmp/cov.info
+COV_MIN=90
+# The repo is bind-mounted from a case-insensitive macOS FS, which makes
+# `#include <string.h>` resolve to String.h (infinite recursion). Compile from a
+# copy on the container's own case-sensitive FS so <string.h> means libc.
+BUILDDIR=/tmp/nbuild
+
+_test:
+	@rm -rf $(BUILDDIR) && cp -a /src $(BUILDDIR)
+	cd $(BUILDDIR) && $(HOST_CXX) $(HOST_CXXFLAGS) -c $(TEST_SRCS) $(TEST_MODULES)
+	cd $(BUILDDIR) && $(HOST_CXX) $(HOST_CXXFLAGS) -o $(TEST_BIN) *.o
+	cd $(BUILDDIR) && $(TEST_BIN)
+	@cd $(BUILDDIR) && lcov --capture --directory . --output-file $(COV_INFO) --no-external --ignore-errors mismatch,unused,empty >/dev/null 2>&1
+	@lcov --extract $(COV_INFO) $(COV_PATTERNS) --output-file $(COV_INFO).f --ignore-errors unused,empty >/dev/null 2>&1
+	@lcov --list $(COV_INFO).f 2>/dev/null || true
+	@pct=$$(lcov --summary $(COV_INFO).f 2>&1 | grep -oP 'lines[.]*: \K[0-9.]+'); \
+	 echo "==> Line coverage (modules under test): $${pct:-0}%"; \
+	 awk "BEGIN{exit !($${pct:-0}+0 >= $(COV_MIN))}" \
+	   || { echo "FAIL: line coverage below $(COV_MIN)%"; exit 1; }
+
+_coverage: _test
+	@genhtml $(COV_INFO).f --output-directory /src/coverage >/dev/null 2>&1 && \
+	 echo "==> HTML coverage report: coverage/index.html"
 
 endif

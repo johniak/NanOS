@@ -1,0 +1,16 @@
+# Lightweight, NATIVE-architecture image for the host-compiled test suite.
+# Tests are pure host code (libc), so they need neither the i686-elf cross
+# toolchain nor GRUB — just a C++ compiler and coverage tools. Building this
+# for the host's native arch (no --platform) avoids amd64 emulation, so the
+# doctest suite compiles in seconds instead of minutes.
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        g++ make lcov \
+    && rm -rf /var/lib/apt/lists/*
+
+# Same marker the Makefile uses to know it is running inside a build container,
+# so `make _test` takes the container branch (no nested docker).
+RUN touch /etc/nanos-build
+
+WORKDIR /src

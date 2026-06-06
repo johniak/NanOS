@@ -42,6 +42,11 @@ RUN set -eux; \
     make install-gcc install-target-libgcc; \
     cd /; rm -rf /tmp/*
 
+# Host-side test tooling (separate layer so it never invalidates the toolchain
+# build cache above). gcov ships with gcc; lcov gives us coverage reports.
+RUN apt-get update && apt-get install -y --no-install-recommends lcov \
+    && rm -rf /var/lib/apt/lists/*
+
 # Marker the Makefile checks to know it is running inside the build container.
 RUN touch /etc/nanos-build
 

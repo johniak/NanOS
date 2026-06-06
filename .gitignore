@@ -7,3 +7,9 @@ fs/image.img
 fs/image-grub2.img
 iso/
 *.iso
+
+# Test coverage artifacts
+coverage/
+*.gcda
+*.gcno
+*.gcov
