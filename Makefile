@@ -1,5 +1,5 @@
 SOURCES=loader.o kmain.o Kernel.o Console.o IOPort.o Gdt.o Idt.o irq.o isr.o
-SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o Ext2Filesystem.o
+SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o ExtFilesystem.o
 SOURCES+= AtaBlockDevice.o RamBlockDevice.o DeviceManager.o Vfs.o
 SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o string_funcs.o
 
@@ -127,9 +127,9 @@ TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
-TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/Ext2Filesystem.cpp lib/String.cpp
+TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp lib/String.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/Ext2Filesystem.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
