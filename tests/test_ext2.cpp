@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "Ext2Filesystem.h"
+#include "Ext4Filesystem.h"
 #include "RamBlockDevice.h"
 #include "Vfs.h"
 #include <cstdio>
@@ -109,6 +110,11 @@ TEST_CASE("ext2 readdir on a file (not a directory) errors") {
 	fs.mount();
 	List<DirEntry> entries;
 	CHECK(fs.readdir("/hello.txt", entries) < 0);
+}
+
+TEST_CASE("ext4 type does not claim the ext2 image") {
+	Ext4FileSystemType e4;
+	CHECK(e4.probe(loadFixture(), 0) == false);
 }
 
 TEST_CASE("ext2 mounts through the VFS and reads by absolute path") {
