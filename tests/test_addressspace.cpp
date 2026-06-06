@@ -1,0 +1,114 @@
+#include "doctest.h"
+#include "AddressSpace.h"
+#include "Paging.h"
+#include "FrameAllocator.h"   // FRAME_SIZE
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+
+using namespace kernel;
+
+// A fake physical-memory environment: one big arena, frames handed out as
+// arena offsets. "Physical address" == offset into the arena, so physToVirt is
+// just arena+pa. Frame 0 is never handed out (0 stays the OOM sentinel).
+struct FakeMem {
+	char* arena;
+	uint32_t next;     // next phys offset to hand out
+	int allocCount;
+	int cap;           // max frames (for OOM tests); <=0 means unlimited
+};
+static uint32_t fakeAlloc(void* c) {
+	FakeMem* m = (FakeMem*) c;
+	if (m->cap > 0 && m->allocCount >= m->cap)
+		return 0;      // OOM
+	uint32_t pa = m->next;
+	m->next += FRAME_SIZE;
+	m->allocCount++;
+	return pa;
+}
+static void fakeFree(void* c, uint32_t) { ((FakeMem*) c)->allocCount--; }
+static void* fakeP2V(void* c, uint32_t pa) { return ((FakeMem*) c)->arena + pa; }
+
+static FakeMem* makeMem(int cap = 0) {
+	FakeMem* m = new FakeMem();
+	m->arena = (char*) calloc(1, 0x100000);   // 1 MiB arena
+	m->next = FRAME_SIZE;                       // first frame is 0x1000, never 0
+	m->allocCount = 0;
+	m->cap = cap;
+	return m;
+}
+static PagingEnv envOf(FakeMem* m) {
+	PagingEnv e = { fakeAlloc, fakeFree, fakeP2V, m };
+	return e;
+}
+// White-box: read the raw PTE flags for a mapped VA via the fake env.
+static uint32_t pteFlags(FakeMem* m, AddressSpace& as, uint32_t va) {
+	uint32_t* pd = (uint32_t*) fakeP2V(m, as.directoryPhys());
+	uint32_t* pt = (uint32_t*) fakeP2V(m, entryAddr(pd[pdIndex(va)]));
+	return pt[ptIndex(va)] & 0xFFF;
+}
+
+TEST_CASE("constructor allocates a zeroed page directory") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	CHECK(as.directoryPhys() != 0);
+	CHECK(m->allocCount == 1);                  // just the directory
+}
+
+TEST_CASE("map then translate round-trips, preserving the page offset") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	CHECK(as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW));
+	CHECK(as.translate(0x400000) == 0xAB000u);
+	CHECK(as.translate(0x400123) == 0xAB123u);  // same page, offset preserved
+}
+
+TEST_CASE("a second VA in the same 4MB region reuses the page table") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	as.map(0x400000, 0x10000, PTE_PRESENT | PTE_RW);
+	int afterFirst = m->allocCount;             // dir + 1 PT = 2
+	as.map(0x401000, 0x11000, PTE_PRESENT | PTE_RW);
+	CHECK(m->allocCount == afterFirst);         // no new PT
+	as.map(0x800000, 0x12000, PTE_PRESENT | PTE_RW);  // different PD entry
+	CHECK(m->allocCount == afterFirst + 1);     // exactly one new PT
+}
+
+TEST_CASE("mapRange maps every page in the span") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	CHECK(as.mapRange(0x400000, 0x100000, 0x3000, PTE_PRESENT | PTE_RW));
+	CHECK(as.translate(0x400000) == 0x100000u);
+	CHECK(as.translate(0x401000) == 0x101000u);
+	CHECK(as.translate(0x402000) == 0x102000u);
+}
+
+TEST_CASE("unmap makes a VA untranslatable") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW);
+	as.unmap(0x400000);
+	CHECK(as.translate(0x400000) == 0xFFFFFFFFu);
+}
+
+TEST_CASE("translate returns the sentinel for unmapped addresses") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	CHECK(as.translate(0x400000) == 0xFFFFFFFFu);   // no PD entry at all
+	as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW);
+	CHECK(as.translate(0x800000) == 0xFFFFFFFFu);   // PD entry exists elsewhere, this PT slot empty
+}
+
+TEST_CASE("PTE flags propagate from map") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW | PTE_USER);
+	CHECK(pteFlags(m, as, 0x400000) == (PTE_PRESENT | PTE_RW | PTE_USER));
+}
+
+TEST_CASE("map fails when a page table cannot be allocated (OOM)") {
+	FakeMem* m = makeMem(1);                    // only the directory fits
+	AddressSpace as(envOf(m));
+	CHECK(as.directoryPhys() != 0);
+	CHECK(!as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW));   // PT alloc returns 0
+}
