@@ -40,9 +40,11 @@ void Kernel::start() {
 	ext2Filesystem.initialize(2048);
 	Interrupt::registerInterruptHandler(3, &interrupt3);
 	//asm("int $3");
-	MultiTasking mt = MultiTasking(ext2Filesystem);
-	mt.exec("/init.bin");
-	mt.start();
+	// Multitasking is experimental/incomplete (no /init.bin, debug-printing
+	// scheduler). Disabled for now so the kernel runs a clean main loop.
+	// MultiTasking mt = MultiTasking(ext2Filesystem);
+	// mt.exec("/init.bin");
+	// mt.start();
 	//init_timer(50);
 //	for (int i = 0; i < 30; i++) {
 //		Console::writeLine(i);
