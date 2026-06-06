@@ -2,6 +2,7 @@ SOURCES=loader.o kmain.o Kernel.o Console.o IOPort.o Gdt.o Idt.o irq.o isr.o
 SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o ExtFilesystem.o
 SOURCES+= AtaBlockDevice.o RamBlockDevice.o DeviceManager.o Vfs.o
 SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o nxjmp.o
+SOURCES+= FrameAllocator.o MultibootMmap.o AddressSpace.o
 SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o string_funcs.o
 
 BINFOLDER=bin/
@@ -147,8 +148,9 @@ TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
 TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp lib/String.cpp
+TEST_MODULES+= mm/MultibootMmap.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/NxeLoader.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/NxeLoader.*" "*/MultibootMmap.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
