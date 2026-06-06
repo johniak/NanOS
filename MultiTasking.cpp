@@ -55,7 +55,7 @@ void init_timer1(unsigned frequency) {
 	kernel::IOPort::outb(0x40, h);
 }
 
-MultiTasking::MultiTasking(Ext2Filesystem ext2fs) {
+MultiTasking::MultiTasking(FileSystem* ext2fs) {
 	this->ext2fs = ext2fs;
 	//MultiTasking::processList=List<Process>();
 	stackSize = 4096;
@@ -68,7 +68,7 @@ void MultiTasking::start() {
 }
 void MultiTasking::exec(String filename) {
 	char buf[1024];
-	int size = ext2fs.readFile("/init.bin", 1024, 0, buf);
+	int size = ext2fs->read("/init.bin", 1024, 0, buf);
 	if (size <= 0) {
 		Console::writeLine(
 				S "Problem with open file: " + filename + S " Error: " + size);

@@ -5,7 +5,7 @@
  *      Author: johniak
  */
 
-#include "Hdd.h"
+#include "Vfs.h"
 #include "Console.h"
 #include "string.h"
 #include "List.h"
@@ -104,7 +104,8 @@ struct Ext2DirectoryEntry {
 	char name[256];
 };
 
-class Ext2Filesystem {
+class Ext2Filesystem: public FileSystem {
+	BlockDevice* device;
 	char superblockBuff[1024];
 	char commonBuff[4096];
 	Ext2BaseSuperblockFields baseSuperBlock;
@@ -114,47 +115,30 @@ class Ext2Filesystem {
 	int partitionLba;
 	int BgdtSector;
 	int blockSize;
+	int inodeSize;
 	char textBuf[128];
 public:
-	void initialize(int partitionLba) {
+	Ext2Filesystem(BlockDevice* device, unsigned partitionLba) {
+		this->device = device;
 		this->partitionLba = partitionLba;
-		Hdd::readSectors(this->partitionLba + 2, 2, superblockBuff);
+	}
+	int mount() {
+		device->readSectors(this->partitionLba + 2, 2, superblockBuff);
 		memcpy((void*) &baseSuperBlock, (void*) superblockBuff,
 				sizeof(Ext2BaseSuperblockFields));
-		memcpy((void*) &extendedSuperblock, (void*) superblockBuff,
+		// The extended superblock fields follow the base fields, not at offset 0.
+		memcpy((void*) &extendedSuperblock,
+				(void*) (superblockBuff + sizeof(Ext2BaseSuperblockFields)),
 				sizeof(Ext2ExtendedSuperblockFields));
+		// Inode size is 128 for ext2 rev 0; rev >= 1 records it in the superblock
+		// (modern mke2fs defaults to 256). Indexing the inode table with a wrong
+		// size reads garbage.
+		inodeSize = extendedSuperblock.sizeOfInodeStructure;
+		if (inodeSize <= 0)
+			inodeSize = 128;
 		initBgdt();
 		printInfo();
-
-////		for (int i = 1; i < 6; i++) {
-////			Ext2Inode inode = readInode(i);
-////			Console::writeLine(inode.dbp0);
-////			Console::writeHex(inode.typeAndPermisions);
-////			Console::writeLine("");
-////		}
-//		Ext2Inode inode = getInode(2);
-//		List<Ext2DirectoryEntry> dirs = getDirectoriesEntries(inode);
-////		Console::write("dir len: ");
-////		Console::writeLine((int) dirs.entries[0].nameLowLenght);
-////		Console::writeLine( dirs.entries[0].name);
-////		Console::write("dir len: ");
-////		Console::writeLine((int) dirs.entries[1].nameLowLenght);
-//		for (int i = 0; i < dirs.getCount(); i++)
-//			Console::writeLine(dirs[i].name);
-
-//		ls("/");
-//		Ext2Inode inode = *getInodeByPath("/pan.txt");
-//		int readed;
-//		int i=0;
-//		while((readed=this->readFile(inode, 128, 128*i, textBuf))==128){
-//			Console::writeLine(textBuf);
-//			i++;
-//		}
-//		if(readed>0&&readed!=128){
-//			textBuf[readed]=0;
-//			Console::writeLine(textBuf);
-//		}
-
+		return 0;
 	}
 	void initBgdt() {
 		blockGroupsCount = (int) ceil(
@@ -165,7 +149,7 @@ public:
 		int sectorCount = ceil(
 				((float) (blockGroupsCount * sizeof(Ext2BlockGroupDescriptor)))
 						/ 512.0);
-		Hdd::readSectors(this->partitionLba + 2 + 2, sectorCount, commonBuff);
+		device->readSectors(this->partitionLba + 2 + 2, sectorCount, commonBuff);
 		memcpy((void*) &blockGroupDescriptors, (void*) commonBuff,
 				sizeof(Ext2BlockGroupDescriptor) * blockGroupsCount);
 	}
@@ -186,9 +170,9 @@ public:
 		Ext2Inode inode;
 		int blockAddress =
 				blockGroupDescriptors[blockGroupNumber].StartingBlockAddressOfInodeTable
-						+ ((inodeIndex * 128) / blockSize);
-		int blockOffset = (inodeIndex * 128) % blockSize;
-		Hdd::readSectors(this->partitionLba + blockAddress * (blockSize / 512),
+						+ ((inodeIndex * inodeSize) / blockSize);
+		int blockOffset = (inodeIndex * inodeSize) % blockSize;
+		device->readSectors(this->partitionLba + blockAddress * (blockSize / 512),
 				2, commonBuff);
 		memcpy(&inode, commonBuff + blockOffset, 128);
 		return inode;
@@ -204,7 +188,7 @@ public:
 		int index = 0;
 		int offset = 0;
 		List<Ext2DirectoryEntry> dirs;
-		Hdd::readSectors(this->partitionLba + block * (blockSize / 512), 1,
+		device->readSectors(this->partitionLba + block * (blockSize / 512), 1,
 				commonBuff);
 		while (offset < inode.lowerSize) {
 			dirs.add(Ext2DirectoryEntry());
@@ -220,9 +204,12 @@ public:
 		}
 		return dirs;
 	}
-	Ext2Inode* getInodeByPath(String path) {
+	// Resolve an absolute path to its inode. Returns false if any component is
+	// missing. (Returns by value via out-param: the old version returned the
+	// address of a local, a use-after-free.)
+	bool getInodeByPath(String path, Ext2Inode& out) {
 		if (!path.startsWith("/"))
-			return (Ext2Inode*) 0;
+			return false;
 
 		path = path.substring(1);
 		List<String> pathSplited = path.split('/');
@@ -230,50 +217,80 @@ public:
 		for (int i = 0; i < pathSplited.getCount(); i++) {
 			if (pathSplited[i].getLenght() == 0)
 				continue;
-			Ext2Inode* inode = getChildrenInode(parentInode, pathSplited[i]);
-			if (inode == 0) {
-				return (Ext2Inode*) 0;
-			}
-			parentInode = *inode;
+			Ext2Inode childInode;
+			if (!getChildrenInode(parentInode, pathSplited[i], childInode))
+				return false;
+			parentInode = childInode;
 		}
-		return &parentInode;
+		out = parentInode;
+		return true;
 	}
-	Ext2Inode* getChildrenInode(Ext2Inode inode, String name) {
+	bool getChildrenInode(Ext2Inode inode, String name, Ext2Inode& out) {
 		if (!isDirectory(inode))
-			return (Ext2Inode*) 0;
+			return false;
 		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
 		for (int i = 0; i < entries.getCount(); i++) {
 			if (name.compareTo(entries[i].name) == 0) {
-
-				Ext2Inode childInode = getInode(entries[i].inode);
-				return &childInode;
+				out = getInode(entries[i].inode);
+				return true;
 			}
 		}
-		return (Ext2Inode*) 0;
+		return false;
 	}
 	bool isDirectory(Ext2Inode inode) {
 		return (inode.typeAndPermisions & 0xF000) == 0x4000;
 	}
 	void ls(String path) {
-		Ext2Inode* inode = getInodeByPath(path);
-		if (inode == 0) {
+		Ext2Inode inode;
+		if (!getInodeByPath(path, inode)) {
 			Console::writeLine("ERROR :: Wrong path");
 			return;
 		}
-		if (!isDirectory(*inode)) {
-			Console::writeHex(inode->typeAndPermisions);
+		if (!isDirectory(inode)) {
 			Console::writeLine("ERROR :: Path does not lead to the directory");
 			return;
 		}
-		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(*inode);
+		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
 		for (int i = 0; i < entries.getCount(); i++) {
 			Console::writeLine(entries[i].name);
 		}
-
 	}
-	int readFile(String filename, unsigned size, unsigned offset, void* buff) {
-		Ext2Inode inode = *getInodeByPath(filename);
-		return readFile(inode,size,offset,buff);
+
+	// ---- VFS FileSystem interface ----
+	int read(String path, unsigned size, unsigned offset, void* buff) {
+		Ext2Inode inode;
+		if (!getInodeByPath(path, inode))
+			return -1;
+		return readFile(inode, size, offset, buff);
+	}
+	int stat(String path, FileStat& out) {
+		Ext2Inode inode;
+		if (!getInodeByPath(path, inode))
+			return -1;
+		out.type = isDirectory(inode) ? NODE_DIR : NODE_FILE;
+		out.size = inode.lowerSize;
+		return 0;
+	}
+	int readdir(String path, List<DirEntry>& out) {
+		Ext2Inode inode;
+		if (!getInodeByPath(path, inode))
+			return -1;
+		if (!isDirectory(inode))
+			return -1;
+		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
+		for (int i = 0; i < entries.getCount(); i++) {
+			DirEntry de;
+			int n = (int) (unsigned char) entries[i].nameLowLenght;
+			if (n > 255)
+				n = 255;
+			for (int k = 0; k < n; k++)
+				de.name[k] = entries[i].name[k];
+			de.name[n] = 0;
+			de.type = entries[i].typeindicator == 2 ? NODE_DIR :
+					entries[i].typeindicator == 1 ? NODE_FILE : NODE_OTHER;
+			out.add(de);
+		}
+		return 0;
 	}
 
 	int readFile(Ext2Inode inode, unsigned size, unsigned offset, void* buff) {
@@ -291,7 +308,7 @@ public:
 		unsigned directBlockEnd = endBlock > 11 ? 11 : endBlock;
 		for (unsigned i = startBlock; i < directBlockEnd + 1; i++) {
 			unsigned blockAddress = inode.directBlocks[i];
-			Hdd::readSectors(
+			device->readSectors(
 					this->partitionLba + blockAddress * (blockSize / 512),
 					(blockSize / 512), commonBuff);
 			if (i == startBlock && i == endBlock) {
@@ -313,7 +330,7 @@ public:
 
 
 //		unsigned indirect = inode.indirectPtr;
-//		Hdd::readSectors(
+//		device->readSectors(
 //							this->partitionLba + indirect * (blockSize / 512),
 //							(blockSize / 512), commonBuff);
 //		int* ttt=(int*)commonBuff;
@@ -321,6 +338,17 @@ public:
 //			Console::writeLine(ttt[i]);
 //		}
 		return size;
+	}
+};
+
+// Factory registered with the VFS so "ext2" can be mounted on any BlockDevice.
+class Ext2FileSystemType: public FileSystemType {
+public:
+	const char* name() {
+		return "ext2";
+	}
+	FileSystem* create(BlockDevice* dev, unsigned partitionLba) {
+		return new Ext2Filesystem(dev, partitionLba);
 	}
 };
 

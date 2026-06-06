@@ -28,11 +28,11 @@ public:
 
 
 class MultiTasking {
-	Ext2Filesystem ext2fs;
+	FileSystem* ext2fs;
 	unsigned stackSize;
 
 public:
-	MultiTasking(Ext2Filesystem ext2fs);
+	MultiTasking(FileSystem* ext2fs);
 	void start();
 	void exec(String filename);
 	void initTimer(unsigned frequency);

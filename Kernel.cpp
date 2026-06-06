@@ -5,6 +5,10 @@
 #include "Interrupt.h"
 #include "Keyboard.h"
 #include "Hdd.h"
+#include "BlockDevice.h"
+#include "AtaBlockDevice.h"
+#include "DeviceManager.h"
+#include "Vfs.h"
 #include "Ext2Filesystem.h"
 #include "List.h"
 #include "String.h"
@@ -36,8 +40,29 @@ void Kernel::start() {
 //	char* bb = buf;
 	//kernel::Interrupt::registerInterruptHandler(, &callback3);
 
-	Ext2Filesystem ext2Filesystem = Ext2Filesystem();
-	ext2Filesystem.initialize(2048);
+	// Storage stack: register the ATA disk as a block device, register the ext2
+	// filesystem type, and mount it at "/". All access goes through the VFS.
+	AtaBlockDevice* hd0 = new AtaBlockDevice("hd0");
+	DeviceManager::registerDevice(hd0);
+	Vfs* vfs = new Vfs();
+	vfs->registerType(new Ext2FileSystemType());
+	vfs->mount("/", "ext2", hd0, 2048);
+
+	// Demo: list /boot/grub and print grub.cfg through the VFS.
+	List<DirEntry> entries;
+	if (vfs->readdir("/boot/grub", entries) == 0) {
+		Console::writeLine("Contents of /boot/grub:");
+		for (int i = 0; i < entries.getCount(); i++)
+			Console::writeLine(entries[i].name);
+	}
+	char cfg[256];
+	int n = vfs->read("/boot/grub/grub.cfg", 255, 0, cfg);
+	if (n > 0) {
+		cfg[n] = 0;
+		Console::writeLine("--- /boot/grub/grub.cfg ---");
+		Console::write(cfg);
+	}
+
 	Interrupt::registerInterruptHandler(3, &interrupt3);
 	//asm("int $3");
 	// Multitasking is experimental/incomplete (no /init.bin, debug-printing
