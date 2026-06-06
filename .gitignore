@@ -3,8 +3,8 @@
 
 # Build artifacts
 bin/kernel.bin
-fs/image.img
-fs/image-grub2.img
+disk/image.img
+disk/image-grub2.img
 iso/
 *.iso
 

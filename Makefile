@@ -4,7 +4,7 @@ SOURCES+= AtaBlockDevice.o RamBlockDevice.o DeviceManager.o Vfs.o
 SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o string_funcs.o
 
 BINFOLDER=bin/
-IMAGE_GRUB2=fs/image-grub2.img
+IMAGE_GRUB2=disk/image-grub2.img
 # Partition starts at LBA 2048 (1MiB offset)
 IMAGE_GRUB2_PART=$(IMAGE_GRUB2)?offset=1048576
 
@@ -62,11 +62,29 @@ CROSS?=i686-elf-
 CXX=$(CROSS)gcc
 AS=$(CROSS)as
 LD=$(CROSS)gcc
-CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ -Iinclude -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore
+
+# Sources live in layered directories; let make find them by basename.
+VPATH=arch:init:kernel:drivers:fs:mm:lib
+# Kernel include path: every code dir plus the freestanding <string.h> in include/.
+KINCLUDES=-Iarch -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude
+
+CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore
 LDFLAGS=-Tlinker.ld -nostdlib -nostartfiles -lgcc
 ASFLAGS=
 
-_all: $(SOURCES) _link
+# The repo is bind-mounted from a case-insensitive macOS FS, so <string.h> would
+# resolve to lib/String.h (infinite include recursion). Compile from a copy on the
+# container's own case-sensitive FS, then copy the kernel back.
+KSRC=/tmp/nanos-ksrc
+
+_all:
+	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
+	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage --exclude=tests -C /src . | tar -xf - -C $(KSRC) && \
+	 mkdir -p $(KSRC)/bin
+	$(MAKE) -C $(KSRC) _compile
+	@mkdir -p $(BINFOLDER) && cp $(KSRC)/$(BINFOLDER)kernel.bin $(BINFOLDER)kernel.bin
+
+_compile: $(SOURCES) _link
 
 _link:
 	$(LD) $(LDFLAGS) -o $(BINFOLDER)kernel.bin $(foreach source,$(SOURCES),$(BINFOLDER)$(source))
@@ -101,12 +119,15 @@ _clean:
 # memory_manager/string_funcs); Console is stubbed by tests/host_shims.cpp.
 # ----------------------------------------------------------------------------
 HOST_CXX=g++
-HOST_CXXFLAGS=-std=c++17 -O0 -g -I. -Wall --coverage
+# Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
+# <string.h> resolves to libc (not the freestanding include/string.h).
+HINCLUDES=-Iarch -Ikernel -Idrivers -Ifs -Imm -Ilib
+HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage
 TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
-TEST_MODULES=RamBlockDevice.cpp DeviceManager.cpp Vfs.cpp Ext2Filesystem.cpp String.cpp
+TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp fs/Vfs.cpp fs/Ext2Filesystem.cpp lib/String.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
 COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/Ext2Filesystem.*"
 COV_INFO=/tmp/cov.info
@@ -117,7 +138,8 @@ COV_MIN=90
 BUILDDIR=/tmp/nbuild
 
 _test:
-	@rm -rf $(BUILDDIR) && cp -a /src $(BUILDDIR)
+	@rm -rf $(BUILDDIR) && mkdir -p $(BUILDDIR) && \
+	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage -C /src . | tar -xf - -C $(BUILDDIR)
 	cd $(BUILDDIR) && $(HOST_CXX) $(HOST_CXXFLAGS) -c $(TEST_SRCS) $(TEST_MODULES)
 	cd $(BUILDDIR) && $(HOST_CXX) $(HOST_CXXFLAGS) -o $(TEST_BIN) *.o
 	cd $(BUILDDIR) && $(TEST_BIN)

@@ -5,7 +5,7 @@
 
 set -e
 
-IMAGE_PATH="fs/image-grub2.img"
+IMAGE_PATH="disk/image-grub2.img"
 OFFSET=1048576   # 2048 sectors * 512 bytes = 1MiB
 SECTORS=63488    # (32MB - 1MB) / 512
 
@@ -14,6 +14,8 @@ if [ -f "$IMAGE_PATH" ]; then
     echo "Image $IMAGE_PATH already exists. Delete it to recreate."
     exit 0
 fi
+
+mkdir -p "$(dirname "$IMAGE_PATH")"
 
 echo "Creating GRUB2 HDD image..."
 
