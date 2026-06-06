@@ -11,6 +11,8 @@
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
+#include "Syscall.h"
+#include "SyscallDispatch.h"
 #include "List.h"
 #include "String.h"
 #include "MultiTasking.h"
@@ -23,6 +25,13 @@ void interrupt3(kernel::Registers* regs) {
 	//}
 }
 namespace kernel {
+
+// Issue a Linux-style syscall via int 0x80 (nr in eax, args in ebx/ecx/edx).
+static int sys3(int nr, int a, int b, int c) {
+	int ret;
+	asm volatile("int $0x80" : "=a"(ret) : "a"(nr), "b"(a), "c"(b), "d"(c) : "memory");
+	return ret;
+}
 
 void Kernel::start() {
 	Console::clearScreen();
@@ -50,19 +59,20 @@ void Kernel::start() {
 	vfs->registerType(new Ext2FileSystemType());
 	vfs->mount("/", "auto", hd0, 2048);
 
-	// Demo: list /boot/grub and print grub.cfg through the VFS.
-	List<DirEntry> entries;
-	if (vfs->readdir("/boot/grub", entries) == 0) {
-		Console::writeLine("Contents of /boot/grub:");
-		for (int i = 0; i < entries.getCount(); i++)
-			Console::writeLine(entries[i].name);
-	}
-	char cfg[256];
-	int n = vfs->read("/boot/grub/grub.cfg", 255, 0, cfg);
-	if (n > 0) {
-		cfg[n] = 0;
-		Console::writeLine("--- /boot/grub/grub.cfg ---");
-		Console::write(cfg);
+	// Install the Linux-style syscall interface (int 0x80) over the VFS.
+	installSyscalls(vfs);
+
+	// Demo: exercise the whole path through real int 0x80 syscalls.
+	const char* msg = "syscall write OK\n";
+	sys3(SYS_write, 1, (int) msg, 17);
+	int fd = sys3(SYS_open, (int) "/boot/grub/grub.cfg", 0, 0);
+	if (fd >= 0) {
+		Console::writeLine("--- grub.cfg via int 0x80 ---");
+		char b[256];
+		int n;
+		while ((n = sys3(SYS_read, fd, (int) b, 255)) > 0)
+			sys3(SYS_write, 1, (int) b, n);
+		sys3(SYS_close, fd, 0, 0);
 	}
 
 	Interrupt::registerInterruptHandler(3, &interrupt3);
