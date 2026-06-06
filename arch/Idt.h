@@ -41,6 +41,8 @@ private:
 
 extern "C" void idt_load(unsigned ptr);
 
+extern "C" void isr128();   // syscall entry (int 0x80)
+
 extern "C" void isr0();
 extern "C" void isr1();
 extern "C" void isr2();

@@ -68,6 +68,9 @@ void Idt::initialize() {
 	setGate(46, (unsigned) irq14, 0x08, 0x8E);
 	setGate(47, (unsigned) irq15, 0x08, 0x8E);
 
+	// Syscall gate: int 0x80, DPL=3 (callable from ring 3 later), 32-bit int gate.
+	setGate(128, (unsigned) isr128, 0x08, 0xEE);
+
 	idt_load((unsigned) &idtPtr);
 }
 

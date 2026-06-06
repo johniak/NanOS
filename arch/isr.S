@@ -48,6 +48,15 @@ ISR_NOERRCODE 29
 ISR_NOERRCODE 30
 ISR_NOERRCODE 31
 
+; Syscall entry (vector 0x80 = 128). Use `push dword` — `push byte 128` would
+; sign-extend to 0xFFFFFF80 and corrupt the interrupt number.
+[GLOBAL isr128]
+isr128:
+    cli
+    push dword 0
+    push dword 128
+    jmp isr_common_stub
+
 
 
 isr_common_stub:
