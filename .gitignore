@@ -1,2 +1,9 @@
 *.o
 *~
+
+# Build artifacts
+bin/kernel.bin
+fs/image.img
+fs/image-grub2.img
+iso/
+*.iso

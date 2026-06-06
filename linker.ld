@@ -1,7 +1,7 @@
 ENTRY(loader)
 SECTIONS
 {
-  .text 0x1000000 :
+  .text 0x100000 :
   {
     code = .; _code = .; __code = .;
     *(.text)
