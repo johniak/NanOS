@@ -7,7 +7,9 @@
  */
 #pragma once
 #include "Vfs.h"
+#include "Syscall.h"
 
 namespace kernel {
 void installSyscalls(Vfs* vfs);
+Syscalls* kernelSyscalls();   // the installed Syscalls instance (0 if not yet installed)
 }

@@ -52,4 +52,8 @@ void installSyscalls(Vfs* vfs) {
 	Interrupt::registerInterruptHandler(0x80, &syscallDispatch);
 }
 
+Syscalls* kernelSyscalls() {
+	return g_sys;
+}
+
 } /* namespace kernel */

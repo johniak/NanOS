@@ -13,6 +13,7 @@
 #include "Ext4Filesystem.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"
+#include "Exec.h"
 #include "List.h"
 #include "String.h"
 #include "MultiTasking.h"
@@ -62,18 +63,15 @@ void Kernel::start() {
 	// Install the Linux-style syscall interface (int 0x80) over the VFS.
 	installSyscalls(vfs);
 
-	// Demo: exercise the whole path through real int 0x80 syscalls.
+	// Sanity: one direct int 0x80 call.
 	const char* msg = "syscall write OK\n";
 	sys3(SYS_write, 1, (int) msg, 17);
-	int fd = sys3(SYS_open, (int) "/boot/grub/grub.cfg", 0, 0);
-	if (fd >= 0) {
-		Console::writeLine("--- grub.cfg via int 0x80 ---");
-		char b[256];
-		int n;
-		while ((n = sys3(SYS_read, fd, (int) b, 255)) > 0)
-			sys3(SYS_write, 1, (int) b, n);
-		sys3(SYS_close, fd, 0, 0);
-	}
+
+	// Load and run the first userspace program (.nx) via the dynamic loader.
+	Console::writeLine("--- exec /bin/init.nx ---");
+	int rc = execProgram(vfs, "/bin/init.nx");
+	Console::write("init.nx exited with code ");
+	Console::writeLine(rc);
 
 	Interrupt::registerInterruptHandler(3, &interrupt3);
 	//asm("int $3");
