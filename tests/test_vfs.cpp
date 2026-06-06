@@ -31,8 +31,10 @@ struct FakeFS : FileSystem {
 struct FakeType : FileSystemType {
 	const char* tn;
 	FakeFS* made;
-	FakeType(const char* n) : tn(n), made(0) {}
+	bool probeResult;
+	FakeType(const char* n) : tn(n), made(0), probeResult(true) {}
 	const char* name() { return tn; }
+	bool probe(BlockDevice*, unsigned) { return probeResult; }
 	FileSystem* create(BlockDevice*, unsigned) { made = new FakeFS(1); return made; }
 };
 
@@ -69,6 +71,7 @@ TEST_CASE("Vfs propagates a filesystem's mount() failure") {
 	};
 	struct FailType : FileSystemType {
 		const char* name() { return "failfs"; }
+		bool probe(BlockDevice*, unsigned) { return true; }
 		FileSystem* create(BlockDevice*, unsigned) { return new FailFS(); }
 	};
 	Vfs vfs;
@@ -80,12 +83,31 @@ TEST_CASE("Vfs propagates a filesystem's mount() failure") {
 TEST_CASE("Vfs fails the mount when the type cannot create a filesystem") {
 	struct NullType : FileSystemType {
 		const char* name() { return "nullfs"; }
+		bool probe(BlockDevice*, unsigned) { return true; }
 		FileSystem* create(BlockDevice*, unsigned) { return 0; }
 	};
 	Vfs vfs;
 	NullType t;
 	vfs.registerType(&t);
 	CHECK(vfs.mount("/", "nullfs", (BlockDevice*)0, 0) < 0);
+}
+
+TEST_CASE("Vfs auto-mount picks the first type whose probe matches") {
+	Vfs vfs;
+	FakeType a("afs"); a.probeResult = false;
+	FakeType b("bfs"); b.probeResult = true;
+	vfs.registerType(&a);
+	vfs.registerType(&b);
+	CHECK(vfs.mount("/", "auto", (BlockDevice*)0, 0) == 0);
+	CHECK(b.made != 0);     // b matched and was created
+	CHECK(a.made == 0);     // a was skipped (probe false)
+}
+
+TEST_CASE("Vfs auto-mount fails when no type probes true") {
+	Vfs vfs;
+	FakeType a("afs"); a.probeResult = false;
+	vfs.registerType(&a);
+	CHECK(vfs.mount("/", "auto", (BlockDevice*)0, 0) < 0);
 }
 
 TEST_CASE("Vfs routes readdir to the mounted filesystem") {

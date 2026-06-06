@@ -10,9 +10,15 @@ void Vfs::registerType(FileSystemType* type) {
 int Vfs::mount(String mountpoint, String fstype, BlockDevice* dev,
 		unsigned partitionLba) {
 	const char* wanted = (char*) fstype;
+	bool autodetect = (strcmp(wanted, "auto") == 0);
 	FileSystemType* type = 0;
 	for (int i = 0; i < types.getCount(); i++) {
-		if (strcmp(types[i]->name(), wanted) == 0) {
+		if (autodetect) {
+			if (types[i]->probe(dev, partitionLba)) {
+				type = types[i];
+				break;
+			}
+		} else if (strcmp(types[i]->name(), wanted) == 0) {
 			type = types[i];
 			break;
 		}

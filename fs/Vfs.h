@@ -35,6 +35,9 @@ class FileSystemType {
 public:
 	virtual ~FileSystemType() {}
 	virtual const char* name() = 0;                                      // e.g. "ext2"
+	// Inspect the superblock and report whether this driver handles the fs.
+	// Used by mount("auto", ...) to pick a driver at runtime.
+	virtual bool probe(BlockDevice* dev, unsigned partitionLba) = 0;
 	virtual FileSystem* create(BlockDevice* dev, unsigned partitionLba) = 0;
 };
 
