@@ -21,7 +21,10 @@ class List {
 public:
 	List() :
 			capacity(10), capacityInc(10), count(0) {
-		array = new T[capacity];
+		// Use malloc (not new[]) so allocation/realloc/free are one consistent
+		// family — new[] for non-trivial T adds an array cookie that free() and
+		// realloc() do not understand.
+		array = (T*) malloc(sizeof(T) * capacity);
 	}
 	void add(T item) {
 		insert(count, item);
@@ -38,9 +41,9 @@ public:
 	}
 	void increaseCapacity() {
 		capacity += capacityInc;
-		T* tmp = (T*) realloc((void*) array, capacity* sizeof(T));
-		free(array);
-		array = tmp;
+		// realloc already frees/moves the old block; the previous free(array)
+		// here was a double free.
+		array = (T*) realloc((void*) array, capacity * sizeof(T));
 	}
 	void removeAt(int index) {
 		if (index < count - 1) {
