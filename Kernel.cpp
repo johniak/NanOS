@@ -75,11 +75,12 @@ int index = 0;
 void Kernel::loop() {
 	//Console::writeLine("test");
 	//Console::write("Johniak test ");
+	// Idle: counter print disabled to keep the screen quiet.
 	index++;
-	Console::writeLine(index);
-	if (index % 100000000==0){
-		Console::writeLine(index);
-	}
+	//Console::writeLine(index);
+	//if (index % 100000000==0){
+	//	Console::writeLine(index);
+	//}
 }
 
 }
