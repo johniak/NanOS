@@ -42,7 +42,7 @@ echo "Created MBR partition table"
 
 # ext2 filesystem at the partition offset (1024-byte blocks).
 PART_BLOCKS=$((SECTORS * 512 / 1024))
-mke2fs -t ext2 -q -E offset=$OFFSET "$IMAGE_PATH" ${PART_BLOCKS}k
+mke2fs -t ext4 -q -E offset=$OFFSET "$IMAGE_PATH" ${PART_BLOCKS}k
 echo "Created ext2 filesystem at offset $OFFSET"
 
 # Populate /boot/grub/grub.cfg via debugfs (no mount needed).

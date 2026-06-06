@@ -10,6 +10,7 @@
 #include "DeviceManager.h"
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
+#include "Ext4Filesystem.h"
 #include "List.h"
 #include "String.h"
 #include "MultiTasking.h"
@@ -45,8 +46,9 @@ void Kernel::start() {
 	AtaBlockDevice* hd0 = new AtaBlockDevice("hd0");
 	DeviceManager::registerDevice(hd0);
 	Vfs* vfs = new Vfs();
+	vfs->registerType(new Ext4FileSystemType());
 	vfs->registerType(new Ext2FileSystemType());
-	vfs->mount("/", "ext2", hd0, 2048);
+	vfs->mount("/", "auto", hd0, 2048);
 
 	// Demo: list /boot/grub and print grub.cfg through the VFS.
 	List<DirEntry> entries;
