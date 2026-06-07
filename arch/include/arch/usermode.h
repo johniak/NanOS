@@ -19,8 +19,10 @@ struct AddressSpace;   // opaque per-process space (see <arch/mmu.h>); 0 = run i
 int enterUser(uint32_t entry, uint32_t userStackTop, AddressSpace* space = 0);
 
 // Load a staged program image (already at its load base, bss zeroed) into a
-// fresh per-process address space and run it in ring 3. Returns the exit code.
-int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd);
+// fresh per-process address space, place an argv image on its stack, and run it
+// in ring 3. Returns the exit code.
+int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
+                  const char* const* argv, int argc);
 
 // Called by the syscall trap when the running program has exited: returns
 // control to the kernel (longjmp back into enterUser).

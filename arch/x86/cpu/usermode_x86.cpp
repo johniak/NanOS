@@ -10,6 +10,7 @@
 #include <arch/usermode.h>
 #include <arch/mmu.h>
 #include "NxJmp.h"
+#include "UserStack.h"         // kernel::buildUserStack
 #include "PagingControl.h"     // kernel::loadCr3
 #include "FrameAllocator.h"    // kernel::g_frames
 #include "SyscallDispatch.h"   // kernel::kernelSyscalls()
@@ -62,7 +63,8 @@ void userExit() {
 	nx_longjmp(&g_userCtx, 1);   // val=1; real exit code comes from Syscalls::code()
 }
 
-int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd) {
+int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
+                  const char* const* argv, int argc) {
 	AddressSpace* space = mmuCreateAddressSpace();
 
 	// Map the image (code/data/bss) to fresh private USER frames, copying the
@@ -75,15 +77,30 @@ int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd) {
 		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 	}
 
-	// Map a private, zeroed user stack at the top of the window (disjoint from the
-	// tiny init image below it).
+	// Map a private, zeroed user stack at the top of the window. Remember each
+	// frame so we can write the argv image into it by physical address (the stack
+	// is mapped in `space`, not the currently-active directory).
+	uint32_t stackFrames[16];   // (USER_STACK_TOP - USER_STACK_BOT) / 4 KiB
+	int sfi = 0;
 	for (uint32_t va = USER_STACK_BOT; va < USER_STACK_TOP; va += 0x1000) {
 		uint32_t f = kernel::g_frames.alloc();
 		memset((void*) f, 0, 0x1000);
 		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+		stackFrames[sfi++] = f;     // index 0 = lowest VA (USER_STACK_BOT)
 	}
+	auto stackPhys = [&](uint32_t va) -> uint32_t {
+		return stackFrames[(va - USER_STACK_BOT) >> 12] + (va & 0xFFFu);
+	};
 
-	int rc = enterUser(entry, USER_STACK_TOP, space);
+	// Build the SysV argv image at the top of the stack; esp ends pointing at argc.
+	uint32_t esp = kernel::buildUserStack(USER_STACK_TOP, argv, argc,
+		[&](uint32_t va, const void* src, unsigned len) {
+			const unsigned char* s = (const unsigned char*) src;
+			for (unsigned i = 0; i < len; i++)
+				*(unsigned char*) stackPhys(va + i) = s[i];
+		});
+
+	int rc = enterUser(entry, esp, space);
 	mmuDestroyAddressSpace(space);
 	return rc;
 }

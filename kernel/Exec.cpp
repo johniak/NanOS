@@ -31,8 +31,9 @@ int execProgram(Vfs* vfs, const char* path) {
 		return rc;
 
 	kernelSyscalls()->resetForRun();
-	// Run the program in ring 3 in its own address space.
-	return arch::execUserImage(entry, h->loadBase, h->bssEnd);
+	// Run the program in ring 3 in its own address space. argv[0] = the path.
+	const char* argv[] = { path, 0 };
+	return arch::execUserImage(entry, h->loadBase, h->bssEnd, argv, 1);
 }
 
 }
