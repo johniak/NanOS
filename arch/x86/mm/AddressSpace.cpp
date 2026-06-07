@@ -50,6 +50,20 @@ void AddressSpace::adoptKernelDirectory(uint32_t kernelDirPhys, uint32_t userVa)
 	dst[pdIndex(userVa)] = 0;   // drop the user-window PDE -> private PT on next map()
 }
 
+void AddressSpace::freeUserWindow(uint32_t userVa) {
+	uint32_t* pd = dir();
+	uint32_t i = pdIndex(userVa);
+	if (!entryPresent(pd[i]))
+		return;
+	uint32_t ptPhys = entryAddr(pd[i]);
+	uint32_t* pt = (uint32_t*) m_env.physToVirt(m_env.ctx, ptPhys);
+	for (int e = 0; e < 1024; e++)
+		if (entryPresent(pt[e]))
+			m_env.freeFrame(m_env.ctx, entryAddr(pt[e]));   // the mapped user frame
+	m_env.freeFrame(m_env.ctx, ptPhys);                     // the page table itself
+	pd[i] = 0;
+}
+
 bool AddressSpace::mapRange(uint32_t va, uint32_t pa, uint32_t len, uint32_t flags) {
 	uint32_t pages = (len + FRAME_SIZE - 1) / FRAME_SIZE;
 	for (uint32_t p = 0; p < pages; p++)

@@ -113,6 +113,28 @@ TEST_CASE("map fails when a page table cannot be allocated (OOM)") {
 	CHECK(!as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW));   // PT alloc returns 0
 }
 
+TEST_CASE("freeUserWindow releases the user PT + its frames, clears the PDE") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	uint32_t f1 = fakeAlloc(m), f2 = fakeAlloc(m), f3 = fakeAlloc(m);   // 3 user frames
+	as.map(0x400000, f1, PTE_PRESENT | PTE_RW | PTE_USER);              // + 1 page table
+	as.map(0x401000, f2, PTE_PRESENT | PTE_RW | PTE_USER);
+	as.map(0x402000, f3, PTE_PRESENT | PTE_RW | PTE_USER);
+	int before = m->allocCount;                                        // dir + 3 frames + PT = 5
+
+	as.freeUserWindow(0x400000);
+	CHECK(m->allocCount == before - 4);                                // 3 frames + 1 PT freed
+	CHECK(as.translate(0x400000) == 0xFFFFFFFFu);                      // PDE cleared
+}
+
+TEST_CASE("freeUserWindow is a no-op when the user window was never mapped") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	int before = m->allocCount;
+	as.freeUserWindow(0x400000);
+	CHECK(m->allocCount == before);
+}
+
 TEST_CASE("adoptKernelDirectory shares the kernel half, privatizes the user window") {
 	FakeMem* m = makeMem();
 	// "kernel" space: map a kernel page (PDE 0) and a page in the user window's

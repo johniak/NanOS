@@ -35,6 +35,11 @@ public:
 	// space: kernel half shared (supervisor), user window private.
 	void adoptKernelDirectory(uint32_t kernelDirPhys, uint32_t userVa);
 
+	// Free the page table covering `userVa` and every present frame it maps, then
+	// clear that PDE. Used to tear down a process's private user window WITHOUT
+	// touching the shared kernel-half page tables (which other PDEs alias).
+	void freeUserWindow(uint32_t userVa);
+
 	// Physical|offset for a mapped VA, or 0xFFFFFFFF if not mapped.
 	uint32_t translate(uint32_t va) const;
 	uint32_t directoryPhys() const { return m_dirPhys; }

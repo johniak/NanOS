@@ -80,11 +80,16 @@ void mmuSwitch(AddressSpace* s) {
 	kernel::loadCr3(s->impl.directoryPhys());
 }
 
-void mmuDestroyAddressSpace(AddressSpace*) {
-	// LEAK for this slice: the copied PDEs alias kernel page tables, so walking
-	// and freeing them would corrupt the kernel. Selective free (the directory,
-	// the private user PT, and the private user frames only) is a later TODO.
-	// Single process + ample RAM, so leaking is fine for now.
+void mmuDestroyAddressSpace(AddressSpace* s) { mmuFreeAddressSpace(s); }
+
+void mmuFreeAddressSpace(AddressSpace* s) {
+	if (!s)
+		return;
+	// Free only the PRIVATE parts: the user-window page table + its frames, and the
+	// directory. The kernel-half PDEs alias shared kernel page tables — leave them.
+	s->impl.freeUserWindow(0x400000);
+	g_fa->free(s->impl.directoryPhys());
+	delete s;
 }
 
 }  // namespace arch

@@ -37,5 +37,11 @@ void mmuMap(AddressSpace*, uint32_t va, uint32_t pa, uint32_t flags);
 void mmuUnmap(AddressSpace*, uint32_t va);
 void mmuSwitch(AddressSpace*);
 void mmuDestroyAddressSpace(AddressSpace*);
+// Tear down a process address space: free the user-window frames + the private user
+// page table + the directory (NOT the shared kernel-half page tables).
+void mmuFreeAddressSpace(AddressSpace*);
+// Eager fork copy: a new space sharing the kernel half, with the user window copied
+// frame-by-frame from `src`.
+AddressSpace* mmuCopyAddressSpace(AddressSpace* src);
 
 }
