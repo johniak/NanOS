@@ -130,3 +130,12 @@ TEST_CASE("sys_exit records the exit code") {
 	CHECK(sc.hasExited() == true);
 	CHECK(sc.code() == 7);
 }
+
+TEST_CASE("resetForRun clears the exit state so the instance can run again") {
+	Syscalls sc(mountFixture(), sink);
+	sc.exit(7);
+	CHECK(sc.hasExited() == true);
+	sc.resetForRun();
+	CHECK(sc.hasExited() == false);
+	CHECK(sc.code() == 0);
+}

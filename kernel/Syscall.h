@@ -60,6 +60,8 @@ public:
 	void exit(int code);
 	bool hasExited() { return exited; }
 	int code() { return exitCode; }
+	// Clear the exit state so the same Syscalls instance can run another program.
+	void resetForRun() { exited = false; exitCode = 0; }
 };
 
 } /* namespace kernel */

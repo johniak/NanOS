@@ -6,13 +6,18 @@
  * mapping is machine-independent (kernel::kernelSyscall).
  */
 #include <arch/syscall.h>
+#include <arch/usermode.h>
 #include "Interrupt.h"
 #include "Syscall.h"
+#include "SyscallDispatch.h"   // kernel::kernelSyscalls()
 
 namespace {
 
 void syscallTrap(kernel::Registers* r) {
 	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx);
+	// If the program exited (SYS_exit set the flag), return to the kernel.
+	if (kernel::kernelSyscalls()->hasExited())
+		arch::userExit();
 }
 
 // Issue a Linux-style syscall via int 0x80 (nr in eax, args in ebx/ecx/edx).
