@@ -52,6 +52,12 @@ int spawn(const char* path, char* const argv[]) {
 	return sys3(SYS_spawn, (int) path, (int) argv, 0);
 }
 
+/* Console input mode: 0 = cooked (line-edited), 1 = raw (per-key). The shell uses
+ * raw for its own line editor and cooked while a child program runs. */
+int termmode(int raw) {
+	return sys3(SYS_termmode, raw, 0, 0);
+}
+
 /* Single fixed heap window, mapped by the kernel at exec time: [0x480000,0x4F0000). */
 void* sbrk(int incr) {
 	static char* cur = (char*) 0x480000;   /* NX_HEAP_BASE */
