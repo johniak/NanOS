@@ -30,4 +30,12 @@ void consoleInit() {}
 // preserves the pre-blocking-stdin behaviour the Syscalls tests expect).
 int inputRead(char*, unsigned) { return 0; }
 void inputSetRaw(int) {}
+
+// Scheduler arch primitives are hardware (context switch / timer); the host harness
+// only exercises the pure round-robin logic, so these are no-op stubs.
+unsigned archTaskBootstrap(unsigned char*, unsigned) { return 0; }
+unsigned archKernelCr3() { return 0; }
+void archTimerInit(unsigned) {}
+void halt_or_hlt() {}
 }
+extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)
