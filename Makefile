@@ -5,7 +5,7 @@ include arch/$(ARCH)/arch.mk
 
 # Machine-independent objects (portable across architectures).
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamBlockDevice.o DeviceManager.o Vfs.o
-MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o FrameAllocator.o KeyDecoder.o
+MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o FrameAllocator.o KeyDecoder.o Scheduler.o
 MI_SOURCES+= memory_manager.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
