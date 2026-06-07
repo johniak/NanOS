@@ -7,6 +7,8 @@
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
 #include "SynthFs.h"
+#include "Scheduler.h"
+#include <arch/sched.h>
 #include "Syscall.h"
 #include "SyscallDispatch.h"
 #include "Exec.h"
@@ -42,6 +44,25 @@ static void mountVolume(Vfs* vfs, SynthFs* root, const char* name, BlockDevice* 
 	mp[i] = 0;
 	vfs->mount(String(mp), "auto", dev, lba);
 	root->addVolume(name);
+}
+
+// Scheduler task bodies. Task 1 (init/nsh) enters ring 3 via execProgram; task 2 is
+// a background kernel thread (demonstrates that several tasks coexist) — it sleeps and
+// counts, so cat /proc/uptime advancing while the shell is idle proves the scheduler
+// keeps running.
+static Vfs* g_vfs = 0;
+static volatile unsigned g_bgwork = 0;
+
+static void initTaskBody() {
+	int rc = execProgram(g_vfs, "/disks/main/nanos/core/init.nxe");
+	Console::write("init exited with code ");
+	Console::writeLine(rc);
+}
+static void clockTaskBody() {
+	for (;;) {
+		g_bgwork++;
+		arch::halt_or_hlt();   // sleep until the next interrupt
+	}
 }
 
 // Build the physical frame allocator from the arch memory map, then hand it to
@@ -86,56 +107,20 @@ void Kernel::start() {
 	installSyscalls(vfs);
 	arch::syscallSelfTest();
 
-	// Launch the interactive shell. It reads commands from the keyboard and spawns
-	// /bin/<cmd>.nxe programs (cat, ls, ...) until the user types `exit`.
-	// Hand control to init (PID 1) on the system volume; init launches the shell.
-	Console::writeLine("--- starting /disks/main/nanos/core/init.nxe ---");
-	int rc = execProgram(vfs, "/disks/main/nanos/core/init.nxe");
-	Console::write("init exited with code ");
-	Console::writeLine(rc);
+	// Start the scheduler: idle (task 0), init/nsh (task 1, enters ring 3), and a
+	// background clock thread (task 2). The 1000 Hz timer preempts; init launches the
+	// shell. Control never returns from start().
+	g_vfs = vfs;
+	Scheduler::init();
+	Scheduler::create(initTaskBody, 1);
+	Scheduler::create(clockTaskBody, 2);
+	arch::archTimerInit(1000);
+	Scheduler::start();
 
-	// Multitasking is experimental/incomplete (no /init.bin, debug-printing
-	// scheduler). Disabled for now so the kernel runs a clean main loop.
-	// MultiTasking mt = MultiTasking(ext2Filesystem);
-	// mt.exec("/init.bin");
-	// mt.start();
-	//init_timer(50);
-//	for (int i = 0; i < 30; i++) {
-//		Console::writeLine(i);
-//	}
-//	String str =String("repeat");
-//	Console::writeLine(S"yolo"+S"rower"+10);
-//	String test = "Ala ma ma kota";
-//	Console::writeLine(S"indexOf: "+test.substring(test.indexOf("ma",5)));
-//	List<String> strs= test.split(' ');
-//	for(int i=0;i<strs.getCount();i++){
-//		//Console::writeLine(strs[i]);
-//		Console::writeLine(S""+strs[i]);
-//	}
-//	for (int i = 0; i < 512; i++) {
-//		int s = (int) buf[i];
-//		s &= 0x000000FF;
-//		Console::writeHex(s);
-//		if ((i + 1) % 27 != 0)
-//			Console::write(" ");
-//	}
-
-	while (1) {
-		this->loop();
-	}
+	for (;;) arch::halt_or_hlt();   // unreachable
 }
 
-int index = 0;
-void Kernel::loop() {
-	//Console::writeLine("test");
-	//Console::write("Johniak test ");
-	// Idle: counter print disabled to keep the screen quiet.
-	index++;
-	//Console::writeLine(index);
-	//if (index % 100000000==0){
-	//	Console::writeLine(index);
-	//}
-}
+void Kernel::loop() {}
 
 }
 ;
