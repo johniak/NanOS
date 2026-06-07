@@ -14,10 +14,11 @@
 
 namespace kernel {
 
-enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_DONE };
+enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TASK_ZOMBIE };
 
 struct Task {
 	unsigned kesp;          // saved kernel esp (the whole context lives on the stack)
+	unsigned esp0;          // top of this task's kernel stack (TSS.esp0 when it runs)
 	TaskState state;
 	void (*body)();
 	int id;                 // 0 = idle

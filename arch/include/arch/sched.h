@@ -20,6 +20,10 @@ unsigned archTaskBootstrap(unsigned char* kstackTop, unsigned cr3);
 // Physical address of the kernel page directory (initial CR3 for a new task).
 unsigned archKernelCr3();
 
+// Repoint the kernel stack the CPU lands on for the next ring3->ring0 trap (TSS.esp0).
+// The scheduler calls this on every switch so traps land on the running task's stack.
+void setKernelStack(unsigned esp0);
+
 // Program the preemption timer at `hz` and route its IRQ to the scheduler tick.
 void archTimerInit(unsigned hz);
 

@@ -1,25 +1,20 @@
 /*
  * usermode_x86.cpp — x86 implementation of <arch/usermode.h>.
  *
- * Runs a loaded program. execUserImage builds a per-process address space, maps
- * the image + a stack to fresh private USER frames (copying the staged bytes),
- * and enters ring 3 via iret. The program traps to the kernel via int 0x80 (the
- * CPU switches to TSS.esp0); on exit the syscall trap calls userExit(), which
- * switches CR3 back to the kernel directory and longjmps back into enterUser.
+ * archLoadUser maps a staged image + heap + stack (and the argv image) into a
+ * per-process address space. archEnterUser switches CR3 and irets to ring 3; it does
+ * not return — the process runs until it exits (the syscall trap / scheduler take
+ * over from there). No longjmp, no nested spawn (Stage 4 trap-frame model).
  */
 #include <arch/usermode.h>
 #include <arch/mmu.h>
-#include "NxJmp.h"
 #include "UserStack.h"         // kernel::buildUserStack
 #include "PagingControl.h"     // kernel::loadCr3
 #include "FrameAllocator.h"    // kernel::g_frames
-#include "SyscallDispatch.h"   // kernel::kernelSyscalls()
+#include "Interrupt.h"         // kernel::Registers (the x86 TrapFrame)
 #include <string.h>
 
 namespace {
-arch::NxJmp g_userCtx;
-int g_depth = 0;            // nesting level of the running program (0 = top-level)
-
 const uint32_t USER_STACK_TOP = 0x500000;
 const uint32_t USER_STACK_BOT = 0x4F0000;   // 64 KiB user stack
 const uint32_t USER_HEAP_BOT  = 0x480000;   // 448 KiB heap (sbrk/malloc in libc glue)
@@ -28,20 +23,44 @@ const uint32_t USER_HEAP_TOP  = 0x4F0000;   // must match user/libc-glue/syscall
 
 namespace arch {
 
-// Defined in cpu_x86.cpp (where the GDT/TSS and kernel stacks live).
-unsigned kstackTop(int depth);
-void setKernelStack(unsigned esp0);
-
-int enterUser(uint32_t entry, uint32_t userStackTop, AddressSpace* space) {
-	if (nx_setjmp(&g_userCtx) != 0)
-		return kernel::kernelSyscalls()->code();   // returned here via userExit()
-
-	if (space == 0) {
-		((void (*)()) entry)();   // ring-0 path
-		return 0;
+uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
+                      const char* const* argv, int argc) {
+	// Image (code/data/bss) -> fresh private USER frames, copying the staged bytes
+	// (identity-mapped in the kernel dir). NxeLoader already zeroed the staged bss.
+	uint32_t imgEnd = (bssEnd + 0xFFF) & ~0xFFFu;
+	for (uint32_t va = loadBase; va < imgEnd; va += 0x1000) {
+		uint32_t f = kernel::g_frames.alloc();
+		memcpy((void*) f, (void*) va, 0x1000);
+		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 	}
+	// Private zeroed heap window (the libc glue's sbrk hands out from here).
+	for (uint32_t va = USER_HEAP_BOT; va < USER_HEAP_TOP; va += 0x1000) {
+		uint32_t f = kernel::g_frames.alloc();
+		memset((void*) f, 0, 0x1000);
+		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+	}
+	// Private zeroed user stack; remember each frame to write the argv image by
+	// physical address (the stack is mapped in `space`, not the active directory).
+	uint32_t stackFrames[16];
+	int sfi = 0;
+	for (uint32_t va = USER_STACK_BOT; va < USER_STACK_TOP; va += 0x1000) {
+		uint32_t f = kernel::g_frames.alloc();
+		memset((void*) f, 0, 0x1000);
+		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+		stackFrames[sfi++] = f;
+	}
+	auto stackPhys = [&](uint32_t va) -> uint32_t {
+		return stackFrames[(va - USER_STACK_BOT) >> 12] + (va & 0xFFFu);
+	};
+	return kernel::buildUserStack(USER_STACK_TOP, argv, argc,
+		[&](uint32_t va, const void* src, unsigned len) {
+			const unsigned char* s = (const unsigned char*) src;
+			for (unsigned i = 0; i < len; i++)
+				*(unsigned char*) stackPhys(va + i) = s[i];
+		});
+}
 
-	// Ring 3: switch to the process address space, then iret down to CPL 3.
+void archEnterUser(uint32_t entry, uint32_t userEsp, AddressSpace* space) {
 	__asm__ __volatile__("cli");
 	mmuSwitch(space);
 	__asm__ __volatile__(
@@ -50,104 +69,29 @@ int enterUser(uint32_t entry, uint32_t userStackTop, AddressSpace* space) {
 			"mov %%ax, %%es\n\t"
 			"mov %%ax, %%fs\n\t"
 			"mov %%ax, %%gs\n\t"
-			"pushl $0x23\n\t"        // ss  (user data)
-			"pushl %0\n\t"           // esp (user stack top)
+			"pushl $0x23\n\t"        // ss
+			"pushl %0\n\t"           // esp
 			"pushl $0x202\n\t"       // eflags (IF=1)
-			"pushl $0x1B\n\t"        // cs  (user code, DPL 3)
-			"pushl %1\n\t"           // eip (entry)
+			"pushl $0x1B\n\t"        // cs (user code, DPL 3)
+			"pushl %1\n\t"           // eip
 			"iret\n\t"
 			:
-			: "r"(userStackTop), "r"(entry)
+			: "r"(userEsp), "r"(entry)
 			: "ax", "memory");
-	return 0;   // not reached
+	// not reached
 }
 
-void userExit() {
-	// Running at CPL 0 on the esp0 stack with the process directory active.
-	// Switch back to the kernel directory, then longjmp to the saved kernel
-	// context (its stack + code are in the shared kernel half, mapped in both).
-	kernel::loadCr3(mmuKernelDirPhys());
-	nx_longjmp(&g_userCtx, 1);   // val=1; real exit code comes from Syscalls::code()
-}
-
-int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
-                  const char* const* argv, int argc) {
-	AddressSpace* space = mmuCreateAddressSpace();
-
-	// Map the image (code/data/bss) to fresh private USER frames, copying the
-	// staged bytes (identity-mapped in the kernel dir) into each frame. NxeLoader
-	// already zeroed the staged bss, so copying those pages yields zeros.
-	uint32_t imgEnd = (bssEnd + 0xFFF) & ~0xFFFu;
-	for (uint32_t va = loadBase; va < imgEnd; va += 0x1000) {
-		uint32_t f = kernel::g_frames.alloc();
-		memcpy((void*) f, (void*) va, 0x1000);
-		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-	}
-
-	// Map a private, zeroed heap window (the libc glue's sbrk hands out from here).
-	for (uint32_t va = USER_HEAP_BOT; va < USER_HEAP_TOP; va += 0x1000) {
-		uint32_t f = kernel::g_frames.alloc();
-		memset((void*) f, 0, 0x1000);
-		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-	}
-
-	// Map a private, zeroed user stack at the top of the window. Remember each
-	// frame so we can write the argv image into it by physical address (the stack
-	// is mapped in `space`, not the currently-active directory).
-	uint32_t stackFrames[16];   // (USER_STACK_TOP - USER_STACK_BOT) / 4 KiB
-	int sfi = 0;
-	for (uint32_t va = USER_STACK_BOT; va < USER_STACK_TOP; va += 0x1000) {
-		uint32_t f = kernel::g_frames.alloc();
-		memset((void*) f, 0, 0x1000);
-		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-		stackFrames[sfi++] = f;     // index 0 = lowest VA (USER_STACK_BOT)
-	}
-	auto stackPhys = [&](uint32_t va) -> uint32_t {
-		return stackFrames[(va - USER_STACK_BOT) >> 12] + (va & 0xFFFu);
-	};
-
-	// Build the SysV argv image at the top of the stack; esp ends pointing at argc.
-	uint32_t esp = kernel::buildUserStack(USER_STACK_TOP, argv, argc,
-		[&](uint32_t va, const void* src, unsigned len) {
-			const unsigned char* s = (const unsigned char*) src;
-			for (unsigned i = 0; i < len; i++)
-				*(unsigned char*) stackPhys(va + i) = s[i];
-		});
-
-	int rc = enterUser(entry, esp, space);
-	mmuDestroyAddressSpace(space);
-	return rc;
-}
-
-int spawnUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
-                   const char* const* argv, int argc) {
-	// Save the parent's ring-3 return context (its enterUser setjmp) — the child's
-	// enterUser will overwrite the single global g_userCtx. Save the parent's exit
-	// state too (the child will set/clear it).
-	NxJmp savedCtx = g_userCtx;
-	bool savedExited = kernel::kernelSyscalls()->hasExited();
-	int  savedCode   = kernel::kernelSyscalls()->code();
-
-	// Switch the CPU to a deeper kernel stack so the child's int 0x80 traps don't
-	// land on (and clobber) the parent's in-flight spawn frames.
-	unsigned parentEsp0 = kstackTop(g_depth);
-	g_depth++;
-	setKernelStack(kstackTop(g_depth));
-	kernel::kernelSyscalls()->resetForRun();
-
-	int rc = execUserImage(entry, loadBase, bssEnd, argv, argc);   // runs child to exit
-
-	// Restore the parent: its kernel stack, return context, and exit state, so the
-	// parent's own later exit() longjmps to the right place and this spawn syscall
-	// does NOT trip the trap's hasExited() check.
-	g_depth--;
-	setKernelStack(parentEsp0);
-	g_userCtx = savedCtx;
-	if (savedExited)
-		kernel::kernelSyscalls()->exit(savedCode);
-	else
-		kernel::kernelSyscalls()->resetForRun();
-	return rc;
+void archFrameToUser(TrapFrame* tf, uint32_t entry, uint32_t userEsp) {
+	// The x86 trap frame IS kernel::Registers on the trapping task's kernel stack.
+	// Rewrite it so the ISR's tail `iret` drops into ring 3 at the new image.
+	kernel::Registers* r = (kernel::Registers*) tf;
+	r->eip = entry;
+	r->useresp = userEsp;
+	r->cs = 0x1B;          // user code, DPL 3
+	r->ss = 0x23;          // user stack, DPL 3
+	r->ds = 0x23;          // user data (restored by the ISR tail into ds/es/fs/gs)
+	r->eflags = 0x202;     // IF=1
+	r->eax = 0;
 }
 
 }  // namespace arch

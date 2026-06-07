@@ -52,6 +52,16 @@ int spawn(const char* path, char* const argv[]) {
 	return sys3(SYS_spawn, (int) path, (int) argv, 0);
 }
 
+/* Replace the current process image with <path>. On success it does not return (the
+ * kernel rewrites the trap frame so the iret lands in the new program); on failure it
+ * returns -1 with errno set. envp is accepted for the POSIX signature but unused. */
+int execve(const char* path, char* const argv[], char* const envp[]) {
+	(void) envp;
+	char abs[256];
+	nx_resolve(path, abs);
+	return reterr(sys3(SYS_execve, (int) abs, (int) argv, 0));
+}
+
 /* Console input mode: 0 = cooked (line-edited), 1 = raw (per-key). The shell uses
  * raw for its own line editor and cooked while a child program runs. */
 int termmode(int raw) {

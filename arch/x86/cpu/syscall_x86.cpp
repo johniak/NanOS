@@ -10,14 +10,17 @@
 #include "Interrupt.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"   // kernel::kernelSyscalls()
+#include "Exec.h"              // kernel::procExit()
 
 namespace {
 
 void syscallTrap(kernel::Registers* r) {
-	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx);
-	// If the program exited (SYS_exit set the flag), return to the kernel.
+	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx,
+			(arch::TrapFrame*) r);
+	// If the process exited (SYS_exit set the flag), tear it down and schedule away.
+	// procExit does not return.
 	if (kernel::kernelSyscalls()->hasExited())
-		arch::userExit();
+		kernel::procExit();
 }
 
 // Issue a Linux-style syscall via int 0x80 (nr in eax, args in ebx/ecx/edx).

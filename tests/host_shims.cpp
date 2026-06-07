@@ -36,6 +36,7 @@ void inputSetRaw(int) {}
 unsigned archTaskBootstrap(unsigned char*, unsigned) { return 0; }
 unsigned archKernelCr3() { return 0; }
 void archTimerInit(unsigned) {}
+void setKernelStack(unsigned) {}
 void halt_or_hlt() {}
 }
 extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)

@@ -2,72 +2,104 @@
 #include "NxeLoader.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"
+#include "Process.h"
+#include "Scheduler.h"
 #include "String.h"
 #include <arch/usermode.h>
 #include <arch/mmu.h>
+#include <arch/sched.h>
 
 namespace kernel {
 
-// Load a .nxe program and run it. Machine-independent: read the image via the
-// VFS into the staging window, validate + zero bss, then hand the entry point to
-// the arch (which runs it and returns the exit code). The program talks to the
-// kernel via int 0x80; the IAT import path is gone (importCount == 0).
+// Load a .nxe image (already staged at the load base in the kernel identity window),
+// validating + zeroing bss. Returns the entry point, or <0 on error. Caller must be
+// on a directory where the staging window 0x400000 is identity-mapped.
+static int loadStaged(unsigned* entryOut) {
+	char* image = (char*) 0x400000;
+	NxHeader* h = (NxHeader*) image;
+	unsigned span = h->bssEnd - h->loadBase;
+	return NxeLoader::loadImage(image, span, 0, entryOut);   // 0 imports -> no resolver
+}
+
+// PID 1 launch (init task body, kernel directory active): stage the image, build a
+// fresh address space for it, enter ring 3. Does not return on success.
 int execProgram(Vfs* vfs, const char* path) {
 	String p = String((char*) path);
 	FileStat st;
 	if (vfs->stat(p, st) < 0)
 		return -1;
-
-	// Stage the image at the fixed load base (kernel identity window).
 	char* image = (char*) 0x400000;
 	if (vfs->read(p, st.size, 0, image) < 0)
 		return -1;
-
 	NxHeader* h = (NxHeader*) image;
-	unsigned span = h->bssEnd - h->loadBase;
-
 	unsigned entry = 0;
-	int rc = NxeLoader::loadImage(image, span, 0, &entry);   // 0 imports -> no resolver
+	int rc = loadStaged(&entry);
 	if (rc < 0)
 		return rc;
 
-	kernelSyscalls()->resetForRun();
-	// Run the program in ring 3 in its own address space. argv[0] = the path.
+	arch::AddressSpace* space = arch::mmuCreateAddressSpace();
 	const char* argv[] = { path, 0 };
-	return arch::execUserImage(entry, h->loadBase, h->bssEnd, argv, 1);
+	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1);
+	ProcTable::current()->space = space;
+	kernelSyscalls()->resetForRun();
+	arch::archEnterUser(entry, esp, space);   // never returns
+	return 0;                                 // unreachable
 }
 
-int spawnProgram(Vfs* vfs, const char* path, const char* const* argv, int argc) {
-	// Called from a syscall while the PARENT runs in ring 3 (its space is active).
-	// Stage the child image under the kernel directory so writing the staging
-	// window (0x400000) does not corrupt the parent's private page mapped there.
-	// argv is already copied into kernel memory by the caller (readable under any
-	// directory), so swapping CR3 here is safe.
-	uint32_t parentDir = arch::mmuCurrentDirPhys();
+// execve(2): replace the current process's image. We run inside a syscall on the
+// process's user CR3; stage + load under the kernel directory (where 0x400000 is
+// identity-mapped), then rewrite the trap frame so the iret enters the new image.
+int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
+		arch::TrapFrame* tf) {
+	Process* p = ProcTable::current();
+	unsigned userDir = arch::mmuCurrentDirPhys();
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 
-	int result;
-	String p = String((char*) path);
+	String pp = String((char*) path);
 	FileStat st;
-	if (vfs->stat(p, st) < 0) {
-		result = -2;   // -ENOENT
-	} else {
-		char* image = (char*) 0x400000;
-		if (vfs->read(p, st.size, 0, image) < 0) {
-			result = -1;
-		} else {
-			NxHeader* h = (NxHeader*) image;
-			unsigned entry = 0;
-			int rc = NxeLoader::loadImage(image, h->bssEnd - h->loadBase, 0, &entry);
-			if (rc < 0)
-				result = rc;
-			else
-				result = arch::spawnUserImage(entry, h->loadBase, h->bssEnd, argv, argc);
-		}
+	if (vfs->stat(pp, st) < 0) {
+		arch::mmuLoadDirPhys(userDir);
+		return -2;   // -ENOENT
+	}
+	char* image = (char*) 0x400000;
+	if (vfs->read(pp, st.size, 0, image) < 0) {
+		arch::mmuLoadDirPhys(userDir);
+		return -1;
+	}
+	NxHeader* h = (NxHeader*) image;
+	unsigned entry = 0;
+	int rc = loadStaged(&entry);
+	if (rc < 0) {
+		arch::mmuLoadDirPhys(userDir);
+		return rc;
 	}
 
-	arch::mmuLoadDirPhys(parentDir);   // back to the parent's space before returning
-	return result;
+	// Load into a fresh space, then drop the caller's old image.
+	arch::AddressSpace* newSpace = arch::mmuCreateAddressSpace();
+	unsigned esp = arch::archLoadUser(newSpace, h->loadBase, h->bssEnd, argv, argc);
+	if (p->space)
+		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
+	p->space = newSpace;
+	kernelSyscalls()->resetForRun();
+
+	arch::archFrameToUser(tf, entry, esp);   // iret will enter the new program ...
+	arch::mmuSwitch(newSpace);               // ... under the new address space.
+	return 0;                                // value irrelevant (frame rewritten)
+}
+
+// SYS_exit tail: free the address space we are standing on (after switching to the
+// kernel directory so we never free the live CR3), zombify the task, schedule away.
+void procExit() {
+	Process* p = ProcTable::current();
+	p->exitCode = p->sys->code();
+	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
+	if (p->space) {
+		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
+		p->space = 0;
+	}
+	Scheduler::current()->state = TASK_ZOMBIE;
+	Scheduler::schedule();   // never returns to this (now zombie) task
+	for (;;) {}              // unreachable
 }
 
 }

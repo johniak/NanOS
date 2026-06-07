@@ -8,7 +8,7 @@
 
 namespace kernel {
 
-static Vfs* g_vfs = 0;   // for SYS_spawn (load a child .nxe from the VFS)
+static Vfs* g_vfs = 0;   // for SYS_execve (load a .nxe from the VFS)
 
 // Bounded copy of a user C-string into a kernel buffer (NUL-terminated).
 static void copyStr(char* dst, const char* src, int cap) {
@@ -27,7 +27,7 @@ static int consoleSink(const char* buf, unsigned len) {
 
 // MI syscall dispatch: map a syscall number + args to the Syscalls core. The
 // arch trap (int 0x80 on x86) decodes registers and calls this.
-int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
+int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame* tf) {
 	int ret = -38;   // -ENOSYS
 	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
 	switch (nr) {
@@ -59,10 +59,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 	case SYS_getdents64:
 		ret = g_sys->getdents64(a0, (void*) a1, a2);
 		break;
-	case SYS_spawn: {
-		// Deep-copy path + argv from the parent's (currently active) user space into
-		// kernel buffers: spawnProgram swaps CR3 to stage the child, after which the
-		// parent's user pointers are no longer mapped.
+	case SYS_execve: {
+		// Deep-copy path + argv from the caller's (currently active) user space into
+		// kernel buffers before execve swaps CR3 to the kernel directory to stage and
+		// load the new image (after which the caller's user pointers are unmapped).
 		static char pathBuf[256];
 		static char argBuf[16][128];
 		static const char* argPtrs[17];
@@ -75,9 +75,13 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 		for (int i = 0; i < argc; i++)
 			argPtrs[i] = argBuf[i];
 		argPtrs[argc] = 0;
-		ret = spawnProgram(g_vfs, pathBuf, argPtrs, argc);
+		ret = execve(g_vfs, pathBuf, argPtrs, argc, tf);   // on success rewrites tf, no return here
 		break;
 	}
+	case SYS_spawn:
+		// Replaced by fork/exec/wait; nsh's spawn path is rewired in Stage 4 Task 6.
+		ret = -38;   // -ENOSYS
+		break;
 	case SYS_termmode:
 		arch::inputSetRaw((int) a0);
 		ret = 0;

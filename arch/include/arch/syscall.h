@@ -8,10 +8,14 @@
  */
 #pragma once
 
+namespace arch { struct TrapFrame; }   // opaque trap frame (passed through for execve/fork)
+
 namespace kernel {
 // MI dispatch: map a syscall number + up to 3 args to a result (negative errno
-// on failure). Defined in kernel/SyscallDispatch.cpp.
-int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2);
+// on failure). `tf` is the opaque trap frame the arch is returning through — needed
+// by syscalls that rewrite the caller's frame (execve) or fork it. Defined in
+// kernel/SyscallDispatch.cpp.
+int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame* tf);
 }
 
 namespace arch {

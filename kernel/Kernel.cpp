@@ -11,6 +11,7 @@
 #include <arch/sched.h>
 #include "Syscall.h"
 #include "SyscallDispatch.h"
+#include "Process.h"
 #include "Exec.h"
 #include "List.h"
 #include "String.h"
@@ -54,8 +55,9 @@ static Vfs* g_vfs = 0;
 static volatile unsigned g_bgwork = 0;
 
 static void initTaskBody() {
+	// Enters ring 3 and does not return on success; only reached if the load fails.
 	int rc = execProgram(g_vfs, "/disks/main/nanos/core/init.nxe");
-	Console::write("init exited with code ");
+	Console::write("init failed to load, code ");
 	Console::writeLine(rc);
 }
 static void clockTaskBody() {
@@ -112,7 +114,8 @@ void Kernel::start() {
 	// shell. Control never returns from start().
 	g_vfs = vfs;
 	Scheduler::init();
-	Scheduler::create(initTaskBody, 1);
+	Task* initTask = Scheduler::create(initTaskBody, 1);
+	ProcTable::byPid(1)->task = initTask;   // the boot process (pid 1) runs the init task
 	Scheduler::create(clockTaskBody, 2);
 	arch::archTimerInit(1000);
 	Scheduler::start();

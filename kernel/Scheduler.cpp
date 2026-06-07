@@ -1,4 +1,5 @@
 #include "Scheduler.h"
+#include "Process.h"
 #include <arch/sched.h>
 
 namespace kernel {
@@ -37,6 +38,7 @@ Task* Scheduler::create(void (*body)(), int id) {
 	t->body = body ? body : idleBody;
 	t->state = TASK_READY;
 	t->kstack = g_kstacks[g_ntasks];
+	t->esp0 = (unsigned) (unsigned long) (t->kstack + KSTACK_SIZE);  // TSS.esp0 for this task
 	t->kesp = arch::archTaskBootstrap(t->kstack + KSTACK_SIZE, arch::archKernelCr3());
 	g_ntasks++;
 	return t;
@@ -57,6 +59,8 @@ void Scheduler::schedule() {
 	if (g_tasks[prev].state == TASK_RUNNING)
 		g_tasks[prev].state = TASK_READY;
 	g_tasks[next].state = TASK_RUNNING;
+	arch::setKernelStack(g_tasks[next].esp0);   // ring3 traps land on next's kstack
+	ProcTable::setCurrent(ProcTable::byTask(&g_tasks[next]));  // route syscalls to it
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
 }
 
@@ -82,6 +86,8 @@ void Scheduler::start() {
 	int first = nextRunnable(st, g_ntasks, 0);
 	g_cur = first;
 	g_tasks[first].state = TASK_RUNNING;
+	arch::setKernelStack(g_tasks[first].esp0);
+	ProcTable::setCurrent(ProcTable::byTask(&g_tasks[first]));
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static unsigned throwaway;
 	arch::archContextSwitch(&throwaway, g_tasks[first].kesp);
