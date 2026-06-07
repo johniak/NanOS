@@ -200,21 +200,33 @@ public:
 	}
 
 	List<Ext2DirectoryEntry> getDirectoriesEntries(Ext2Inode inode) {
-		unsigned block = resolveBlock(inode, 0);
-		int index = 0;
-		int offset = 0;
 		List<Ext2DirectoryEntry> dirs;
-		// Read the whole first directory block (not just one sector).
-		device->readSectors(this->partitionLba + block * (blockSize / 512),
-				(blockSize / 512), commonBuff);
-		while (offset < inode.lowerSize) {
-			dirs.add(Ext2DirectoryEntry());
-			memcpy(&dirs[index], commonBuff + offset,
-					sizeof(Ext2DirectoryEntry) - 256);
-			int tmp = offset + sizeof(Ext2DirectoryEntry) - 256;
-			memcpy(&dirs[index].name, commonBuff + tmp, dirs[index].nameLowLenght);
-			offset += dirs[index].entrySize;
-			index++;
+		unsigned size = (unsigned) inode.lowerSize;
+		unsigned nblocks = (size + blockSize - 1) / blockSize;
+		const int HDR = sizeof(Ext2DirectoryEntry) - 256;   // fixed header before name[]
+		// Directories can span several blocks; entries never cross a block boundary
+		// (the last in a block pads to its end). Walk block by block.
+		for (unsigned fb = 0; fb < nblocks; fb++) {
+			unsigned block = resolveBlock(inode, fb);
+			if (block == 0)
+				continue;
+			device->readSectors(this->partitionLba + block * (blockSize / 512),
+					(blockSize / 512), commonBuff);
+			int off = 0;
+			while (off + HDR <= blockSize) {
+				Ext2DirectoryEntry de;
+				memcpy(&de, commonBuff + off, HDR);
+				if (de.entrySize <= 0)
+					break;                  // malformed/zero rec_len -> stop (no infinite loop)
+				int nl = (int) (unsigned char) de.nameLowLenght;
+				if (nl > 255)
+					nl = 255;
+				memcpy(de.name, commonBuff + off + HDR, nl);
+				de.name[nl] = 0;
+				if (de.inode != 0)          // skip deleted / unused slots
+					dirs.add(de);
+				off += de.entrySize;
+			}
 		}
 		return dirs;
 	}
