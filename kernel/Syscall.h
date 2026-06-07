@@ -28,6 +28,11 @@ typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 struct LinuxStat {
 	unsigned st_mode;   // S_IFREG (0x8000) / S_IFDIR (0x4000) | perms
 	unsigned st_size;
+	unsigned st_nlink;
+	unsigned st_uid;
+	unsigned st_gid;
+	unsigned st_mtime;
+	unsigned st_ino;
 };
 
 class Syscalls {
@@ -55,6 +60,7 @@ public:
 	int read(int fd, void* buf, unsigned n);
 	int write(int fd, const void* buf, unsigned n);
 	int lseek(int fd, int off, int whence);
+	int stat(String path, LinuxStat* out);
 	int fstat(int fd, LinuxStat* out);
 	int getdents64(int fd, void* buf, unsigned n);
 	void exit(int code);

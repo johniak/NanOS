@@ -87,19 +87,44 @@ int Syscalls::lseek(int fd, int off, int whence) {
 	return pos;
 }
 
+// Fill a LinuxStat from a VFS FileStat, falling back to sane defaults for fields
+// a filesystem may not record (mode/nlink). Shared by stat() and fstat().
+static void fillStat(LinuxStat* out, const FileStat& st) {
+	out->st_mode = st.mode ? st.mode
+	             : ((st.type == NODE_DIR) ? 0x41EDu : 0x81A4u);   // 0755 dir / 0644 file
+	out->st_size = st.size;
+	out->st_nlink = st.nlink ? st.nlink : 1;
+	out->st_uid = st.uid;
+	out->st_gid = st.gid;
+	out->st_mtime = st.mtime;
+	out->st_ino = 1;
+}
+
+int Syscalls::stat(String path, LinuxStat* out) {
+	FileStat st;
+	if (vfs->stat(path, st) < 0)
+		return -ENOENT;
+	fillStat(out, st);
+	return 0;
+}
+
 int Syscalls::fstat(int fd, LinuxStat* out) {
 	if (!valid(fd))
 		return -EBADF;
 	if (fds[fd].isConsole) {
 		out->st_mode = 0x2000;   // S_IFCHR
 		out->st_size = 0;
+		out->st_nlink = 1;
+		out->st_uid = 0;
+		out->st_gid = 0;
+		out->st_mtime = 0;
+		out->st_ino = 0;
 		return 0;
 	}
 	FileStat st;
 	if (vfs->stat(fds[fd].path, st) < 0)
 		return -EBADF;
-	out->st_mode = (st.type == NODE_DIR) ? 0x4000 : 0x8000;   // S_IFDIR / S_IFREG
-	out->st_size = st.size;
+	fillStat(out, st);
 	return 0;
 }
 

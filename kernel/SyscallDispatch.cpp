@@ -48,6 +48,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 	case SYS_lseek:
 		ret = g_sys->lseek(a0, a1, a2);
 		break;
+	case SYS_stat:
+		ret = g_sys->stat(String((char*) a0), (LinuxStat*) a1);
+		break;
 	case SYS_fstat:
 		ret = g_sys->fstat(a0, (LinuxStat*) a1);
 		break;

@@ -80,6 +80,22 @@ TEST_CASE("sys_fstat reports size and file type") {
 	CHECK(sc.fstat(fd, &st) == 0);
 	CHECK(st.st_size == 18);
 	CHECK((st.st_mode & 0xF000) == 0x8000);    // S_IFREG
+	CHECK(st.st_nlink >= 1);
+}
+
+TEST_CASE("sys_stat by path reports metadata; missing path -> -ENOENT") {
+	Syscalls sc(mountFixture(), sink);
+	LinuxStat st;
+	CHECK(sc.stat(String((char*) "/hello.txt"), &st) == 0);
+	CHECK(st.st_size == 18);
+	CHECK((st.st_mode & 0xF000) == 0x8000);    // S_IFREG
+	CHECK(st.st_nlink >= 1);
+
+	LinuxStat dst;
+	CHECK(sc.stat(String((char*) "/boot"), &dst) == 0);
+	CHECK((dst.st_mode & 0xF000) == 0x4000);   // S_IFDIR
+
+	CHECK(sc.stat(String((char*) "/no/such"), &st) == -2);   // -ENOENT
 }
 
 TEST_CASE("sys_getdents64 lists a directory") {

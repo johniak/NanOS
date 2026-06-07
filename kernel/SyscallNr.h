@@ -14,6 +14,7 @@
 #define SYS_open 5
 #define SYS_close 6
 #define SYS_lseek 19
+#define SYS_stat 106
 #define SYS_fstat 108
 #define SYS_getdents64 220
 
