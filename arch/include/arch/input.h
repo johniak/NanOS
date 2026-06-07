@@ -10,8 +10,15 @@
 
 namespace arch {
 
-// Block until a committed input line is available, then copy up to `n` bytes into
-// `buf`. Returns the number of bytes copied (0 = EOF on Ctrl-D at an empty line).
-int inputReadLine(char* buf, unsigned n);
+// Read console input, blocking until something is available. Mode-dependent:
+//  - cooked (default): returns one committed, line-edited line (echoed by the kernel);
+//  - raw: returns >=1 available raw bytes (no echo, no line editing); arrow keys
+//    arrive as ANSI escape sequences (ESC '[' 'A'/'B'/'C'/'D').
+// Returns the number of bytes copied (0 = EOF on Ctrl-D at an empty cooked line).
+int inputRead(char* buf, unsigned n);
+
+// Select console input mode: 0 = cooked, 1 = raw. A shell switches to raw to run
+// its own line editor, and back to cooked while a child program runs.
+void inputSetRaw(int raw);
 
 }

@@ -20,6 +20,7 @@
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with
  * a Linux number we might add later). */
-#define SYS_spawn 500   /* run a child .nxe synchronously; returns its exit code */
+#define SYS_spawn 500     /* run a child .nxe synchronously; returns its exit code */
+#define SYS_termmode 501  /* console input mode: 0 = cooked (line), 1 = raw (keys) */
 
 #endif /* SYSCALLNR_H_ */

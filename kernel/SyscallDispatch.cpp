@@ -2,6 +2,7 @@
 #include "Syscall.h"
 #include "Exec.h"
 #include <arch/syscall.h>
+#include <arch/input.h>
 #include "Console.h"
 
 namespace kernel {
@@ -76,6 +77,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 		ret = spawnProgram(g_vfs, pathBuf, argPtrs, argc);
 		break;
 	}
+	case SYS_termmode:
+		arch::inputSetRaw((int) a0);
+		ret = 0;
+		break;
 	}
 	return ret;
 }
