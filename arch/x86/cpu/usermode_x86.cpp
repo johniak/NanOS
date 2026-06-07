@@ -22,6 +22,8 @@ int g_depth = 0;            // nesting level of the running program (0 = top-lev
 
 const uint32_t USER_STACK_TOP = 0x500000;
 const uint32_t USER_STACK_BOT = 0x4F0000;   // 64 KiB user stack
+const uint32_t USER_HEAP_BOT  = 0x480000;   // 448 KiB heap (sbrk/malloc in libc glue)
+const uint32_t USER_HEAP_TOP  = 0x4F0000;   // must match user/libc-glue/syscalls.c
 }
 
 namespace arch {
@@ -79,6 +81,13 @@ int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
 	for (uint32_t va = loadBase; va < imgEnd; va += 0x1000) {
 		uint32_t f = kernel::g_frames.alloc();
 		memcpy((void*) f, (void*) va, 0x1000);
+		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+	}
+
+	// Map a private, zeroed heap window (the libc glue's sbrk hands out from here).
+	for (uint32_t va = USER_HEAP_BOT; va < USER_HEAP_TOP; va += 0x1000) {
+		uint32_t f = kernel::g_frames.alloc();
+		memset((void*) f, 0, 0x1000);
 		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 	}
 

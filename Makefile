@@ -132,20 +132,27 @@ _clean:
 	$(CXX) -c $(CXXFLAGS) $< -o $(BINFOLDER)$@
 
 # ----------------------------------------------------------------------------
-# Userland: build /bin/init.nxe (own linker script/base, NOT in kernel SOURCES).
-# No <string.h> is included by user code, so it builds in place safely.
+# Userland: .nxe programs link against ported picolibc + our syscall glue (own
+# linker script/base 0x400000, NOT in kernel SOURCES). picolibc headers come via
+# -isystem; SyscallNr.h via -Ikernel. No <string.h> clash (lib/ is not on the path).
 # ----------------------------------------------------------------------------
-USER_CFLAGS=-ffreestanding -nostdlib -nostdinc -Ikernel -Iuser -Wall -fno-pic
-USER_OBJS=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)libnanos.o $(BINFOLDER)init.o
+PICOLIBC=/opt/picolibc/i686-elf
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -Ikernel -Iuser -Iuser/libc-glue/include -Wall -fno-pic -fno-stack-protector
+USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
+# Shared per-program objects: startup, .nxe header, and the picolibc syscall glue.
+USER_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)syscalls.o
 
-_userland:
+_userland: _userland-glue
+	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
+	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)init.elf $(USER_GLUE) $(BINFOLDER)init.o $(USER_LIBS)
+	$(CROSS)objcopy -O binary $(BINFOLDER)init.elf $(BINFOLDER)init.nxe
+
+# Build the shared startup/header/glue objects once.
+_userland-glue:
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf user/crt0.S -o $(BINFOLDER)crt0.o
 	$(CXX) $(USER_CFLAGS) -c user/nxhdr.c -o $(BINFOLDER)nxhdr.o
-	$(CXX) $(USER_CFLAGS) -c user/libnanos.c -o $(BINFOLDER)libnanos.o
-	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
-	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)init.elf $(USER_OBJS)
-	$(CROSS)objcopy -O binary $(BINFOLDER)init.elf $(BINFOLDER)init.nxe
+	$(CXX) $(USER_CFLAGS) -c user/libc-glue/syscalls.c -o $(BINFOLDER)syscalls.o
 
 # ----------------------------------------------------------------------------
 # Host-compiled test suite (doctest) + coverage gate.
