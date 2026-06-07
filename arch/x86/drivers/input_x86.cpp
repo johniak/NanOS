@@ -13,11 +13,13 @@
 #include "LineDiscipline.h"
 #include "KeyDecoder.h"
 #include "Console.h"
+#include "Scheduler.h"
 
 namespace {
 kernel::LineDiscipline g_line;
 kernel::KeyDecoder g_decoder;
 int g_raw = 0;
+kernel::Task* g_inputWaiter = 0;   // the task blocked in inputRead, if any
 
 // Raw-mode byte ring (filled in IRQ context, drained by inputRead).
 const int RAWCAP = 256;
@@ -64,23 +66,28 @@ void inputFeedScancode(unsigned char sc) {
 				g_line.push((char) ev, echoChar);
 		});
 	}
+	// Wake the blocked reader once its read is satisfiable.
+	if (g_inputWaiter && ((g_raw && !rawEmpty()) || (!g_raw && g_line.lineReady())))
+		kernel::Scheduler::wake(g_inputWaiter);
 }
 
 int inputRead(char* buf, unsigned n) {
 	if (g_raw) {
-		while (rawEmpty()) {
-			arch::cpuEnableInterrupts();
-			arch::cpuHalt();
+		while (rawEmpty()) {                       // block until a byte arrives
+			g_inputWaiter = kernel::Scheduler::current();
+			kernel::Scheduler::block();            // deschedule; keyboard IRQ wakes us
 		}
+		g_inputWaiter = 0;
 		unsigned i = 0;
 		while (i < n && !rawEmpty())
 			buf[i++] = (char) rawPop();
 		return (int) i;
 	}
-	while (!g_line.lineReady()) {
-		arch::cpuEnableInterrupts();
-		arch::cpuHalt();
+	while (!g_line.lineReady()) {                  // block until a full line is ready
+		g_inputWaiter = kernel::Scheduler::current();
+		kernel::Scheduler::block();
 	}
+	g_inputWaiter = 0;
 	return g_line.takeLine(buf, (int) n);
 }
 
