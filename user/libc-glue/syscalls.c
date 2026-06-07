@@ -47,11 +47,6 @@ int gettimeofday(struct timeval* tv, void* tz) {
 	return 0;
 }
 
-/* Run a child program (NanOS-specific). Declared for the shell; harmless elsewhere. */
-int spawn(const char* path, char* const argv[]) {
-	return sys3(SYS_spawn, (int) path, (int) argv, 0);
-}
-
 /* fork(2): returns the child pid to the parent, 0 in the child, -1 on failure. */
 int fork(void) {
 	return reterr(sys3(SYS_fork, 0, 0, 0));

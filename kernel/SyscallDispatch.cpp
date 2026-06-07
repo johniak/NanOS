@@ -84,10 +84,6 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		ret = execve(g_vfs, pathBuf, argPtrs, argc, tf);   // on success rewrites tf, no return here
 		break;
 	}
-	case SYS_spawn:
-		// Replaced by fork/exec/wait; nsh's spawn path is rewired in Stage 4 Task 6.
-		ret = -38;   // -ENOSYS
-		break;
 	case SYS_termmode:
 		arch::inputSetRaw((int) a0);
 		ret = 0;

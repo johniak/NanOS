@@ -9,7 +9,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-int spawn(const char* path, char* const argv[]);   /* libc glue (int 0x80) */
+int fork(void);                                                  /* libc glue */
+int execve(const char* path, char* const argv[], char* const envp[]);
+int waitpid(int pid, int* status, int options);
+void _exit(int code);
 int termmode(int raw);                              /* 0 = cooked, 1 = raw    */
 
 #define CAP  256
@@ -171,9 +174,18 @@ int main(void) {
 		char path[160];
 		snprintf(path, sizeof path, "/disks/main/nanos/bin/%s.nxe", argv[0]);
 		termmode(0);                         /* cooked while the child runs */
-		int rc = spawn(path, argv);
-		termmode(1);
-		if (rc == -2)
+		int pid = fork();
+		if (pid == 0) {                      /* child: become the program */
+			char* envp[] = { 0 };
+			execve(path, argv, envp);
 			printf("nsh: %s: command not found\n", argv[0]);
+			_exit(127);                      /* exec failed */
+		} else if (pid > 0) {                /* parent: wait for it */
+			int st;
+			waitpid(pid, &st, 0);
+		} else {
+			printf("nsh: fork failed\n");
+		}
+		termmode(1);
 	}
 }
