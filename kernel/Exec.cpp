@@ -119,14 +119,42 @@ int forkProcess(arch::TrapFrame* tf) {
 void procExit() {
 	Process* p = ProcTable::current();
 	p->exitCode = p->sys->code();
+	p->exited = true;
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 		p->space = 0;
 	}
+	// Wake the parent if it is blocked in waitpid; it will reap this zombie.
+	Process* parent = ProcTable::byPid(p->parent);
+	if (parent)
+		Scheduler::wake(parent->task);
 	Scheduler::current()->state = TASK_ZOMBIE;
 	Scheduler::schedule();   // never returns to this (now zombie) task
 	for (;;) {}              // unreachable
+}
+
+// waitpid(2): reap a child of the current process. Block until a matching child has
+// exited, copy its (encoded) status to *statusOut, release its scheduler task slot
+// and its syscall state, and return its pid. -ECHILD if there is no such child.
+int waitProcess(int wantPid, int* statusOut) {
+	Process* parent = ProcTable::current();
+	for (;;) {
+		Process* child = 0;
+		int r = ProcTable::reapChild(parent->pid, wantPid, &child);
+		if (r == -10)
+			return -10;            // -ECHILD: no such child
+		if (r > 0) {
+			int code = child->exitCode;
+			Scheduler::reap(child->task);   // free the child's task slot (kstack reuse)
+			delete child->sys;              // dup'd fd table from fork
+			ProcTable::freeSlot(child);     // release the process slot
+			if (statusOut)
+				*statusOut = (code & 0xFF) << 8;   // WEXITSTATUS-compatible encoding
+			return r;
+		}
+		Scheduler::block();        // children alive but none exited yet: wait
+	}
 }
 
 }

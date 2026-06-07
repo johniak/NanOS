@@ -24,6 +24,7 @@ Process* ProcTable::alloc(int parent) {
 			p->task = 0;
 			p->space = 0;
 			p->sys = 0;
+			p->exited = false;
 			p->exitCode = 0;
 			return p;
 		}
@@ -46,6 +47,29 @@ Process* ProcTable::byTask(Task* t) {
 		if (g_procs[i].used && g_procs[i].task == t)
 			return &g_procs[i];
 	return 0;
+}
+
+int ProcTable::reapChild(int parentPid, int wantPid, Process** childOut) {
+	bool any = false;
+	for (int i = 0; i < MAXPROC; i++) {
+		Process* c = &g_procs[i];
+		if (!c->used || c->parent != parentPid)
+			continue;
+		if (wantPid > 0 && c->pid != wantPid)
+			continue;
+		any = true;
+		if (c->exited) {
+			if (childOut)
+				*childOut = c;
+			return c->pid;
+		}
+	}
+	return any ? 0 : -10;   // 0 = child(ren) still running; -ECHILD = no such child
+}
+
+void ProcTable::freeSlot(Process* p) {
+	if (p)
+		p->used = false;
 }
 
 }  // namespace kernel

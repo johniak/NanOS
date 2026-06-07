@@ -32,19 +32,33 @@ void Scheduler::init() {
 	create(idleBody, 0);
 }
 
-static Task* allocSlot(int id, unsigned char* kstack) {
-	Task* t = &g_tasks[g_ntasks];
+// Find a reusable (FREE) slot below the high-water mark, or extend by one if there
+// is room. Slots are recycled by reap() so fork/exec/exit churn does not exhaust the
+// table. Returns -1 when the table is full.
+static int findFreeSlot() {
+	for (int i = 0; i < g_ntasks; i++)
+		if (g_tasks[i].state == TASK_FREE)
+			return i;
+	return (g_ntasks < MAXTASKS) ? g_ntasks++ : -1;
+}
+
+static Task* allocSlot(int id) {
+	int i = findFreeSlot();
+	if (i < 0)
+		return 0;
+	Task* t = &g_tasks[i];
 	t->id = id;
 	t->body = 0;
 	t->state = TASK_READY;
-	t->kstack = kstack;
-	t->esp0 = (unsigned) (unsigned long) (kstack + KSTACK_SIZE);   // TSS.esp0 for this task
-	g_ntasks++;
+	t->kstack = g_kstacks[i];
+	t->esp0 = (unsigned) (unsigned long) (t->kstack + KSTACK_SIZE);   // TSS.esp0 for this task
 	return t;
 }
 
 Task* Scheduler::create(void (*body)(), int id) {
-	Task* t = allocSlot(id, g_kstacks[g_ntasks]);
+	Task* t = allocSlot(id);
+	if (!t)
+		return 0;
 	t->body = body ? body : idleBody;
 	t->kesp = arch::archTaskBootstrap(t->kstack + KSTACK_SIZE, arch::archKernelCr3());
 	return t;
@@ -53,7 +67,7 @@ Task* Scheduler::create(void (*body)(), int id) {
 // A bare task: slot + kernel stack + esp0, but no first-run trampoline. The caller
 // fabricates `kesp` itself (fork plants a copied trap frame; see arch::archForkChild).
 Task* Scheduler::createBlank(int id) {
-	return allocSlot(id, g_kstacks[g_ntasks]);
+	return allocSlot(id);
 }
 
 Task* Scheduler::current() { return &g_tasks[g_cur]; }
@@ -89,6 +103,11 @@ void Scheduler::block() {
 void Scheduler::wake(Task* t) {
 	if (t)
 		t->state = TASK_READY;
+}
+
+void Scheduler::reap(Task* t) {
+	if (t)
+		t->state = TASK_FREE;   // slot becomes reusable by findFreeSlot()
 }
 
 void Scheduler::start() {

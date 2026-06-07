@@ -57,6 +57,11 @@ int fork(void) {
 	return reterr(sys3(SYS_fork, 0, 0, 0));
 }
 
+/* waitpid(2): block for a child to exit; *status gets a WEXITSTATUS-style code. */
+int waitpid(int pid, int* status, int options) {
+	return reterr(sys3(SYS_waitpid, pid, (int) status, options));
+}
+
 /* Replace the current process image with <path>. On success it does not return (the
  * kernel rewrites the trap frame so the iret lands in the new program); on failure it
  * returns -1 with errno set. envp is accepted for the POSIX signature but unused. */

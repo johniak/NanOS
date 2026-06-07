@@ -21,7 +21,8 @@ struct Process {
 	Task* task;          // scheduler context
 	void* space;         // arch::AddressSpace* (opaque here)
 	Syscalls* sys;       // per-process fd table + exit status
-	int exitCode;        // valid once the task is a zombie
+	bool exited;         // true once it has called exit() (awaiting reap)
+	int exitCode;        // valid once `exited`
 };
 
 class ProcTable {
@@ -32,6 +33,15 @@ public:
 	static void setCurrent(Process* p);
 	static Process* byPid(int pid);
 	static Process* byTask(Task* t);     // the process whose scheduler task is t
+
+	// waitpid lookup (pure bookkeeping; the scheduler/arch teardown is the caller's).
+	// Scan the children of `parentPid` (wantPid > 0 narrows to that one child):
+	//   - an exited child -> set *childOut to it and return its pid (the caller tears
+	//     it down and frees the slot via freeSlot);
+	//   - matching child(ren) still running -> return 0 (caller should block);
+	//   - no matching child -> return -10 (-ECHILD).
+	static int reapChild(int parentPid, int wantPid, Process** childOut);
+	static void freeSlot(Process* p);    // release a process slot after teardown
 };
 
 }
