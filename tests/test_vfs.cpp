@@ -146,3 +146,13 @@ TEST_CASE("Vfs routes by longest-prefix mountpoint, stripping it") {
 	vfs.read("/dev", 1, 0, buf);
 	CHECK(strcmp(tDev.made->received, "/") == 0);
 }
+
+TEST_CASE("Vfs mounts a pre-built FileSystem (no device/type) and routes to it") {
+	Vfs vfs;
+	FakeFS root(7);
+	CHECK(vfs.mount("/", &root) == 0);
+	CHECK(root.mountCalls == 1);          // overload calls fs->mount() once
+	char buf[8];
+	CHECK(vfs.read("/dev/random", 1, 0, buf) == 7);
+	CHECK(strcmp(root.received, "/dev/random") == 0);
+}

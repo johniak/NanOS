@@ -58,9 +58,15 @@ class Vfs {
 	// with '/'). Returns 0 if no mount matches.
 	FileSystem* resolve(String path, String& relative);
 
+	// Record a mountpoint -> filesystem binding.
+	void addMount(String mountpoint, FileSystem* fs);
+
 public:
 	void registerType(FileSystemType* type);
 	int mount(String mountpoint, String fstype, BlockDevice* dev, unsigned partitionLba);
+	// Mount an already-built filesystem (e.g. the synthetic root, which has no
+	// BlockDevice). Calls fs->mount() then records the binding.
+	int mount(String mountpoint, FileSystem* fs);
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
 	int readdir(String path, List<DirEntry>& out);
