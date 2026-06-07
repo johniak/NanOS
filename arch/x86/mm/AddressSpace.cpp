@@ -64,6 +64,27 @@ void AddressSpace::freeUserWindow(uint32_t userVa) {
 	pd[i] = 0;
 }
 
+void AddressSpace::copyUserWindowFrom(const AddressSpace& src, uint32_t userVa) {
+	uint32_t* spd = src.dir();
+	uint32_t i = pdIndex(userVa);
+	if (!entryPresent(spd[i]))
+		return;
+	uint32_t* spt = (uint32_t*) m_env.physToVirt(m_env.ctx, entryAddr(spd[i]));
+	uint32_t base = i << 22;   // first VA covered by this PDE
+	for (int e = 0; e < 1024; e++) {
+		if (!entryPresent(spt[e]))
+			continue;
+		uint32_t srcPa = entryAddr(spt[e]);
+		uint32_t flags = spt[e] & 0xFFF;
+		uint32_t newPa = m_env.allocFrame(m_env.ctx);
+		if (!newPa)
+			return;   // OOM: leave the partial copy for the caller to tear down
+		memcpy(m_env.physToVirt(m_env.ctx, newPa),
+				m_env.physToVirt(m_env.ctx, srcPa), FRAME_SIZE);
+		map(base | (uint32_t) (e << 12), newPa, flags);
+	}
+}
+
 bool AddressSpace::mapRange(uint32_t va, uint32_t pa, uint32_t len, uint32_t flags) {
 	uint32_t pages = (len + FRAME_SIZE - 1) / FRAME_SIZE;
 	for (uint32_t p = 0; p < pages; p++)

@@ -32,16 +32,28 @@ void Scheduler::init() {
 	create(idleBody, 0);
 }
 
-Task* Scheduler::create(void (*body)(), int id) {
+static Task* allocSlot(int id, unsigned char* kstack) {
 	Task* t = &g_tasks[g_ntasks];
 	t->id = id;
-	t->body = body ? body : idleBody;
+	t->body = 0;
 	t->state = TASK_READY;
-	t->kstack = g_kstacks[g_ntasks];
-	t->esp0 = (unsigned) (unsigned long) (t->kstack + KSTACK_SIZE);  // TSS.esp0 for this task
-	t->kesp = arch::archTaskBootstrap(t->kstack + KSTACK_SIZE, arch::archKernelCr3());
+	t->kstack = kstack;
+	t->esp0 = (unsigned) (unsigned long) (kstack + KSTACK_SIZE);   // TSS.esp0 for this task
 	g_ntasks++;
 	return t;
+}
+
+Task* Scheduler::create(void (*body)(), int id) {
+	Task* t = allocSlot(id, g_kstacks[g_ntasks]);
+	t->body = body ? body : idleBody;
+	t->kesp = arch::archTaskBootstrap(t->kstack + KSTACK_SIZE, arch::archKernelCr3());
+	return t;
+}
+
+// A bare task: slot + kernel stack + esp0, but no first-run trampoline. The caller
+// fabricates `kesp` itself (fork plants a copied trap frame; see arch::archForkChild).
+Task* Scheduler::createBlank(int id) {
+	return allocSlot(id, g_kstacks[g_ntasks]);
 }
 
 Task* Scheduler::current() { return &g_tasks[g_cur]; }

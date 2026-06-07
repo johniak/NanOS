@@ -40,6 +40,12 @@ public:
 	// touching the shared kernel-half page tables (which other PDEs alias).
 	void freeUserWindow(uint32_t userVa);
 
+	// Eager fork copy: for every present page in `src`'s user-window PT (the PDE
+	// covering `userVa`), allocate a fresh frame, copy the bytes, and map it here
+	// with the same flags. This space must already share the kernel half and have
+	// a private (empty) user window (adoptKernelDirectory).
+	void copyUserWindowFrom(const AddressSpace& src, uint32_t userVa);
+
 	// Physical|offset for a mapped VA, or 0xFFFFFFFF if not mapped.
 	uint32_t translate(uint32_t va) const;
 	uint32_t directoryPhys() const { return m_dirPhys; }

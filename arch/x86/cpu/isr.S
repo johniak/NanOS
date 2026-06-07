@@ -73,6 +73,11 @@ isr_common_stub:
    [extern isr_handler]
    call isr_handler
 
+; A freshly forked child resumes here: archForkChild planted a copied trap frame so
+; that, after the scheduler's context switch `ret`s into this label, the tail below
+; restores segments + registers and `iret`s the child into ring 3 with eax = 0.
+[GLOBAL ret_from_fork]
+ret_from_fork:
    pop eax        ; reload the original data segment descriptor
    mov ds, ax
    mov es, ax

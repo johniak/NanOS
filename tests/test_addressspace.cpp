@@ -135,6 +135,49 @@ TEST_CASE("freeUserWindow is a no-op when the user window was never mapped") {
 	CHECK(m->allocCount == before);
 }
 
+TEST_CASE("copyUserWindowFrom duplicates each user page into fresh frames") {
+	FakeMem* m = makeMem();
+	// Parent space with two user pages holding distinguishable bytes.
+	AddressSpace parent(envOf(m));
+	uint32_t pf1 = fakeAlloc(m), pf2 = fakeAlloc(m);
+	memset(fakeP2V(m, pf1), 0xAA, FRAME_SIZE);
+	memset(fakeP2V(m, pf2), 0xBB, FRAME_SIZE);
+	parent.map(0x400000, pf1, PTE_PRESENT | PTE_RW | PTE_USER);
+	parent.map(0x402000, pf2, PTE_PRESENT | PTE_RW | PTE_USER);
+
+	AddressSpace child(envOf(m));
+	child.adoptKernelDirectory(parent.directoryPhys(), 0x400000);   // share kernel half
+	int before = m->allocCount;
+	child.copyUserWindowFrom(parent, 0x400000);
+	// Two fresh frames + one fresh page table for the child's user window.
+	CHECK(m->allocCount == before + 3);
+
+	// Child sees the same VAs but backed by DIFFERENT physical frames.
+	uint32_t c1 = child.translate(0x400000) & 0xFFFFF000;
+	uint32_t c2 = child.translate(0x402000) & 0xFFFFF000;
+	CHECK(c1 != 0xFFFFF000u);
+	CHECK(c1 != pf1);
+	CHECK(c2 != pf2);
+	// Contents copied; flags preserved.
+	CHECK(((unsigned char*) fakeP2V(m, c1))[0] == 0xAA);
+	CHECK(((unsigned char*) fakeP2V(m, c2))[0] == 0xBB);
+	CHECK(pteFlags(m, child, 0x400000) == (PTE_PRESENT | PTE_RW | PTE_USER));
+
+	// Writing the child's copy does not disturb the parent's frame (isolation).
+	memset(fakeP2V(m, c1), 0xCC, FRAME_SIZE);
+	CHECK(((unsigned char*) fakeP2V(m, pf1))[0] == 0xAA);
+}
+
+TEST_CASE("copyUserWindowFrom on an empty user window copies nothing") {
+	FakeMem* m = makeMem();
+	AddressSpace parent(envOf(m));
+	AddressSpace child(envOf(m));
+	child.adoptKernelDirectory(parent.directoryPhys(), 0x400000);
+	int before = m->allocCount;
+	child.copyUserWindowFrom(parent, 0x400000);
+	CHECK(m->allocCount == before);
+}
+
 TEST_CASE("adoptKernelDirectory shares the kernel half, privatizes the user window") {
 	FakeMem* m = makeMem();
 	// "kernel" space: map a kernel page (PDE 0) and a page in the user window's

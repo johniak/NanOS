@@ -28,6 +28,11 @@ int execProgram(Vfs* vfs, const char* path);
 int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		arch::TrapFrame* tf);
 
+// fork(2): create a child process — eager copy of the current process's address
+// space + fd table — that resumes from the same trap frame *tf with a return value
+// of 0. Returns the child's pid to the parent, or <0 on failure (-EAGAIN).
+int forkProcess(arch::TrapFrame* tf);
+
 // SYS_exit handler tail: free the current process's address space, mark its task a
 // zombie, and schedule away. Does NOT return.
 void procExit();

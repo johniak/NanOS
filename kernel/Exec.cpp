@@ -87,6 +87,33 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	return 0;                                // value irrelevant (frame rewritten)
 }
 
+// fork(2): eager copy of the current process. Copy the address space under the kernel
+// directory (where all RAM is identity-mapped, so the user frames are reachable), dup
+// the fd table, and fabricate the child's kernel stack from the parent's trap frame.
+int forkProcess(arch::TrapFrame* tf) {
+	Process* parent = ProcTable::current();
+	Process* child = ProcTable::alloc(parent->pid);
+	if (!child)
+		return -11;   // -EAGAIN: no free process slot
+
+	unsigned parentDir = arch::mmuCurrentDirPhys();
+	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
+	arch::AddressSpace* space = arch::mmuCopyAddressSpace((arch::AddressSpace*) parent->space);
+	arch::mmuLoadDirPhys(parentDir);
+	if (!space) {
+		child->used = false;
+		return -11;
+	}
+	child->space = space;
+	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
+
+	Task* t = Scheduler::createBlank(child->pid);
+	child->task = t;
+	arch::archForkChild(t, tf, arch::mmuSpaceDirPhys(space));
+	t->state = TASK_READY;                      // scheduler picks it up; resumes with eax=0
+	return child->pid;                          // parent sees the child's pid
+}
+
 // SYS_exit tail: free the address space we are standing on (after switching to the
 // kernel directory so we never free the live CR3), zombify the task, schedule away.
 void procExit() {

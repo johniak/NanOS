@@ -7,7 +7,11 @@
  */
 #pragma once
 
+namespace kernel { struct Task; }   // scheduler task (Scheduler.h)
+
 namespace arch {
+
+struct TrapFrame;   // opaque syscall trap frame (the x86 Registers)
 
 // Save the current context (callee-saved regs + esp + CR3) into *saveOldKesp, then
 // load newKesp's context. Returns (on this task) when something switches back to it.
@@ -29,5 +33,10 @@ void archTimerInit(unsigned hz);
 
 // Idle primitive: enable interrupts and halt until the next one.
 void halt_or_hlt();
+
+// fork: fabricate the child task's kernel stack from the parent's syscall trap frame
+// so the first context switch into it `ret`s through ret_from_fork and `iret`s the
+// copied frame (eax = 0) into ring 3 under `childCr3`. `child` already has kstack/esp0.
+void archForkChild(kernel::Task* child, TrapFrame* parentTf, unsigned childCr3);
 
 }

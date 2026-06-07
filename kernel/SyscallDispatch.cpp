@@ -35,6 +35,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		g_sys->exit((int) a0);
 		ret = 0;
 		break;
+	case SYS_fork:
+		ret = forkProcess(tf);
+		break;
 	case SYS_read:
 		ret = g_sys->read(a0, (void*) a1, a2);
 		break;

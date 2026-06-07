@@ -92,4 +92,14 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 	delete s;
 }
 
+AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
+	AddressSpace* s = new AddressSpace(g_env);
+	// Share the kernel half, private (empty) user window, then copy the user pages.
+	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x400000);
+	s->impl.copyUserWindowFrom(src->impl, 0x400000);
+	return s;
+}
+
+uint32_t mmuSpaceDirPhys(AddressSpace* s) { return s->impl.directoryPhys(); }
+
 }  // namespace arch

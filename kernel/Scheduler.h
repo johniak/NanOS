@@ -29,6 +29,8 @@ class Scheduler {
 public:
 	static void init();                            // create the idle task (id 0)
 	static Task* create(void (*body)(), int id);   // bootstrap a task, mark READY
+	static Task* createBlank(int id);              // alloc a task slot + kstack only
+	                                               // (kesp fabricated by the caller, e.g. fork)
 	static void start();                           // switch into the first runnable task
 	static void schedule();                        // pick next runnable + context switch
 	static void onTick();                          // timer: ticks++ then schedule

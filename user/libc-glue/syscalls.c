@@ -52,6 +52,11 @@ int spawn(const char* path, char* const argv[]) {
 	return sys3(SYS_spawn, (int) path, (int) argv, 0);
 }
 
+/* fork(2): returns the child pid to the parent, 0 in the child, -1 on failure. */
+int fork(void) {
+	return reterr(sys3(SYS_fork, 0, 0, 0));
+}
+
 /* Replace the current process image with <path>. On success it does not return (the
  * kernel rewrites the trap frame so the iret lands in the new program); on failure it
  * returns -1 with errno set. envp is accepted for the POSIX signature but unused. */

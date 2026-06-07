@@ -21,4 +21,4 @@ ARCH_SOURCES+= cpu_x86.o irq_x86.o syscall_x86.o fault_x86.o usermode_x86.o cons
 ARCH_SOURCES+= bootinfo_x86.o MultibootMmap.o
 ARCH_SOURCES+= mmu_x86.o AddressSpace.o
 ARCH_SOURCES+= Keyboard.o input_x86.o Hdd.o ATA.o AtaBlockDevice.o block_x86.o
-ARCH_SOURCES+= switch.o sched_x86.o
+ARCH_SOURCES+= switch.o sched_x86.o fork_x86.o
