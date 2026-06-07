@@ -13,6 +13,11 @@ namespace {
 kernel::Gdt g_gdt;
 kernel::Idt g_idt;
 kernel::Keyboard g_keyboard;
+
+// Dedicated kernel stack for ring3->ring0 transitions (TSS.esp0). Must be
+// SEPARATE from the boot stack, which holds the live execProgram frames and the
+// longjmp target that exit() returns to.
+unsigned char g_userKstack[8192];
 }
 
 namespace arch {
@@ -24,6 +29,10 @@ void cpuInit() {
 	// the GDT layout (bootloaders differ). Idt::initialize remaps the PIC and
 	// installs all 256 gates (incl. the int 0x80 syscall gate) then sti.
 	g_gdt.initialize();
+	// Point the TSS at the dedicated kernel stack and load the task register, so
+	// ring3->ring0 traps (int 0x80, IRQs) have a kernel stack to switch to.
+	g_gdt.setKernelStack((unsigned) (g_userKstack + sizeof(g_userKstack)));
+	g_gdt.loadTss();
 	g_idt.initialize();
 	faultInit();
 	// Legacy PC input: the PS/2 keyboard (IRQ1).
