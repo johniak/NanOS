@@ -12,6 +12,7 @@ True `fork()` needs per-process address spaces → paging → ring 3 → schedul
 | **2** | **init in ring 3 + own address space** — single process, no scheduler. init runs at CPL 3 in a private page directory (kernel half shared supervisor, user window `[0x400000,0x500000)` = fresh private frames), syscalls via `int 0x80` (TSS `esp0`), exits back to the kernel, runs twice; provably isolated (user touching kernel mem → `#PF`, no triple fault). | ✅ DONE |
 | **3** | **Scheduler + `task` abstraction** — preemptive round-robin on timer IRQ0; `task_struct` (saved regs, page dir, kernel stack, fd table); context switch (save/restore frame + CR3). Several tasks coexist. | ⬜ TODO |
 | **4** | **`fork` / `exec` / `wait` / `exit`** — Unix process model. fork = **eager** address-space copy (decided), exec reuses the loader into the current space, wait/exit with zombies. | ⬜ TODO |
+| **(synthetic root FS)** | **`/` is a synthetic in-memory filesystem** (`SynthFs`), not a physical volume — deliberately non-Unix. It holds `/disks` (mounted volumes), `/dev` (`null`/`zero`/`random`), `/proc` (`uptime`); the system disk mounts at **`/disks/main`** (programs at `/disks/main/bin`). Node kinds: dir / static / generated. Plugs into the existing prefix-routing `Vfs` (+ a `mount(mp, FileSystem*)` overload). Spec/plan: `docs/superpowers/{specs,plans}/2026-06-07-synthetic-root-fs*`. | ✅ DONE |
 | **(shell + coreutils)** | **`nsh` shell + verbatim sbase `cat`/`ls` on a ported picolibc.** Done as a side-project on top of stage 2: a synchronous `SYS_spawn` (nested ring-3 exec, second kernel stack), argv on the user stack, cooked blocking stdin (keyboard line discipline), `SYS_stat` + ext metadata so `ls -l` shows real mode/size/owner. Userland gained a real libc (picolibc, built in Docker) + a thin syscall/sbrk/dirent/cwd/pwd-grp glue layer; `cat.c`/`ls.c`/libutf are unmodified upstream. Boots into `nsh$`. | ✅ DONE |
 | **later** | **`.ndl` (Nano Dynamic Library)** — full Windows-style model: the libc becomes a separate `.ndl` the kernel loads into the process (ring 3), program's IAT bound to it; the `.ndl` issues `int 0x80`. (Today picolibc + glue are statically linked into each program and trap directly — no IAT.) Also: `.nkext` kernel modules; ext write support; a getdents64 read cursor (today it re-lists the whole dir per call, so readdir reads once); fix the `.`-entry empty-name render in `ls`. | ⬜ TODO |
 
@@ -44,5 +45,6 @@ True `fork()` needs per-process address spaces → paging → ring 3 → schedul
 - `user/init.c` has an uncommitted debug line `write(1,"test\n",5)` (predates stage 2).
 - Branch `dockerized-build` is many commits ahead of `origin/master`, not pushed.
 
-_Last updated: shell + coreutils landed (nsh + verbatim sbase cat/ls on picolibc,
-SYS_spawn, cooked stdin, SYS_stat). Next: stage 3 (scheduler), then the `.ndl` libc._
+_Last updated: synthetic root FS landed (/ virtual, disks under /disks/main, /dev + /proc).
+Earlier: shell + coreutils (nsh + verbatim sbase cat/ls on picolibc, SYS_spawn, cooked
+stdin, SYS_stat). Next: stage 3 (scheduler), then the `.ndl` libc._
