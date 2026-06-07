@@ -23,6 +23,12 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam);
 // directories that share the kernel half, and for switching back on exit).
 uint32_t mmuKernelDirPhys();
 
+// Read/load the active page-directory physical address (CR3 on x86). MI code uses
+// these to stage a spawned child under the kernel identity map, then restore the
+// caller's space — without depending on the x86 control-register details.
+uint32_t mmuCurrentDirPhys();
+void mmuLoadDirPhys(uint32_t dirPhys);
+
 // Per-process address spaces. mmuCreateAddressSpace returns a space that shares
 // the kernel half and has a private (initially empty) user window.
 struct AddressSpace;

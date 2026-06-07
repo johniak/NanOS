@@ -24,6 +24,14 @@ int enterUser(uint32_t entry, uint32_t userStackTop, AddressSpace* space = 0);
 int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
                   const char* const* argv, int argc);
 
+// Like execUserImage, but RE-ENTRANT: called from a syscall while a parent program
+// is already running in ring 3 (a spawn). Saves/restores the single ring-3 return
+// context and switches the CPU to a deeper kernel stack so the child's traps don't
+// clobber the parent's in-flight frames. The caller (MI spawn glue) is responsible
+// for staging the image under the kernel directory and restoring its own CR3.
+int spawnUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
+                   const char* const* argv, int argc);
+
 // Called by the syscall trap when the running program has exited: returns
 // control to the kernel (longjmp back into enterUser).
 void userExit();

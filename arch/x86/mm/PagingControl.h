@@ -15,6 +15,13 @@ inline void loadCr3(uint32_t pdPhys) {
 	__asm__ __volatile__("mov %0, %%cr3" : : "r"(pdPhys) : "memory");
 }
 
+// Read the current page-directory physical address from CR3.
+inline uint32_t readCr3() {
+	uint32_t v;
+	__asm__ __volatile__("mov %%cr3, %0" : "=r"(v));
+	return v;
+}
+
 // Set CR0.PG (bit 31) to turn paging on. The next instruction must execute at a
 // mapped (identity) address — satisfied because the kernel .text is identity-mapped.
 inline void enablePaging() {

@@ -58,6 +58,9 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 
 uint32_t mmuKernelDirPhys() { return g_kernelDirPhys; }
 
+uint32_t mmuCurrentDirPhys() { return kernel::readCr3(); }
+void mmuLoadDirPhys(uint32_t dirPhys) { kernel::loadCr3(dirPhys); }
+
 AddressSpace* mmuCreateAddressSpace() {
 	AddressSpace* s = new AddressSpace(g_env);
 	// Share the whole kernel half; the user window (0x400000) gets a private PT.

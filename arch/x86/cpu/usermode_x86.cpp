@@ -18,12 +18,17 @@
 
 namespace {
 arch::NxJmp g_userCtx;
+int g_depth = 0;            // nesting level of the running program (0 = top-level)
 
 const uint32_t USER_STACK_TOP = 0x500000;
 const uint32_t USER_STACK_BOT = 0x4F0000;   // 64 KiB user stack
 }
 
 namespace arch {
+
+// Defined in cpu_x86.cpp (where the GDT/TSS and kernel stacks live).
+unsigned kstackTop(int depth);
+void setKernelStack(unsigned esp0);
 
 int enterUser(uint32_t entry, uint32_t userStackTop, AddressSpace* space) {
 	if (nx_setjmp(&g_userCtx) != 0)
@@ -102,6 +107,37 @@ int execUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
 
 	int rc = enterUser(entry, esp, space);
 	mmuDestroyAddressSpace(space);
+	return rc;
+}
+
+int spawnUserImage(uint32_t entry, uint32_t loadBase, uint32_t bssEnd,
+                   const char* const* argv, int argc) {
+	// Save the parent's ring-3 return context (its enterUser setjmp) — the child's
+	// enterUser will overwrite the single global g_userCtx. Save the parent's exit
+	// state too (the child will set/clear it).
+	NxJmp savedCtx = g_userCtx;
+	bool savedExited = kernel::kernelSyscalls()->hasExited();
+	int  savedCode   = kernel::kernelSyscalls()->code();
+
+	// Switch the CPU to a deeper kernel stack so the child's int 0x80 traps don't
+	// land on (and clobber) the parent's in-flight spawn frames.
+	unsigned parentEsp0 = kstackTop(g_depth);
+	g_depth++;
+	setKernelStack(kstackTop(g_depth));
+	kernel::kernelSyscalls()->resetForRun();
+
+	int rc = execUserImage(entry, loadBase, bssEnd, argv, argc);   // runs child to exit
+
+	// Restore the parent: its kernel stack, return context, and exit state, so the
+	// parent's own later exit() longjmps to the right place and this spawn syscall
+	// does NOT trip the trap's hasExited() check.
+	g_depth--;
+	setKernelStack(parentEsp0);
+	g_userCtx = savedCtx;
+	if (savedExited)
+		kernel::kernelSyscalls()->exit(savedCode);
+	else
+		kernel::kernelSyscalls()->resetForRun();
 	return rc;
 }
 
