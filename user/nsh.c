@@ -69,9 +69,9 @@ int main(void) {
 			argc = 2;
 		}
 
-		/* Programs live on the system volume under /disks/main/bin. */
+		/* Programs live on the system volume under /disks/main/nanos/bin. */
 		char path[160];
-		snprintf(path, sizeof path, "/disks/main/bin/%s.nxe", argv[0]);
+		snprintf(path, sizeof path, "/disks/main/nanos/bin/%s.nxe", argv[0]);
 		int rc = spawn(path, argv);
 		if (rc == -2)                       /* -ENOENT */
 			printf("nsh: %s: command not found\n", argv[0]);

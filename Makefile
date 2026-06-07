@@ -128,10 +128,14 @@ _grub2-image:
 	./scripts/create-grub2-image.sh
 
 _image: _all _userland _grub2-image
-	printf "rm /boot/kernel.bin\nwrite $(BINFOLDER)kernel.bin /boot/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	-printf "mkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
-	for p in $(USER_PROGS); do \
-	  printf "rm /bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	# System volume layout: everything NanOS lives under /nanos (core/bin/lib/kext/
+	# config/cache/logs). GRUB stays in /boot. mkdir is idempotent across rebuilds.
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	# Kernel + init (PID 1) in core; the rest of the programs in bin.
+	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	for p in nsh cat ls; do \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 
 _iso: _all
@@ -160,8 +164,8 @@ SBASE_UTIL_CAT=$(BINFOLDER)eprintf.o $(BINFOLDER)concat.o $(BINFOLDER)writeall.o
 SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarray.o $(BINFOLDER)human.o $(BINFOLDER)fshut.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
-# Programs written into /bin (each builds bin/<name>.nxe).
-USER_PROGS=nsh cat ls
+# Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
+USER_PROGS=init nsh cat ls
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -170,6 +174,8 @@ define link_prog
 endef
 
 _userland: _userland-glue _userland-sbase
+	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
+	$(call link_prog,init,$(BINFOLDER)init.o)
 	$(CXX) $(USER_CFLAGS) -c user/nsh.c -o $(BINFOLDER)nsh.o
 	$(call link_prog,nsh,$(BINFOLDER)nsh.o)
 	$(CXX) $(USER_CFLAGS) -c $(SBASE)/cat.c -o $(BINFOLDER)cat.o

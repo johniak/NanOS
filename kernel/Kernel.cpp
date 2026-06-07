@@ -88,11 +88,10 @@ void Kernel::start() {
 
 	// Launch the interactive shell. It reads commands from the keyboard and spawns
 	// /bin/<cmd>.nxe programs (cat, ls, ...) until the user types `exit`.
-	// Programs live on the system volume: /disks/main/bin (the disk is mounted under
-	// /disks/main, not at "/").
-	Console::writeLine("--- starting /disks/main/bin/nsh.nxe ---");
-	int rc = execProgram(vfs, "/disks/main/bin/nsh.nxe");
-	Console::write("nsh exited with code ");
+	// Hand control to init (PID 1) on the system volume; init launches the shell.
+	Console::writeLine("--- starting /disks/main/nanos/core/init.nxe ---");
+	int rc = execProgram(vfs, "/disks/main/nanos/core/init.nxe");
+	Console::write("init exited with code ");
 	Console::writeLine(rc);
 
 	// Multitasking is experimental/incomplete (no /init.bin, debug-printing
