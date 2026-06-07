@@ -1,6 +1,6 @@
 #include "SyscallDispatch.h"
 #include "Syscall.h"
-#include "Interrupt.h"
+#include <arch/syscall.h>
 #include "Console.h"
 
 namespace kernel {
@@ -13,43 +13,43 @@ static int consoleSink(const char* buf, unsigned len) {
 	return (int) len;
 }
 
-// int 0x80 handler: Linux i386 ABI — nr in eax, args in ebx/ecx/edx/esi/edi,
-// return in eax (propagates back to the caller through isr_common_stub's popa).
-static void syscallDispatch(Registers* r) {
+// MI syscall dispatch: map a syscall number + args to the Syscalls core. The
+// arch trap (int 0x80 on x86) decodes registers and calls this.
+int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 	int ret = -38;   // -ENOSYS
-	switch (r->eax) {
+	switch (nr) {
 	case SYS_exit:
-		g_sys->exit((int) r->ebx);
+		g_sys->exit((int) a0);
 		ret = 0;
 		break;
 	case SYS_read:
-		ret = g_sys->read(r->ebx, (void*) r->ecx, r->edx);
+		ret = g_sys->read(a0, (void*) a1, a2);
 		break;
 	case SYS_write:
-		ret = g_sys->write(r->ebx, (const void*) r->ecx, r->edx);
+		ret = g_sys->write(a0, (const void*) a1, a2);
 		break;
 	case SYS_open:
-		ret = g_sys->open(String((char*) r->ebx), r->ecx);
+		ret = g_sys->open(String((char*) a0), a1);
 		break;
 	case SYS_close:
-		ret = g_sys->close(r->ebx);
+		ret = g_sys->close(a0);
 		break;
 	case SYS_lseek:
-		ret = g_sys->lseek(r->ebx, r->ecx, r->edx);
+		ret = g_sys->lseek(a0, a1, a2);
 		break;
 	case SYS_fstat:
-		ret = g_sys->fstat(r->ebx, (LinuxStat*) r->ecx);
+		ret = g_sys->fstat(a0, (LinuxStat*) a1);
 		break;
 	case SYS_getdents64:
-		ret = g_sys->getdents64(r->ebx, (void*) r->ecx, r->edx);
+		ret = g_sys->getdents64(a0, (void*) a1, a2);
 		break;
 	}
-	r->eax = (unsigned) ret;
+	return ret;
 }
 
 void installSyscalls(Vfs* vfs) {
 	g_sys = new Syscalls(vfs, consoleSink);
-	Interrupt::registerInterruptHandler(0x80, &syscallDispatch);
+	arch::syscallInit();
 }
 
 Syscalls* kernelSyscalls() {

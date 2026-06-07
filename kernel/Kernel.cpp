@@ -1,9 +1,6 @@
 #include <stdint.h>
 #include "Kernel.h"
 #include "Console.h"
-#include "Gdt.h"
-#include "Idt.h"
-#include "Interrupt.h"
 #include "Keyboard.h"
 #include "Hdd.h"
 #include "BlockDevice.h"
@@ -20,23 +17,12 @@
 #include "MultiTasking.h"
 #include <arch/bootinfo.h>
 #include <arch/mmu.h>
+#include <arch/cpu.h>
+#include <arch/syscall.h>
 #include "FrameAllocator.h"
 char buf[1024];
 
-void interrupt3(kernel::Registers* regs) {
-	//asm("int $3");
-	//while (true) {
-	kernel::Console::writeLine("Hehehehd");
-	//}
-}
 namespace kernel {
-
-// Issue a Linux-style syscall via int 0x80 (nr in eax, args in ebx/ecx/edx).
-static int sys3(int nr, int a, int b, int c) {
-	int ret;
-	asm volatile("int $0x80" : "=a"(ret) : "a"(nr), "b"(a), "c"(b), "d"(c) : "memory");
-	return ret;
-}
 
 // Mark a usable physical range free in the frame allocator (arch reports only
 // usable ranges via <arch/bootinfo.h>).
@@ -59,13 +45,8 @@ void Kernel::start() {
 	Console::clearScreen();
 	Console::writeLine("NanoOS initialize...");
 
-	// Install our own GDT first: the IDT gates use code selector 0x08, which
-	// is only valid once we control the GDT layout (bootloaders differ).
-	Gdt gdt = Gdt();
-	gdt.initialize();
-
-	Idt idt = Idt();
-	idt.initialize();
+	// Bring up the CPU descriptor tables + interrupt vectors (arch).
+	arch::cpuInit();
 	Keyboard keyboard = Keyboard();
 	keyboard.initialize();
 	Console::writeLine("");
@@ -84,12 +65,9 @@ void Kernel::start() {
 	vfs->registerType(new Ext2FileSystemType());
 	vfs->mount("/", "auto", hd0, 2048);
 
-	// Install the Linux-style syscall interface (int 0x80) over the VFS.
+	// Install the syscall interface over the VFS, then a boot sanity syscall.
 	installSyscalls(vfs);
-
-	// Sanity: one direct int 0x80 call.
-	const char* msg = "syscall write OK\n";
-	sys3(SYS_write, 1, (int) msg, 17);
+	arch::syscallSelfTest();
 
 	// Load and run the first userspace program (.nxe) via the dynamic loader.
 	Console::writeLine("--- exec /bin/init.nxe ---");
@@ -97,8 +75,6 @@ void Kernel::start() {
 	Console::write("init.nxe exited with code ");
 	Console::writeLine(rc);
 
-	Interrupt::registerInterruptHandler(3, &interrupt3);
-	//asm("int $3");
 	// Multitasking is experimental/incomplete (no /init.bin, debug-printing
 	// scheduler). Disabled for now so the kernel runs a clean main loop.
 	// MultiTasking mt = MultiTasking(ext2Filesystem);
