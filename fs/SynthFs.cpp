@@ -54,11 +54,48 @@ void SynthFs::addVolume(const char* name) {
 	addDir(m_disks, name);
 }
 
+// ---- generated nodes (devices + proc) -------------------------------------
+// Stream devices ignore offset: null is always EOF; zero/random produce endlessly.
+static int gen_null(unsigned, void*, unsigned) { return 0; }
+
+static int gen_zero(unsigned, void* buf, unsigned n) {
+	memset(buf, 0, n);
+	return (int) n;
+}
+
+static int gen_random(unsigned, void* buf, unsigned n) {
+	static unsigned state = 2463534242u;   // xorshift32, advances across reads
+	unsigned char* p = (unsigned char*) buf;
+	for (unsigned i = 0; i < n; i++) {
+		state ^= state << 13;
+		state ^= state >> 17;
+		state ^= state << 5;
+		p[i] = (unsigned char) state;
+	}
+	return (int) n;
+}
+
+// Snapshot file: serve a fixed string by offset so `cat` terminates (no RTC yet).
+static int gen_uptime(unsigned off, void* buf, unsigned n) {
+	static const char s[] = "uptime: 0 (no timer yet)\n";
+	unsigned len = sizeof(s) - 1;
+	if (off >= len)
+		return 0;
+	unsigned cnt = n < (len - off) ? n : (len - off);
+	memcpy(buf, s + off, cnt);
+	return (int) cnt;
+}
+
 SynthFs::SynthFs() {
 	root = mk(SK_DIR, "/", 0555);
 	m_disks = addDir(root, "disks");
 	m_dev = addDir(root, "dev");
 	m_proc = addDir(root, "proc");
+
+	addGen(m_dev, "null", gen_null, 0666);
+	addGen(m_dev, "zero", gen_zero, 0666);
+	addGen(m_dev, "random", gen_random, 0444);
+	addGen(m_proc, "uptime", gen_uptime, 0444);
 }
 
 int SynthFs::mount() { return 0; }

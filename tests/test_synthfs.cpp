@@ -59,6 +59,39 @@ TEST_CASE("SynthFs addVolume shows up under /disks") {
 	CHECK(listed(e1, "main"));
 }
 
+TEST_CASE("SynthFs /dev generators: null/zero/random") {
+	SynthFs fs;
+	List<DirEntry> e;
+	REQUIRE(fs.readdir("/dev", e) == 0);
+	CHECK(listed(e, "null"));
+	CHECK(listed(e, "zero"));
+	CHECK(listed(e, "random"));
+
+	char z[16];
+	memset(z, 0xAB, sizeof z);
+	CHECK(fs.read("/dev/zero", 16, 0, z) == 16);
+	bool allzero = true;
+	for (int i = 0; i < 16; i++) if (z[i] != 0) allzero = false;
+	CHECK(allzero);
+
+	char nb[4];
+	CHECK(fs.read("/dev/null", 4, 0, nb) == 0);   // EOF
+
+	char r1[8], r2[8];
+	CHECK(fs.read("/dev/random", 8, 0, r1) == 8);
+	CHECK(fs.read("/dev/random", 8, 0, r2) == 8);
+	CHECK(memcmp(r1, r2, 8) != 0);                 // stream advances
+}
+
+TEST_CASE("SynthFs /proc/uptime is nonempty text and terminates (offset EOF)") {
+	SynthFs fs;
+	char buf[64] = {0};
+	int n = fs.read("/proc/uptime", sizeof buf, 0, buf);
+	CHECK(n > 0);
+	CHECK(strstr(buf, "uptime") != 0);
+	CHECK(fs.read("/proc/uptime", sizeof buf, (unsigned) n, buf) == 0);  // EOF past end
+}
+
 TEST_CASE("SynthFs errors on missing paths and bad ops") {
 	SynthFs fs;
 	FileStat st;
