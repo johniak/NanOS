@@ -1,9 +1,14 @@
-SOURCES=loader.o kmain.o Kernel.o Console.o IOPort.o Gdt.o Idt.o irq.o isr.o
-SOURCES+= Interrupt.o Keyboard.o ATA.o Hdd.o ExtFilesystem.o
-SOURCES+= AtaBlockDevice.o RamBlockDevice.o DeviceManager.o Vfs.o
-SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o nxjmp.o
-SOURCES+= FrameAllocator.o MultibootMmap.o AddressSpace.o
-SOURCES+= memory_manager.o List.o String.o MultiTasking.o icxxabi.o string_funcs.o
+# Architecture selection: machine-dependent knobs come from arch/$(ARCH)/arch.mk
+# (CROSS, ARCH_VPATH, ARCH_INCLUDES, ARCH_LINKER, ARCH_SOURCES).
+ARCH ?= x86
+include arch/$(ARCH)/arch.mk
+
+# Machine-independent objects (portable across architectures).
+MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o RamBlockDevice.o DeviceManager.o Vfs.o
+MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o FrameAllocator.o
+MI_SOURCES+= memory_manager.o List.o String.o icxxabi.o string_funcs.o
+# Full link set = portable objects + the selected arch's machine-dependent objects.
+SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
 
 BINFOLDER=bin/
 IMAGE_GRUB2=disk/image-grub2.img
@@ -60,18 +65,19 @@ else
 # Tools resolved from the container PATH (i686-elf toolchain in /opt/cross).
 # ============================================================================
 
-CROSS?=i686-elf-
 CXX=$(CROSS)gcc
 AS=$(CROSS)as
 LD=$(CROSS)gcc
 
-# Sources live in layered directories; let make find them by basename.
-VPATH=arch:init:kernel:drivers:fs:mm:lib
-# Kernel include path: every code dir plus the freestanding <string.h> in include/.
-KINCLUDES=-Iarch -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude
+# Sources live in layered directories; let make find them by basename. The MI
+# dirs are fixed; the arch's dirs come from ARCH_VPATH (arch/$(ARCH)/...).
+VPATH=init:kernel:drivers:fs:mm:lib:$(ARCH_VPATH)
+# Kernel include path: the MI code dirs + the arch contracts (arch/include) + the
+# selected arch's headers (ARCH_INCLUDES) + the freestanding <string.h> in include/.
+KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude $(ARCH_INCLUDES)
 
 CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore
-LDFLAGS=-Tlinker.ld -nostdlib -nostartfiles -lgcc
+LDFLAGS=-T$(ARCH_LINKER) -nostdlib -nostartfiles -lgcc
 ASFLAGS=
 
 # The repo is bind-mounted from a case-insensitive macOS FS, so <string.h> would
