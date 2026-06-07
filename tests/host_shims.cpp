@@ -3,8 +3,9 @@
 //
 // Memory (malloc/free/realloc, global new/delete) and string.h come from libc by
 // simply NOT linking memory_manager.cpp / string_funcs.cpp into the test binary.
-// Only Console needs a host stand-in: it normally writes to VGA memory.
-#include "Console.h"
+// The real MI Console.cpp is compiled in the test build; only the arch console
+// SINK (<arch/console.h>) needs a host stand-in — it normally writes VGA memory.
+#include <arch/console.h>
 #include "memory_manager.h"
 #include <cstdio>
 
@@ -17,30 +18,10 @@ void free(void* p) { __builtin_free(p); }
 void* realloc(void* p, size_t n) { return __builtin_realloc(p, n); }
 void* calloc(size_t a, size_t b) { return __builtin_calloc(a, b); }
 
-namespace kernel {
-
-unsigned short Console::cursorX = 0;
-unsigned short Console::cursorY = 0;
-volatile unsigned short* Console::videoram = 0;
-
-void Console::scroll() {}
-void Console::moveCursor() {}
-void Console::goToXY(unsigned short, unsigned short) {}
-
-void Console::write(char c) { putchar(c); }
-void Console::write(int d) { printf("%d", d); }
-void Console::write(const char* text) { fputs(text, stdout); }
-void Console::writeHex(int hex) { printf("0x%X", hex); }
-void Console::writeLine(char c) { printf("%c\n", c); }
-void Console::writeLine(const char* line) { printf("%s\n", line); }
-void Console::writeLine(int line) { printf("%d\n", line); }
-void Console::clearScreen() {}
-
-char* Console::itoa(int i, int base) {
-	static char buf[34];
-	if (base == 16) snprintf(buf, sizeof(buf), "%x", i);
-	else snprintf(buf, sizeof(buf), "%d", i);
-	return buf;
-}
-
+// Arch console sink stand-in: route glyphs to stdout, ignore cursor/clear.
+namespace arch {
+void consolePutChar(char c) { putchar(c); }
+void consoleClear() {}
+void consoleSetCursor(unsigned, unsigned) {}
+void consoleInit() {}
 }

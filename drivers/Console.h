@@ -1,13 +1,10 @@
 #pragma once
 #include <string.h>
 namespace kernel{
-	
+
+	// Machine-independent console: formatting over the arch character sink
+	// (<arch/console.h>). The VGA/hardware specifics live in the arch layer.
 	class Console{
-		static unsigned short cursorX;
-		static unsigned short cursorY;
-		static volatile  unsigned short *videoram;
-		static void scroll();
-		static void moveCursor();
 	public:
 		static void goToXY(unsigned short x,unsigned short y);
 		static void write(char c);
