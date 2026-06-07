@@ -17,12 +17,15 @@ kernel::Keyboard g_keyboard;
 
 namespace arch {
 
+void faultInit();   // arch/x86/cpu/fault_x86.cpp — #GP/#PF debug handlers
+
 void cpuInit() {
 	// GDT first: the IDT gates use code selector 0x08, valid only once we own
 	// the GDT layout (bootloaders differ). Idt::initialize remaps the PIC and
 	// installs all 256 gates (incl. the int 0x80 syscall gate) then sti.
 	g_gdt.initialize();
 	g_idt.initialize();
+	faultInit();
 	// Legacy PC input: the PS/2 keyboard (IRQ1).
 	g_keyboard.initialize();
 }
