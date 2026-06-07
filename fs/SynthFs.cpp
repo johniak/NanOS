@@ -1,7 +1,33 @@
 #include "SynthFs.h"
+#include "Scheduler.h"
 #include <string.h>
 
 namespace kernel {
+
+// Append the decimal form of v to out; returns the number of chars written.
+static int utoa(unsigned v, char* out) {
+	char tmp[12];
+	int t = 0;
+	do { tmp[t++] = (char) ('0' + v % 10); v /= 10; } while (v);
+	for (int i = 0; i < t; i++)
+		out[i] = tmp[t - 1 - i];
+	return t;
+}
+
+int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz) {
+	unsigned secs = hz ? ticks / hz : 0;
+	int p = 0;
+	const char* a = "uptime: ";
+	for (int i = 0; a[i] && p < cap - 1; i++) buf[p++] = a[i];
+	p += utoa(secs, buf + p);
+	const char* b = " s (";
+	for (int i = 0; b[i] && p < cap - 1; i++) buf[p++] = b[i];
+	p += utoa(ticks, buf + p);
+	const char* c = " ticks)\n";
+	for (int i = 0; c[i] && p < cap - 1; i++) buf[p++] = c[i];
+	buf[p] = 0;
+	return p;
+}
 
 // Length-bounded name compare (avoids strncmp, absent from the freestanding libc):
 // node name `a` (NUL-terminated) equals the `blen`-char component `b`.
@@ -75,13 +101,14 @@ static int gen_random(unsigned, void* buf, unsigned n) {
 	return (int) n;
 }
 
-// Snapshot file: serve a fixed string by offset so `cat` terminates (no RTC yet).
+// Snapshot file: render the live tick count (served by offset so `cat` terminates).
+// cat reads it in a single call (n >= len), so regenerating per call is consistent.
 static int gen_uptime(unsigned off, void* buf, unsigned n) {
-	static const char s[] = "uptime: 0 (no timer yet)\n";
-	unsigned len = sizeof(s) - 1;
-	if (off >= len)
+	static char s[64];
+	int len = uptimeString(s, sizeof s, kernel::Scheduler::ticks(), 1000);
+	if (off >= (unsigned) len)
 		return 0;
-	unsigned cnt = n < (len - off) ? n : (len - off);
+	unsigned cnt = n < (unsigned) (len - off) ? n : (unsigned) (len - off);
 	memcpy(buf, s + off, cnt);
 	return (int) cnt;
 }

@@ -92,6 +92,18 @@ TEST_CASE("SynthFs /proc/uptime is nonempty text and terminates (offset EOF)") {
 	CHECK(fs.read("/proc/uptime", sizeof buf, (unsigned) n, buf) == 0);  // EOF past end
 }
 
+TEST_CASE("uptimeString renders seconds and the raw tick count") {
+	char b[64];
+	int n = uptimeString(b, sizeof b, 2500, 1000);   // 2500 ticks @ 1000 Hz = 2 s
+	CHECK(n > 0);
+	CHECK(strstr(b, "2500 ticks") != 0);
+	CHECK(strstr(b, "2 s") != 0);
+
+	int z = uptimeString(b, sizeof b, 0, 1000);
+	CHECK(z > 0);
+	CHECK(strstr(b, "0 ticks") != 0);
+}
+
 TEST_CASE("SynthFs errors on missing paths and bad ops") {
 	SynthFs fs;
 	FileStat st;

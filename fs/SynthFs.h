@@ -17,6 +17,10 @@ namespace kernel {
 // A generated file: fill up to n bytes at logical offset off; return bytes produced.
 typedef int (*SynthGen)(unsigned off, void* buf, unsigned n);
 
+// Render an uptime string ("uptime: <s> s (<ticks> ticks)\n") into buf; returns its
+// length. Free function so it is host-testable; used by the /proc/uptime generator.
+int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz);
+
 enum SynthKind { SK_DIR, SK_STATIC, SK_GEN };
 
 struct SynthNode {
