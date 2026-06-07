@@ -18,5 +18,5 @@ ARCH_LINKER=arch/x86/linker.ld
 
 ARCH_SOURCES=loader.o Gdt.o Idt.o Interrupt.o IOPort.o irq.o isr.o nxjmp.o
 ARCH_SOURCES+= cpu_x86.o irq_x86.o console_x86.o
-ARCH_SOURCES+= MultibootMmap.o AddressSpace.o
+ARCH_SOURCES+= bootinfo_x86.o MultibootMmap.o AddressSpace.o
 ARCH_SOURCES+= Keyboard.o Hdd.o ATA.o AtaBlockDevice.o MultiTasking.o

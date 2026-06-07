@@ -1,13 +1,9 @@
-#include <stdint.h>
 #include "Kernel.h"
 
 using namespace kernel;
 
 extern "C" void kmain(){
-	extern uint32_t magic;
-	if ( magic != 0x2BADB002 ){ 
-	}
-  Kernel kernel = Kernel(); 
+  Kernel kernel = Kernel();
   kernel.start();
 }
 

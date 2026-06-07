@@ -18,16 +18,13 @@
 #include "List.h"
 #include "String.h"
 #include "MultiTasking.h"
-#include "MultibootInfo.h"
-#include "MultibootMmap.h"
+#include <arch/bootinfo.h>
 #include "FrameAllocator.h"
 #include "AddressSpace.h"
 #include "Paging.h"
 #include "PagingControl.h"
 char buf[1024];
 
-// Set by arch/loader.s from ebx: physical pointer to the Multiboot info struct.
-extern "C" unsigned mbd;
 // Linker symbol marking the end of the kernel image (linker.ld).
 extern char end;
 
@@ -53,23 +50,20 @@ static uint32_t kAllocFrame(void*) { return g_frames.alloc(); }
 static void kFreeFrame(void*, uint32_t pa) { g_frames.free(pa); }
 static void* kPhysToVirt(void*, uint32_t pa) { return (void*) pa; }
 
-// Mark each usable mmap region as free in the frame allocator.
-static void freeUsableRegion(void* fa, uint64_t base, uint64_t len, uint32_t type) {
-	if (type == MMAP_TYPE_AVAILABLE)
-		((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
+// Mark a usable physical range free in the frame allocator (arch reports only
+// usable ranges via <arch/bootinfo.h>).
+static void markFree(void* fa, uint64_t base, uint64_t len) {
+	((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
 }
 
-// Build the physical frame allocator from the Multiboot memory map, construct
-// the kernel address space identity-mapping all RAM, and enable paging. Still
-// ring 0, single program: every region the kernel/init.nxe touch maps 1:1.
+// Build the physical frame allocator from the arch memory map, construct the
+// kernel address space identity-mapping all RAM, and enable paging. Still ring
+// 0, single program: every region the kernel/init.nxe touch maps 1:1.
 void Kernel::initPaging() {
-	MultibootInfo* mbi = (MultibootInfo*) mbd;
-	unsigned top = highestUsableAddr(mbi);
-	if (top == 0)
-		top = 0x8000000;   // fallback: 128 MiB (QEMU default) if no memory info
+	unsigned top = arch::bootMemTop();
 
 	g_frames.init(top);
-	parseMmap(mbi, &g_frames, freeUsableRegion);
+	arch::bootMemForEachUsable(&g_frames, markFree);
 
 	// Re-reserve the windows the frame pool must never hand out.
 	g_frames.markRangeUsed(0, 0x100000);                            // low mem + VGA
