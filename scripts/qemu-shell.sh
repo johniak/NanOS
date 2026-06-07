@@ -14,7 +14,7 @@ qemu-system-i386 -drive file="$IMG",format=raw \
     -display none -monitor unix:"$MON",server,nowait \
     -no-reboot -d int -D "$LOG" &
 QPID=$!
-sleep 3   # boot to the prompt
+sleep 5   # boot to the prompt
 
 CMDS="$*" python3 - "$MON" "$PPM" "$@" <<'PY'
 import socket, sys, time, os

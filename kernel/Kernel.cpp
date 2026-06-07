@@ -6,6 +6,7 @@
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
+#include "SynthFs.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"
 #include "Exec.h"
@@ -25,6 +26,22 @@ namespace kernel {
 // usable ranges via <arch/bootinfo.h>).
 static void markFree(void* fa, uint64_t base, uint64_t len) {
 	((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
+}
+
+// Mount a physical volume at /disks/<name> and register a marker under the synthetic
+// /disks so it shows up in readdir. Single helper = one source of truth.
+static void mountVolume(Vfs* vfs, SynthFs* root, const char* name, BlockDevice* dev,
+		unsigned lba) {
+	char mp[80];
+	const char* pre = "/disks/";
+	int i = 0;
+	for (; pre[i]; i++)
+		mp[i] = pre[i];
+	for (int j = 0; name[j] && i < 79; j++, i++)
+		mp[i] = name[j];
+	mp[i] = 0;
+	vfs->mount(String(mp), "auto", dev, lba);
+	root->addVolume(name);
 }
 
 // Build the physical frame allocator from the arch memory map, then hand it to
@@ -58,7 +75,12 @@ void Kernel::start() {
 	Vfs* vfs = new Vfs();
 	vfs->registerType(new Ext4FileSystemType());
 	vfs->registerType(new Ext2FileSystemType());
-	vfs->mount("/", "auto", hd0, 2048);
+
+	// The root "/" is a synthetic in-memory namespace (/disks, /dev, /proc); the
+	// physical disk is NOT mounted at "/" but under /disks/main.
+	SynthFs* root = new SynthFs();
+	vfs->mount("/", root);
+	mountVolume(vfs, root, "main", hd0, 2048);
 
 	// Install the syscall interface over the VFS, then a boot sanity syscall.
 	installSyscalls(vfs);
@@ -66,8 +88,10 @@ void Kernel::start() {
 
 	// Launch the interactive shell. It reads commands from the keyboard and spawns
 	// /bin/<cmd>.nxe programs (cat, ls, ...) until the user types `exit`.
-	Console::writeLine("--- starting /bin/nsh.nxe ---");
-	int rc = execProgram(vfs, "/bin/nsh.nxe");
+	// Programs live on the system volume: /disks/main/bin (the disk is mounted under
+	// /disks/main, not at "/").
+	Console::writeLine("--- starting /disks/main/bin/nsh.nxe ---");
+	int rc = execProgram(vfs, "/disks/main/bin/nsh.nxe");
 	Console::write("nsh exited with code ");
 	Console::writeLine(rc);
 
