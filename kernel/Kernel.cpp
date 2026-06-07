@@ -1,10 +1,7 @@
 #include <stdint.h>
 #include "Kernel.h"
 #include "Console.h"
-#include "Keyboard.h"
-#include "Hdd.h"
 #include "BlockDevice.h"
-#include "AtaBlockDevice.h"
 #include "DeviceManager.h"
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
@@ -14,11 +11,11 @@
 #include "Exec.h"
 #include "List.h"
 #include "String.h"
-#include "MultiTasking.h"
 #include <arch/bootinfo.h>
 #include <arch/mmu.h>
 #include <arch/cpu.h>
 #include <arch/syscall.h>
+#include <arch/block.h>
 #include "FrameAllocator.h"
 char buf[1024];
 
@@ -45,10 +42,8 @@ void Kernel::start() {
 	Console::clearScreen();
 	Console::writeLine("NanoOS initialize...");
 
-	// Bring up the CPU descriptor tables + interrupt vectors (arch).
+	// Bring up the CPU descriptor tables, interrupt vectors and legacy input (arch).
 	arch::cpuInit();
-	Keyboard keyboard = Keyboard();
-	keyboard.initialize();
 	Console::writeLine("");
 
 	// Enable paging (identity-mapped) before the storage stack / userspace.
@@ -56,9 +51,9 @@ void Kernel::start() {
 //	char* bb = buf;
 	//kernel::Interrupt::registerInterruptHandler(, &callback3);
 
-	// Storage stack: register the ATA disk as a block device, register the ext2
-	// filesystem type, and mount it at "/". All access goes through the VFS.
-	AtaBlockDevice* hd0 = new AtaBlockDevice("hd0");
+	// Storage stack: register the arch boot disk as a block device, register the
+	// filesystem types, and mount at "/". All access goes through the VFS.
+	BlockDevice* hd0 = arch::bootDisk();
 	DeviceManager::registerDevice(hd0);
 	Vfs* vfs = new Vfs();
 	vfs->registerType(new Ext4FileSystemType());
