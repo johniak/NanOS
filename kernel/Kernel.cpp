@@ -19,14 +19,9 @@
 #include "String.h"
 #include "MultiTasking.h"
 #include <arch/bootinfo.h>
+#include <arch/mmu.h>
 #include "FrameAllocator.h"
-#include "AddressSpace.h"
-#include "Paging.h"
-#include "PagingControl.h"
 char buf[1024];
-
-// Linker symbol marking the end of the kernel image (linker.ld).
-extern char end;
 
 void interrupt3(kernel::Registers* regs) {
 	//asm("int $3");
@@ -43,46 +38,20 @@ static int sys3(int nr, int a, int b, int c) {
 	return ret;
 }
 
-// PagingEnv hooks: physical memory is identity-mapped, so phys==virt.
-// (Types must match the function-pointer fields exactly: uint32_t here is the
-// toolchain's `long unsigned int`, not `unsigned int`.)
-static uint32_t kAllocFrame(void*) { return g_frames.alloc(); }
-static void kFreeFrame(void*, uint32_t pa) { g_frames.free(pa); }
-static void* kPhysToVirt(void*, uint32_t pa) { return (void*) pa; }
-
 // Mark a usable physical range free in the frame allocator (arch reports only
 // usable ranges via <arch/bootinfo.h>).
 static void markFree(void* fa, uint64_t base, uint64_t len) {
 	((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
 }
 
-// Build the physical frame allocator from the arch memory map, construct the
-// kernel address space identity-mapping all RAM, and enable paging. Still ring
-// 0, single program: every region the kernel/init.nxe touch maps 1:1.
+// Build the physical frame allocator from the arch memory map, then hand it to
+// the arch MMU to bring up kernel paging. Machine-independent: the page-table
+// format and CR registers live behind <arch/mmu.h>.
 void Kernel::initPaging() {
 	unsigned top = arch::bootMemTop();
-
 	g_frames.init(top);
 	arch::bootMemForEachUsable(&g_frames, markFree);
-
-	// Re-reserve the windows the frame pool must never hand out.
-	g_frames.markRangeUsed(0, 0x100000);                            // low mem + VGA
-	g_frames.markRangeUsed(0x100000, (unsigned) &end - 0x100000);   // kernel image
-	g_frames.markRangeUsed(0x400000, 0x100000);                     // user window
-	unsigned heapBase = 0x75BCD15 & PAGE_MASK;                      // bump heap
-	g_frames.markRangeUsed(heapBase, top - heapBase);
-
-	// The directory + page tables come from the frame pool (below the heap); the
-	// AddressSpace object itself comes from the already-reserved bump heap.
-	static AddressSpace* kspace = 0;
-	PagingEnv env = { kAllocFrame, kFreeFrame, kPhysToVirt, 0 };
-	kspace = new AddressSpace(env);
-	kspace->mapRange(0, 0, top, PTE_PRESENT | PTE_RW);   // identity-map all RAM
-
-	asm volatile("cli");
-	loadCr3(kspace->directoryPhys());
-	enablePaging();
-	asm volatile("sti");
+	arch::mmuInitKernel(g_frames, top);
 	Console::writeLine("paging enabled");
 }
 
