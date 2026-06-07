@@ -285,6 +285,11 @@ public:
 			return -1;
 		out.type = isDirectory(inode) ? NODE_DIR : NODE_FILE;
 		out.size = inode.lowerSize;
+		out.mode = (unsigned) (unsigned short) inode.typeAndPermisions;
+		out.nlink = (unsigned) (unsigned short) inode.hardlinksCount;
+		out.uid = (unsigned) (unsigned short) inode.userId;
+		out.gid = (unsigned) (unsigned short) inode.groupId;
+		out.mtime = (unsigned) inode.lastmodification;
 		return 0;
 	}
 

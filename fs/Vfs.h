@@ -10,6 +10,11 @@ enum NodeType { NODE_FILE, NODE_DIR, NODE_OTHER };
 struct FileStat {
 	NodeType type;
 	unsigned size;
+	unsigned mode;     // ext i_mode: format bits (S_IF*) | permission bits
+	unsigned nlink;    // hard-link count
+	unsigned uid;      // owner id
+	unsigned gid;      // group id
+	unsigned mtime;    // last-modification time (epoch seconds)
 };
 
 // Names are bounded (ext2 caps at 255) and stored inline so DirEntry/Mount stay

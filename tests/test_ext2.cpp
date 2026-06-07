@@ -63,6 +63,21 @@ TEST_CASE("ext2 stat reports type and size for files and directories") {
 	CHECK(dst.type == NODE_DIR);
 }
 
+TEST_CASE("ext2 stat surfaces inode metadata (mode/nlink) from the inode") {
+	Ext2Filesystem fs(loadFixture(), 0);
+	fs.mount();
+	FileStat st;
+	REQUIRE(fs.stat("/hello.txt", st) == 0);
+	CHECK((st.mode & 0xF000) == 0x8000);   // S_IFREG
+	CHECK((st.mode & 0x1FF) != 0);         // some permission bits set
+	CHECK(st.nlink >= 1);                  // at least one hard link
+
+	FileStat dst;
+	REQUIRE(fs.stat("/boot", dst) == 0);
+	CHECK((dst.mode & 0xF000) == 0x4000);  // S_IFDIR
+	CHECK(dst.nlink >= 2);                 // a dir links itself (.) and its parent
+}
+
 TEST_CASE("ext2 reports errors for missing paths instead of crashing") {
 	Ext2Filesystem fs(loadFixture(), 0);
 	fs.mount();
