@@ -94,17 +94,34 @@ ASFLAGS=
 # container's own case-sensitive FS, then copy the kernel back.
 KSRC=/tmp/nanos-ksrc
 
+# Full link set as paths under the (bind-mounted) object dir.
+OBJECTS=$(addprefix $(BINFOLDER),$(SOURCES))
+
+# Sources are compiled from a case-sensitive copy in $(KSRC) (the macOS bind mount is
+# case-insensitive, where <string.h> would collide with lib/String.h). But the OBJECTS
+# are written into the bind-mounted /src/bin via a symlink, so they PERSIST across
+# container runs. tar preserves source mtimes, so make rebuilds only what changed
+# (and, via -MMD dep files, what a changed header reaches) instead of everything.
 _all:
+	@mkdir -p $(BINFOLDER)
 	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
 	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage --exclude=tests -C /src . | tar -xf - -C $(KSRC) && \
-	 mkdir -p $(KSRC)/bin
+	 ln -s /src/$(BINFOLDER) $(KSRC)/bin
 	$(MAKE) -C $(KSRC) _compile
-	@mkdir -p $(BINFOLDER) && cp $(KSRC)/$(BINFOLDER)kernel.bin $(BINFOLDER)kernel.bin
 
-_compile: $(SOURCES) _link
+_compile: $(BINFOLDER)kernel.bin
 
-_link:
-	$(LD) $(LDFLAGS) -o $(BINFOLDER)kernel.bin $(foreach source,$(SOURCES),$(BINFOLDER)$(source))
+$(BINFOLDER)kernel.bin: $(OBJECTS)
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+
+$(BINFOLDER)%.o: %.cpp
+	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
+$(BINFOLDER)%.o: %.s
+	$(AS) $(ASFLAGS) $< -o $@
+$(BINFOLDER)%.o: %.S
+	nasm -f elf $< -o $@
+
+-include $(OBJECTS:.o=.d)
 
 # Build the GRUB2 ext2 skeleton once, then (re)write the kernel into it.
 _grub2-image:
@@ -124,14 +141,7 @@ _iso: _all
 	grub-mkrescue -o nanos.iso iso/
 
 _clean:
-	-rm $(BINFOLDER)*.o $(BINFOLDER)kernel.bin
-
-.s.o:
-	$(AS) $(ASFLAGS) $< -o $(BINFOLDER)$@
-.S.o:
-	nasm -f elf $< -o $(BINFOLDER)$@
-.cpp.o:
-	$(CXX) -c $(CXXFLAGS) $< -o $(BINFOLDER)$@
+	-rm $(BINFOLDER)*.o $(BINFOLDER)*.d $(BINFOLDER)kernel.bin
 
 # ----------------------------------------------------------------------------
 # Userland: .nxe programs link against ported picolibc + our syscall glue (own
