@@ -14,10 +14,13 @@ kernel::Gdt g_gdt;
 kernel::Idt g_idt;
 kernel::Keyboard g_keyboard;
 
-// Dedicated kernel stack for ring3->ring0 transitions (TSS.esp0). Must be
+// Dedicated kernel stacks for ring3->ring0 transitions (TSS.esp0). Must be
 // SEPARATE from the boot stack, which holds the live execProgram frames and the
-// longjmp target that exit() returns to.
+// longjmp target that exit() returns to. A second stack (g_childKstack) lets a
+// spawned child trap without clobbering the parent's in-flight spawn frames on
+// g_userKstack (depth 0 = top-level program, depth 1 = its spawned child).
 unsigned char g_userKstack[8192];
+unsigned char g_childKstack[8192];
 }
 
 namespace arch {
@@ -42,5 +45,15 @@ void cpuInit() {
 void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts() { __asm__ __volatile__("sti"); }
 void cpuHalt() { __asm__ __volatile__("hlt"); }
+
+// Per-depth kernel stack top for TSS.esp0 (used by the nested-spawn machinery in
+// usermode_x86.cpp). depth 0 = top-level program, depth 1 = its spawned child.
+unsigned kstackTop(int depth) {
+	return depth == 0 ? (unsigned) (g_userKstack + sizeof(g_userKstack))
+	                  : (unsigned) (g_childKstack + sizeof(g_childKstack));
+}
+
+// Repoint TSS.esp0 (where the CPU lands on the next ring3->ring0 trap).
+void setKernelStack(unsigned esp0) { g_gdt.setKernelStack(esp0); }
 
 }
