@@ -4,7 +4,7 @@ ARCH ?= x86
 include arch/$(ARCH)/arch.mk
 
 # Machine-independent objects (portable across architectures).
-MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o RamBlockDevice.o DeviceManager.o Vfs.o
+MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamBlockDevice.o DeviceManager.o Vfs.o
 MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o FrameAllocator.o
 MI_SOURCES+= memory_manager.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
@@ -199,10 +199,10 @@ TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
-TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp lib/String.cpp
+TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp lib/String.cpp
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp arch/x86/mm/AddressSpace.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/Syscall.*" "*/NxeLoader.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/AddressSpace.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/AddressSpace.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
