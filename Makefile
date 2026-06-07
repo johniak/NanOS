@@ -59,6 +59,15 @@ clean:
 	$(DOCKER_RUN) make _clean
 	-rm -rf iso/ nanos.iso $(IMAGE_GRUB2) coverage/
 
+# Machine-independence guard: the MI layer (init/kernel/mm/fs/lib/drivers) must
+# only reach the arch via <arch/...> contracts — never x86 internals. Runs on the
+# host (plain grep, no Docker). Fails if any forbidden reference creeps back in.
+MI_CHECK_DIRS=init kernel mm fs lib drivers
+check-arch:
+	@if grep -rnE '#include[[:space:]]*"(Gdt|Idt|Interrupt|IOPort|Paging|PagingControl|AddressSpace|Multiboot)[A-Za-z]*\.h"|\bRegisters\b|\bIRQ[0-9]|__asm__|asm[[:space:]]*\(|asm[[:space:]]+volatile|\b(outb|inb|inw)\b' $(MI_CHECK_DIRS); then \
+	   echo "FAIL: machine-dependent reference in MI layer (above)"; exit 1; \
+	 else echo "OK: MI layer is arch-clean."; fi
+
 else
 # ============================================================================
 # CONTAINER side (Linux): real compilation, image and ISO creation.

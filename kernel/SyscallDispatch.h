@@ -1,9 +1,10 @@
 /*
  * SyscallDispatch.h
  *
- * Kernel-only glue: installs the int 0x80 handler that maps Linux i386 syscall
- * numbers to the Syscalls core. Not host-tested (touches Registers/IDT);
- * verified in QEMU.
+ * Machine-independent syscall layer: installs the Syscalls core over the VFS and
+ * exposes kernel::kernelSyscall (the syscall-number switch) that the arch trap
+ * handler calls. The register decode / int 0x80 wiring lives behind
+ * <arch/syscall.h> in the arch layer.
  */
 #pragma once
 #include "Vfs.h"
