@@ -18,4 +18,16 @@ project's own code; this file covers external components used by the **userland*
   image (not vendored into this repo); the resulting `libc.a` is linked at userland
   build time.
 
-<!-- sbase (cat/ls + libutil + libutf) is added when those programs are vendored. -->
+## sbase (suckless base utilities)
+
+- **What:** the `cat` and `ls` coreutils, vendored **verbatim** from upstream, plus
+  the `libutil`/`libutf` support files and the `arg.h`/`util.h`/`compat.h` headers
+  they need. Compiled against picolibc into `/bin/cat.nxe` and `/bin/ls.nxe`.
+- **Vendored at:** `user/third_party/sbase/` (upstream commit recorded in
+  `user/third_party/sbase/VERSION`).
+- **Upstream:** https://git.suckless.org/sbase
+- **License:** ISC/MIT-style. The upstream `LICENSE` file is kept verbatim at
+  [`user/third_party/sbase/LICENSE`](user/third_party/sbase/LICENSE).
+- **Local changes:** none to the program sources — `cat.c`/`ls.c` and the `libutil`/
+  `libutf` files are unmodified upstream. Only the build (Makefile) and the libc
+  porting layer (`user/libc-glue/`) are NanOS's own.

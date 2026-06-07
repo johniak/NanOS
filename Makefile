@@ -113,7 +113,9 @@ _grub2-image:
 _image: _all _userland _grub2-image
 	printf "rm /boot/kernel.bin\nwrite $(BINFOLDER)kernel.bin /boot/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	-printf "mkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
-	printf "rm /bin/init.nxe\nwrite $(BINFOLDER)init.nxe /bin/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	for p in $(USER_PROGS); do \
+	  printf "rm /bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	done
 
 _iso: _all
 	mkdir -p iso/boot/grub
@@ -137,15 +139,27 @@ _clean:
 # -isystem; SyscallNr.h via -Ikernel. No <string.h> clash (lib/ is not on the path).
 # ----------------------------------------------------------------------------
 PICOLIBC=/opt/picolibc/i686-elf
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -Ikernel -Iuser -Iuser/libc-glue/include -Wall -fno-pic -fno-stack-protector
+SBASE=user/third_party/sbase
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -Ikernel -Iuser -Iuser/libc-glue/include -I$(SBASE) -Wall -fno-pic -fno-stack-protector
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, and the picolibc syscall glue.
 USER_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)syscalls.o
+# sbase libutil objects shared by the vendored coreutils.
+SBASE_UTIL=$(BINFOLDER)eprintf.o $(BINFOLDER)concat.o $(BINFOLDER)writeall.o
+# Programs written into /bin (each builds bin/<name>.nxe).
+USER_PROGS=init cat
 
-_userland: _userland-glue
+# Link one program: $(call link_prog,<name>,<extra objects>)
+define link_prog
+	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)$(1).elf $(USER_GLUE) $(2) $(USER_LIBS)
+	$(CROSS)objcopy -O binary $(BINFOLDER)$(1).elf $(BINFOLDER)$(1).nxe
+endef
+
+_userland: _userland-glue _userland-sbase
 	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
-	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)init.elf $(USER_GLUE) $(BINFOLDER)init.o $(USER_LIBS)
-	$(CROSS)objcopy -O binary $(BINFOLDER)init.elf $(BINFOLDER)init.nxe
+	$(call link_prog,init,$(BINFOLDER)init.o)
+	$(CXX) $(USER_CFLAGS) -c $(SBASE)/cat.c -o $(BINFOLDER)cat.o
+	$(call link_prog,cat,$(BINFOLDER)cat.o $(SBASE_UTIL))
 
 # Build the shared startup/header/glue objects once.
 _userland-glue:
@@ -153,6 +167,12 @@ _userland-glue:
 	nasm -f elf user/crt0.S -o $(BINFOLDER)crt0.o
 	$(CXX) $(USER_CFLAGS) -c user/nxhdr.c -o $(BINFOLDER)nxhdr.o
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/syscalls.c -o $(BINFOLDER)syscalls.o
+
+# Build the vendored sbase libutil objects the coreutils link against.
+_userland-sbase:
+	$(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/eprintf.c -o $(BINFOLDER)eprintf.o
+	$(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/concat.c -o $(BINFOLDER)concat.o
+	$(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/writeall.c -o $(BINFOLDER)writeall.o
 
 # ----------------------------------------------------------------------------
 # Host-compiled test suite (doctest) + coverage gate.
