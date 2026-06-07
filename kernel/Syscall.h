@@ -9,17 +9,9 @@
 #ifndef SYSCALL_H_
 #define SYSCALL_H_
 
-namespace kernel {
+#include "SyscallNr.h"   // SYS_* numbers (shared with userland, plain C)
 
-// Linux i386 syscall numbers.
-#define SYS_exit 1
-#define SYS_read 3
-#define SYS_write 4
-#define SYS_open 5
-#define SYS_close 6
-#define SYS_lseek 19
-#define SYS_fstat 108
-#define SYS_getdents64 220
+namespace kernel {
 
 // errno values returned (negated) on error.
 #define ENOENT 2
