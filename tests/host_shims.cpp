@@ -6,6 +6,7 @@
 // The real MI Console.cpp is compiled in the test build; only the arch console
 // SINK (<arch/console.h>) needs a host stand-in — it normally writes VGA memory.
 #include <arch/console.h>
+#include <arch/input.h>
 #include "memory_manager.h"
 #include <cstdio>
 
@@ -24,4 +25,8 @@ void consolePutChar(char c) { putchar(c); }
 void consoleClear() {}
 void consoleSetCursor(unsigned, unsigned) {}
 void consoleInit() {}
+
+// No real keyboard under the host harness: console reads are immediate EOF (this
+// preserves the pre-blocking-stdin behaviour the Syscalls tests expect).
+int inputReadLine(char*, unsigned) { return 0; }
 }

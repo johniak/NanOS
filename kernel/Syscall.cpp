@@ -1,6 +1,7 @@
 #include "Syscall.h"
 #include "List.h"
 #include "string.h"
+#include <arch/input.h>
 
 namespace kernel {
 
@@ -51,7 +52,7 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
 	if (fds[fd].isConsole)
-		return 0;   // no stdin -> EOF
+		return arch::inputReadLine((char*) buf, n);   // blocking cooked line; 0 = EOF
 	int r = vfs->read(fds[fd].path, n, fds[fd].offset, buf);
 	if (r < 0)
 		return 0;   // past EOF

@@ -33,6 +33,4 @@ public:
 	void initialize();
 
 };
-
-static void kb_handler(Registers reg);
 }
