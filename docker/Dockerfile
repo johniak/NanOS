@@ -47,6 +47,28 @@ RUN set -eux; \
 RUN apt-get update && apt-get install -y --no-install-recommends lcov \
     && rm -rf /var/lib/apt/lists/*
 
+# picolibc: a C library for the NanOS userland. Built as a SEPARATE static library
+# against the cross-gcc above (NOT a toolchain rebuild), so this trailing layer
+# never invalidates the expensive toolchain cache. Programs link libc.a + our thin
+# syscall glue; sbase cat/ls compile against picolibc's headers.
+ARG PICOLIBC_VERSION=1.8.6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        meson ninja-build python3 git \
+    && rm -rf /var/lib/apt/lists/*
+COPY picolibc-i686-elf.txt /tmp/picolibc-i686-elf.txt
+RUN set -eux; \
+    git clone --depth 1 --branch "${PICOLIBC_VERSION}" \
+        https://github.com/picolibc/picolibc /tmp/picolibc; \
+    cd /tmp/picolibc; \
+    meson setup build --cross-file /tmp/picolibc-i686-elf.txt \
+        -Dprefix=/opt/picolibc/i686-elf \
+        -Dincludedir=include -Dlibdir=lib \
+        -Dmultilib=false -Dpicocrt=false -Dpicolib=true -Dsemihost=false \
+        -Dtests=false -Dformat-default=integer -Dthread-local-storage=false; \
+    ninja -C build; \
+    ninja -C build install; \
+    cd /; rm -rf /tmp/picolibc /tmp/picolibc-i686-elf.txt
+
 # Marker the Makefile checks to know it is running inside the build container.
 RUN touch /etc/nanos-build
 
