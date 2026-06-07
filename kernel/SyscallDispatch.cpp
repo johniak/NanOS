@@ -1,5 +1,6 @@
 #include "SyscallDispatch.h"
 #include "Syscall.h"
+#include "Process.h"
 #include "Exec.h"
 #include <arch/syscall.h>
 #include <arch/input.h>
@@ -7,7 +8,6 @@
 
 namespace kernel {
 
-static Syscalls* g_sys = 0;
 static Vfs* g_vfs = 0;   // for SYS_spawn (load a child .nxe from the VFS)
 
 // Bounded copy of a user C-string into a kernel buffer (NUL-terminated).
@@ -29,6 +29,7 @@ static int consoleSink(const char* buf, unsigned len) {
 // arch trap (int 0x80 on x86) decodes registers and calls this.
 int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 	int ret = -38;   // -ENOSYS
+	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
 	switch (nr) {
 	case SYS_exit:
 		g_sys->exit((int) a0);
@@ -86,13 +87,16 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2) {
 }
 
 void installSyscalls(Vfs* vfs) {
-	g_sys = new Syscalls(vfs, consoleSink);
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);          // pid 1: the boot/init process
+	p->sys = new Syscalls(vfs, consoleSink);
+	ProcTable::setCurrent(p);
 	g_vfs = vfs;
 	arch::syscallInit();
 }
 
 Syscalls* kernelSyscalls() {
-	return g_sys;
+	return ProcTable::current()->sys;
 }
 
 } /* namespace kernel */
