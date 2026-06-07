@@ -27,7 +27,11 @@ static int reterr(int r) {
 
 int write(int fd, const void* b, int n) { return reterr(sys3(SYS_write, fd, (int) b, n)); }
 int read(int fd, void* b, int n)        { return reterr(sys3(SYS_read, fd, (int) b, n)); }
-int open(const char* p, int fl, ...)    { return reterr(sys3(SYS_open, (int) p, fl, 0)); }
+int open(const char* p, int fl, ...) {
+	char abs[256];
+	nx_resolve(p, abs);
+	return reterr(sys3(SYS_open, (int) abs, fl, 0));
+}
 int close(int fd)                       { return reterr(sys3(SYS_close, fd, 0, 0)); }
 int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off, wh)); }
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
@@ -70,8 +74,10 @@ static void fillstat(struct stat* o, const struct knl_stat* k) {
 	o->st_ino = k->ino;
 }
 int stat(const char* p, struct stat* o) {
+	char abs[256];
+	nx_resolve(p, abs);
 	struct knl_stat k;
-	int r = sys3(SYS_stat, (int) p, (int) &k, 0);
+	int r = sys3(SYS_stat, (int) abs, (int) &k, 0);
 	if (r < 0) { errno = -r; return -1; }
 	fillstat(o, &k);
 	return 0;

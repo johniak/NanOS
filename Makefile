@@ -140,14 +140,18 @@ _clean:
 # ----------------------------------------------------------------------------
 PICOLIBC=/opt/picolibc/i686-elf
 SBASE=user/third_party/sbase
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -Ikernel -Iuser -Iuser/libc-glue/include -I$(SBASE) -Wall -fno-pic -fno-stack-protector
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -Ikernel -Iuser -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
-# Shared per-program objects: startup, .nxe header, and the picolibc syscall glue.
-USER_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)syscalls.o
-# sbase libutil objects shared by the vendored coreutils.
-SBASE_UTIL=$(BINFOLDER)eprintf.o $(BINFOLDER)concat.o $(BINFOLDER)writeall.o
+# Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
+# the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
+USER_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o
+# Per-program libutil subsets and the libutf objects (ls needs UTF + dir/pwd glue).
+SBASE_UTIL_CAT=$(BINFOLDER)eprintf.o $(BINFOLDER)concat.o $(BINFOLDER)writeall.o
+SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarray.o $(BINFOLDER)human.o $(BINFOLDER)fshut.o
+LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
+GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs written into /bin (each builds bin/<name>.nxe).
-USER_PROGS=init cat
+USER_PROGS=init cat ls
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -159,7 +163,9 @@ _userland: _userland-glue _userland-sbase
 	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
 	$(call link_prog,init,$(BINFOLDER)init.o)
 	$(CXX) $(USER_CFLAGS) -c $(SBASE)/cat.c -o $(BINFOLDER)cat.o
-	$(call link_prog,cat,$(BINFOLDER)cat.o $(SBASE_UTIL))
+	$(call link_prog,cat,$(BINFOLDER)cat.o $(SBASE_UTIL_CAT))
+	$(CXX) $(USER_CFLAGS) -c $(SBASE)/ls.c -o $(BINFOLDER)ls.o
+	$(call link_prog,ls,$(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS))
 
 # Build the shared startup/header/glue objects once.
 _userland-glue:
@@ -167,12 +173,16 @@ _userland-glue:
 	nasm -f elf user/crt0.S -o $(BINFOLDER)crt0.o
 	$(CXX) $(USER_CFLAGS) -c user/nxhdr.c -o $(BINFOLDER)nxhdr.o
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/syscalls.c -o $(BINFOLDER)syscalls.o
+	$(CXX) $(USER_CFLAGS) -c user/libc-glue/cwd.c -o $(BINFOLDER)cwd.o
+	$(CXX) $(USER_CFLAGS) -c user/libc-glue/dirent.c -o $(BINFOLDER)dirent.o
+	$(CXX) $(USER_CFLAGS) -c user/libc-glue/pwd_grp.c -o $(BINFOLDER)pwd_grp.o
 
-# Build the vendored sbase libutil objects the coreutils link against.
+# Build the vendored sbase libutil + libutf objects the coreutils link against.
 _userland-sbase:
-	$(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/eprintf.c -o $(BINFOLDER)eprintf.o
-	$(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/concat.c -o $(BINFOLDER)concat.o
-	$(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/writeall.c -o $(BINFOLDER)writeall.o
+	for f in eprintf concat writeall ealloc reallocarray human fshut; do \
+	  $(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/$$f.c -o $(BINFOLDER)$$f.o || exit 1; done
+	for f in $(SBASE)/libutf/*.c; do \
+	  $(CXX) $(USER_CFLAGS) -c $$f -o $(BINFOLDER)$$(basename $$f .c).o || exit 1; done
 
 # ----------------------------------------------------------------------------
 # Host-compiled test suite (doctest) + coverage gate.
