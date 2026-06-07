@@ -19,7 +19,12 @@ enum PageFlags { PAGE_PRESENT = 1, PAGE_WRITE = 2, PAGE_USER = 4 };
 // load the directory and enable paging.
 void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam);
 
-// --- forward-looking: per-process address spaces (defined with the ring-3 work) ---
+// Physical address of the kernel page directory (for building per-process
+// directories that share the kernel half, and for switching back on exit).
+uint32_t mmuKernelDirPhys();
+
+// Per-process address spaces. mmuCreateAddressSpace returns a space that shares
+// the kernel half and has a private (initially empty) user window.
 struct AddressSpace;
 AddressSpace* mmuCreateAddressSpace();
 void mmuMap(AddressSpace*, uint32_t va, uint32_t pa, uint32_t flags);

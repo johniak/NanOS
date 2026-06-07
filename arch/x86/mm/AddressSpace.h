@@ -28,6 +28,13 @@ public:
 	void unmap(uint32_t va);                              // clear the PTE (keep the PT)
 	bool mapRange(uint32_t va, uint32_t pa, uint32_t len, uint32_t flags);
 
+	// Copy all 1024 page-directory entries from another directory (the kernel's)
+	// into this one — sharing every kernel page table — then clear the PDE
+	// covering `userVa` so a later map() of that region allocates a fresh PRIVATE
+	// page table instead of mutating the shared kernel one. Builds a per-process
+	// space: kernel half shared (supervisor), user window private.
+	void adoptKernelDirectory(uint32_t kernelDirPhys, uint32_t userVa);
+
 	// Physical|offset for a mapped VA, or 0xFFFFFFFF if not mapped.
 	uint32_t translate(uint32_t va) const;
 	uint32_t directoryPhys() const { return m_dirPhys; }

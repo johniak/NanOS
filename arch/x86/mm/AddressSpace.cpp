@@ -42,6 +42,14 @@ void AddressSpace::unmap(uint32_t va) {
 	pt[ptIndex(va)] = 0;
 }
 
+void AddressSpace::adoptKernelDirectory(uint32_t kernelDirPhys, uint32_t userVa) {
+	uint32_t* dst = dir();
+	uint32_t* src = (uint32_t*) m_env.physToVirt(m_env.ctx, kernelDirPhys);
+	for (int i = 0; i < 1024; i++)
+		dst[i] = src[i];
+	dst[pdIndex(userVa)] = 0;   // drop the user-window PDE -> private PT on next map()
+}
+
 bool AddressSpace::mapRange(uint32_t va, uint32_t pa, uint32_t len, uint32_t flags) {
 	uint32_t pages = (len + FRAME_SIZE - 1) / FRAME_SIZE;
 	for (uint32_t p = 0; p < pages; p++)

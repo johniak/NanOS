@@ -112,3 +112,29 @@ TEST_CASE("map fails when a page table cannot be allocated (OOM)") {
 	CHECK(as.directoryPhys() != 0);
 	CHECK(!as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW));   // PT alloc returns 0
 }
+
+TEST_CASE("adoptKernelDirectory shares the kernel half, privatizes the user window") {
+	FakeMem* m = makeMem();
+	// "kernel" space: map a kernel page (PDE 0) and a page in the user window's
+	// PDE 1 range above the window (e.g. 0x700000) to prove the shared PT is kept.
+	AddressSpace kern(envOf(m));
+	kern.map(0x100000, 0x100000, PTE_PRESENT | PTE_RW);   // PDE 0
+	kern.map(0x400000, 0x222000, PTE_PRESENT | PTE_RW);   // PDE 1 (kernel's view)
+
+	AddressSpace proc(envOf(m));                          // same arena
+	proc.adoptKernelDirectory(kern.directoryPhys(), 0x400000);
+
+	// Kernel half shared: a kernel VA still translates through the copied PDE.
+	CHECK(proc.translate(0x100000) == 0x100000u);
+	// User window PDE cleared: 0x400000 is now unmapped in the process.
+	CHECK(proc.translate(0x400000) == 0xFFFFFFFFu);
+
+	// Mapping the user window allocates exactly one fresh private page table...
+	int before = m->allocCount;
+	proc.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW | PTE_USER);
+	CHECK(m->allocCount == before + 1);
+	CHECK(proc.translate(0x400000) == 0xAB000u);
+	CHECK(pteFlags(m, proc, 0x400000) == (PTE_PRESENT | PTE_RW | PTE_USER));
+	// ...and the kernel's own user-window mapping is untouched (private PT).
+	CHECK(kern.translate(0x400000) == 0x222000u);
+}
