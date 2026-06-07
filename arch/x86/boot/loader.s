@@ -1,5 +1,3 @@
-.global loader                          # making entry point visible to linker
-
 # setting up the Multiboot header - see GRUB docs for details
 .set ALIGN,    1<<0                     # align loaded modules on page boundaries
 .set MEMINFO,  1<<1                     # provide memory map
@@ -7,11 +5,17 @@
 .set MAGIC,    0x1BADB002               # 'magic number' lets bootloader find the header
 .set CHECKSUM, -(MAGIC + FLAGS)         # checksum required
 
+# The header lives in its own section so the linker script can place it at the
+# very start of the image, independent of object link order (GRUB scans only the
+# first 8 KiB for the magic).
+.section .multiboot, "a"
 .align 4
 .long MAGIC
 .long FLAGS
 .long CHECKSUM
 
+.text
+.global loader                          # making entry point visible to linker
 
 # reserve initial kernel stack space
 stack_bottom:

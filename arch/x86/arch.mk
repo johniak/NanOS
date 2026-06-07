@@ -9,12 +9,12 @@
 
 CROSS ?= i686-elf-
 
-# NOTE: during the MI/MD split the x86 sources still live in their original dirs;
-# ARCH_VPATH/ARCH_INCLUDES point there and migrate to arch/x86/{boot,cpu,mm,drivers}
-# step by step. ARCH_SOURCES already reflects the final MD partition.
-ARCH_VPATH=arch
-ARCH_INCLUDES=-Iarch
-ARCH_LINKER=linker.ld
+# The CPU/boot/asm sources now live under arch/x86/{boot,cpu,drivers}; the
+# mm/multiboot and remaining PC-driver sources migrate here in later steps (until
+# then they are found via the MI VPATH dirs: mm/, drivers/, kernel/).
+ARCH_VPATH=arch/x86/boot:arch/x86/cpu:arch/x86/drivers
+ARCH_INCLUDES=-Iarch/x86/boot -Iarch/x86/cpu -Iarch/x86/drivers
+ARCH_LINKER=arch/x86/linker.ld
 
 ARCH_SOURCES=loader.o Gdt.o Idt.o Interrupt.o IOPort.o irq.o isr.o nxjmp.o
 ARCH_SOURCES+= MultibootMmap.o AddressSpace.o
