@@ -151,7 +151,7 @@ SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarra
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs written into /bin (each builds bin/<name>.nxe).
-USER_PROGS=init cat ls
+USER_PROGS=nsh cat ls
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -160,8 +160,8 @@ define link_prog
 endef
 
 _userland: _userland-glue _userland-sbase
-	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
-	$(call link_prog,init,$(BINFOLDER)init.o)
+	$(CXX) $(USER_CFLAGS) -c user/nsh.c -o $(BINFOLDER)nsh.o
+	$(call link_prog,nsh,$(BINFOLDER)nsh.o)
 	$(CXX) $(USER_CFLAGS) -c $(SBASE)/cat.c -o $(BINFOLDER)cat.o
 	$(call link_prog,cat,$(BINFOLDER)cat.o $(SBASE_UTIL_CAT))
 	$(CXX) $(USER_CFLAGS) -c $(SBASE)/ls.c -o $(BINFOLDER)ls.o

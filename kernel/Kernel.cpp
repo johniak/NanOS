@@ -64,16 +64,12 @@ void Kernel::start() {
 	installSyscalls(vfs);
 	arch::syscallSelfTest();
 
-	// Load and run the userspace program (.nxe) twice in a row to confirm the
-	// single-process exec mechanism cleanly re-runs after a program exits.
-	for (int run = 1; run <= 2; run++) {
-		Console::write("--- exec /bin/init.nxe (run ");
-		Console::write(run);
-		Console::writeLine(") ---");
-		int rc = execProgram(vfs, "/bin/init.nxe");
-		Console::write("init.nxe exited with code ");
-		Console::writeLine(rc);
-	}
+	// Launch the interactive shell. It reads commands from the keyboard and spawns
+	// /bin/<cmd>.nxe programs (cat, ls, ...) until the user types `exit`.
+	Console::writeLine("--- starting /bin/nsh.nxe ---");
+	int rc = execProgram(vfs, "/bin/nsh.nxe");
+	Console::write("nsh exited with code ");
+	Console::writeLine(rc);
 
 	// Multitasking is experimental/incomplete (no /init.bin, debug-printing
 	// scheduler). Disabled for now so the kernel runs a clean main loop.
