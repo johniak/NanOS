@@ -17,7 +17,11 @@ IMAGE_GRUB2=disk/image-grub2.img
 IMAGE_GRUB2_PART=$(IMAGE_GRUB2)?offset=1048576
 
 DOCKER_IMAGE=nanos-build
-DOCKER_RUN=docker run --rm --platform linux/amd64 -v $(CURDIR):/src -w /src $(DOCKER_IMAGE)
+# Build the image for the host's NATIVE architecture (no --platform): the i686-elf cross
+# toolchain and all image tools are arch-agnostic, so on Apple Silicon this runs natively
+# instead of under QEMU amd64 emulation — the single biggest build speedup. The output
+# (i686 kernel + i386-pc GRUB image) is identical regardless of build-host arch.
+DOCKER_RUN=docker run --rm -v $(CURDIR):/src -w /src $(DOCKER_IMAGE)
 
 ifeq ($(wildcard /etc/nanos-build),)
 # ============================================================================
@@ -25,7 +29,7 @@ ifeq ($(wildcard /etc/nanos-build),)
 # ============================================================================
 
 docker-image:
-	docker build --platform linux/amd64 -t $(DOCKER_IMAGE) docker/
+	docker build -t $(DOCKER_IMAGE) docker/
 
 build: docker-image
 	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _all'

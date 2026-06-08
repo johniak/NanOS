@@ -13,14 +13,28 @@ ARG PREFIX=/opt/cross
 
 ENV PATH="${PREFIX}/bin:${PATH}"
 
-# Runtime + build dependencies.
+# Runtime + build dependencies. grub-pc-bin (the i386-pc BIOS GRUB) is amd64/i386 only,
+# so it's fetched separately below (its files are target data, not host binaries).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates wget make \
         build-essential bison flex texinfo \
         libgmp-dev libmpc-dev libmpfr-dev \
-        nasm grub-pc-bin grub-common xorriso mtools \
+        nasm grub-common xorriso mtools \
         e2fsprogs parted \
     && rm -rf /var/lib/apt/lists/*
+
+# The i386-pc GRUB modules (boot.img + *.mod) live in grub-pc-bin, which Debian only
+# packages for amd64/i386 — but the files are i386 target data that grub-common's
+# grub-mkimage uses on ANY host. Fetch the amd64 .deb and drop its /usr/lib/grub/i386-pc
+# into place so the bootable image builds whether the container is amd64 or arm64.
+RUN set -eux; cd /tmp; \
+    dpkg --add-architecture amd64; \
+    apt-get update; \
+    apt-get download grub-pc-bin:amd64; \
+    dpkg-deb -x grub-pc-bin*.deb /tmp/grubpc; \
+    mkdir -p /usr/lib/grub; \
+    cp -r /tmp/grubpc/usr/lib/grub/i386-pc /usr/lib/grub/; \
+    rm -rf /tmp/grubpc grub-pc-bin*.deb /var/lib/apt/lists/*
 
 # Build binutils, then gcc (all-gcc + libgcc only — freestanding kernel).
 RUN set -eux; \
