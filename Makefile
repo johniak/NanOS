@@ -182,7 +182,11 @@ GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
 USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll doom
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
-USER_LIBS_NDL=greet.ndl
+USER_LIBS_NDL=greet.ndl libc.ndl
+# Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
+# the C library (picolibc + syscall/cwd/signal glue + the signal trampoline) now lives in
+# libc.ndl, pulled in by name via the import library instead of static-linked.
+DYN_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o
 
 # Userland objects build via per-source-dir pattern rules — only CHANGED files recompile
 # (the old recipe recompiled all ~30 programs+glue every build), and -MMD tracks header
@@ -219,7 +223,6 @@ $(BINFOLDER)%.nxe: $(MKNX)
 
 # Per-program object sets (USER_GLUE is shared). Doom has its own rule (it needs -lm).
 $(BINFOLDER)init.nxe:      $(USER_GLUE) $(BINFOLDER)init.o
-$(BINFOLDER)nsh.nxe:       $(USER_GLUE) $(BINFOLDER)nsh.o
 $(BINFOLDER)cat.nxe:       $(USER_GLUE) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
 $(BINFOLDER)ls.nxe:        $(USER_GLUE) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS)
 $(BINFOLDER)sigtest.nxe:   $(USER_GLUE) $(BINFOLDER)sigtest.o
@@ -228,7 +231,6 @@ $(BINFOLDER)timetest.nxe:  $(USER_GLUE) $(BINFOLDER)timetest.o
 $(BINFOLDER)brktest.nxe:   $(USER_GLUE) $(BINFOLDER)brktest.o
 $(BINFOLDER)inputtest.nxe: $(USER_GLUE) $(BINFOLDER)inputtest.o
 $(BINFOLDER)fstest.nxe:    $(USER_GLUE) $(BINFOLDER)fstest.o
-$(BINFOLDER)free.nxe:      $(USER_GLUE) $(BINFOLDER)free.o
 
 # ---- Stage-2 dynamic-linking demo: greet.ndl (shared lib) + usedll (imports from it) ----
 $(BINFOLDER)greet.o: user/lib/greet.c
@@ -250,6 +252,58 @@ $(BINFOLDER)greet.ndl: $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o $(MKNX)
 $(BINFOLDER)usedll.nxe: $(USER_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(USER_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(USER_LIBS)
 	$(MKNX) $(BINFOLDER)usedll.elf $@ --need greet.ndl
+
+# ---- Stage 3: the shared C library libc.ndl + its import library ----
+# libc.ndl bundles picolibc + the syscall/cwd porting glue into ONE relocatable shared
+# library exporting the C API, linked at the .ndl preferred base (the loader relocates it
+# per process). We do NOT --whole-archive picolibc: that would pull its own sbrk/signal
+# (clashing with our kernel-backed glue) and objects needing unimplemented syscalls
+# (getentropy/sigprocmask). Instead our glue overrides sbrk/signal and a curated
+# --undefined list force-includes the public functions programs use (their transitive
+# deps come along automatically); whatever is pulled becomes the exported API.
+# The signal/sigreturn glue + its trampoline live in libc.ndl (our `signal` overrides
+# picolibc's, which would need sigprocmask). `abort`/`raise` are deliberately NOT forced:
+# picolibc's signal.c defines both raise AND signal, so pulling them would clash with our
+# signal.
+LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o
+LIBC_FORCE=printf fprintf snprintf vsnprintf sprintf vfprintf fputs fputc puts putchar \
+  fwrite fread fopen fclose fflush fgets fgetc perror \
+  malloc free calloc realloc \
+  memcpy memmove memset memcmp memchr \
+  strlen strnlen strcmp strncmp strcpy strncpy strcat strncat strchr strrchr strstr \
+  strdup strerror strtok strspn strcspn strpbrk \
+  atoi atol strtol strtoul qsort abs labs \
+  exit
+LIBC_UNDEF=$(foreach s,$(LIBC_FORCE),-Wl,--undefined=$(s))
+$(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o \
+	  $(LIBC_GLUE_OBJS) $(LIBC_UNDEF) -L$(PICOLIBC)/lib -lc -lgcc
+$(BINFOLDER)libc.ndl: $(BINFOLDER)libc.elf $(MKNX)
+	$(MKNX) $(BINFOLDER)libc.elf $@ --dll --export-all
+
+# Import library: a `name: jmp [__imp_name]` thunk + IAT slot per libc.ndl function export
+# (generated assembly). A program links this instead of static picolibc; mknx derives the
+# program's import table from the __imp_ slots the linker keeps.
+$(BINFOLDER)libc_import.s: $(BINFOLDER)libc.elf $(MKNX)
+	$(MKNX) $(BINFOLDER)libc.elf $@ --implib --export-all
+$(BINFOLDER)libc_import.o: $(BINFOLDER)libc_import.s
+	nasm -f elf $< -o $@
+
+# Dynamically-linked programs: startup glue + the import library, NO static libc; each
+# declares "needed: libc.ndl" so the loader maps libc.ndl and binds the imports by name.
+# `link-dyn` = link the program objects ($2) into $1.elf with the import lib, then mknx it.
+# Only function-only programs migrate cleanly here: a program that references stdio data
+# symbols (stdout/stderr/stdin, errno) directly needs dllimport-style indirection we don't
+# emit, so those (cat/ls/doom) stay statically linked for now.
+define link-dyn
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)$(1).elf $(DYN_GLUE) $(2) $(BINFOLDER)libc_import.o -lgcc
+	$(MKNX) $(BINFOLDER)$(1).elf $(BINFOLDER)$(1).nxe --need libc.ndl
+endef
+
+$(BINFOLDER)free.nxe: $(DYN_GLUE) $(BINFOLDER)free.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
+	$(call link-dyn,free,$(BINFOLDER)free.o)
+$(BINFOLDER)nsh.nxe:  $(DYN_GLUE) $(BINFOLDER)nsh.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
+	$(call link-dyn,nsh,$(BINFOLDER)nsh.o)
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
