@@ -15,6 +15,8 @@
 #define SYS_open 5
 #define SYS_close 6
 #define SYS_waitpid 7
+#define SYS_unlink 10
+#define SYS_mkdir 39
 #define SYS_execve 11
 #define SYS_lseek 19
 #define SYS_brk 45

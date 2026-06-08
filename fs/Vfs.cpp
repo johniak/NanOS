@@ -151,4 +151,28 @@ int Vfs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
 	return fs->mmapInfo(rel, physOut, lenOut);
 }
 
+int Vfs::create(String path, unsigned mode) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->create(rel, mode);
+}
+
+int Vfs::unlink(String path) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->unlink(rel);
+}
+
+int Vfs::mkdir(String path, unsigned mode) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->mkdir(rel, mode);
+}
+
 }

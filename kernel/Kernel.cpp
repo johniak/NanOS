@@ -7,6 +7,7 @@
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
 #include "SynthFs.h"
+#include "RamFs.h"
 #include "Fbdev.h"
 #include "Fb0Device.h"
 #include "Scheduler.h"
@@ -165,6 +166,12 @@ void Kernel::start() {
 	vfs->mount("/", root);
 	okBegin("Mounting ext filesystem at /disks/main");
 	mountVolume(vfs, root, "main", hd0, 2048);
+	okEnd();
+
+	// Writable in-memory filesystem (tmpfs) at /tmp, the Unix way to give programs a
+	// place to write transient files (e.g. Doom's config + savegames). Cleared on reboot.
+	okBegin("Mounting tmpfs at /tmp");
+	vfs->mount("/tmp", new RamFs());
 	okEnd();
 
 	// Expose the framebuffer as Linux /dev/fb0 (fbdev ioctls + mmap + read/write) so

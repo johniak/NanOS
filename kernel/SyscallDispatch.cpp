@@ -69,6 +69,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_close:
 		ret = g_sys->close(a0);
 		break;
+	case SYS_unlink:
+		ret = g_sys->unlink(String((char*) a0));
+		break;
+	case SYS_mkdir:
+		ret = g_sys->mkdir(String((char*) a0), (int) a1);
+		break;
 	case SYS_lseek:
 		ret = g_sys->lseek(a0, a1, a2);
 		break;

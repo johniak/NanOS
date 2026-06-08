@@ -24,9 +24,22 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	}
 }
 
-int Syscalls::open(String path, int /*flags*/) {
+int Syscalls::open(String path, int flags) {
 	FileStat st;
-	if (vfs->stat(path, st) < 0)
+	bool exists = vfs->stat(path, st) >= 0;
+	// O_CREAT (and O_TRUNC) ask the filesystem to make-or-truncate the file. On a
+	// read-only fs create() returns -EROFS; if the file already exists we ignore that
+	// and open it read-only, otherwise the open fails.
+	if (flags & (O_CREAT | O_TRUNC)) {
+		int cr = vfs->create(path, 0644);
+		if (cr == 0) {
+			st.size = 0;
+			exists = true;
+		} else if (!exists) {
+			return cr < 0 ? cr : -ENOENT;
+		}
+	}
+	if (!exists)
 		return -ENOENT;
 	for (int fd = 3; fd < MAXFD; fd++) {
 		if (!fds[fd].used) {
@@ -35,7 +48,7 @@ int Syscalls::open(String path, int /*flags*/) {
 			fds[fd].path = path;
 			fds[fd].offset = 0;
 			fds[fd].size = st.size;
-			fds[fd].flags = 0;
+			fds[fd].flags = (unsigned) flags;
 			return fd;
 		}
 	}
@@ -71,8 +84,11 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
 	// (e.g. /dev/fb0) accepts the write.
 	int r = vfs->write(fds[fd].path, n, fds[fd].offset, buf);
-	if (r > 0)
+	if (r > 0) {
 		fds[fd].offset += (unsigned) r;
+		if (fds[fd].offset > fds[fd].size)   // track growth so SEEK_END/fstat stay correct
+			fds[fd].size = fds[fd].offset;
+	}
 	return r;
 }
 
@@ -170,6 +186,14 @@ int Syscalls::ioctl(int fd, unsigned cmd, void* arg) {
 	if (fds[fd].isConsole)
 		return -EINVAL;          // no console ioctls (yet)
 	return vfs->ioctl(fds[fd].path, cmd, arg);
+}
+
+int Syscalls::unlink(String path) {
+	return vfs->unlink(path);
+}
+
+int Syscalls::mkdir(String path, int mode) {
+	return vfs->mkdir(path, (unsigned) mode);
 }
 
 int Syscalls::fcntl(int fd, int cmd, int arg) {

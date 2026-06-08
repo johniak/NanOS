@@ -35,15 +35,21 @@ void free(void *ptr){
 	//hehe
 }
 void *realloc(void *ptr, size_t size){
-	AlocatedStruct al;
+	// C standard: realloc(NULL, size) == malloc(size).
+	if(!ptr)
+		return malloc(size);
+	// Find the old allocation's length; 0 if we never recorded it (so we never copy a
+	// garbage length from an uninitialized struct — the original bug this fixes).
+	int oldLen = 0;
 	for(int i=0;i<allocatedIndex;i++){
 		if(alocated[i].start==ptr){
-			al=alocated[i];
+			oldLen = alocated[i].lenght;
 			break;
 		}
 	}
-	void* newPtr =malloc(size);
-	memcpy(newPtr,ptr,al.lenght);
+	void* newPtr = malloc(size);
+	unsigned copy = (unsigned) oldLen < (unsigned) size ? (unsigned) oldLen : (unsigned) size;
+	memcpy(newPtr, ptr, copy);
 	return newPtr;
 }
 

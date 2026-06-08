@@ -128,6 +128,7 @@ SynthFs::SynthFs() {
 	m_disks = addDir(root, "disks");
 	m_dev = addDir(root, "dev");
 	m_proc = addDir(root, "proc");
+	addDir(root, "tmp");        // marker so `ls /` shows /tmp; the tmpfs mounts over it
 
 	addGen(m_dev, "null", gen_null, 0666);
 	addGen(m_dev, "zero", gen_zero, 0666);

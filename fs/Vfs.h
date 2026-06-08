@@ -38,6 +38,12 @@ public:
 	virtual int write(String, unsigned, unsigned, const void*) { return -30; }  // -EROFS
 	virtual int ioctl(String, unsigned, void*) { return -22; }                  // -EINVAL
 	virtual int mmapInfo(String, unsigned*, unsigned*) { return -22; }          // -EINVAL
+
+	// Write extensions. Default to read-only (-EROFS); a writable fs (RamFs/tmpfs)
+	// overrides them. create() makes-or-truncates a regular file.
+	virtual int create(String, unsigned) { return -30; }                        // -EROFS
+	virtual int unlink(String) { return -30; }                                  // -EROFS
+	virtual int mkdir(String, unsigned) { return -30; }                         // -EROFS
 };
 
 // Factory registered by type name; creates a FileSystem for a device.
@@ -79,6 +85,9 @@ public:
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
+	int create(String path, unsigned mode);
+	int unlink(String path);
+	int mkdir(String path, unsigned mode);
 };
 
 }

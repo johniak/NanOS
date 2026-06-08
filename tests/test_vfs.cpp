@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "Vfs.h"
+#include "RamFs.h"
 #include <cstring>
 
 using namespace kernel;
@@ -155,4 +156,26 @@ TEST_CASE("Vfs mounts a pre-built FileSystem (no device/type) and routes to it")
 	char buf[8];
 	CHECK(vfs.read("/dev/random", 1, 0, buf) == 7);
 	CHECK(strcmp(root.received, "/dev/random") == 0);
+}
+
+TEST_CASE("Vfs routes writes to a tmpfs mount; a read-only mount stays -EROFS") {
+	Vfs vfs;
+	FakeFS root(1);                  // read-only fs (no write/create override)
+	RamFs tmp;
+	CHECK(vfs.mount("/", &root) == 0);
+	CHECK(vfs.mount("/tmp", &tmp) == 0);
+
+	// A write/create under /tmp lands in the tmpfs (longest-prefix routing strips /tmp).
+	CHECK(vfs.create("/tmp/save.dsg", 0644) == 0);
+	const char* data = "savegame";
+	CHECK(vfs.write("/tmp/save.dsg", 8, 0, data) == 8);
+	char buf[16] = {0};
+	CHECK(vfs.read("/tmp/save.dsg", 16, 0, buf) == 8);
+	CHECK(strncmp(buf, "savegame", 8) == 0);
+	CHECK(vfs.mkdir("/tmp/d", 0755) == 0);
+
+	// The read-only root rejects writes/creates with -EROFS (the FileSystem default).
+	CHECK(vfs.write("/etc/x", 1, 0, data) == -30);
+	CHECK(vfs.create("/etc/x", 0644) == -30);
+	CHECK(vfs.mkdir("/etc", 0755) == -30);
 }

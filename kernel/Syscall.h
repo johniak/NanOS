@@ -29,6 +29,8 @@ namespace kernel {
 #define F_GETFL 3
 #define F_SETFL 4
 #define O_NONBLOCK 0x4000
+#define O_CREAT 0x40
+#define O_TRUNC 0x200
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
@@ -79,6 +81,8 @@ public:
 	int lseek(int fd, int off, int whence);
 	int stat(String path, LinuxStat* out);
 	int fstat(int fd, LinuxStat* out);
+	int unlink(String path);              // remove a file (writable fs only)
+	int mkdir(String path, int mode);     // create a directory (writable fs only)
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL (O_NONBLOCK)

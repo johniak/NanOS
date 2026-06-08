@@ -46,6 +46,16 @@ int fcntl(int fd, int cmd, ...) {
 	return reterr(sys3(SYS_fcntl, fd, cmd, arg));
 }
 int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off, wh)); }
+int unlink(const char* p) {
+	char abs[256];
+	nx_resolve(p, abs);
+	return reterr(sys3(SYS_unlink, (int) abs, 0, 0));
+}
+int mkdir(const char* p, mode_t mode) {
+	char abs[256];
+	nx_resolve(p, abs);
+	return reterr(sys3(SYS_mkdir, (int) abs, (int) mode, 0));
+}
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
 int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; }
 int getpid(void)                        { return 1; }

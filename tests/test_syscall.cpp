@@ -4,6 +4,7 @@
 #include "Ext2Filesystem.h"
 #include "RamBlockDevice.h"
 #include "SynthFs.h"
+#include "RamFs.h"
 #include "CharDevice.h"
 #include <cstdio>
 #include <cstring>
@@ -213,6 +214,40 @@ TEST_CASE("clockGettime splits a millisecond tick count into sec/nsec") {
 	CHECK(ts.tv_sec == 0);
 	CHECK(ts.tv_nsec == 999000000);
 	CHECK(sc.clockGettime(0, 0, nullptr) == -EINVAL);
+}
+
+TEST_CASE("sys open(O_CREAT)+write+lseek+read on a writable tmpfs mount") {
+	// A Vfs with a writable RamFs at root (mirrors /tmp). Heap-allocated so the mount
+	// registry keeps a valid pointer for the test's lifetime.
+	Vfs* vfs = new Vfs();
+	vfs->mount("/", new RamFs());
+	Syscalls sc(vfs, sink);
+
+	// O_WRONLY|O_CREAT|O_TRUNC (== fopen "w"): create then write.
+	int fd = sc.open(String("/cfg"), O_CREAT | O_TRUNC | 1);
+	CHECK(fd >= 3);
+	const char* data = "doomcfg";
+	CHECK(sc.write(fd, data, 7) == 7);
+	CHECK(sc.close(fd) == 0);
+
+	// Reopen read-only and read it back.
+	int rd = sc.open(String("/cfg"), 0);
+	CHECK(rd >= 3);
+	char buf[16] = {0};
+	CHECK(sc.read(rd, buf, 16) == 7);
+	CHECK(strncmp(buf, "doomcfg", 7) == 0);
+	// lseek + partial read.
+	CHECK(sc.lseek(rd, 4, SEEK_SET) == 4);
+	CHECK(sc.read(rd, buf, 16) == 3);
+	CHECK(strncmp(buf, "cfg", 3) == 0);
+	sc.close(rd);
+
+	// open without O_CREAT on a missing path still fails.
+	CHECK(sc.open(String("/missing"), 0) == -ENOENT);
+	// unlink + mkdir route through.
+	CHECK(sc.unlink(String("/cfg")) == 0);
+	CHECK(sc.open(String("/cfg"), 0) == -ENOENT);
+	CHECK(sc.mkdir(String("/d"), 0755) == 0);
 }
 
 TEST_CASE("fcntl gets/sets the file status flags (O_NONBLOCK)") {
