@@ -11,11 +11,19 @@
 #include "Paging.h"
 #include "PagingControl.h"
 #include "FrameAllocator.h"
+#include <string.h>
 
 // Linker symbol marking the end of the kernel image (arch/x86/linker.ld).
 extern char end;
 
 namespace {
+
+// Anonymous user heap window: 0x20000000 (PDE 128) up to +32 MiB (PDE 135). Above RAM
+// (128 MiB) and the framebuffer window (0x10000000, PDE 64), so it is private per process
+// and needs no identity-map coverage. 32 MiB comfortably holds Doom's 6 MiB zone + WAD
+// caching + screen buffer.
+const uint32_t NX_BRK_BASE = 0x20000000;
+const uint32_t NX_BRK_MAX  = NX_BRK_BASE + 32u * 1024u * 1024u;
 
 kernel::FrameAllocator* g_fa = 0;
 uint32_t allocFrame(void*) { return g_fa->alloc(); }
@@ -92,18 +100,25 @@ void mmuDestroyAddressSpace(AddressSpace* s) { mmuFreeAddressSpace(s); }
 void mmuFreeAddressSpace(AddressSpace* s) {
 	if (!s)
 		return;
-	// Free only the PRIVATE parts: the user-window page table + its frames, and the
-	// directory. The kernel-half PDEs alias shared kernel page tables — leave them.
+	// Free only the PRIVATE parts: the user-window page table + its frames, the heap
+	// PDEs (anonymous RAM, so freeUserWindow's frame-free is correct), and the directory.
+	// The kernel-half PDEs alias shared kernel page tables — leave them. The framebuffer
+	// window (0x10000000) is MMIO and is intentionally NOT freed here.
 	s->impl.freeUserWindow(0x400000);
+	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
+		s->impl.freeUserWindow(va);   // no-op for PDEs the heap never grew into
 	g_fa->free(s->impl.directoryPhys());
 	delete s;
 }
 
 AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	AddressSpace* s = new AddressSpace(g_env);
-	// Share the kernel half, private (empty) user window, then copy the user pages.
+	// Share the kernel half, private (empty) user window, then copy the user pages and
+	// every populated heap PDE (fork duplicates the heap, as a Unix child expects).
 	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x400000);
 	s->impl.copyUserWindowFrom(src->impl, 0x400000);
+	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
+		s->impl.copyUserWindowFrom(src->impl, va);
 	return s;
 }
 
@@ -124,6 +139,43 @@ uint32_t mmuMapUserFb(AddressSpace* s, uint32_t fbPhys, uint32_t bytes) {
 			kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_USER);
 	kernel::loadCr3(saved);
 	return ok ? FB_USER_VA + off : 0;
+}
+
+uint32_t mmuUserHeapBase() { return NX_BRK_BASE; }
+uint32_t mmuUserHeapMax()  { return NX_BRK_MAX; }
+
+int mmuSetUserBrk(AddressSpace* s, uint32_t oldBrk, uint32_t newBrk) {
+	// Map (grow) or unmap (shrink) whole pages between the two break values. The break is
+	// byte-granular but the mapping is page-granular, so round both ends up: the mapped
+	// region is always [NX_BRK_BASE, pageUp(brk)).
+	uint32_t oldTop = (oldBrk + 0xFFFu) & ~0xFFFu;
+	uint32_t newTop = (newBrk + 0xFFFu) & ~0xFFFu;
+	// Allocating/zeroing fresh page-table and data frames touches arbitrary RAM by
+	// identity, which is only safe under the kernel directory (same trap as mmuMapUserFb).
+	uint32_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	int rc = 0;
+	if (newTop > oldTop) {
+		for (uint32_t va = oldTop; va < newTop; va += 0x1000) {
+			uint32_t f = g_fa->alloc();
+			if (!f) { rc = -1; break; }
+			memset((void*) f, 0, 0x1000);
+			if (!s->impl.map(va, f, kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_USER)) {
+				g_fa->free(f);
+				rc = -1;
+				break;
+			}
+		}
+	} else if (newTop < oldTop) {
+		for (uint32_t va = newTop; va < oldTop; va += 0x1000) {
+			uint32_t pa = s->impl.translate(va);
+			s->impl.unmap(va);
+			if (pa != 0xFFFFFFFFu)
+				g_fa->free(pa);
+		}
+	}
+	kernel::loadCr3(saved);   // CR3 reload flushes the TLB so the new PTEs are live
+	return rc;
 }
 
 }  // namespace arch

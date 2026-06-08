@@ -30,6 +30,11 @@ struct Process {
 	char comm[16];       // short name (Linux `comm`)
 	char cmdline[128];   // full command line (argv joined by spaces)
 
+	// brk/sbrk heap (the growable anonymous region at a high VA; see arch mmuSetUserBrk).
+	unsigned brkBase;    // fixed start of the heap window (== current break when empty)
+	unsigned brkCur;     // current program break
+	unsigned brkMax;     // hard ceiling (brkBase + cap)
+
 	// Signals + job control.
 	SignalState sig;     // pending/blocked masks + disposition table
 	bool stopped;        // job-control stopped (its task is TASK_STOPPED)

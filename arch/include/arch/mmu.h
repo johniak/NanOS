@@ -57,4 +57,15 @@ uint32_t mmuSpaceDirPhys(AddressSpace*);
 // user virtual address of the framebuffer, or 0 on failure. Used by mmap of /dev/fb0.
 uint32_t mmuMapUserFb(AddressSpace*, uint32_t fbPhys, uint32_t bytes);
 
+// Growable anonymous user heap (the brk/sbrk region). It lives at a fixed high VA,
+// above RAM and the framebuffer window, so it is independent of the 4 MiB user window.
+// mmuUserHeapBase/Max bound it; mmuSetUserBrk grows (maps fresh zeroed USER|RW frames)
+// or shrinks (unmaps + frees) the mapping between two break values. Page-granular: the
+// break itself can be byte-granular, the mapping rounds to whole pages. Returns 0 on
+// success, -1 on out-of-memory. The teardown/fork of these PDEs is handled inside
+// mmuFreeAddressSpace / mmuCopyAddressSpace.
+uint32_t mmuUserHeapBase();
+uint32_t mmuUserHeapMax();
+int mmuSetUserBrk(AddressSpace*, uint32_t oldBrk, uint32_t newBrk);
+
 }

@@ -125,13 +125,20 @@ void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
 	return (void*) r;
 }
 
-/* Single fixed heap window, mapped by the kernel at exec time: [0x480000,0x4F0000). */
+/* brk(2)/sbrk(2): the heap is a growable high-VA region the kernel maps on demand (see
+ * kernel SYS_brk / arch mmuSetUserBrk). brk(0) reports the current break; brk(addr) sets
+ * it and returns the resulting break (the OLD break on failure). sbrk tracks the break in
+ * userland and grows/shrinks via brk. picolibc's malloc sits directly on top of this. */
+static char* nx_brk(char* addr) { return (char*) sys3(SYS_brk, (int) addr, 0, 0); }
 void* sbrk(int incr) {
-	static char* cur = (char*) 0x480000;   /* NX_HEAP_BASE */
-	char* top = (char*) 0x4F0000;          /* just below the user stack window */
-	if (cur + incr > top) { errno = ENOMEM; return (void*) -1; }
+	static char* cur = 0;
+	if (!cur)
+		cur = nx_brk(0);                   /* learn the initial break (NX_BRK_BASE) */
+	char* want = cur + incr;
+	char* got = nx_brk(want);
+	if (got != want) { errno = ENOMEM; return (void*) -1; }
 	char* prev = cur;
-	cur += incr;
+	cur = want;
 	return prev;
 }
 

@@ -119,6 +119,20 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		ret = execve(g_vfs, pathBuf, argPtrs, argc, tf);   // on success rewrites tf, no return here
 		break;
 	}
+	case SYS_brk: {
+		// Linux brk: a0 == 0 queries the current break; otherwise set it, clamped to
+		// [brkBase, brkMax]. On success return the new break; on any failure return the
+		// CURRENT (unchanged) break (glibc's sbrk detects failure by comparing).
+		Process* p = ProcTable::current();
+		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
+		unsigned req = a0;
+		if (req != 0 && req >= p->brkBase && req <= p->brkMax && space) {
+			if (arch::mmuSetUserBrk(space, p->brkCur, req) == 0)
+				p->brkCur = req;
+		}
+		ret = (int) p->brkCur;
+		break;
+	}
 	case SYS_termmode:
 		arch::inputSetRaw((int) a0);
 		ret = 0;

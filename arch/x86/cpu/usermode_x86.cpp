@@ -15,10 +15,12 @@
 #include <string.h>
 
 namespace {
-const uint32_t USER_STACK_TOP = 0x500000;
-const uint32_t USER_STACK_BOT = 0x4F0000;   // 64 KiB user stack
-const uint32_t USER_HEAP_BOT  = 0x480000;   // 448 KiB heap (sbrk/malloc in libc glue)
-const uint32_t USER_HEAP_TOP  = 0x4F0000;   // must match user/libc-glue/syscalls.c
+// The user window is a single 4 MiB PDE (0x400000..0x7FFFFF). The program image loads
+// at the bottom (loadBase = 0x400000); the stack lives at the TOP, giving the image up
+// to ~3.5 MiB. The heap is no longer here — sbrk now grows a separate high-VA region via
+// SYS_brk (see mmu_x86.cpp mmuSetUserBrk), so the old 0x480000 fixed heap window is gone.
+const uint32_t USER_STACK_TOP = 0x800000;
+const uint32_t USER_STACK_BOT = 0x780000;   // 512 KiB user stack (top of the user window)
 }
 
 namespace arch {
@@ -33,15 +35,9 @@ uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
 		memcpy((void*) f, (void*) va, 0x1000);
 		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 	}
-	// Private zeroed heap window (the libc glue's sbrk hands out from here).
-	for (uint32_t va = USER_HEAP_BOT; va < USER_HEAP_TOP; va += 0x1000) {
-		uint32_t f = kernel::g_frames.alloc();
-		memset((void*) f, 0, 0x1000);
-		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
-	}
 	// Private zeroed user stack; remember each frame to write the argv image by
 	// physical address (the stack is mapped in `space`, not the active directory).
-	uint32_t stackFrames[16];
+	uint32_t stackFrames[128];   // 512 KiB / 4 KiB
 	int sfi = 0;
 	for (uint32_t va = USER_STACK_BOT; va < USER_STACK_TOP; va += 0x1000) {
 		uint32_t f = kernel::g_frames.alloc();

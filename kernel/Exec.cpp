@@ -17,6 +17,14 @@ namespace kernel {
 // group. 0 = no foreground (the shell is at its prompt).
 static int g_foregroundPid = 0;
 
+// Reset a process's brk/sbrk heap to empty (no pages mapped yet) at the fixed high-VA
+// base. Called whenever a fresh address space is installed (program launch / execve).
+static void initBrk(Process* p) {
+	p->brkBase = arch::mmuUserHeapBase();
+	p->brkCur = p->brkBase;
+	p->brkMax = arch::mmuUserHeapMax();
+}
+
 // Load a .nxe image (already staged at the load base in the kernel identity window),
 // validating + zeroing bss. Returns the entry point, or <0 on error. Caller must be
 // on a directory where the staging window 0x400000 is identity-mapped.
@@ -47,6 +55,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	const char* argv[] = { path, 0 };
 	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1);
 	ProcTable::current()->space = space;
+	initBrk(ProcTable::current());
 	ProcTable::setCommand(ProcTable::current(), argv, 1);
 	kernelSyscalls()->resetForRun();
 	arch::archEnterUser(entry, esp, space);   // never returns
@@ -87,6 +96,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	if (p->space)
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 	p->space = newSpace;
+	initBrk(p);                              // fresh image -> empty heap
 	ProcTable::setCommand(p, argv, argc);
 	sigExecReset(p->sig);                    // caught handlers -> default across exec
 	kernelSyscalls()->resetForRun();
@@ -114,6 +124,9 @@ int forkProcess(arch::TrapFrame* tf) {
 		return -11;
 	}
 	child->space = space;
+	child->brkBase = parent->brkBase;          // inherit the heap (mmuCopyAddressSpace
+	child->brkCur = parent->brkCur;            // already duplicated the mapped pages)
+	child->brkMax = parent->brkMax;
 	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
 	child->kthread = false;
 	for (int i = 0; i < (int) sizeof child->comm; i++)
