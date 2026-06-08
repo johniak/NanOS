@@ -28,13 +28,13 @@ docker-image:
 	docker build --platform linux/amd64 -t $(DOCKER_IMAGE) docker/
 
 build: docker-image
-	$(DOCKER_RUN) make _all
+	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _all'
 
 image: docker-image
-	$(DOCKER_RUN) make _image
+	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _image'
 
 iso: docker-image
-	$(DOCKER_RUN) make _iso
+	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _iso'
 
 run: image
 	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
@@ -173,46 +173,44 @@ GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
 USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free doom
 
-# Link one program: $(call link_prog,<name>,<extra objects>)
-define link_prog
-	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)$(1).elf $(USER_GLUE) $(2) $(USER_LIBS)
-	$(CROSS)objcopy -O binary $(BINFOLDER)$(1).elf $(BINFOLDER)$(1).nxe
-endef
-
-_userland: _userland-glue _userland-sbase _userland-doom
-	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
-	$(call link_prog,init,$(BINFOLDER)init.o)
-	$(CXX) $(USER_CFLAGS) -c user/nsh.c -o $(BINFOLDER)nsh.o
-	$(call link_prog,nsh,$(BINFOLDER)nsh.o)
-	$(CXX) $(USER_CFLAGS) -c $(SBASE)/cat.c -o $(BINFOLDER)cat.o
-	$(call link_prog,cat,$(BINFOLDER)cat.o $(SBASE_UTIL_CAT))
-	$(CXX) $(USER_CFLAGS) -c $(SBASE)/ls.c -o $(BINFOLDER)ls.o
-	$(call link_prog,ls,$(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS))
-	$(CXX) $(USER_CFLAGS) -c user/sigtest.c -o $(BINFOLDER)sigtest.o
-	$(call link_prog,sigtest,$(BINFOLDER)sigtest.o)
-	$(CXX) $(USER_CFLAGS) -c user/fbtest.c -o $(BINFOLDER)fbtest.o
-	$(call link_prog,fbtest,$(BINFOLDER)fbtest.o)
-	$(CXX) $(USER_CFLAGS) -c user/timetest.c -o $(BINFOLDER)timetest.o
-	$(call link_prog,timetest,$(BINFOLDER)timetest.o)
-	$(CXX) $(USER_CFLAGS) -c user/brktest.c -o $(BINFOLDER)brktest.o
-	$(call link_prog,brktest,$(BINFOLDER)brktest.o)
-	$(CXX) $(USER_CFLAGS) -c user/inputtest.c -o $(BINFOLDER)inputtest.o
-	$(call link_prog,inputtest,$(BINFOLDER)inputtest.o)
-	$(CXX) $(USER_CFLAGS) -c user/fstest.c -o $(BINFOLDER)fstest.o
-	$(call link_prog,fstest,$(BINFOLDER)fstest.o)
-	$(CXX) $(USER_CFLAGS) -c user/free.c -o $(BINFOLDER)free.o
-	$(call link_prog,free,$(BINFOLDER)free.o)
-
-# Build the shared startup/header/glue objects once.
-_userland-glue:
+# Userland objects build via per-source-dir pattern rules — only CHANGED files recompile
+# (the old recipe recompiled all ~30 programs+glue every build), and -MMD tracks header
+# deps. Linking is a generic %.nxe rule over each program's declared object prerequisites.
+$(BINFOLDER)%.o: user/%.c
 	@mkdir -p $(BINFOLDER)
-	nasm -f elf user/crt0.S -o $(BINFOLDER)crt0.o
-	nasm -f elf user/sigtramp.S -o $(BINFOLDER)sigtramp.o
-	$(CXX) $(USER_CFLAGS) -c user/nxhdr.c -o $(BINFOLDER)nxhdr.o
-	$(CXX) $(USER_CFLAGS) -c user/libc-glue/syscalls.c -o $(BINFOLDER)syscalls.o
-	$(CXX) $(USER_CFLAGS) -c user/libc-glue/cwd.c -o $(BINFOLDER)cwd.o
-	$(CXX) $(USER_CFLAGS) -c user/libc-glue/dirent.c -o $(BINFOLDER)dirent.o
-	$(CXX) $(USER_CFLAGS) -c user/libc-glue/pwd_grp.c -o $(BINFOLDER)pwd_grp.o
+	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/libc-glue/%.c
+	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: $(SBASE)/%.c
+	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: $(SBASE)/libutil/%.c
+	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: $(SBASE)/libutf/%.c
+	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/%.S
+	@mkdir -p $(BINFOLDER)
+	nasm -f elf $< -o $@
+
+# Link a .nxe from its object prerequisites (declared per program below).
+$(BINFOLDER)%.nxe:
+	$(LD) -nostdlib -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) $(USER_LIBS)
+	$(CROSS)objcopy -O binary $(@:.nxe=.elf) $@
+
+# Per-program object sets (USER_GLUE is shared). Doom has its own rule (it needs -lm).
+$(BINFOLDER)init.nxe:      $(USER_GLUE) $(BINFOLDER)init.o
+$(BINFOLDER)nsh.nxe:       $(USER_GLUE) $(BINFOLDER)nsh.o
+$(BINFOLDER)cat.nxe:       $(USER_GLUE) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
+$(BINFOLDER)ls.nxe:        $(USER_GLUE) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS)
+$(BINFOLDER)sigtest.nxe:   $(USER_GLUE) $(BINFOLDER)sigtest.o
+$(BINFOLDER)fbtest.nxe:    $(USER_GLUE) $(BINFOLDER)fbtest.o
+$(BINFOLDER)timetest.nxe:  $(USER_GLUE) $(BINFOLDER)timetest.o
+$(BINFOLDER)brktest.nxe:   $(USER_GLUE) $(BINFOLDER)brktest.o
+$(BINFOLDER)inputtest.nxe: $(USER_GLUE) $(BINFOLDER)inputtest.o
+$(BINFOLDER)fstest.nxe:    $(USER_GLUE) $(BINFOLDER)fstest.o
+$(BINFOLDER)free.nxe:      $(USER_GLUE) $(BINFOLDER)free.o
+
+# All programs (init -> /nanos/core, the rest -> /nanos/bin; see _image).
+_userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which
 # breaks Doom's tentative globals) and warnings off; -DNORMALUNIX -DLINUX select the POSIX
@@ -230,18 +228,15 @@ $(BINFOLDER)%.o: $(DOOM_DIR)/%.c
 $(BINFOLDER)doomgeneric_nanos.o: user/doomgeneric_nanos.c
 	$(CXX) $(DOOM_CFLAGS) -MMD -MP -c $< -o $@
 
-_userland-doom: $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o
+# Doom links with -lm (renderer trig/sqrt), so it gets an explicit rule overriding the
+# generic %.nxe one. Objects build via the $(DOOM_DIR)/%.c pattern rule above.
+$(BINFOLDER)doom.nxe: $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o
 	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)doom.elf $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(USER_LIBS) -lm
 	$(CROSS)objcopy -O binary $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe
 
--include $(DOOM_OBJS:.o=.d) $(BINFOLDER)doomgeneric_nanos.d
-
-# Build the vendored sbase libutil + libutf objects the coreutils link against.
-_userland-sbase:
-	for f in eprintf concat writeall ealloc reallocarray human fshut; do \
-	  $(CXX) $(USER_CFLAGS) -c $(SBASE)/libutil/$$f.c -o $(BINFOLDER)$$f.o || exit 1; done
-	for f in $(SBASE)/libutf/*.c; do \
-	  $(CXX) $(USER_CFLAGS) -c $$f -o $(BINFOLDER)$$(basename $$f .c).o || exit 1; done
+# Pull in all userland header-dependency files (.d), so a changed header recompiles only
+# the objects that include it. Missing on a clean build -> everything compiles (correct).
+-include $(wildcard $(BINFOLDER)*.d)
 
 # ----------------------------------------------------------------------------
 # Host-compiled test suite (doctest) + coverage gate.
