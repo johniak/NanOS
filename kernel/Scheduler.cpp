@@ -71,6 +71,7 @@ Task* Scheduler::createBlank(int id) {
 }
 
 Task* Scheduler::current() { return &g_tasks[g_cur]; }
+Task* Scheduler::idle() { return &g_tasks[0]; }   // idle is always the first task
 unsigned Scheduler::ticks() { return g_ticks; }
 
 void Scheduler::schedule() {

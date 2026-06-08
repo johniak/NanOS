@@ -1,5 +1,7 @@
 #include "doctest.h"
 #include "Process.h"
+#include "Scheduler.h"
+#include <cstring>
 
 using namespace kernel;
 
@@ -76,4 +78,58 @@ TEST_CASE("reapChild: wantPid narrows to a specific child") {
 	// A pid that is not a child of parent -> -ECHILD.
 	out = nullptr;
 	CHECK(ProcTable::reapChild(parent->pid, 9999, &out) == -10);
+}
+
+TEST_CASE("setCommand: comm = basename(argv0), cmdline = argv joined") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* argv[] = { "/disks/main/nanos/bin/ls.nxe", "-l", "/proc", 0 };
+	ProcTable::setCommand(p, argv, 3);
+	CHECK(strcmp(p->comm, "ls.nxe") == 0);
+	CHECK(strcmp(p->cmdline, "/disks/main/nanos/bin/ls.nxe -l /proc") == 0);
+
+	const char* one[] = { "init", 0 };           // no slash -> comm is the whole arg
+	ProcTable::setCommand(p, one, 1);
+	CHECK(strcmp(p->comm, "init") == 0);
+	CHECK(strcmp(p->cmdline, "init") == 0);
+}
+
+TEST_CASE("snapshot/infoByPid: fields + state char from the task / exit flag") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	const char* av[] = { "init", 0 };
+	ProcTable::setCommand(a, av, 1);
+
+	// No task yet -> 'R'.
+	ProcInfo pi;
+	REQUIRE(ProcTable::infoByPid(a->pid, &pi));
+	CHECK(pi.state == 'R');
+	CHECK(pi.ppid == 0);
+	CHECK(strcmp(pi.comm, "init") == 0);
+
+	// Blocked task -> 'S'.
+	Task t; t.state = TASK_BLOCKED; a->task = &t;
+	REQUIRE(ProcTable::infoByPid(a->pid, &pi));
+	CHECK(pi.state == 'S');
+
+	// Exited overrides the task state -> 'Z'.
+	a->exited = true;
+	REQUIRE(ProcTable::infoByPid(a->pid, &pi));
+	CHECK(pi.state == 'Z');
+
+	// A kthread child shows up in the snapshot.
+	Process* k = ProcTable::alloc(a->pid);
+	k->kthread = true;
+	const char* kv[] = { "clock", 0 };
+	ProcTable::setCommand(k, kv, 1);
+
+	ProcInfo arr[8];
+	int n = ProcTable::snapshot(arr, 8);
+	CHECK(n == 2);
+	bool sawKthread = false;
+	for (int i = 0; i < n; i++)
+		if (arr[i].pid == k->pid) { sawKthread = true; CHECK(arr[i].kthread); }
+	CHECK(sawKthread);
+
+	CHECK(!ProcTable::infoByPid(9999, &pi));      // absent pid
 }

@@ -41,6 +41,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	const char* argv[] = { path, 0 };
 	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1);
 	ProcTable::current()->space = space;
+	ProcTable::setCommand(ProcTable::current(), argv, 1);
 	kernelSyscalls()->resetForRun();
 	arch::archEnterUser(entry, esp, space);   // never returns
 	return 0;                                 // unreachable
@@ -80,6 +81,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	if (p->space)
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 	p->space = newSpace;
+	ProcTable::setCommand(p, argv, argc);
 	kernelSyscalls()->resetForRun();
 
 	arch::archFrameToUser(tf, entry, esp);   // iret will enter the new program ...
@@ -106,6 +108,11 @@ int forkProcess(arch::TrapFrame* tf) {
 	}
 	child->space = space;
 	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
+	child->kthread = false;
+	for (int i = 0; i < (int) sizeof child->comm; i++)
+		child->comm[i] = parent->comm[i];      // inherit name until the child exec's
+	for (int i = 0; i < (int) sizeof child->cmdline; i++)
+		child->cmdline[i] = parent->cmdline[i];
 
 	Task* t = Scheduler::createBlank(child->pid);
 	child->task = t;

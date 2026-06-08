@@ -60,6 +60,9 @@ public:
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
 	int readdir(String path, List<DirEntry>& out);
+
+private:
+	int readNode(String path, unsigned size, unsigned off, void* buf);   // static-tree read
 };
 
 }

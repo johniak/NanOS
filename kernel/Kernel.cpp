@@ -67,6 +67,18 @@ static void clockTaskBody() {
 	}
 }
 
+// Register a scheduler kernel thread (idle/clock) as a process so it shows up in
+// /proc, exactly as Linux lists its kthreads (e.g. [kworker], swapper).
+static void registerKthread(Task* t, const char* name) {
+	Process* p = ProcTable::alloc(0);
+	if (!p)
+		return;
+	p->task = t;
+	p->kthread = true;
+	const char* a[] = { name, 0 };
+	ProcTable::setCommand(p, a, 1);
+}
+
 // Build the physical frame allocator from the arch memory map, then hand it to
 // the arch MMU to bring up kernel paging. Machine-independent: the page-table
 // format and CR registers live behind <arch/mmu.h>.
@@ -116,7 +128,11 @@ void Kernel::start() {
 	Scheduler::init();
 	Task* initTask = Scheduler::create(initTaskBody, 1);
 	ProcTable::byPid(1)->task = initTask;   // the boot process (pid 1) runs the init task
-	Scheduler::create(clockTaskBody, 2);
+	const char* initArgv[] = { "init", 0 };
+	ProcTable::setCommand(ProcTable::byPid(1), initArgv, 1);   // until it execve's nsh
+	Task* clockTask = Scheduler::create(clockTaskBody, 2);
+	registerKthread(Scheduler::idle(), "idle");   // kernel threads visible in /proc
+	registerKthread(clockTask, "clock");
 	arch::archTimerInit(1000);
 	Scheduler::start();
 

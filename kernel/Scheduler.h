@@ -39,6 +39,7 @@ public:
 	static void wake(Task* t);                     // -> READY (IRQ-safe: just a flag)
 	static void reap(Task* t);                     // -> FREE: release the slot for reuse
 	static Task* current();
+	static Task* idle();                           // the idle task (slot 0)
 	static unsigned ticks();
 	static void runCurrentBody();                  // called by the arch trampoline
 

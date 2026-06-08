@@ -23,6 +23,20 @@ struct Process {
 	Syscalls* sys;       // per-process fd table + exit status
 	bool exited;         // true once it has called exit() (awaiting reap)
 	int exitCode;        // valid once `exited`
+	bool kthread;        // kernel thread (idle/clock): no user address space
+	char comm[16];       // short name (Linux `comm`)
+	char cmdline[128];   // full command line (argv joined by spaces)
+};
+
+// A read-only snapshot of one process, the source for /proc and ps. Decoupled from
+// the live table so the (pure) renderers and the SynthFs /proc layer are host-testable.
+struct ProcInfo {
+	int pid;
+	int ppid;
+	char state;          // 'R' running/ready, 'S' sleeping (blocked), 'Z' zombie
+	bool kthread;
+	char comm[16];
+	char cmdline[128];
 };
 
 class ProcTable {
@@ -42,6 +56,11 @@ public:
 	//   - no matching child -> return -10 (-ECHILD).
 	static int reapChild(int parentPid, int wantPid, Process** childOut);
 	static void freeSlot(Process* p);    // release a process slot after teardown
+
+	// /proc + ps support.
+	static int snapshot(ProcInfo* out, int max);     // fill `out`, return live count
+	static bool infoByPid(int pid, ProcInfo* out);   // one process, false if absent
+	static void setCommand(Process* p, const char* const* argv, int argc);  // comm + cmdline
 };
 
 }

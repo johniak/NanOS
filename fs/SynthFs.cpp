@@ -1,5 +1,6 @@
 #include "SynthFs.h"
 #include "Scheduler.h"
+#include "Process.h"
 #include <string.h>
 
 namespace kernel {
@@ -158,7 +159,122 @@ SynthNode* SynthFs::walk(const char* path) {
 	return cur;
 }
 
+// ---- dynamic /proc (per-process directories, Linux-style) -----------------
+// Classify a path against the live process table:
+//   1 = "/proc" itself (readdir appends one dir per pid), 2 = "/proc/<pid>",
+//   3 = "/proc/<pid>/<file>", 0 = not a dynamic /proc path (e.g. /proc/uptime).
+static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
+	const char* pre = "/proc";
+	int i = 0;
+	for (; pre[i]; i++)
+		if (path[i] != pre[i])
+			return 0;
+	if (path[i] == 0)
+		return 1;                       // "/proc"
+	if (path[i] != '/')
+		return 0;                       // e.g. "/procfoo"
+	i++;
+	if (path[i] == 0)
+		return 1;                       // "/proc/"
+	int pid = 0, digits = 0;
+	for (; path[i] >= '0' && path[i] <= '9'; i++) {
+		pid = pid * 10 + (path[i] - '0');
+		digits++;
+	}
+	if (digits == 0)
+		return 0;                       // non-numeric child (e.g. "uptime")
+	*pidOut = pid;
+	if (path[i] == 0)
+		return 2;                       // "/proc/<pid>"
+	if (path[i] != '/')
+		return 0;                       // "/proc/12abc"
+	i++;
+	if (path[i] == 0)
+		return 2;                       // "/proc/<pid>/"
+	*fileOut = path + i;                // "/proc/<pid>/<file>"
+	return 3;
+}
+
+static bool streq(const char* a, const char* b) {
+	int i = 0;
+	for (; a[i] && b[i]; i++)
+		if (a[i] != b[i])
+			return false;
+	return a[i] == b[i];
+}
+
+static const char* const PROC_FILES[] = { "comm", "cmdline", "stat", "status", 0 };
+static bool isProcFile(const char* name) {
+	for (int i = 0; PROC_FILES[i]; i++)
+		if (streq(name, PROC_FILES[i]))
+			return true;
+	return false;
+}
+
+static int appendStr(char* buf, int p, int cap, const char* s) {
+	for (int i = 0; s[i] && p < cap - 1; i++)
+		buf[p++] = s[i];
+	return p;
+}
+
+// Render one /proc/<pid>/<file> into buf; returns its length, or -1 if unknown.
+static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& pi) {
+	int p = 0;
+	char st[2] = { pi.state, 0 };
+	if (streq(file, "comm")) {
+		p = appendStr(buf, p, cap, pi.comm);
+		p = appendStr(buf, p, cap, "\n");
+	} else if (streq(file, "cmdline")) {
+		p = appendStr(buf, p, cap, pi.cmdline);
+		p = appendStr(buf, p, cap, "\n");
+	} else if (streq(file, "stat")) {
+		// "<pid> (<comm>) <state> <ppid>\n" — the fields ps cares about first.
+		p += utoa((unsigned) pi.pid, buf + p);
+		p = appendStr(buf, p, cap, " (");
+		p = appendStr(buf, p, cap, pi.comm);
+		p = appendStr(buf, p, cap, ") ");
+		p = appendStr(buf, p, cap, st);
+		p = appendStr(buf, p, cap, " ");
+		p += utoa((unsigned) pi.ppid, buf + p);
+		p = appendStr(buf, p, cap, "\n");
+	} else if (streq(file, "status")) {
+		p = appendStr(buf, p, cap, "Name:\t");
+		p = appendStr(buf, p, cap, pi.comm);
+		p = appendStr(buf, p, cap, "\nState:\t");
+		p = appendStr(buf, p, cap, st);
+		p = appendStr(buf, p, cap, "\nPid:\t");
+		p += utoa((unsigned) pi.pid, buf + p);
+		p = appendStr(buf, p, cap, "\nPPid:\t");
+		p += utoa((unsigned) pi.ppid, buf + p);
+		p = appendStr(buf, p, cap, "\nKthread:\t");
+		p = appendStr(buf, p, cap, pi.kthread ? "1" : "0");
+		p = appendStr(buf, p, cap, "\n");
+	} else {
+		return -1;
+	}
+	buf[p] = 0;
+	return p;
+}
+
 int SynthFs::read(String path, unsigned size, unsigned off, void* buf) {
+	int pid = 0;
+	const char* file = 0;
+	if (classifyProc((char*) path, &pid, &file) == 3) {
+		ProcInfo pi;
+		if (!isProcFile(file) || !ProcTable::infoByPid(pid, &pi))
+			return -1;
+		char tmp[320];
+		int len = renderProcFile(file, tmp, sizeof tmp, pi);
+		if (len < 0 || off >= (unsigned) len)
+			return len < 0 ? -1 : 0;
+		unsigned cnt = size < (unsigned) (len - off) ? size : (unsigned) (len - off);
+		memcpy(buf, tmp + off, cnt);
+		return (int) cnt;
+	}
+	return readNode(path, size, off, buf);
+}
+
+int SynthFs::readNode(String path, unsigned size, unsigned off, void* buf) {
 	SynthNode* n = walk((char*) path);
 	if (!n)
 		return -1;
@@ -176,6 +292,23 @@ int SynthFs::read(String path, unsigned size, unsigned off, void* buf) {
 }
 
 int SynthFs::stat(String path, FileStat& out) {
+	int pid = 0;
+	const char* file = 0;
+	int c = classifyProc((char*) path, &pid, &file);
+	if (c == 2 || c == 3) {                 // /proc/<pid> dir, or /proc/<pid>/<file>
+		ProcInfo pi;
+		if (!ProcTable::infoByPid(pid, &pi))
+			return -1;
+		if (c == 3 && !isProcFile(file))
+			return -1;
+		out.type = (c == 2) ? NODE_DIR : NODE_FILE;
+		out.size = 0;
+		out.mode = (c == 2) ? (0x4000 | 0555) : (0x8000 | 0444);
+		out.nlink = 1;
+		out.uid = out.gid = out.mtime = 0;
+		return 0;
+	}
+
 	SynthNode* n = walk((char*) path);
 	if (!n)
 		return -1;
@@ -196,6 +329,24 @@ int SynthFs::stat(String path, FileStat& out) {
 }
 
 int SynthFs::readdir(String path, List<DirEntry>& out) {
+	int pid = 0;
+	const char* file = 0;
+	if (classifyProc((char*) path, &pid, &file) == 2) {   // /proc/<pid> -> per-pid files
+		ProcInfo pi;
+		if (!ProcTable::infoByPid(pid, &pi))
+			return -1;
+		for (int i = 0; PROC_FILES[i]; i++) {
+			DirEntry de;
+			int k = 0;
+			for (; PROC_FILES[i][k] && k < 255; k++)
+				de.name[k] = PROC_FILES[i][k];
+			de.name[k] = 0;
+			de.type = NODE_FILE;
+			out.add(de);
+		}
+		return 0;
+	}
+
 	SynthNode* n = walk((char*) path);
 	if (!n || n->kind != SK_DIR)
 		return -1;
@@ -207,6 +358,17 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 		de.name[k] = 0;
 		de.type = (n->child[i]->kind == SK_DIR) ? NODE_DIR : NODE_FILE;
 		out.add(de);
+	}
+	if (n == m_proc) {                          // append one dir per live process
+		ProcInfo procs[32];
+		int np = ProcTable::snapshot(procs, 32);
+		for (int i = 0; i < np; i++) {
+			DirEntry de;
+			int k = utoa((unsigned) procs[i].pid, de.name);
+			de.name[k] = 0;
+			de.type = NODE_DIR;
+			out.add(de);
+		}
 	}
 	return 0;
 }

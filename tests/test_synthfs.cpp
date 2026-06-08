@@ -1,6 +1,8 @@
 #include "doctest.h"
 #include "SynthFs.h"
+#include "Process.h"
 #include <cstring>
+#include <cstdio>
 
 using namespace kernel;
 
@@ -112,4 +114,118 @@ TEST_CASE("SynthFs errors on missing paths and bad ops") {
 	CHECK(fs.read("/nope", 1, 0, b) < 0);
 	List<DirEntry> e;
 	CHECK(fs.readdir("/proc/version-missing", e) < 0);
+}
+
+// ---- dynamic /proc (live process table) -----------------------------------
+
+TEST_CASE("SynthFs /proc lists a dir per live pid + the static uptime") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	const char* av[] = { "init", 0 };
+	ProcTable::setCommand(a, av, 1);
+
+	SynthFs fs;
+	List<DirEntry> e;
+	REQUIRE(fs.readdir("/proc", e) == 0);
+	CHECK(listed(e, "uptime"));            // static gen node still there
+	char pidName[16];
+	snprintf(pidName, sizeof pidName, "%d", a->pid);
+	CHECK(listed(e, pidName));             // dynamic per-pid directory
+}
+
+TEST_CASE("SynthFs /proc/<pid> is a dir listing comm/cmdline/stat/status") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	const char* av[] = { "nsh", 0 };
+	ProcTable::setCommand(a, av, 1);
+	char dir[24];
+	snprintf(dir, sizeof dir, "/proc/%d", a->pid);
+
+	SynthFs fs;
+	FileStat st;
+	REQUIRE(fs.stat(dir, st) == 0);
+	CHECK(st.type == NODE_DIR);
+
+	List<DirEntry> e;
+	REQUIRE(fs.readdir(dir, e) == 0);
+	CHECK(listed(e, "comm"));
+	CHECK(listed(e, "cmdline"));
+	CHECK(listed(e, "stat"));
+	CHECK(listed(e, "status"));
+}
+
+TEST_CASE("SynthFs /proc/<pid>/{comm,stat,status} render the process") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);             // pid, ppid 0
+	const char* av[] = { "nsh", "arg", 0 };
+	ProcTable::setCommand(a, av, 2);
+
+	SynthFs fs;
+	char path[40];
+	char buf[256];
+
+	snprintf(path, sizeof path, "/proc/%d/comm", a->pid);
+	memset(buf, 0, sizeof buf);
+	REQUIRE(fs.read(path, sizeof buf, 0, buf) > 0);
+	CHECK(strcmp(buf, "nsh\n") == 0);
+
+	snprintf(path, sizeof path, "/proc/%d/cmdline", a->pid);
+	memset(buf, 0, sizeof buf);
+	REQUIRE(fs.read(path, sizeof buf, 0, buf) > 0);
+	CHECK(strcmp(buf, "nsh arg\n") == 0);
+
+	snprintf(path, sizeof path, "/proc/%d/stat", a->pid);
+	memset(buf, 0, sizeof buf);
+	REQUIRE(fs.read(path, sizeof buf, 0, buf) > 0);
+	CHECK(strstr(buf, "(nsh)") != 0);
+	CHECK(strstr(buf, " R ") != 0);               // not exited, no task -> running
+
+	snprintf(path, sizeof path, "/proc/%d/status", a->pid);
+	memset(buf, 0, sizeof buf);
+	REQUIRE(fs.read(path, sizeof buf, 0, buf) > 0);
+	CHECK(strstr(buf, "Name:\tnsh") != 0);
+	CHECK(strstr(buf, "State:\tR") != 0);
+	CHECK(strstr(buf, "Kthread:\t0") != 0);
+}
+
+TEST_CASE("SynthFs /proc: a zombie reads State Z; a kthread reads Kthread 1") {
+	ProcTable::init();
+	Process* z = ProcTable::alloc(0);
+	const char* zv[] = { "ls", 0 };
+	ProcTable::setCommand(z, zv, 1);
+	z->exited = true;
+
+	Process* k = ProcTable::alloc(0);
+	const char* kv[] = { "idle", 0 };
+	ProcTable::setCommand(k, kv, 1);
+	k->kthread = true;
+
+	SynthFs fs;
+	char path[40], buf[256];
+	snprintf(path, sizeof path, "/proc/%d/status", z->pid);
+	memset(buf, 0, sizeof buf);
+	fs.read(path, sizeof buf, 0, buf);
+	CHECK(strstr(buf, "State:\tZ") != 0);
+
+	snprintf(path, sizeof path, "/proc/%d/status", k->pid);
+	memset(buf, 0, sizeof buf);
+	fs.read(path, sizeof buf, 0, buf);
+	CHECK(strstr(buf, "Kthread:\t1") != 0);
+}
+
+TEST_CASE("SynthFs /proc: absent pid and bad per-pid file error out") {
+	ProcTable::init();
+	ProcTable::alloc(0);                          // pid 1 exists
+
+	SynthFs fs;
+	FileStat st;
+	char buf[64];
+	CHECK(fs.stat("/proc/999", st) < 0);          // no such pid
+	List<DirEntry> e;
+	CHECK(fs.readdir("/proc/999", e) < 0);
+	CHECK(fs.read("/proc/999/stat", sizeof buf, 0, buf) < 0);
+	CHECK(fs.stat("/proc/1/bogus", st) < 0);      // unknown per-pid file
+	CHECK(fs.read("/proc/1/bogus", sizeof buf, 0, buf) < 0);
+	// /proc/uptime must still be the static node, not a (bogus) pid path.
+	CHECK(fs.read("/proc/uptime", sizeof buf, 0, buf) > 0);
 }
