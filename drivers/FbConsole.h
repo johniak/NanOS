@@ -16,18 +16,26 @@ class FbConsole {
 	uint32_t m_cols, m_rows;   // grid size in character cells
 	uint32_t m_cx, m_cy;       // cursor cell
 	uint32_t m_fg, m_bg;
+	// Minimal ANSI SGR support (CSI ... m) so colored boot text works like a Linux console.
+	int m_esc;                 // 0 = normal, 1 = saw ESC, 2 = in CSI
+	int m_par[4], m_npar;      // accumulated CSI numeric parameters
+	bool m_bold;
+
+	void handleEscape(char c);
+	void applySgr();
 public:
 	FbConsole();
 
 	void init(const FbSurface& s);          // grid = w/FONT_W x h/FONT_H, clear to bg
 	void clear();
-	void putChar(char c);                   // \b \t \r \n, printable glyph, wrap, scroll
+	void putChar(char c);                   // \b \t \r \n, SGR colors, glyph, wrap, scroll
 	void setCursor(unsigned x, unsigned y); // clamped to the grid
 
 	uint32_t cols() const { return m_cols; }
 	uint32_t rows() const { return m_rows; }
 	uint32_t cursorX() const { return m_cx; }
 	uint32_t cursorY() const { return m_cy; }
+	uint32_t fg() const { return m_fg; }    // current foreground (for tests)
 };
 
 }  // namespace kernel

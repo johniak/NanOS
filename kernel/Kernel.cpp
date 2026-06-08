@@ -58,6 +58,13 @@ static Vfs* g_vfs = 0;
 static volatile unsigned g_bgwork = 0;
 
 static void initTaskBody() {
+	// Let the "[ OK ]" boot splash sit for ~2s (the timer is running now), then clear to a
+	// fresh terminal — the Linux feel of a boot screen handing off to a login/shell.
+	unsigned t0 = Scheduler::ticks();
+	while (Scheduler::ticks() - t0 < 2000)
+		arch::halt_or_hlt();
+	Console::clearScreen();
+
 	// Enters ring 3 and does not return on success; only reached if the load fails.
 	int rc = execProgram(g_vfs, "/disks/main/nanos/core/init.nxe");
 	Console::write("init failed to load, code ");
@@ -82,6 +89,13 @@ static void registerKthread(Task* t, const char* name) {
 	ProcTable::setCommand(p, a, 1);
 }
 
+// Print a Linux-style "[ OK ] <msg>" boot line with a green OK (ANSI SGR; the framebuffer
+// console renders the color).
+static void okLine(const char* msg) {
+	Console::write("[ \033[1;32mOK\033[0m ] ");
+	Console::writeLine(msg);
+}
+
 // Build the physical frame allocator from the arch memory map, then hand it to
 // the arch MMU to bring up kernel paging. Machine-independent: the page-table
 // format and CR registers live behind <arch/mmu.h>.
@@ -100,16 +114,22 @@ void Kernel::initPaging() {
 		arch::mmuMapKernelMmio((uint32_t) fb->addr, fb->pitch * fb->height);
 		arch::consoleActivateFramebuffer();
 	}
-	Console::writeLine("paging enabled");
+	// Boot splash (now that the framebuffer console is up). Subsystems that came up
+	// before the framebuffer (CPU/interrupts) are acknowledged here in order.
+	Console::writeLine("");
+	Console::writeLine("    NanOS  --  booting");
+	Console::writeLine("");
+	okLine("CPU, GDT/IDT, interrupts, keyboard");
+	okLine("Paging enabled");
 	if (fb) {
-		Console::write("framebuffer: ");
+		Console::write("[ \033[1;32mOK\033[0m ] Framebuffer ");
 		Console::write((int) fb->width);
 		Console::write("x");
 		Console::write((int) fb->height);
-		Console::write(" bpp");
+		Console::write("x");
 		Console::writeLine((int) fb->bpp);
 	} else {
-		Console::writeLine("framebuffer: none (VGA text)");
+		okLine("Framebuffer: none (VGA text)");
 	}
 }
 
@@ -148,10 +168,14 @@ void Kernel::start() {
 				fbdev->height, fbdev->bpp };
 		root->addChar(root->dev(), "fb0", new Fb0Device(info), 0666);
 	}
+	okLine("Mounted ext filesystem at /disks/main");
+	if (fbdev)
+		okLine("Graphics device /dev/fb0");
 
 	// Install the syscall interface over the VFS, then a boot sanity syscall.
 	installSyscalls(vfs);
 	arch::syscallSelfTest();
+	okLine("Syscall interface (int 0x80)");
 
 	// Start the scheduler: idle (task 0), init/nsh (task 1, enters ring 3), and a
 	// background clock thread (task 2). The 1000 Hz timer preempts; init launches the
@@ -166,6 +190,7 @@ void Kernel::start() {
 	registerKthread(Scheduler::idle(), "idle");   // kernel threads visible in /proc
 	registerKthread(clockTask, "clock");
 	arch::archTimerInit(1000);
+	okLine("Scheduler + tasks; starting shell");
 	Scheduler::start();
 
 	for (;;) arch::halt_or_hlt();   // unreachable

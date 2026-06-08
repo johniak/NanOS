@@ -73,6 +73,25 @@ TEST_CASE("FbConsole: backspace never underflows; setCursor clamps to the grid")
 	CHECK(con.cursorY() == 1);
 }
 
+TEST_CASE("FbConsole: ANSI SGR sets the foreground color; escapes don't advance the cursor") {
+	unsigned char buf[PITCH * H];
+	memset(buf, 0, sizeof buf);
+	FbConsole con;
+	con.init(FbSurface{ buf, PITCH, W, H, 32 });
+
+	auto feed = [&](const char* s) { for (const char* p = s; *p; p++) con.putChar(*p); };
+
+	feed("\033[32m");                 // green
+	CHECK(con.fg() == 0x00AA00u);
+	CHECK(con.cursorX() == 0);        // the escape was consumed, no glyph drawn
+
+	feed("\033[1;31m");               // bold -> bright red
+	CHECK(con.fg() == 0xFF5555u);
+
+	feed("\033[0m");                  // reset to default
+	CHECK(con.fg() == 0x00C0C0C0u);
+}
+
 TEST_CASE("FbConsole: a printed glyph paints pixels into its cell") {
 	unsigned char buf[PITCH * H];
 	memset(buf, 0, sizeof buf);
