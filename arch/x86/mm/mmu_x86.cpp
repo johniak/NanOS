@@ -11,6 +11,7 @@
 #include "Paging.h"
 #include "PagingControl.h"
 #include "FrameAllocator.h"
+#include "memory_manager.h"   // heapInit
 #include <string.h>
 
 // Linker symbol marking the end of the kernel image (arch/x86/linker.ld).
@@ -51,8 +52,11 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint32_t) (unsigned) &end - 0x100000); // kernel image
 	fa.markRangeUsed(0x400000, 0x100000);                           // user window
-	uint32_t heapBase = 0x75BCD15 & kernel::PAGE_MASK;              // bump heap
+	uint32_t heapBase = 0x75BCD15 & kernel::PAGE_MASK;              // kernel byte heap
 	fa.markRangeUsed(heapBase, topOfRam - heapBase);
+	// Lay out the kernel heap over its reserved region before the first malloc below.
+	// Paging is still off here, so the region is directly (identity) accessible.
+	heapInit((void*) heapBase, topOfRam - heapBase);
 
 	g_kspace = new kernel::AddressSpace(g_env);
 	g_kspace->mapRange(0, 0, topOfRam, kernel::PTE_PRESENT | kernel::PTE_RW);

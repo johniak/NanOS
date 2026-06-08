@@ -13,6 +13,10 @@ void *calloc(size_t nmeb, size_t size);
 void free(void *ptr);
 void *realloc(void *ptr, size_t size);
 
+// Lay out the kernel byte heap over [base, base+size). Must be called once, before the
+// first malloc (the arch MMU bring-up does this once it knows the top of RAM).
+void heapInit(void *base, unsigned size);
+
 
 
 
