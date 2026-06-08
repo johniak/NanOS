@@ -15,6 +15,18 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <time.h>
+#include <string.h>
+#include <stdio.h>
+
+/* Force the stdin stream object to be linked. picolibc's tinystdio pulls stdin/stdout/
+ * stderr from libc.a only on reference; programs here use stdout/stderr (printf) but
+ * rarely stdin, yet fread()'s __bufio_get references stdin weakly (it flushes stdout
+ * before reading stdin). Without a strong reference, stdin resolves to address 0 and the
+ * first fread on ANY file dereferences NULL. A static initializer won't do (a stream
+ * isn't a compile-time constant), so reference it from a (linked, never-called) function
+ * — the relocation alone pulls picolibc's stdin object in. */
+FILE* __nx_keep_stdin;
+void __nx_link_streams(void) { __nx_keep_stdin = stdin; }
 
 static inline int sys3(int nr, int a, int b, int c) {
 	int r;
@@ -55,6 +67,30 @@ int mkdir(const char* p, mode_t mode) {
 	char abs[256];
 	nx_resolve(p, abs);
 	return reterr(sys3(SYS_mkdir, (int) abs, (int) mode, 0));
+}
+/* rename(2): NanOS has no rename syscall, so do it in userland — copy the old file to the
+ * new name, then unlink the old. Both ends are ordinary files (Doom uses it to finalize a
+ * savegame from a temp file). Only valid within a writable fs (e.g. /tmp). */
+int rename(const char* oldp, const char* newp) {
+	int in = open(oldp, 0 /*O_RDONLY*/);
+	if (in < 0) return -1;
+	int out = open(newp, 01 | 0100 | 01000 /*O_WRONLY|O_CREAT|O_TRUNC*/, 0644);
+	if (out < 0) { close(in); return -1; }
+	char buf[512];
+	int n;
+	while ((n = read(in, buf, sizeof buf)) > 0) {
+		int off = 0;
+		while (off < n) {
+			int w = write(out, buf + off, n - off);
+			if (w <= 0) { close(in); close(out); return -1; }
+			off += w;
+		}
+	}
+	close(in);
+	close(out);
+	if (n < 0) return -1;
+	unlink(oldp);
+	return 0;
 }
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
 int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; }
@@ -161,9 +197,13 @@ void* sbrk(int incr) {
 	return prev;
 }
 
-/* Map the kernel's compact stat onto picolibc's struct stat. */
+/* Map the kernel's compact stat onto picolibc's struct stat. Zero the whole struct first
+ * (the kernel fills only a few fields) and set a sane st_blksize — picolibc's stdio sizes
+ * its file buffer from st_blksize, so leaving it as stack garbage makes fopen try to
+ * malloc a huge (or zero) buffer, which fails and then crashes on the first fread. */
 struct knl_stat { unsigned mode, size, nlink, uid, gid, mtime, ino; };
 static void fillstat(struct stat* o, const struct knl_stat* k) {
+	memset(o, 0, sizeof *o);
 	o->st_mode = k->mode;
 	o->st_size = k->size;
 	o->st_nlink = k->nlink;
@@ -171,6 +211,7 @@ static void fillstat(struct stat* o, const struct knl_stat* k) {
 	o->st_gid = k->gid;
 	o->st_mtime = k->mtime;
 	o->st_ino = k->ino;
+	o->st_blksize = 512;
 }
 int stat(const char* p, struct stat* o) {
 	char abs[256];

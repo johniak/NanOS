@@ -37,10 +37,10 @@ iso: docker-image
 	$(DOCKER_RUN) make _iso
 
 run: image
-	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
+	qemu-system-i386 -m 256M -drive file=$(IMAGE_GRUB2),format=raw
 
 run-iso: iso
-	qemu-system-i386 -cdrom nanos.iso
+	qemu-system-i386 -m 256M -cdrom nanos.iso
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
@@ -135,9 +135,11 @@ _image: _all _userland _grub2-image
 	# Kernel + init (PID 1) in core; the rest of the programs in bin.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	for p in nsh cat ls sigtest fbtest timetest brktest inputtest fstest; do \
+	for p in nsh cat ls sigtest fbtest timetest brktest inputtest fstest doom; do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
+	# Doom's shareware IWAD on the disk (read-only); the platform layer passes -iwad at it.
+	printf "rm /nanos/doom1.wad\nwrite disk/doom1.wad /nanos/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub
@@ -169,7 +171,7 @@ SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarra
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest doom
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -177,7 +179,7 @@ define link_prog
 	$(CROSS)objcopy -O binary $(BINFOLDER)$(1).elf $(BINFOLDER)$(1).nxe
 endef
 
-_userland: _userland-glue _userland-sbase
+_userland: _userland-glue _userland-sbase _userland-doom
 	$(CXX) $(USER_CFLAGS) -c user/init.c -o $(BINFOLDER)init.o
 	$(call link_prog,init,$(BINFOLDER)init.o)
 	$(CXX) $(USER_CFLAGS) -c user/nsh.c -o $(BINFOLDER)nsh.o
@@ -209,6 +211,21 @@ _userland-glue:
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/cwd.c -o $(BINFOLDER)cwd.o
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/dirent.c -o $(BINFOLDER)dirent.o
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/pwd_grp.c -o $(BINFOLDER)pwd_grp.o
+
+# Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which
+# breaks Doom's tentative globals) and warnings off; -DNORMALUNIX -DLINUX select the POSIX
+# code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
+# replaces the shipped backends. Built as the `doom` program in USER_PROGS.
+DOOM_DIR=user/third_party/doomgeneric
+DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -w -fcommon -fno-pic -fno-stack-protector
+DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
+
+_userland-doom:
+	for f in $(DOOM_DIR)/*.c; do \
+	  $(CXX) $(DOOM_CFLAGS) -c $$f -o $(BINFOLDER)$$(basename $$f .c).o || exit 1; done
+	$(CXX) $(DOOM_CFLAGS) -c user/doomgeneric_nanos.c -o $(BINFOLDER)doomgeneric_nanos.o
+	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)doom.elf $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(USER_LIBS) -lm
+	$(CROSS)objcopy -O binary $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe
 
 # Build the vendored sbase libutil + libutf objects the coreutils link against.
 _userland-sbase:
