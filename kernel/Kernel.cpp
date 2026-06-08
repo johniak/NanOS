@@ -89,11 +89,15 @@ static void registerKthread(Task* t, const char* name) {
 	ProcTable::setCommand(p, a, 1);
 }
 
-// Print a Linux-style "[ OK ] <msg>" boot line with a green OK (ANSI SGR; the framebuffer
-// console renders the color).
-static void okLine(const char* msg) {
-	Console::write("[ \033[1;32mOK\033[0m ] ");
-	Console::writeLine(msg);
+// Linux-style boot status: print the line with a blank marker first, run the step, then
+// overwrite the marker with a green OK in place (carriage-return back to column 0). The
+// step between okBegin and okEnd must NOT print a newline.
+static void okBegin(const char* msg) {
+	Console::write("[    ] ");
+	Console::write(msg);
+}
+static void okEnd() {
+	Console::write("\r[ \033[1;32mOK\033[0m ]\n");
 }
 
 // Build the physical frame allocator from the arch memory map, then hand it to
@@ -119,17 +123,18 @@ void Kernel::initPaging() {
 	Console::writeLine("");
 	Console::writeLine("    NanOS  --  booting");
 	Console::writeLine("");
-	okLine("CPU, GDT/IDT, interrupts, keyboard");
-	okLine("Paging enabled");
+	okBegin("CPU, GDT/IDT, interrupts, keyboard"); okEnd();
+	okBegin("Paging enabled"); okEnd();
 	if (fb) {
-		Console::write("[ \033[1;32mOK\033[0m ] Framebuffer ");
+		okBegin("Framebuffer ");
 		Console::write((int) fb->width);
 		Console::write("x");
 		Console::write((int) fb->height);
 		Console::write("x");
-		Console::writeLine((int) fb->bpp);
+		Console::write((int) fb->bpp);
+		okEnd();
 	} else {
-		okLine("Framebuffer: none (VGA text)");
+		okBegin("Framebuffer: none (VGA text)"); okEnd();
 	}
 }
 
@@ -158,29 +163,32 @@ void Kernel::start() {
 	// physical disk is NOT mounted at "/" but under /disks/main.
 	SynthFs* root = new SynthFs();
 	vfs->mount("/", root);
+	okBegin("Mounting ext filesystem at /disks/main");
 	mountVolume(vfs, root, "main", hd0, 2048);
+	okEnd();
 
 	// Expose the framebuffer as Linux /dev/fb0 (fbdev ioctls + mmap + read/write) so
 	// framebuffer software can drive it. Only when the bootloader gave us a framebuffer.
 	const arch::BootFramebuffer* fbdev = arch::bootFramebuffer();
 	if (fbdev) {
+		okBegin("Graphics device /dev/fb0");
 		FbInfo info = { (uint32_t) fbdev->addr, fbdev->pitch, fbdev->width,
 				fbdev->height, fbdev->bpp };
 		root->addChar(root->dev(), "fb0", new Fb0Device(info), 0666);
+		okEnd();
 	}
-	okLine("Mounted ext filesystem at /disks/main");
-	if (fbdev)
-		okLine("Graphics device /dev/fb0");
 
-	// Install the syscall interface over the VFS, then a boot sanity syscall.
+	// Install the syscall interface over the VFS, then a (silent) boot sanity syscall.
+	okBegin("Syscall interface (int 0x80)");
 	installSyscalls(vfs);
 	arch::syscallSelfTest();
-	okLine("Syscall interface (int 0x80)");
+	okEnd();
 
 	// Start the scheduler: idle (task 0), init/nsh (task 1, enters ring 3), and a
 	// background clock thread (task 2). The 1000 Hz timer preempts; init launches the
 	// shell. Control never returns from start().
 	g_vfs = vfs;
+	okBegin("Scheduler + tasks; starting shell");
 	Scheduler::init();
 	Task* initTask = Scheduler::create(initTaskBody, 1);
 	ProcTable::byPid(1)->task = initTask;   // the boot process (pid 1) runs the init task
@@ -190,7 +198,7 @@ void Kernel::start() {
 	registerKthread(Scheduler::idle(), "idle");   // kernel threads visible in /proc
 	registerKthread(clockTask, "clock");
 	arch::archTimerInit(1000);
-	okLine("Scheduler + tasks; starting shell");
+	okEnd();
 	Scheduler::start();
 
 	for (;;) arch::halt_or_hlt();   // unreachable

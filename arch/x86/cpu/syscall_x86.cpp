@@ -45,8 +45,10 @@ void syscallInit() {
 }
 
 void syscallSelfTest() {
-	const char* msg = "syscall write OK\n";
-	sys3(SYS_write, 1, (int) msg, 17);
+	// Exercise the int 0x80 round-trip at boot (catches a broken IDT gate / handler)
+	// without printing — a zero-length write still traps and returns through the gate.
+	const char* msg = "";
+	sys3(SYS_write, 1, (int) msg, 0);
 }
 
 }  // namespace arch

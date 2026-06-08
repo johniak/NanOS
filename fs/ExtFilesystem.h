@@ -152,7 +152,7 @@ public:
 				descSize = ds;
 		}
 		initBgdt();
-		printInfo();
+		// printInfo();   // (debug dump) silenced so the boot splash stays one line per step
 		return 0;
 	}
 
