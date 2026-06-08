@@ -12,21 +12,50 @@
 
 static char g_cwd[256] = "/";
 
-/* Expand `path` to an absolute path in `out` (>= 256 bytes). Relative paths are
- * joined onto the current directory; no "."/".." normalisation (not needed). */
+/* Expand `path` to a clean absolute path in `out` (>= 256 bytes). Relative paths are
+ * joined onto the current directory, then normalised: empty and "." components are
+ * dropped and ".." pops the previous component (e.g. "." -> the cwd, "./dev" -> "/dev").
+ * Without this, "ls ." would ask the kernel for a child literally named ".". */
 void nx_resolve(const char* path, char* out) {
+	char joined[512];
 	if (path[0] == '/') {
-		strncpy(out, path, 255);
-		out[255] = 0;
-		return;
+		strncpy(joined, path, 511);
+		joined[511] = 0;
+	} else {
+		strncpy(joined, g_cwd, 511);
+		joined[511] = 0;
+		unsigned l = strlen(joined);
+		if (l == 0 || joined[l - 1] != '/') {
+			if (l < 511) { joined[l++] = '/'; joined[l] = 0; }
+		}
+		strncat(joined, path, 511 - strlen(joined));
 	}
-	strncpy(out, g_cwd, 255);
-	out[255] = 0;
-	unsigned l = strlen(out);
-	if (l == 0 || out[l - 1] != '/') {
-		if (l < 255) { out[l++] = '/'; out[l] = 0; }
+
+	/* Split on '/', dropping "" and ".", popping on "..". */
+	const char* seg[64];
+	int seglen[64];
+	int n = 0;
+	const char* p = joined;
+	while (*p) {
+		while (*p == '/') p++;
+		if (!*p) break;
+		const char* s = p;
+		while (*p && *p != '/') p++;
+		int len = (int) (p - s);
+		if (len == 1 && s[0] == '.') continue;
+		if (len == 2 && s[0] == '.' && s[1] == '.') { if (n > 0) n--; continue; }
+		if (n < 64) { seg[n] = s; seglen[n] = len; n++; }
 	}
-	strncat(out, path, 255 - strlen(out));
+
+	char* o = out;
+	char* end = out + 255;
+	if (n == 0) { out[0] = '/'; out[1] = 0; return; }
+	for (int i = 0; i < n && o < end; i++) {
+		*o++ = '/';
+		for (int k = 0; k < seglen[i] && o < end; k++)
+			*o++ = seg[i][k];
+	}
+	*o = 0;
 }
 
 int chdir(const char* path) {
