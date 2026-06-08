@@ -30,16 +30,42 @@ public:
 		textArray[length] = 0;
 	}
 
-	void append(String str) {
-		int totalLenght = length + str.length;
-		if (length == 0) {
-			textArray = (char*) malloc(length);
+	// Value semantics: each String owns its buffer (deep copy on copy/assign, freed in
+	// the destructor). Without this, copies would share a buffer and the now-real free()
+	// would double-free or use-after-free across the many pass-by-value call sites.
+	String(const String& o) {
+		length = o.length;
+		if (o.textArray) {
+			textArray = (char*) malloc(length + 1);
+			memcpy(textArray, o.textArray, length);
+			textArray[length] = 0;
 		} else {
-			char* tmp = (char*) realloc(textArray, totalLenght + 1);
-			free(textArray);
-			textArray = tmp;
+			textArray = 0;
 		}
-		memcpy(textArray + length, str.textArray, str.length);
+	}
+	String& operator=(const String& o) {
+		if (this == &o)
+			return *this;
+		free(textArray);
+		length = o.length;
+		if (o.textArray) {
+			textArray = (char*) malloc(length + 1);
+			memcpy(textArray, o.textArray, length);
+			textArray[length] = 0;
+		} else {
+			textArray = 0;
+		}
+		return *this;
+	}
+
+	void append(const String& str) {
+		int totalLenght = length + str.length;
+		// realloc handles textArray==0 (acts as malloc) and frees the old buffer itself,
+		// so there is no separate free() (that was a double-free under a real allocator).
+		textArray = (char*) realloc(textArray, totalLenght + 1);
+		if (str.textArray)
+			memcpy(textArray + length, str.textArray, str.length);
+		textArray[totalLenght] = 0;
 		length = totalLenght;
 	}
 
@@ -94,35 +120,9 @@ public:
 	int compareTo(String str){
 		return strcmp(textArray,str.textArray);
 	}
-	List<String> split(char separator){
-		List<String> strs= List<String>();
-		int last=0;
-		for(int i=0;i<length;i++){
-			if(textArray[i]==separator){
-				strs.add(this->substring(last,i));
-				last=i+1;
-			}
-		}
-		if(last!=length){
-			strs.add(this->substring(last,length));
-		}
-		return strs;
-	}
-	String substring(int start){
-		return substring(start,length);
-	}
-	String substring(int start,int end){
-		if(start>=end){
-			return "";
-		}
-		if(end>length)
-			return "";
-		String str="";
-		char* newArr=(char*)malloc(end-start+1);
-		newArr[end-start]=0;
-		memcpy(newArr,textArray+start,end-start);
-		return newArr;
-	}
+	// (split/substring removed: they returned List<String>/String by value through a
+	// container that can't hold value types safely, and the only user — ext path lookup —
+	// now parses components in place. See ExtFilesystem::getInodeByPath.)
 	bool startsWith(String str){
 		return indexOf(str)==0;
 	}

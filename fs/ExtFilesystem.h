@@ -233,30 +233,42 @@ public:
 
 	// Resolve an absolute path to its inode. Returns false if any component is
 	// missing.
+	// Walk an absolute path to its inode by parsing components in place (no String/List
+	// allocations per call — like SynthFs/RamFs walk). Empty components are skipped.
 	bool getInodeByPath(String path, Ext2Inode& out) {
-		if (!path.startsWith("/"))
+		const char* p = (char*) path;
+		if (!p || p[0] != '/')
 			return false;
-		path = path.substring(1);
-		List<String> pathSplited = path.split('/');
-		Ext2Inode parentInode = getInode(2);
-		for (int i = 0; i < pathSplited.getCount(); i++) {
-			if (pathSplited[i].getLenght() == 0)
-				continue;
-			Ext2Inode childInode;
-			if (!getChildrenInode(parentInode, pathSplited[i], childInode))
-				return false;
-			parentInode = childInode;
+		Ext2Inode cur = getInode(2);   // ext2 root inode is #2
+		int i = 1;
+		while (p[i]) {
+			int j = i;
+			while (p[j] && p[j] != '/')
+				j++;
+			int len = j - i;
+			if (len > 0) {
+				Ext2Inode child;
+				if (!getChildrenInode(cur, p + i, len, child))
+					return false;
+				cur = child;
+			}
+			i = (p[j] == '/') ? j + 1 : j;
 		}
-		out = parentInode;
+		out = cur;
 		return true;
 	}
 
-	bool getChildrenInode(Ext2Inode inode, String name, Ext2Inode& out) {
+	// Find the child named `name` (exactly `len` chars) in directory `inode`.
+	bool getChildrenInode(Ext2Inode inode, const char* name, int len, Ext2Inode& out) {
 		if (!isDirectory(inode))
 			return false;
 		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
 		for (int i = 0; i < entries.getCount(); i++) {
-			if (name.compareTo(entries[i].name) == 0) {
+			const char* en = entries[i].name;   // NUL-terminated entry name
+			int k = 0;
+			while (k < len && en[k] && en[k] == name[k])
+				k++;
+			if (k == len && en[k] == 0) {
 				out = getInode(entries[i].inode);
 				return true;
 			}

@@ -8,12 +8,12 @@
 #include "String.h"
 
 String::String() {
-	length=0;
-
+	length = 0;
+	textArray = 0;   // empty String owns no buffer (free(0) in the dtor is a no-op)
 }
 
 String::~String() {
-	// TODO Auto-generated destructor stub
+	free(textArray);   // value semantics: each String frees its own buffer
 }
 
 String operator+(String str1,const char* str2)
