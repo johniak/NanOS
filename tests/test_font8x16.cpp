@@ -8,10 +8,10 @@ TEST_CASE("fontGlyph: space is blank, 'A' matches the known VGA bitmap") {
 	for (int i = 0; i < FONT_H; i++)
 		CHECK(sp[i] == 0);                     // space glyph is all-zero
 
-	const unsigned char* a = fontGlyph('A');   // 30 30 78 78 cc.. fc fc cc.. 00 00
-	CHECK(a[0] == 0x30);
-	CHECK(a[2] == 0x78);
-	CHECK(a[8] == 0xfc);
+	const unsigned char* a = fontGlyph('A');   // 00 00 10 38 6c c6 c6 fe c6 c6 c6 c6 00..
+	CHECK(a[3] == 0x38);
+	CHECK(a[5] == 0xc6);
+	CHECK(a[7] == 0xfe);
 	CHECK(a[15] == 0x00);
 	int set = 0;
 	for (int i = 0; i < FONT_H; i++) if (a[i]) set++;
