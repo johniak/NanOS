@@ -120,6 +120,39 @@ TEST_CASE("sigExecReset: caught -> DFL, ignored stays ignored, pending dropped")
 	CHECK(s.pending == 0);
 }
 
+TEST_CASE("sigHasInterrupt: ignored/cont signals do not interrupt; term/stop/handler do") {
+	SignalState s;
+	sigInit(s);
+	CHECK(!sigHasInterrupt(s));
+
+	sigPost(s, SIGCHLD);                      // default-ignore -> no interrupt (no EINTR)
+	CHECK(!sigHasInterrupt(s));
+
+	sigPost(s, SIGINT);                       // default-terminate -> interrupts
+	CHECK(sigHasInterrupt(s));
+
+	sigInit(s);
+	sigPost(s, SIGCONT);                      // resume -> does not interrupt a wait
+	CHECK(!sigHasInterrupt(s));
+
+	sigInit(s);
+	sigPost(s, SIGTSTP);                      // stop -> interrupts
+	CHECK(sigHasInterrupt(s));
+
+	sigInit(s);
+	s.handlers[SIGINT] = kSigIgnore;          // explicitly ignored -> no interrupt
+	sigPost(s, SIGINT);
+	CHECK(!sigHasInterrupt(s));
+
+	s.handlers[SIGINT] = 0x401000;            // a handler -> interrupts
+	CHECK(sigHasInterrupt(s));
+
+	sigInit(s);                               // blocked terminate -> not deliverable, no interrupt
+	s.blocked = ~0u;
+	sigPost(s, SIGINT);
+	CHECK(!sigHasInterrupt(s));
+}
+
 TEST_CASE("wait-status encodings match the W* macro contract") {
 	// WIFEXITED: (status & 0x7f) == 0; WEXITSTATUS: (status >> 8) & 0xff
 	int e = waitStatusExited(42);

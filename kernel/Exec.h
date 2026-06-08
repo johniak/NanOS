@@ -33,10 +33,11 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 // of 0. Returns the child's pid to the parent, or <0 on failure (-EAGAIN).
 int forkProcess(arch::TrapFrame* tf);
 
-// waitpid(2): block until a child of the current process (matching `wantPid`, or any
-// child when wantPid <= 0) has exited; write its encoded status to *statusOut, reap
-// it, and return its pid. Returns -ECHILD when there is no such child.
-int waitProcess(int wantPid, int* statusOut);
+// waitpid(2): wait on a child of the current process (matching `wantPid`, or any child
+// when wantPid <= 0); write its W*-encoded status to *statusOut and return its pid.
+// `options` are the Linux bits: WNOHANG (1) returns 0 rather than blocking, WUNTRACED
+// (2) also reports a child that has just stopped. Returns -ECHILD when there is no child.
+int waitProcess(int wantPid, int* statusOut, int options);
 
 // SYS_exit handler tail: free the current process's address space, mark its task a
 // zombie, and schedule away. Does NOT return.

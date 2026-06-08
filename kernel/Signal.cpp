@@ -86,6 +86,19 @@ SigDisp sigResolve(const SignalState& s, int sig) {
 	}
 }
 
+bool sigHasInterrupt(const SignalState& s) {
+	unsigned ready = (s.pending & ~s.blocked)
+	               | (s.pending & (bit(SIGKILL) | bit(SIGSTOP)));   // these ignore the mask
+	for (int sig = 1; sig < NANOS_NSIG; sig++) {
+		if (!(ready & bit(sig)))
+			continue;
+		SigDisp d = sigResolve(s, sig);
+		if (d == DISP_TERM || d == DISP_STOP || d == DISP_HANDLER)
+			return true;
+	}
+	return false;
+}
+
 void sigForkInherit(SignalState& child, const SignalState& parent) {
 	child.blocked = parent.blocked;
 	child.restorer = parent.restorer;

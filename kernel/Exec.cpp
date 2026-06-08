@@ -149,14 +149,16 @@ void procExit() {
 	for (;;) {}              // unreachable
 }
 
-// waitpid(2): reap a child of the current process. Block until a matching child has
-// exited, copy its (encoded) status to *statusOut, release its scheduler task slot
-// and its syscall state, and return its pid. -ECHILD if there is no such child.
-int waitProcess(int wantPid, int* statusOut) {
+// waitpid(2): wait on a child of the current process. With WUNTRACED, also report a
+// child that has just stopped (job control). With WNOHANG, return 0 instead of blocking
+// when nothing is reportable. Writes the W*-encoded status to *statusOut and returns the
+// child pid (freeing the slot only for an exited child). -ECHILD if there is no child.
+enum { WAIT_WNOHANG = 1, WAIT_WUNTRACED = 2 };
+int waitProcess(int wantPid, int* statusOut, int options) {
 	Process* parent = ProcTable::current();
 	int prevForeground = g_foregroundPid;
 	if (wantPid > 0)
-		g_foregroundPid = wantPid;   // Ctrl+C targets the child we are waiting on
+		g_foregroundPid = wantPid;   // Ctrl+C / Ctrl+Z target the child we are waiting on
 	for (;;) {
 		Process* child = 0;
 		int r = ProcTable::reapChild(parent->pid, wantPid, &child);
@@ -175,7 +177,22 @@ int waitProcess(int wantPid, int* statusOut) {
 			g_foregroundPid = prevForeground;
 			return r;
 		}
-		Scheduler::block();        // children alive but none exited yet: wait
+		// A child that just stopped (job control): report it without reaping the slot.
+		if (options & WAIT_WUNTRACED) {
+			Process* st = 0;
+			int sp = ProcTable::reapStopped(parent->pid, wantPid, &st);
+			if (sp > 0) {
+				if (statusOut)
+					*statusOut = waitStatusStopped(st->stopSignal);
+				g_foregroundPid = prevForeground;
+				return sp;
+			}
+		}
+		if (options & WAIT_WNOHANG) {       // nothing reportable; don't block
+			g_foregroundPid = prevForeground;
+			return 0;
+		}
+		Scheduler::block();        // children alive but none reportable yet: wait
 		if (hasPendingSignalCurrent()) {   // a signal for US interrupts the wait
 			g_foregroundPid = prevForeground;
 			return -4;             // -EINTR
@@ -212,6 +229,25 @@ static void procKill(int sig) {
 	for (;;) {}   // unreachable
 }
 
+// Stop the current process (job-control SIGTSTP/SIGSTOP). Notifies the parent (SIGCHLD +
+// wake, so waitpid(WUNTRACED) reports the stop) and deschedules. RETURNS when a later
+// SIGCONT marks the task runnable again — the trap frame is untouched, so the eventual
+// iret resumes the user exactly where it stopped.
+static void procStop(int sig) {
+	Process* p = ProcTable::current();
+	p->stopped = true;
+	p->stopSignal = sig;
+	p->stopReported = false;
+	Process* parent = ProcTable::byPid(p->parent);
+	if (parent) {
+		sigPost(parent->sig, SIGCHLD);
+		Scheduler::wake(parent->task);
+	}
+	Scheduler::current()->state = TASK_STOPPED;
+	Scheduler::schedule();         // resumes here once continued (or killed)
+	p->stopped = false;
+}
+
 // kill(2): post `sig` to process `pid`. Wakes a blocked target so it can deliver.
 int signalSend(int pid, int sig) {
 	if (sig < 0 || sig >= NANOS_NSIG)
@@ -222,8 +258,20 @@ int signalSend(int pid, int sig) {
 	if (sig == 0)
 		return 0;     // existence check only
 	sigPost(t->sig, sig);
-	if (t->task && t->task->state == TASK_BLOCKED)
-		Scheduler::wake(t->task);   // let it run to its return-to-user and deliver
+	if (sig == SIGCONT && t->stopped) {        // resume a stopped process (job control)
+		t->stopped = false;
+		t->continued = true;
+		Process* parent = ProcTable::byPid(t->parent);
+		if (parent) { sigPost(parent->sig, SIGCHLD); Scheduler::wake(parent->task); }
+	}
+	// Wake the target so it reaches a return-to-user and delivers: any blocked task, or a
+	// stopped task that is being continued or killed.
+	if (t->task) {
+		if (t->task->state == TASK_BLOCKED)
+			Scheduler::wake(t->task);
+		else if (t->task->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
+			Scheduler::wake(t->task);
+	}
 	return 0;
 }
 
@@ -258,7 +306,7 @@ int signalMask(int how, unsigned set, unsigned* oldset) {
 
 bool hasPendingSignalCurrent() {
 	Process* p = ProcTable::current();
-	return p && sigNextDeliverable(p->sig) != 0;
+	return p && sigHasInterrupt(p->sig);   // ignored signals (SIGCHLD) must not cause EINTR
 }
 
 // Deliver pending signals at a return-to-user point. The caller has already ensured the
@@ -275,9 +323,10 @@ void signalDeliver(arch::TrapFrame* tf) {
 		switch (sigResolve(p->sig, sig)) {
 		case DISP_IGN:
 		case DISP_CONT:
-			continue;                  // ignored / resume handled on post (Stage D)
+			continue;                  // ignored / resume is handled when SIGCONT is posted
 		case DISP_STOP:
-			continue;                  // job-control stop wired in Stage D
+			procStop(sig);             // stop here; returns when continued
+			continue;
 		case DISP_HANDLER: {
 			// Run the user handler in ring 3, with `sig` blocked for its duration.
 			unsigned oldMask = p->sig.blocked;

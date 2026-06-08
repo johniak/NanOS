@@ -14,7 +14,7 @@
 
 namespace kernel {
 
-enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_DONE, TASK_ZOMBIE, TASK_FREE };
+enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_STOPPED, TASK_DONE, TASK_ZOMBIE, TASK_FREE };
 
 struct Task {
 	unsigned kesp;          // saved kernel esp (the whole context lives on the stack)

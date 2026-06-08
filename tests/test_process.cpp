@@ -94,6 +94,40 @@ TEST_CASE("setCommand: comm = basename(argv0), cmdline = argv joined") {
 	CHECK(strcmp(p->cmdline, "init") == 0);
 }
 
+TEST_CASE("reapStopped: reports a stopped child once, then nothing") {
+	ProcTable::init();
+	Process* parent = ProcTable::alloc(0);
+	Process* child = ProcTable::alloc(parent->pid);
+
+	Process* out = (Process*) 0x1;
+	CHECK(ProcTable::reapStopped(parent->pid, -1, &out) == 0);   // not stopped yet
+
+	child->stopped = true;
+	child->stopSignal = 20;   // SIGTSTP
+	out = nullptr;
+	CHECK(ProcTable::reapStopped(parent->pid, -1, &out) == child->pid);
+	CHECK(out == child);
+	CHECK(child->stopReported);
+
+	out = nullptr;
+	CHECK(ProcTable::reapStopped(parent->pid, -1, &out) == 0);   // already reported
+	// wantPid that is not this child -> nothing.
+	child->stopReported = false;
+	CHECK(ProcTable::reapStopped(parent->pid, 9999, &out) == 0);
+}
+
+TEST_CASE("infoByPid: a job-control stopped process reads state 'T'") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	const char* av[] = { "spin", 0 };
+	ProcTable::setCommand(a, av, 1);
+	a->stopped = true;
+
+	ProcInfo pi;
+	REQUIRE(ProcTable::infoByPid(a->pid, &pi));
+	CHECK(pi.state == 'T');
+}
+
 TEST_CASE("snapshot/infoByPid: fields + state char from the task / exit flag") {
 	ProcTable::init();
 	Process* a = ProcTable::alloc(0);

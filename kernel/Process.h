@@ -65,6 +65,11 @@ public:
 	//   - matching child(ren) still running -> return 0 (caller should block);
 	//   - no matching child -> return -10 (-ECHILD).
 	static int reapChild(int parentPid, int wantPid, Process** childOut);
+
+	// Job control: find a child (of parentPid; wantPid > 0 narrows) that is stopped and
+	// not yet reported to waitpid(WUNTRACED). Marks it reported and returns its pid via
+	// *childOut, or 0 if there is none. Distinct from reapChild (which reaps the dead).
+	static int reapStopped(int parentPid, int wantPid, Process** childOut);
 	static void freeSlot(Process* p);    // release a process slot after teardown
 
 	// /proc + ps support.

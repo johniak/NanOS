@@ -77,6 +77,23 @@ int ProcTable::reapChild(int parentPid, int wantPid, Process** childOut) {
 	return any ? 0 : -10;   // 0 = child(ren) still running; -ECHILD = no such child
 }
 
+int ProcTable::reapStopped(int parentPid, int wantPid, Process** childOut) {
+	for (int i = 0; i < MAXPROC; i++) {
+		Process* c = &g_procs[i];
+		if (!c->used || c->parent != parentPid)
+			continue;
+		if (wantPid > 0 && c->pid != wantPid)
+			continue;
+		if (c->stopped && !c->stopReported) {
+			c->stopReported = true;
+			if (childOut)
+				*childOut = c;
+			return c->pid;
+		}
+	}
+	return 0;
+}
+
 void ProcTable::freeSlot(Process* p) {
 	if (p)
 		p->used = false;
@@ -86,10 +103,13 @@ void ProcTable::freeSlot(Process* p) {
 static char stateChar(const Process* p) {
 	if (p->exited)
 		return 'Z';
+	if (p->stopped)
+		return 'T';                  // job-control stopped
 	if (!p->task)
 		return 'R';
 	switch (p->task->state) {
 	case TASK_BLOCKED: return 'S';   // sleeping (e.g. blocked read / waitpid)
+	case TASK_STOPPED: return 'T';   // stopped
 	case TASK_ZOMBIE:  return 'Z';
 	default:           return 'R';   // READY / RUNNING
 	}

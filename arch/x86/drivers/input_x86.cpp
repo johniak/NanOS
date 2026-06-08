@@ -65,10 +65,10 @@ void inputFeedScancode(unsigned char sc) {
 	} else {
 		g_decoder.feed(sc, [](int ev) {
 			// Cooked-mode control keys generate signals to the foreground process,
-			// like a Unix tty: Ctrl+C -> SIGINT, Ctrl+\ -> SIGQUIT. (Ctrl+Z is wired
-			// for job control in a later stage.)
+			// like a Unix tty: Ctrl+C -> SIGINT, Ctrl+\ -> SIGQUIT, Ctrl+Z -> SIGTSTP.
 			if (ev == 0x03) { kernel::consoleSignal(SIGINT);  return; }
 			if (ev == 0x1C) { kernel::consoleSignal(SIGQUIT); return; }
+			if (ev == 0x1A) { kernel::consoleSignal(SIGTSTP); return; }
 			if (ev < 256)              // cooked: arrows ignored
 				g_line.push((char) ev, echoChar);
 		});

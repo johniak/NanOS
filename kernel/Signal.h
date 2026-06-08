@@ -93,6 +93,11 @@ int  sigNextDeliverable(const SignalState& s);   // lowest pending & ~blocked si
 SigDisp sigResolve(const SignalState& s, int sig);
 bool sigCanCatch(int sig);                       // false for SIGKILL/SIGSTOP
 
+// True if a deliverable signal would actually interrupt the process — i.e. resolves to
+// terminate / stop / run-a-handler. Ignored signals (e.g. default SIGCHLD) and SIGCONT
+// do NOT count, so they must not yield EINTR from a blocking syscall.
+bool sigHasInterrupt(const SignalState& s);
+
 void sigForkInherit(SignalState& child, const SignalState& parent);  // copy disp+mask
 void sigExecReset(SignalState& s);               // caught -> default (keep ignore)
 

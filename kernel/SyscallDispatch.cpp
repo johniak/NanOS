@@ -40,7 +40,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		ret = forkProcess(tf);
 		break;
 	case SYS_waitpid:
-		ret = waitProcess((int) a0, (int*) a1);
+		ret = waitProcess((int) a0, (int*) a1, (int) a2);   // a2 = options (WNOHANG/WUNTRACED)
 		break;
 	case SYS_kill:
 		ret = signalSend((int) a0, (int) a1);
