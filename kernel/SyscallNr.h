@@ -19,6 +19,8 @@
 #define SYS_lseek 19
 #define SYS_kill 37
 #define SYS_signal 48
+#define SYS_ioctl 54
+#define SYS_mmap2 192
 #define SYS_stat 106
 #define SYS_fstat 108
 #define SYS_sigreturn 119

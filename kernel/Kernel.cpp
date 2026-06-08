@@ -7,6 +7,8 @@
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
 #include "SynthFs.h"
+#include "Fbdev.h"
+#include "Fb0Device.h"
 #include "Scheduler.h"
 #include <arch/sched.h>
 #include "Syscall.h"
@@ -137,6 +139,15 @@ void Kernel::start() {
 	SynthFs* root = new SynthFs();
 	vfs->mount("/", root);
 	mountVolume(vfs, root, "main", hd0, 2048);
+
+	// Expose the framebuffer as Linux /dev/fb0 (fbdev ioctls + mmap + read/write) so
+	// framebuffer software can drive it. Only when the bootloader gave us a framebuffer.
+	const arch::BootFramebuffer* fbdev = arch::bootFramebuffer();
+	if (fbdev) {
+		FbInfo info = { (uint32_t) fbdev->addr, fbdev->pitch, fbdev->width,
+				fbdev->height, fbdev->bpp };
+		root->addChar(root->dev(), "fb0", new Fb0Device(info), 0666);
+	}
 
 	// Install the syscall interface over the VFS, then a boot sanity syscall.
 	installSyscalls(vfs);

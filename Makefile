@@ -5,7 +5,7 @@ include arch/$(ARCH)/arch.mk
 
 # Machine-independent objects (portable across architectures).
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamBlockDevice.o DeviceManager.o Vfs.o
-MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o
+MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o Fbdev.o Fb0Device.o
 MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
 MI_SOURCES+= memory_manager.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
@@ -135,7 +135,7 @@ _image: _all _userland _grub2-image
 	# Kernel + init (PID 1) in core; the rest of the programs in bin.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	for p in nsh cat ls sigtest; do \
+	for p in nsh cat ls sigtest fbtest; do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 
@@ -169,7 +169,7 @@ SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarra
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
-USER_PROGS=init nsh cat ls sigtest
+USER_PROGS=init nsh cat ls sigtest fbtest
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -188,6 +188,8 @@ _userland: _userland-glue _userland-sbase
 	$(call link_prog,ls,$(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS))
 	$(CXX) $(USER_CFLAGS) -c user/sigtest.c -o $(BINFOLDER)sigtest.o
 	$(call link_prog,sigtest,$(BINFOLDER)sigtest.o)
+	$(CXX) $(USER_CFLAGS) -c user/fbtest.c -o $(BINFOLDER)fbtest.o
+	$(call link_prog,fbtest,$(BINFOLDER)fbtest.o)
 
 # Build the shared startup/header/glue objects once.
 _userland-glue:
@@ -224,9 +226,9 @@ TEST_SRCS=$(wildcard tests/*.cpp)
 # coverage via the .h patterns below.
 TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp lib/String.cpp
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp arch/x86/mm/AddressSpace.cpp
-TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp
+TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/AddressSpace.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/AddressSpace.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes

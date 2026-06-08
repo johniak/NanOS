@@ -63,6 +63,8 @@ public:
 	int stat(String path, LinuxStat* out);
 	int fstat(int fd, LinuxStat* out);
 	int getdents64(int fd, void* buf, unsigned n);
+	int ioctl(int fd, unsigned cmd, void* arg);
+	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 	void exit(int code);
 	bool hasExited() { return exited; }
 	int code() { return exitCode; }

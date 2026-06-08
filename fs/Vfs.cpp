@@ -127,4 +127,28 @@ int Vfs::readdir(String path, List<DirEntry>& out) {
 	return fs->readdir(rel, out);
 }
 
+int Vfs::write(String path, unsigned size, unsigned off, const void* buf) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->write(rel, size, off, buf);
+}
+
+int Vfs::ioctl(String path, unsigned cmd, void* arg) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->ioctl(rel, cmd, arg);
+}
+
+int Vfs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->mmapInfo(rel, physOut, lenOut);
+}
+
 }

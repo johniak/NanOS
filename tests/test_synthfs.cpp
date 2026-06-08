@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "SynthFs.h"
+#include "CharDevice.h"
 #include "Process.h"
 #include <cstring>
 #include <cstdio>
@@ -114,6 +115,45 @@ TEST_CASE("SynthFs errors on missing paths and bad ops") {
 	CHECK(fs.read("/nope", 1, 0, b) < 0);
 	List<DirEntry> e;
 	CHECK(fs.readdir("/proc/version-missing", e) < 0);
+}
+
+// ---- char devices (SK_CHARDEV: /dev/fb0-style) -----------------------------
+
+namespace {
+struct FakeDev : CharDevice {
+	int lastCmd = 0;
+	int read(unsigned, void* b, unsigned n) { memset(b, 0x7E, n); return (int) n; }
+	int write(unsigned, const void*, unsigned n) { return (int) n; }
+	int ioctl(unsigned cmd, void*) { lastCmd = (int) cmd; return 0; }
+	int mmapInfo(unsigned* p, unsigned* l) { *p = 0xABC000; *l = 0x1000; return 0; }
+};
+}
+
+TEST_CASE("SynthFs SK_CHARDEV routes read/write/ioctl/mmapInfo to the device") {
+	SynthFs fs;
+	static FakeDev dev;                       // static: the fs keeps the pointer
+	fs.addChar(fs.dev(), "fb0", &dev, 0666);
+
+	char buf[4] = { 0 };
+	CHECK(fs.read("/dev/fb0", 4, 0, buf) == 4);
+	CHECK((unsigned char) buf[0] == 0x7E);
+	CHECK(fs.write("/dev/fb0", 4, 0, buf) == 4);
+	CHECK(fs.ioctl("/dev/fb0", 0x4600, buf) == 0);
+	CHECK(dev.lastCmd == 0x4600);
+	unsigned p = 0, l = 0;
+	CHECK(fs.mmapInfo("/dev/fb0", &p, &l) == 0);
+	CHECK(p == 0xABC000u);
+	CHECK(l == 0x1000u);
+
+	// /dev/fb0 shows up in the /dev listing.
+	List<DirEntry> e;
+	REQUIRE(fs.readdir("/dev", e) == 0);
+	CHECK(listed(e, "fb0"));
+
+	// A non-device node: write is -EROFS, ioctl/mmap are -EINVAL.
+	CHECK(fs.write("/dev/zero", 4, 0, buf) == -30);
+	CHECK(fs.ioctl("/dev/zero", 0, buf) < 0);
+	CHECK(fs.mmapInfo("/dev/zero", &p, &l) < 0);
 }
 
 // ---- dynamic /proc (live process table) -----------------------------------

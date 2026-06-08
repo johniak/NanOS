@@ -32,6 +32,12 @@ public:
 	virtual int read(String path, unsigned size, unsigned off, void* buf) = 0; // bytes, <0 err
 	virtual int stat(String path, FileStat& out) = 0;                    // 0 ok, <0 err
 	virtual int readdir(String path, List<DirEntry>& out) = 0;           // 0 ok, <0 err
+
+	// Device extensions. Default to "unsupported" so ordinary read-only filesystems
+	// (ext2/ext4) need not implement them; SynthFs overrides them for char devices.
+	virtual int write(String, unsigned, unsigned, const void*) { return -30; }  // -EROFS
+	virtual int ioctl(String, unsigned, void*) { return -22; }                  // -EINVAL
+	virtual int mmapInfo(String, unsigned*, unsigned*) { return -22; }          // -EINVAL
 };
 
 // Factory registered by type name; creates a FileSystem for a device.
@@ -70,6 +76,9 @@ public:
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
 	int readdir(String path, List<DirEntry>& out);
+	int write(String path, unsigned size, unsigned off, const void* buf);
+	int ioctl(String path, unsigned cmd, void* arg);
+	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
 };
 
 }

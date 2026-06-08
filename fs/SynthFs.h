@@ -14,6 +14,8 @@
 
 namespace kernel {
 
+struct CharDevice;   // a writable/ioctl/mmappable device node (drivers/CharDevice.h)
+
 // A generated file: fill up to n bytes at logical offset off; return bytes produced.
 typedef int (*SynthGen)(unsigned off, void* buf, unsigned n);
 
@@ -21,7 +23,7 @@ typedef int (*SynthGen)(unsigned off, void* buf, unsigned n);
 // length. Free function so it is host-testable; used by the /proc/uptime generator.
 int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz);
 
-enum SynthKind { SK_DIR, SK_STATIC, SK_GEN };
+enum SynthKind { SK_DIR, SK_STATIC, SK_GEN, SK_CHARDEV };
 
 struct SynthNode {
 	char name[64];
@@ -31,6 +33,7 @@ struct SynthNode {
 	const char* data;       // SK_STATIC
 	unsigned len;
 	SynthGen gen;           // SK_GEN
+	CharDevice* dev;        // SK_CHARDEV
 	unsigned perms;         // permission bits (type bits added by stat)
 };
 
@@ -50,6 +53,7 @@ public:
 	SynthNode* addDir(SynthNode* parent, const char* name);
 	void addStatic(SynthNode* parent, const char* name, const char* data, unsigned len);
 	void addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms);
+	void addChar(SynthNode* parent, const char* name, CharDevice* dev, unsigned perms);
 	void addVolume(const char* name);     // marker dir under /disks
 
 	SynthNode* dev() { return m_dev; }
@@ -60,6 +64,10 @@ public:
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
 	int readdir(String path, List<DirEntry>& out);
+	// Device extensions (override the FileSystem defaults; only char-device nodes honor them).
+	int write(String path, unsigned size, unsigned off, const void* buf);
+	int ioctl(String path, unsigned cmd, void* arg);
+	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
 
 private:
 	int readNode(String path, unsigned size, unsigned off, void* buf);   // static-tree read

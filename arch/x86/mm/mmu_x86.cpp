@@ -109,4 +109,21 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 
 uint32_t mmuSpaceDirPhys(AddressSpace* s) { return s->impl.directoryPhys(); }
 
+uint32_t mmuMapUserFb(AddressSpace* s, uint32_t fbPhys, uint32_t bytes) {
+	const uint32_t FB_USER_VA = 0x10000000;   // 256 MiB: above RAM, outside the 1 MiB window
+	uint32_t base = fbPhys & kernel::PAGE_MASK;
+	uint32_t off = fbPhys - base;
+	uint32_t len = (off + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;
+	// Allocating + zeroing page-table frames touches arbitrary physical RAM by identity,
+	// which is only safe under the kernel directory (the process dir's user-window PDE
+	// does NOT identity-map all RAM). Switch to the kernel dir for the mapping, then back
+	// (the CR3 reload makes the new PTEs live).
+	uint32_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	bool ok = s->impl.mapRange(FB_USER_VA, base, len,
+			kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_USER);
+	kernel::loadCr3(saved);
+	return ok ? FB_USER_VA + off : 0;
+}
+
 }  // namespace arch

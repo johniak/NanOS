@@ -3,6 +3,8 @@
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
 #include "RamBlockDevice.h"
+#include "SynthFs.h"
+#include "CharDevice.h"
 #include <cstdio>
 #include <cstring>
 // malloc/free via memory_manager.h (transitive); do not include <cstdlib>.
@@ -41,6 +43,48 @@ TEST_CASE("sys_write to fd 1 reaches the console sink") {
 	CHECK(sc.write(1, "hi!", 3) == 3);
 	CHECK(g_outLen == 3);
 	CHECK(strncmp(g_out, "hi!", 3) == 0);
+}
+
+namespace {
+struct FbFake : CharDevice {
+	unsigned lastIoctl = 0;
+	int read(unsigned, void* b, unsigned n) { memset(b, 0xAA, n); return (int) n; }
+	int write(unsigned, const void*, unsigned n) { return (int) n; }
+	int ioctl(unsigned cmd, void*) { lastIoctl = cmd; return 0; }
+	int mmapInfo(unsigned* p, unsigned* l) { *p = 0x1234000; *l = 0x2000; return 0; }
+};
+}
+
+TEST_CASE("sys ioctl/write/mmapInfo route to a device fd; console fd rejects them") {
+	Vfs* vfs = new Vfs();
+	static SynthFs root;
+	static FbFake fb;
+	root.addChar(root.dev(), "fb0", &fb, 0666);
+	REQUIRE(vfs->mount("/", &root) == 0);
+
+	Syscalls sc(vfs, sink);
+	int fd = sc.open("/dev/fb0", 0);
+	REQUIRE(fd >= 3);
+
+	char buf[4] = { 1, 2, 3, 4 };
+	CHECK(sc.write(fd, buf, 4) == 4);            // device accepts the write
+	CHECK(sc.ioctl(fd, 0x4600, buf) == 0);
+	CHECK(fb.lastIoctl == 0x4600u);
+	unsigned p = 0, l = 0;
+	CHECK(sc.mmapInfo(fd, &p, &l) == 0);
+	CHECK(p == 0x1234000u);
+	CHECK(l == 0x2000u);
+
+	CHECK(sc.ioctl(1, 0, buf) < 0);              // console fd: no ioctl
+	CHECK(sc.mmapInfo(1, &p, &l) < 0);           // console fd: not mmappable
+}
+
+TEST_CASE("sys_write to a read-only file is -EROFS") {
+	Syscalls sc(mountFixture(), sink);
+	int fd = sc.open("/hello.txt", 0);
+	REQUIRE(fd >= 3);
+	char b[2] = { 0 };
+	CHECK(sc.write(fd, b, 1) == -30);            // -EROFS via the FileSystem default
 }
 
 TEST_CASE("sys_open/read returns file bytes and advances the offset") {

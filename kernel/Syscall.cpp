@@ -65,7 +65,12 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 		return -EBADF;
 	if (fds[fd].isConsole)
 		return consoleWrite((const char*) buf, n);
-	return -EROFS;   // filesystem is read-only
+	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
+	// (e.g. /dev/fb0) accepts the write.
+	int r = vfs->write(fds[fd].path, n, fds[fd].offset, buf);
+	if (r > 0)
+		fds[fd].offset += (unsigned) r;
+	return r;
 }
 
 int Syscalls::lseek(int fd, int off, int whence) {
@@ -154,6 +159,20 @@ int Syscalls::getdents64(int fd, void* buf, unsigned n) {
 		pos += reclen;
 	}
 	return (int) pos;
+}
+
+int Syscalls::ioctl(int fd, unsigned cmd, void* arg) {
+	if (!valid(fd))
+		return -EBADF;
+	if (fds[fd].isConsole)
+		return -EINVAL;          // no console ioctls (yet)
+	return vfs->ioctl(fds[fd].path, cmd, arg);
+}
+
+int Syscalls::mmapInfo(int fd, unsigned* physOut, unsigned* lenOut) {
+	if (!valid(fd) || fds[fd].isConsole)
+		return -EBADF;
+	return vfs->mmapInfo(fds[fd].path, physOut, lenOut);
 }
 
 void Syscalls::exit(int code) {

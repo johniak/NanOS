@@ -52,4 +52,9 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src);
 // Physical address of a space's page directory (the CR3 value for entering it).
 uint32_t mmuSpaceDirPhys(AddressSpace*);
 
+// Map a framebuffer's physical region into a process address space at a fixed user VA
+// (above RAM, separate from the 1 MiB user window), present+writable+user. Returns the
+// user virtual address of the framebuffer, or 0 on failure. Used by mmap of /dev/fb0.
+uint32_t mmuMapUserFb(AddressSpace*, uint32_t fbPhys, uint32_t bytes);
+
 }

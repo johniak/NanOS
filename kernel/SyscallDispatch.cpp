@@ -5,6 +5,7 @@
 #include "SignalDispatch.h"
 #include <arch/syscall.h>
 #include <arch/input.h>
+#include <arch/mmu.h>
 #include "Console.h"
 
 namespace kernel {
@@ -78,6 +79,25 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_getdents64:
 		ret = g_sys->getdents64(a0, (void*) a1, a2);
 		break;
+	case SYS_ioctl:
+		ret = g_sys->ioctl((int) a0, a1, (void*) a2);
+		break;
+	case SYS_mmap2: {
+		// Simplified ABI: a0 = fd, a1 = length, a2 = offset (the libc mmap() wrapper
+		// repacks the 6 POSIX args into these). We support mapping a device's region
+		// (e.g. /dev/fb0) into the calling process. Returns the user VA, or <0 on error.
+		unsigned phys = 0, len = 0;
+		int r = g_sys->mmapInfo((int) a0, &phys, &len);
+		if (r < 0) {
+			ret = r;
+			break;
+		}
+		unsigned want = (a1 && a1 < len) ? a1 : len;
+		arch::AddressSpace* space = (arch::AddressSpace*) ProcTable::current()->space;
+		unsigned va = arch::mmuMapUserFb(space, phys, want);
+		ret = va ? (int) va : -12;   // -ENOMEM
+		break;
+	}
 	case SYS_execve: {
 		// Deep-copy path + argv from the caller's (currently active) user space into
 		// kernel buffers before execve swaps CR3 to the kernel directory to stage and

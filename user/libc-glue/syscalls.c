@@ -9,6 +9,8 @@
  */
 #include "SyscallNr.h"
 #include <errno.h>
+#include <stddef.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
@@ -81,6 +83,26 @@ int execve(const char* path, char* const argv[], char* const envp[]) {
  * raw for its own line editor and cooked while a child program runs. */
 int termmode(int raw) {
 	return sys3(SYS_termmode, raw, 0, 0);
+}
+
+/* ioctl(2): used for the framebuffer (FBIOGET_*SCREENINFO). The single pointer arg is
+ * passed through to the device. */
+int ioctl(int fd, unsigned long request, ...) {
+	va_list ap;
+	va_start(ap, request);
+	void* arg = va_arg(ap, void*);
+	va_end(ap);
+	return reterr(sys3(SYS_ioctl, fd, (int) request, (int) arg));
+}
+
+/* mmap(2): we repack the six POSIX arguments into our 3-register kernel ABI
+ * (fd, length, offset); only shared device mappings (e.g. /dev/fb0) are supported, so
+ * addr/prot/flags are ignored. Returns MAP_FAILED ((void*)-1) on error. */
+void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
+	(void) addr; (void) prot; (void) flags;
+	int r = sys3(SYS_mmap2, fd, (int) length, (int) offset);
+	if (r < 0) { errno = -r; return (void*) -1; }
+	return (void*) r;
 }
 
 /* Single fixed heap window, mapped by the kernel at exec time: [0x480000,0x4F0000). */

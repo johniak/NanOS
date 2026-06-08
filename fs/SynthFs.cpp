@@ -1,4 +1,5 @@
 #include "SynthFs.h"
+#include "CharDevice.h"
 #include "Scheduler.h"
 #include "Process.h"
 #include <string.h>
@@ -51,6 +52,7 @@ SynthNode* SynthFs::mk(SynthKind kind, const char* name, unsigned perms) {
 	n->data = 0;
 	n->len = 0;
 	n->gen = 0;
+	n->dev = 0;
 	n->perms = perms;
 	return n;
 }
@@ -73,6 +75,13 @@ void SynthFs::addStatic(SynthNode* parent, const char* name, const char* data, u
 void SynthFs::addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms) {
 	SynthNode* n = mk(SK_GEN, name, perms);
 	n->gen = g;
+	if (parent->nchild < 32)
+		parent->child[parent->nchild++] = n;
+}
+
+void SynthFs::addChar(SynthNode* parent, const char* name, CharDevice* dev, unsigned perms) {
+	SynthNode* n = mk(SK_CHARDEV, name, perms);
+	n->dev = dev;
 	if (parent->nchild < 32)
 		parent->child[parent->nchild++] = n;
 }
@@ -288,7 +297,32 @@ int SynthFs::readNode(String path, unsigned size, unsigned off, void* buf) {
 	}
 	if (n->kind == SK_GEN)
 		return n->gen(off, buf, size);
+	if (n->kind == SK_CHARDEV)
+		return n->dev->read(off, buf, size);
 	return -1;   // directory
+}
+
+int SynthFs::write(String path, unsigned size, unsigned off, const void* buf) {
+	SynthNode* n = walk((char*) path);
+	if (!n)
+		return -2;             // -ENOENT
+	if (n->kind != SK_CHARDEV)
+		return -30;            // -EROFS: the synthetic tree is otherwise read-only
+	return n->dev->write(off, buf, size);
+}
+
+int SynthFs::ioctl(String path, unsigned cmd, void* arg) {
+	SynthNode* n = walk((char*) path);
+	if (!n || n->kind != SK_CHARDEV)
+		return -22;            // -EINVAL / -ENOTTY
+	return n->dev->ioctl(cmd, arg);
+}
+
+int SynthFs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
+	SynthNode* n = walk((char*) path);
+	if (!n || n->kind != SK_CHARDEV)
+		return -22;            // -EINVAL: not mmappable
+	return n->dev->mmapInfo(physOut, lenOut);
 }
 
 int SynthFs::stat(String path, FileStat& out) {
