@@ -222,12 +222,19 @@ DOOM_DIR=user/third_party/doomgeneric
 DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -w -fcommon -fno-pic -fno-stack-protector
 DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
 
-_userland-doom:
-	for f in $(DOOM_DIR)/*.c; do \
-	  $(CXX) $(DOOM_CFLAGS) -c $$f -o $(BINFOLDER)$$(basename $$f .c).o || exit 1; done
-	$(CXX) $(DOOM_CFLAGS) -c user/doomgeneric_nanos.c -o $(BINFOLDER)doomgeneric_nanos.o
+# Per-object rules (with -MMD header tracking) so only CHANGED Doom sources recompile
+# — the old wildcard loop rebuilt all ~80 files on every `make run` (minutes under
+# amd64 emulation). The link itself still runs each build (fast), picking up fresh glue.
+$(BINFOLDER)%.o: $(DOOM_DIR)/%.c
+	$(CXX) $(DOOM_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)doomgeneric_nanos.o: user/doomgeneric_nanos.c
+	$(CXX) $(DOOM_CFLAGS) -MMD -MP -c $< -o $@
+
+_userland-doom: $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o
 	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)doom.elf $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(USER_LIBS) -lm
 	$(CROSS)objcopy -O binary $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe
+
+-include $(DOOM_OBJS:.o=.d) $(BINFOLDER)doomgeneric_nanos.d
 
 # Build the vendored sbase libutil + libutf objects the coreutils link against.
 _userland-sbase:
