@@ -1,21 +1,9 @@
 #include "NxFormat.h"
 
-extern char __bss_start[], __bss_end[], __nx_image_size[];
-extern void _start(void);
-
-// The .nx header, placed first in the image by nx.ld. Fields are link-time
-// constants. No imports: the program traps via int 0x80, so importCount is 0
-// (importTable still points in-image at loadBase to satisfy the loader's bounds
-// check, but it is never walked).
+// Reserve space for the NanOS header at the very start of the image (nx.ld places
+// .nxheader first, so it lands at loadBase). The build tool `mknx` fills these bytes in
+// from the linked ELF — entry, image extent, bss range, and the reloc/export/import
+// tables — so the placeholder only needs to occupy sizeof(NxHeader) PROGBITS bytes. The
+// magic keeps the section non-empty (and thus PROGBITS, not NOBITS).
 __attribute__((section(".nxheader"), used))
-const NxHeader nx_header = {
-	NX_MAGIC,
-	1,
-	(unsigned) &_start,
-	0x400000u,
-	(unsigned) __nx_image_size,
-	(unsigned) __bss_start,
-	(unsigned) __bss_end,
-	0x400000u,   /* importTable (unused; importCount == 0) */
-	0,           /* importCount */
-};
+const NxHeader nx_header = { NX_MAGIC };

@@ -153,6 +153,7 @@ _iso: _all
 
 _clean:
 	-rm $(BINFOLDER)*.o $(BINFOLDER)*.d $(BINFOLDER)kernel.bin
+	-rm $(BINFOLDER)*.elf $(BINFOLDER)*.nxe $(BINFOLDER)mknx
 
 # ----------------------------------------------------------------------------
 # Userland: .nxe programs link against ported picolibc + our syscall glue (own
@@ -195,10 +196,20 @@ $(BINFOLDER)%.o: user/%.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf $< -o $@
 
-# Link a .nxe from its object prerequisites (declared per program below).
-$(BINFOLDER)%.nxe:
-	$(LD) -nostdlib -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) $(USER_LIBS)
-	$(CROSS)objcopy -O binary $(@:.nxe=.elf) $@
+# mknx: host build tool (native cc) that turns the linked ELF into a .nxe/.ndl —
+# extracts the load image + R_386_32 base relocations + exports/imports, replacing
+# `objcopy -O binary`. Needs the format header (kernel/NxFormat.h) via -Ikernel.
+MKNX=$(BINFOLDER)mknx
+$(MKNX): tools/mknx.c kernel/NxFormat.h
+	@mkdir -p $(BINFOLDER)
+	cc -O2 -Wall -Ikernel -o $@ tools/mknx.c
+
+# Link a .nxe from its object prerequisites (declared per program below). `--emit-relocs`
+# keeps the absolute (R_386_32) relocations in the ELF so mknx can build the relocation
+# table — the .nxe becomes loadable at any base (delta applied by the loader).
+$(BINFOLDER)%.nxe: $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) $(USER_LIBS)
+	$(MKNX) $(@:.nxe=.elf) $@
 
 # Per-program object sets (USER_GLUE is shared). Doom has its own rule (it needs -lm).
 $(BINFOLDER)init.nxe:      $(USER_GLUE) $(BINFOLDER)init.o
@@ -234,9 +245,9 @@ $(BINFOLDER)doomgeneric_nanos.o: user/doomgeneric_nanos.c
 
 # Doom links with -lm (renderer trig/sqrt), so it gets an explicit rule overriding the
 # generic %.nxe one. Objects build via the $(DOOM_DIR)/%.c pattern rule above.
-$(BINFOLDER)doom.nxe: $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o
-	$(LD) -nostdlib -T user/nx.ld -o $(BINFOLDER)doom.elf $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(USER_LIBS) -lm
-	$(CROSS)objcopy -O binary $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe
+$(BINFOLDER)doom.nxe: $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)doom.elf $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(USER_LIBS) -lm
+	$(MKNX) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe
 
 # Pull in all userland header-dependency files (.d), so a changed header recompiles only
 # the objects that include it. Missing on a clean build -> everything compiles (correct).

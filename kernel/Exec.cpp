@@ -25,14 +25,20 @@ static void initBrk(Process* p) {
 	p->brkMax = arch::mmuUserHeapMax();
 }
 
+// The staging window: the reserved 1 MiB at 0x400000 (see mmu_x86.cpp markRangeUsed).
+// The image is read here, bss is zeroed in place, then archLoadUser copies it into the
+// process's private frames. loadImage bounds every access to this capacity, so an image
+// whose bss/tables would overrun the window is rejected cleanly instead of corrupting RAM.
+static const unsigned STAGE_BASE = 0x400000;
+static const unsigned STAGE_CAP  = 0x100000;
+
 // Load a .nxe image (already staged at the load base in the kernel identity window),
-// validating + zeroing bss. Returns the entry point, or <0 on error. Caller must be
-// on a directory where the staging window 0x400000 is identity-mapped.
+// applying relocations + zeroing bss. EXEs load at their preferred base, so the delta is
+// 0 and relocation is a no-op. Returns the entry point, or <0 on error. Caller must be on
+// a directory where the staging window 0x400000 is identity-mapped.
 static int loadStaged(unsigned* entryOut) {
-	char* image = (char*) 0x400000;
-	NxHeader* h = (NxHeader*) image;
-	unsigned span = h->bssEnd - h->loadBase;
-	return NxeLoader::loadImage(image, span, 0, entryOut);   // 0 imports -> no resolver
+	char* image = (char*) STAGE_BASE;
+	return NxeLoader::loadImage(image, STAGE_CAP, 0, 0, entryOut);   // delta 0, no imports
 }
 
 // PID 1 launch (init task body, kernel directory active): stage the image, build a
