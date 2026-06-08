@@ -10,6 +10,7 @@
 #include "RamFs.h"
 #include "Fbdev.h"
 #include "Fb0Device.h"
+#include "KeyboardDevice.h"
 #include "Scheduler.h"
 #include <arch/sched.h>
 #include "Syscall.h"
@@ -192,6 +193,15 @@ void Kernel::start() {
 		root->addChar(root->dev(), "fb0", new Fb0Device(info), 0666);
 		okEnd();
 	}
+
+	// Expose the keyboard as Linux-style /dev/input0 (evdev): the PS/2 IRQ feeds it
+	// scancodes, it queues key down/up events, programs read() them. The arch input path
+	// feeds it once kbdRegister() points at it.
+	okBegin("Input device /dev/input0");
+	KeyboardDevice* kbd = new KeyboardDevice();
+	kbdRegister(kbd);
+	root->addChar(root->dev(), "input0", kbd, 0444);
+	okEnd();
 
 	// Install the syscall interface over the VFS, then a (silent) boot sanity syscall.
 	okBegin("Syscall interface (int 0x80)");

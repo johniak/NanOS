@@ -46,6 +46,7 @@ static unsigned char* g_fb;        /* mmap'd linear framebuffer */
 static uint32_t g_pitch;           /* bytes per scanline */
 static uint32_t g_fbw, g_fbh;      /* screen resolution */
 static uint32_t g_xoff, g_yoff;    /* top-left of the centered 640x400 image */
+static int g_kbdFd = -1;           /* /dev/input0 (key down/up events) */
 
 void DG_Init() {
 	int fd = open("/dev/fb0", O_RDWR);
@@ -65,9 +66,16 @@ void DG_Init() {
 	g_xoff = g_fbw > DOOMGENERIC_RESX ? (g_fbw - DOOMGENERIC_RESX) / 2 : 0;
 	g_yoff = g_fbh > DOOMGENERIC_RESY ? (g_fbh - DOOMGENERIC_RESY) / 2 : 0;
 
-	/* Non-blocking raw keyboard, so DG_GetKey can poll each frame without stalling. */
+	/* Raw console mode just to silence echo (cooked mode would print typed keys onto the
+	 * game screen). Real key events come from /dev/input0 (key down/up), not the console. */
 	termmode(1);
-	fcntl(0, F_SETFL, O_NONBLOCK);
+	g_kbdFd = open("/dev/input0", O_RDONLY);
+	/* Drain any scancodes queued while the shell was running. */
+	if (g_kbdFd >= 0) {
+		unsigned char tmp[64];
+		while (read(g_kbdFd, tmp, sizeof tmp) > 0)
+			;
+	}
 }
 
 void DG_DrawFrame() {
@@ -104,21 +112,14 @@ void DG_SleepMs(uint32_t ms) {
 }
 
 /* ---- input -------------------------------------------------------------------------
- * The PS/2 tty gives only key-DOWN (make codes); it never reports key-up, but a held key
- * auto-repeats (the make code arrives again every ~tens of ms). So we model the held
- * state with a timeout: a key is PRESSED on its first byte and stays DOWN as long as the
- * repeats keep arriving; once they stop for HOLD_MS we emit a RELEASE. This is what Doom's
- * gameplay needs (movement reads the held gamekeydown[] state across tics) — a press then
- * immediate release in the same tic, as before, gets cancelled before the tic samples it,
- * which is why you could navigate menus (they act on the press event) but not move. */
-#define HOLD_MS 140        /* release a key this long after its last repeat */
-#define NKEYS 256
-
+ * Real key events from /dev/input0: each is [code][down], code = normalised PS/2 set-1
+ * scancode (bit7 = extended key), down = 1 press / 0 release. We map code -> Doom key and
+ * forward the exact press/release, so movement (which reads the held key state across
+ * tics) works and stops precisely on the break code — no timeout, no guessing. The
+ * default Doom control scheme falls right out of the standard keys. */
 #define EVQ 256
 static struct { int pressed; unsigned char key; } g_evq[EVQ];
 static int g_evHead, g_evTail;
-static unsigned char g_down[NKEYS];     /* 1 while the key is considered held */
-static uint32_t g_seen[NKEYS];          /* ms timestamp of the key's last byte */
 
 static void evPush(int pressed, unsigned char key) {
 	int n = (g_evHead + 1) % EVQ;
@@ -129,58 +130,56 @@ static void evPush(int pressed, unsigned char key) {
 	}
 }
 
-/* Map a console byte to a Doom key code. Letters are lowercased; digits/letters pass
- * through (Doom reads them directly for weapons and y/n prompts). */
-static unsigned char toDoomKey(int c) {
-	switch (c) {
-	case '\n': case '\r': return KEY_ENTER;
-	case 27:              return KEY_ESCAPE;   /* a bare ESC (not an arrow sequence) */
-	case 8: case 0x7f:    return KEY_BACKSPACE;
-	case '\t':            return KEY_TAB;
-	case ' ':             return KEY_FIRE;     /* space shoots */
-	case 'e': case 'E':   return KEY_USE;      /* e opens doors / flips switches */
-	default:
-		if (c >= 'A' && c <= 'Z') return (unsigned char) (c - 'A' + 'a');
-		return (unsigned char) c;
+/* PS/2 set-1 base scancode (0x00-0x7F) -> Doom key, for non-extended keys. 0 = ignore. */
+static const unsigned char sc2k[128] = {
+	[0x01] = KEY_ESCAPE,
+	[0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4', [0x06] = '5',
+	[0x07] = '6', [0x08] = '7', [0x09] = '8', [0x0A] = '9', [0x0B] = '0',
+	[0x0C] = KEY_MINUS, [0x0D] = KEY_EQUALS,
+	[0x0E] = KEY_BACKSPACE, [0x0F] = KEY_TAB,
+	[0x10] = 'q', [0x11] = 'w', [0x12] = 'e', [0x13] = 'r', [0x14] = 't',
+	[0x15] = 'y', [0x16] = 'u', [0x17] = 'i', [0x18] = 'o', [0x19] = 'p',
+	[0x1C] = KEY_ENTER,
+	[0x1D] = KEY_FIRE,                 /* Left Ctrl = fire (Doom default) */
+	[0x1E] = 'a', [0x1F] = 's', [0x20] = 'd', [0x21] = 'f', [0x22] = 'g',
+	[0x23] = 'h', [0x24] = 'j', [0x25] = 'k', [0x26] = 'l',
+	[0x2A] = KEY_RSHIFT,               /* Left Shift = run */
+	[0x2C] = 'z', [0x2D] = 'x', [0x2E] = 'c', [0x2F] = 'v', [0x30] = 'b',
+	[0x31] = 'n', [0x32] = 'm',
+	[0x36] = KEY_RSHIFT,               /* Right Shift = run */
+	[0x38] = KEY_RALT,                 /* Left Alt = strafe */
+	[0x39] = KEY_USE,                  /* Space = use (Doom default) */
+	[0x3B] = KEY_F1, [0x3C] = KEY_F2, [0x3D] = KEY_F3, [0x3E] = KEY_F4, [0x3F] = KEY_F5,
+	[0x40] = KEY_F6, [0x41] = KEY_F7, [0x42] = KEY_F8, [0x43] = KEY_F9, [0x44] = KEY_F10,
+};
+
+/* Map a normalised scancode (from /dev/input0) to a Doom key, or 0 to ignore. */
+static unsigned char scToDoom(unsigned char code) {
+	if (code & 0x80) {                 /* extended (0xE0-prefixed) keys */
+		switch (code & 0x7F) {
+		case 0x48: return KEY_UPARROW;
+		case 0x50: return KEY_DOWNARROW;
+		case 0x4B: return KEY_LEFTARROW;
+		case 0x4D: return KEY_RIGHTARROW;
+		case 0x1D: return KEY_FIRE;    /* Right Ctrl */
+		case 0x38: return KEY_RALT;    /* Right Alt = strafe */
+		default:   return 0;
+		}
 	}
+	return sc2k[code & 0x7F];
 }
 
-/* Mark a key seen this poll: press it if it wasn't down, and refresh its repeat clock. */
-static void keySeen(unsigned char k, uint32_t now) {
-	if (!g_down[k]) {
-		g_down[k] = 1;
-		evPush(1, k);
-	}
-	g_seen[k] = now;
-}
-
-/* Read whatever bytes are buffered (non-blocking), translate to Doom keys, mark them
- * seen; then release any held key whose repeats stopped HOLD_MS ago. */
+/* Read queued key events from /dev/input0 and turn them into Doom press/release events. */
 static void pollInput() {
-	uint32_t now = DG_GetTicksMs();
+	if (g_kbdFd < 0)
+		return;
 	unsigned char b[64];
-	int n = read(0, b, sizeof b);
-	for (int i = 0; n > 0 && i < n; i++) {
-		unsigned char k;
-		if (b[i] == 27 && i + 2 < n && b[i + 1] == '[') {
-			switch (b[i + 2]) {                /* arrow keys: ESC [ A/B/C/D */
-			case 'A': k = KEY_UPARROW; break;
-			case 'B': k = KEY_DOWNARROW; break;
-			case 'C': k = KEY_RIGHTARROW; break;
-			case 'D': k = KEY_LEFTARROW; break;
-			default:  k = KEY_ESCAPE; break;
-			}
-			i += 2;
-		} else {
-			k = toDoomKey(b[i]);
-		}
-		keySeen(k, now);
+	int n = read(g_kbdFd, b, sizeof b);
+	for (int i = 0; n > 0 && i + 1 < n; i += 2) {     /* [code][down] records */
+		unsigned char key = scToDoom(b[i]);
+		if (key)
+			evPush(b[i + 1] ? 1 : 0, key);
 	}
-	for (int k = 0; k < NKEYS; k++)
-		if (g_down[k] && (now - g_seen[k]) >= HOLD_MS) {
-			g_down[k] = 0;
-			evPush(0, (unsigned char) k);
-		}
 }
 
 int DG_GetKey(int* pressed, unsigned char* key) {

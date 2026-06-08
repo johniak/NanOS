@@ -17,6 +17,7 @@
 #include "Signal.h"             // SIGINT / SIGQUIT numbers
 #include "SignalDispatch.h"     // kernel::consoleSignal / hasPendingSignalCurrent
 #include "Syscall.h"            // kernel::EAGAIN (O_NONBLOCK no-data return)
+#include "KeyboardDevice.h"     // kernel::kbdFeed (/dev/input0 key events)
 
 namespace {
 kernel::LineDiscipline g_line;
@@ -51,6 +52,9 @@ namespace arch {
 
 // Called from the keyboard IRQ for every scancode byte.
 void inputFeedScancode(unsigned char sc) {
+	// Always feed the /dev/input0 key-event device (evdev-style: it coexists with the
+	// console). It decodes make/break itself, so a game gets exact key down/up.
+	kernel::kbdFeed(sc);
 	if (g_raw) {
 		g_decoder.feed(sc, [](int ev) {
 			if (ev < 256) {
