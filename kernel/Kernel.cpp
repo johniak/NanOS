@@ -7,6 +7,8 @@
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
 #include "SynthFs.h"
+#include "Framebuffer.h"
+#include "Font8x16.h"
 #include "Scheduler.h"
 #include <arch/sched.h>
 #include "Syscall.h"
@@ -95,14 +97,18 @@ void Kernel::initPaging() {
 	const arch::BootFramebuffer* fb = arch::bootFramebuffer();
 	if (fb) {
 		arch::mmuMapKernelMmio((uint32_t) fb->addr, fb->pitch * fb->height);
-		// TEMPORARY (Stage A smoke): paint the screen so the QEMU screendump proves GRUB
-		// set a graphics mode and the MMIO mapping works. Replaced by the renderer next.
-		if (fb->bpp == 32) {
-			volatile uint32_t* px = (volatile uint32_t*) (uint32_t) fb->addr;
-			unsigned words = (fb->pitch / 4) * fb->height;
-			for (unsigned i = 0; i < words; i++)
-				px[i] = 0x00203A66;   // dark blue
-		}
+		// Stage B smoke: exercise the MI renderer + 8x16 font on the real framebuffer —
+		// background, R/G/B bars, and a text line. (Stage C turns this into the console.)
+		FbSurface surf = { (uint8_t*) (uint32_t) fb->addr, fb->pitch, fb->width, fb->height,
+				fb->bpp };
+		fbFillRect(surf, 0, 0, surf.width, surf.height, 0x00203A66);
+		fbFillRect(surf, 0, 0,  surf.width, 16, 0x00CC3333);
+		fbFillRect(surf, 0, 16, surf.width, 16, 0x0033CC33);
+		fbFillRect(surf, 0, 32, surf.width, 16, 0x003333CC);
+		const char* msg = "NanOS framebuffer + 8x16 font OK";
+		uint32_t gx = 8;
+		for (const char* p = msg; *p; p++, gx += FONT_W)
+			fbBlitGlyph(surf, fontGlyph((unsigned char) *p), gx, 80, 0x00FFFFFF, 0x00203A66);
 		Console::write("framebuffer: ");
 		Console::write((int) fb->width);
 		Console::write("x");
