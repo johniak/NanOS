@@ -85,7 +85,7 @@ int inputRead(char* buf, unsigned n) {
 			kernel::Scheduler::block();            // deschedule; keyboard IRQ wakes us
 			if (kernel::hasPendingSignalCurrent()) {   // woken by a signal, not input
 				g_inputWaiter = 0;
-				return -4;                         // -EINTR
+				return -kernel::ERESTARTSYS;       // restart or -> EINTR, decided at delivery
 			}
 		}
 		g_inputWaiter = 0;
@@ -99,7 +99,7 @@ int inputRead(char* buf, unsigned n) {
 		kernel::Scheduler::block();
 		if (kernel::hasPendingSignalCurrent()) {   // woken by a signal, not a full line
 			g_inputWaiter = 0;
-			return -4;                             // -EINTR
+			return -kernel::ERESTARTSYS;           // restart or -> EINTR, decided at delivery
 		}
 	}
 	g_inputWaiter = 0;

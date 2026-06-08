@@ -12,12 +12,20 @@ namespace arch { struct TrapFrame; }
 
 namespace kernel {
 
+// A blocking syscall interrupted by a signal returns this internal sentinel (Linux's
+// ERESTARTSYS). It never reaches user space: signal delivery either restarts the syscall
+// (SA_RESTART) or rewrites it to -EINTR.
+static const int ERESTARTSYS = 512;
+
 int  signalSend(int pid, int sig);                                  // kill(2)
 int  signalAction(int sig, unsigned handler, unsigned restorer);    // signal(2)
 int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocmask(2)
-void signalDeliver(arch::TrapFrame* tf);   // deliver pending signals at return-to-user
+// Deliver pending signals at a return to ring 3. `origEax` is the syscall number when
+// coming from the syscall path (`inSyscall` true) so an interrupted, restartable syscall
+// can be restarted; on the IRQ path pass (0, false).
+void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall);
 int  signalReturn(arch::TrapFrame* tf);    // sigreturn(2): restore the pre-handler frame
 void consoleSignal(int sig);               // a cooked-tty control key -> foreground proc
-bool hasPendingSignalCurrent();            // for EINTR in interruptible blocking syscalls
+bool hasPendingSignalCurrent();            // EINTR/restart check for blocking syscalls
 
 }  // namespace kernel

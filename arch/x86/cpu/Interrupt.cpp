@@ -42,8 +42,8 @@ extern "C" void irq_handler(kernel::Registers regs) {
 		handler(&regs);
 	}
 	// On the way back to ring 3, deliver pending signals (e.g. a SIGINT posted by the
-	// keyboard IRQ to a CPU-bound foreground process). Skipped for kernel-mode frames.
+	// keyboard IRQ to a CPU-bound foreground process). Not a syscall return, so no restart.
 	if ((regs.cs & 3) == 3)
-		kernel::signalDeliver((arch::TrapFrame*) &regs);
+		kernel::signalDeliver((arch::TrapFrame*) &regs, 0, false);
 }
 

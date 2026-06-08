@@ -92,16 +92,25 @@ struct SigContext {
 }
 
 void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
-                         int sig, uint32_t oldMask) {
+                         int sig, uint32_t oldMask, uint32_t origEax, int restartAction) {
 	// Delivery runs in the target's own context, so its user CR3 is active and the user
 	// stack at useresp is directly writable.
 	kernel::Registers* r = (kernel::Registers*) tf;
 	uint32_t usp = r->useresp;
 
+	// Decide the eip/eax the program resumes with after the handler returns (sigreturn):
+	//  - RESTART: rewind to the int 0x80 (2 bytes) and restore eax = syscall number;
+	//  - EINTR:   keep eip, report -EINTR;
+	//  - KEEP:    preserve the in-progress eip and the real result in eax.
+	uint32_t resumeEip = r->eip;
+	uint32_t resumeEax = r->eax;
+	if (restartAction == SIG_FRAME_RESTART) { resumeEip = r->eip - 2; resumeEax = origEax; }
+	else if (restartAction == SIG_FRAME_EINTR) { resumeEax = (uint32_t) (-4); }   // -EINTR
+
 	usp -= sizeof(SigContext);              // save the interrupted register context
 	SigContext* ctx = (SigContext*) usp;
-	ctx->eip = r->eip;     ctx->eflags = r->eflags;
-	ctx->eax = r->eax;     ctx->ecx = r->ecx;
+	ctx->eip = resumeEip;  ctx->eflags = r->eflags;
+	ctx->eax = resumeEax;  ctx->ecx = r->ecx;
 	ctx->edx = r->edx;     ctx->ebx = r->ebx;
 	ctx->esp = r->useresp; ctx->ebp = r->ebp;
 	ctx->esi = r->esi;     ctx->edi = r->edi;
@@ -131,6 +140,16 @@ int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut) {
 	if (oldMaskOut)
 		*oldMaskOut = ctx->oldmask;
 	return (int) savedEax;
+}
+
+int archSyscallResult(TrapFrame* tf) {
+	return (int) ((kernel::Registers*) tf)->eax;
+}
+
+void archRestartSyscall(TrapFrame* tf, uint32_t origEax) {
+	kernel::Registers* r = (kernel::Registers*) tf;
+	r->eip -= 2;        // back up over the 2-byte `int 0x80`
+	r->eax = origEax;   // restore the syscall number so the iret re-issues it
 }
 
 void archFrameToUser(TrapFrame* tf, uint32_t entry, uint32_t userEsp) {

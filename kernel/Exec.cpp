@@ -286,6 +286,12 @@ int signalAction(int sig, unsigned handler, unsigned restorer) {
 	p->sig.handlers[sig] = handler;
 	if (restorer)
 		p->sig.restorer = restorer;
+	// signal() carries SA_RESTART (glibc/BSD semantics): a handler restarts interrupted
+	// syscalls. Default/ignore dispositions clear it.
+	if (handler != kSigDefault && handler != kSigIgnore)
+		p->sig.restart |= sigbit(sig);
+	else
+		p->sig.restart &= ~sigbit(sig);
 	return (int) prev;
 }
 
@@ -311,28 +317,36 @@ bool hasPendingSignalCurrent() {
 
 // Deliver pending signals at a return-to-user point. The caller has already ensured the
 // trap frame returns to ring 3.
-void signalDeliver(arch::TrapFrame* tf) {
+void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall) {
 	Process* p = ProcTable::current();
 	if (!p || p->kthread)
 		return;
+	// Was this a blocking syscall interrupted by a signal (eligible for restart/EINTR)?
+	bool restartable = inSyscall && (arch::archSyscallResult(tf) == -ERESTARTSYS);
 	for (;;) {
 		int sig = sigNextDeliverable(p->sig);
 		if (!sig)
-			return;
+			break;
 		sigConsume(p->sig, sig);
 		switch (sigResolve(p->sig, sig)) {
 		case DISP_IGN:
 		case DISP_CONT:
 			continue;                  // ignored / resume is handled when SIGCONT is posted
 		case DISP_STOP:
-			procStop(sig);             // stop here; returns when continued
+			procStop(sig);             // stop here; returns when continued (then restart below)
 			continue;
 		case DISP_HANDLER: {
-			// Run the user handler in ring 3, with `sig` blocked for its duration.
+			// Run the user handler in ring 3, with `sig` blocked for its duration. Bake the
+			// post-handler resume into the frame: restart the interrupted syscall (SA_RESTART)
+			// or report -EINTR.
+			int action = arch::SIG_FRAME_KEEP;
+			if (restartable)
+				action = (p->sig.restart & sigbit(sig)) ? arch::SIG_FRAME_RESTART
+				                                        : arch::SIG_FRAME_EINTR;
 			unsigned oldMask = p->sig.blocked;
 			p->sig.blocked |= sigbit(sig);
 			arch::archPushSignalFrame(tf, p->sig.handlers[sig], p->sig.restorer,
-					sig, oldMask);
+					sig, oldMask, origEax, action);
 			return;                    // one handler per return-to-user; rest after sigreturn
 		}
 		case DISP_TERM:
@@ -340,6 +354,10 @@ void signalDeliver(arch::TrapFrame* tf) {
 			procKill(sig);             // frees space, zombifies, wakes parent; no return
 		}
 	}
+	// No handler was set up (only stop/continue happened). A syscall interrupted by a stop
+	// restarts once continued — Linux never returns EINTR for a bare stop.
+	if (restartable)
+		arch::archRestartSyscall(tf, origEax);
 }
 
 // SYS_sigreturn: restore the pre-handler context from the user-stack frame and the

@@ -33,6 +33,7 @@ bool sigCanCatch(int sig) {
 void sigInit(SignalState& s) {
 	s.pending = 0;
 	s.blocked = 0;
+	s.restart = 0;
 	s.restorer = 0;
 	for (int i = 0; i < NANOS_NSIG; i++)
 		s.handlers[i] = kSigDefault;
@@ -101,6 +102,7 @@ bool sigHasInterrupt(const SignalState& s) {
 
 void sigForkInherit(SignalState& child, const SignalState& parent) {
 	child.blocked = parent.blocked;
+	child.restart = parent.restart;
 	child.restorer = parent.restorer;
 	child.pending = 0;                        // pending signals are NOT inherited
 	for (int i = 0; i < NANOS_NSIG; i++)
@@ -114,6 +116,7 @@ void sigExecReset(SignalState& s) {
 	for (int i = 0; i < NANOS_NSIG; i++)
 		if (s.handlers[i] != kSigIgnore)
 			s.handlers[i] = kSigDefault;
+	s.restart = 0;                            // caught handlers are gone -> no restart flags
 }
 
 int waitStatusExited(int code)    { return (code & 0xFF) << 8; }

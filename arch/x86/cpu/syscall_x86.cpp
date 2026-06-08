@@ -16,15 +16,17 @@
 namespace {
 
 void syscallTrap(kernel::Registers* r) {
+	unsigned origEax = r->eax;   // syscall number, saved before dispatch (for restart)
 	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx,
 			(arch::TrapFrame*) r);
 	// If the process exited (SYS_exit set the flag), tear it down and schedule away.
 	// procExit does not return.
 	if (kernel::kernelSyscalls()->hasExited())
 		kernel::procExit();
-	// Deliver pending signals on the way back to ring 3 (may terminate / run a handler).
+	// Deliver pending signals on the way back to ring 3 (may terminate, run a handler, or
+	// restart this syscall if it was interrupted).
 	if ((r->cs & 3) == 3)
-		kernel::signalDeliver((arch::TrapFrame*) r);
+		kernel::signalDeliver((arch::TrapFrame*) r, origEax, true);
 }
 
 // Issue a Linux-style syscall via int 0x80 (nr in eax, args in ebx/ecx/edx).

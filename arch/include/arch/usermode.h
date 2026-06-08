@@ -30,15 +30,30 @@ struct TrapFrame;   // opaque syscall/IRQ trap frame (the x86 Registers); see <a
 // `userEsp` (used by execve to morph the calling process into a freshly loaded image).
 void archFrameToUser(TrapFrame* tf, uint32_t entry, uint32_t userEsp);
 
+// How an interrupted syscall is resumed after a handler runs, baked into the saved frame:
+enum {
+	SIG_FRAME_KEEP    = 0,   // not a restartable syscall: preserve eip + the result in eax
+	SIG_FRAME_RESTART = 1,   // SA_RESTART: rewind eip to the int 0x80 and restore eax = nr
+	SIG_FRAME_EINTR   = 2,   // no SA_RESTART: leave eip, set eax = -EINTR
+};
+
 // Push a signal-handler frame onto the user stack and retarget `tf` so the return-to-user
 // `iret` enters `handler(sig)` in ring 3. On the handler's `ret` it lands in the libc
-// trampoline `restorer`, which invokes sigreturn. `oldMask` is the signal mask to be
-// restored at sigreturn (saved inside the frame).
+// trampoline `restorer`, which invokes sigreturn. `oldMask` is the signal mask restored at
+// sigreturn. `restartAction` (SIG_FRAME_*) decides what the resumed context does about an
+// interrupted syscall; `origEax` is the syscall number to restore when restarting.
 void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
-                         int sig, uint32_t oldMask);
+                         int sig, uint32_t oldMask, uint32_t origEax, int restartAction);
 
 // SYS_sigreturn: restore `tf` from the user-stack signal frame; writes the mask to be
 // restored to *oldMaskOut and returns the interrupted code's saved eax.
 int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut);
+
+// The current syscall result sitting in the trap frame (eax), as a signed int.
+int archSyscallResult(TrapFrame* tf);
+
+// Rewind a trap frame so its iret re-executes the `int 0x80` (eip -= 2) with eax = the
+// original syscall number — i.e. restart the interrupted syscall in place (no handler).
+void archRestartSyscall(TrapFrame* tf, uint32_t origEax);
 
 }

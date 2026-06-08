@@ -74,6 +74,7 @@ static const unsigned kSigIgnore  = 1;   // SIG_IGN
 struct SignalState {
 	unsigned pending;                  // bit (sig-1) set => sig is pending
 	unsigned blocked;                  // sigprocmask: blocked signals
+	unsigned restart;                  // bit set => this signal's handler has SA_RESTART
 	unsigned handlers[NANOS_NSIG];     // kSigDefault / kSigIgnore / user handler address
 	unsigned restorer;                 // sa_restorer trampoline (libc __nx_sigtramp)
 };

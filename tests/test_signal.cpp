@@ -8,6 +8,7 @@ TEST_CASE("sigInit clears everything to defaults") {
 	sigInit(s);
 	CHECK(s.pending == 0);
 	CHECK(s.blocked == 0);
+	CHECK(s.restart == 0);
 	CHECK(s.restorer == 0);
 	for (int i = 0; i < NANOS_NSIG; i++)
 		CHECK(s.handlers[i] == kSigDefault);
@@ -93,6 +94,7 @@ TEST_CASE("sigForkInherit copies dispositions + mask, drops pending") {
 	parent.handlers[SIGINT] = 0x401000;
 	parent.handlers[SIGQUIT] = kSigIgnore;
 	parent.blocked = 0x8;
+	parent.restart = 0x2;
 	parent.restorer = 0x402000;
 	sigPost(parent, SIGTERM);
 
@@ -101,6 +103,7 @@ TEST_CASE("sigForkInherit copies dispositions + mask, drops pending") {
 	CHECK(child.handlers[SIGINT] == 0x401000u);
 	CHECK(child.handlers[SIGQUIT] == kSigIgnore);
 	CHECK(child.blocked == 0x8u);
+	CHECK(child.restart == 0x2u);                 // SA_RESTART flags inherited
 	CHECK(child.restorer == 0x402000u);
 	CHECK(child.pending == 0);                    // pending NOT inherited
 }
@@ -111,12 +114,14 @@ TEST_CASE("sigExecReset: caught -> DFL, ignored stays ignored, pending dropped")
 	s.handlers[SIGINT] = 0x401000;                // caught
 	s.handlers[SIGQUIT] = kSigIgnore;                // ignored
 	s.blocked = 0x4;
+	s.restart = 0x6;
 	sigPost(s, SIGTERM);
 
 	sigExecReset(s);
 	CHECK(s.handlers[SIGINT] == kSigDefault);         // reset
 	CHECK(s.handlers[SIGQUIT] == kSigIgnore);        // preserved
 	CHECK(s.blocked == 0x4u);                     // mask preserved
+	CHECK(s.restart == 0);                        // restart flags cleared (handlers gone)
 	CHECK(s.pending == 0);
 }
 
