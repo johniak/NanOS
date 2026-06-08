@@ -18,7 +18,7 @@ LOG=/tmp/nanos-int.log
 PPM=/tmp/nanos-screen.ppm
 rm -f "$MON" "$LOG" "$PPM"
 
-qemu-system-i386 -m 256M -drive file="$IMG",format=raw \
+qemu-system-i386 -drive file="$IMG",format=raw \
     -display none -monitor unix:"$MON",server,nowait \
     -no-reboot -d int -D "$LOG" &
 QPID=$!

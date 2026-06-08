@@ -37,10 +37,10 @@ iso: docker-image
 	$(DOCKER_RUN) make _iso
 
 run: image
-	qemu-system-i386 -m 256M -drive file=$(IMAGE_GRUB2),format=raw
+	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
 
 run-iso: iso
-	qemu-system-i386 -m 256M -cdrom nanos.iso
+	qemu-system-i386 -cdrom nanos.iso
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
