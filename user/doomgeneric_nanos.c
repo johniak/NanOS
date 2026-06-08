@@ -104,13 +104,21 @@ void DG_SleepMs(uint32_t ms) {
 }
 
 /* ---- input -------------------------------------------------------------------------
- * The tty gives key-down only (no key-up), so we synthesize a release immediately after
- * each press (a "tap"): holding a key autorepeats, which reads as repeated taps — enough
- * for movement, fire, use, menus and weapon select. Events are queued and handed out one
- * per DG_GetKey call (doomgeneric polls until it returns 0). */
+ * The PS/2 tty gives only key-DOWN (make codes); it never reports key-up, but a held key
+ * auto-repeats (the make code arrives again every ~tens of ms). So we model the held
+ * state with a timeout: a key is PRESSED on its first byte and stays DOWN as long as the
+ * repeats keep arriving; once they stop for HOLD_MS we emit a RELEASE. This is what Doom's
+ * gameplay needs (movement reads the held gamekeydown[] state across tics) — a press then
+ * immediate release in the same tic, as before, gets cancelled before the tic samples it,
+ * which is why you could navigate menus (they act on the press event) but not move. */
+#define HOLD_MS 140        /* release a key this long after its last repeat */
+#define NKEYS 256
+
 #define EVQ 256
 static struct { int pressed; unsigned char key; } g_evq[EVQ];
 static int g_evHead, g_evTail;
+static unsigned char g_down[NKEYS];     /* 1 while the key is considered held */
+static uint32_t g_seen[NKEYS];          /* ms timestamp of the key's last byte */
 
 static void evPush(int pressed, unsigned char key) {
 	int n = (g_evHead + 1) % EVQ;
@@ -137,13 +145,22 @@ static unsigned char toDoomKey(int c) {
 	}
 }
 
-/* Drain all currently-buffered console bytes into the event queue (press+release each). */
-static void drainInput() {
+/* Mark a key seen this poll: press it if it wasn't down, and refresh its repeat clock. */
+static void keySeen(unsigned char k, uint32_t now) {
+	if (!g_down[k]) {
+		g_down[k] = 1;
+		evPush(1, k);
+	}
+	g_seen[k] = now;
+}
+
+/* Read whatever bytes are buffered (non-blocking), translate to Doom keys, mark them
+ * seen; then release any held key whose repeats stopped HOLD_MS ago. */
+static void pollInput() {
+	uint32_t now = DG_GetTicksMs();
 	unsigned char b[64];
 	int n = read(0, b, sizeof b);
-	if (n <= 0)
-		return;
-	for (int i = 0; i < n; i++) {
+	for (int i = 0; n > 0 && i < n; i++) {
 		unsigned char k;
 		if (b[i] == 27 && i + 2 < n && b[i + 1] == '[') {
 			switch (b[i + 2]) {                /* arrow keys: ESC [ A/B/C/D */
@@ -157,14 +174,18 @@ static void drainInput() {
 		} else {
 			k = toDoomKey(b[i]);
 		}
-		evPush(1, k);   /* press ... */
-		evPush(0, k);   /* ... then release (tap) */
+		keySeen(k, now);
 	}
+	for (int k = 0; k < NKEYS; k++)
+		if (g_down[k] && (now - g_seen[k]) >= HOLD_MS) {
+			g_down[k] = 0;
+			evPush(0, (unsigned char) k);
+		}
 }
 
 int DG_GetKey(int* pressed, unsigned char* key) {
 	if (g_evHead == g_evTail)
-		drainInput();
+		pollInput();
 	if (g_evHead == g_evTail)
 		return 0;
 	*pressed = g_evq[g_evTail].pressed;
