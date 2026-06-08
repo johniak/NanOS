@@ -43,4 +43,24 @@ void bootMemForEachUsable(void* ctx, UsableRangeCb cb) {
 	kernel::parseMmap(mbi, &f, forwardUsable);
 }
 
+const BootFramebuffer* bootFramebuffer() {
+	static BootFramebuffer fb;
+	static int state = 0;   // 0=unprobed, 1=present, 2=absent
+	if (state == 0) {
+		kernel::MbFramebuffer mb;
+		kernel::MultibootInfo* mbi = (kernel::MultibootInfo*) mbd;
+		if (kernel::multibootFramebuffer(mbi, &mb)) {
+			fb.addr = mb.addr;
+			fb.pitch = mb.pitch;
+			fb.width = mb.width;
+			fb.height = mb.height;
+			fb.bpp = mb.bpp;
+			state = 1;
+		} else {
+			state = 2;
+		}
+	}
+	return state == 1 ? &fb : 0;
+}
+
 }  // namespace arch

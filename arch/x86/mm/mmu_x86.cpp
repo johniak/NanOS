@@ -58,6 +58,13 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 
 uint32_t mmuKernelDirPhys() { return g_kernelDirPhys; }
 
+void mmuMapKernelMmio(uint32_t phys, uint32_t bytes) {
+	uint32_t base = phys & kernel::PAGE_MASK;
+	uint32_t end = (phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
+	// Map into the live kernel directory; these VAs were never touched, so no stale TLB.
+	g_kspace->mapRange(base, base, end - base, kernel::PTE_PRESENT | kernel::PTE_RW);
+}
+
 uint32_t mmuCurrentDirPhys() { return kernel::readCr3(); }
 void mmuLoadDirPhys(uint32_t dirPhys) { kernel::loadCr3(dirPhys); }
 

@@ -1,7 +1,8 @@
 # setting up the Multiboot header - see GRUB docs for details
 .set ALIGN,    1<<0                     # align loaded modules on page boundaries
 .set MEMINFO,  1<<1                     # provide memory map
-.set FLAGS,    ALIGN | MEMINFO          # this is the Multiboot 'flag' field
+.set VIDEO,    1<<2                     # request a graphics video mode (like Linux vesafb)
+.set FLAGS,    ALIGN | MEMINFO | VIDEO  # this is the Multiboot 'flag' field
 .set MAGIC,    0x1BADB002               # 'magic number' lets bootloader find the header
 .set CHECKSUM, -(MAGIC + FLAGS)         # checksum required
 
@@ -13,6 +14,21 @@
 .long MAGIC
 .long FLAGS
 .long CHECKSUM
+# Address fields (offsets 12..28). Flag bit 16 is unset so GRUB ignores their
+# values, but the graphics fields below are positional, so these 5 dwords must
+# still be present to push them to offset 32.
+.long 0                                 # header_addr
+.long 0                                 # load_addr
+.long 0                                 # load_end_addr
+.long 0                                 # bss_end_addr
+.long 0                                 # entry_addr
+# Graphics request (flag bit 2), offsets 32..44. mode_type 0 = linear framebuffer.
+# GRUB sets this mode (VBE on BIOS, GOP on UEFI) and reports the framebuffer in the
+# Multiboot info. Width/height/depth are a preference; we read back the real values.
+.long 0                                 # mode_type = 0 (linear graphics)
+.long 1024                              # width
+.long 768                               # height
+.long 32                                # depth (bits per pixel)
 
 .text
 .global loader                          # making entry point visible to linker

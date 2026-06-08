@@ -23,6 +23,12 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam);
 // directories that share the kernel half, and for switching back on exit).
 uint32_t mmuKernelDirPhys();
 
+// Identity-map a physical MMIO span (e.g. the framebuffer LFB, which sits above
+// RAM and is therefore NOT covered by the kernel identity map) into the kernel
+// directory, present+writable, supervisor. Call after mmuInitKernel and BEFORE any
+// per-process address space is created, so the new PDE is shared by every process.
+void mmuMapKernelMmio(uint32_t phys, uint32_t bytes);
+
 // Read/load the active page-directory physical address (CR3 on x86). MI code uses
 // these to stage a spawned child under the kernel identity map, then restore the
 // caller's space — without depending on the x86 control-register details.

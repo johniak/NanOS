@@ -88,6 +88,30 @@ void Kernel::initPaging() {
 	arch::bootMemForEachUsable(&g_frames, markFree);
 	arch::mmuInitKernel(g_frames, top);
 	Console::writeLine("paging enabled");
+
+	// If the bootloader gave us a graphics framebuffer (vesafb model), map its MMIO
+	// into the kernel now — before any per-process space is created — so we (and every
+	// process) can draw into it. The framebuffer console takes over in a later stage.
+	const arch::BootFramebuffer* fb = arch::bootFramebuffer();
+	if (fb) {
+		arch::mmuMapKernelMmio((uint32_t) fb->addr, fb->pitch * fb->height);
+		// TEMPORARY (Stage A smoke): paint the screen so the QEMU screendump proves GRUB
+		// set a graphics mode and the MMIO mapping works. Replaced by the renderer next.
+		if (fb->bpp == 32) {
+			volatile uint32_t* px = (volatile uint32_t*) (uint32_t) fb->addr;
+			unsigned words = (fb->pitch / 4) * fb->height;
+			for (unsigned i = 0; i < words; i++)
+				px[i] = 0x00203A66;   // dark blue
+		}
+		Console::write("framebuffer: ");
+		Console::write((int) fb->width);
+		Console::write("x");
+		Console::write((int) fb->height);
+		Console::write(" bpp");
+		Console::writeLine((int) fb->bpp);
+	} else {
+		Console::writeLine("framebuffer: none (VGA text)");
+	}
 }
 
 void Kernel::start() {
