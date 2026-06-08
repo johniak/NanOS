@@ -25,9 +25,17 @@
 #include <arch/syscall.h>
 #include <arch/block.h>
 #include "FrameAllocator.h"
+#include "memory_manager.h"   // heapTotalBytes/heapFreeBytes for /proc/meminfo
 char buf[1024];
 
 namespace kernel {
+
+// Live system memory figures (kB) for /proc/meminfo. MemTotal is the whole RAM from the
+// boot map; MemFree is the free physical page frames; KHeap* is the kernel byte heap.
+unsigned sysMemTotalKb() { return (unsigned) (arch::bootMemTop() / 1024u); }
+unsigned sysMemFreeKb()  { return (unsigned) (g_frames.freeCount() * (FRAME_SIZE / 1024u)); }
+unsigned sysHeapTotalKb() { return heapTotalBytes() / 1024u; }
+unsigned sysHeapFreeKb()  { return heapFreeBytes() / 1024u; }
 
 // Mark a usable physical range free in the frame allocator (arch reports only
 // usable ranges via <arch/bootinfo.h>).

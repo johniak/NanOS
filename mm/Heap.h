@@ -30,6 +30,7 @@ public:
 	void* realloc(void* ptr, unsigned size);
 
 	unsigned freeBytes() const;            // total free payload bytes (for tests/stats)
+	unsigned totalBytes() const { return m_end; }   // arena size (for /proc/meminfo)
 
 private:
 	char*    m_base;       // 8-aligned arena start (block offset 0 lives here)

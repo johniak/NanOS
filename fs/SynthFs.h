@@ -23,6 +23,19 @@ typedef int (*SynthGen)(unsigned off, void* buf, unsigned n);
 // length. Free function so it is host-testable; used by the /proc/uptime generator.
 int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz);
 
+// Render Linux-style /proc/meminfo (MemTotal/MemFree + our kernel-heap figures, all in
+// kB) into buf; returns its length. Pure -> host-testable; the /proc/meminfo generator
+// supplies the live numbers via the sys*Kb() accessors below.
+int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
+		unsigned heapTotalKb, unsigned heapFreeKb);
+
+// Live system memory figures in kB. Implemented in the kernel (Kernel.cpp) over the
+// frame allocator + byte heap + boot memory map; stubbed in the host test harness.
+unsigned sysMemTotalKb();
+unsigned sysMemFreeKb();
+unsigned sysHeapTotalKb();
+unsigned sysHeapFreeKb();
+
 enum SynthKind { SK_DIR, SK_STATIC, SK_GEN, SK_CHARDEV };
 
 struct SynthNode {

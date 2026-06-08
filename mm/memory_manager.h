@@ -17,6 +17,10 @@ void *realloc(void *ptr, size_t size);
 // first malloc (the arch MMU bring-up does this once it knows the top of RAM).
 void heapInit(void *base, unsigned size);
 
+// Kernel byte-heap stats (for /proc/meminfo).
+unsigned heapTotalBytes(void);
+unsigned heapFreeBytes(void);
+
 
 
 

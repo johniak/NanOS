@@ -19,6 +19,9 @@ void heapInit(void* base, unsigned size) {
 	g_heap.init(base, size);
 }
 
+unsigned heapTotalBytes(void) { return g_heap.totalBytes(); }
+unsigned heapFreeBytes(void) { return g_heap.freeBytes(); }
+
 void *malloc(size_t size) {
 	return g_heap.alloc((unsigned) size);
 }

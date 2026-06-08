@@ -31,6 +31,33 @@ int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz) {
 	return p;
 }
 
+// Render /proc/meminfo, Linux-style ("Key:<pad>value kB\n" lines). Pure for host tests.
+int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
+		unsigned heapTotalKb, unsigned heapFreeKb) {
+	struct Row { const char* key; unsigned val; };
+	Row rows[] = {
+		{ "MemTotal:", memTotalKb }, { "MemFree:", memFreeKb },
+		{ "MemUsed:", memTotalKb > memFreeKb ? memTotalKb - memFreeKb : 0 },
+		{ "KHeapTotal:", heapTotalKb }, { "KHeapFree:", heapFreeKb },
+	};
+	int p = 0;
+	for (unsigned r = 0; r < sizeof rows / sizeof rows[0]; r++) {
+		const char* k = rows[r].key;
+		int keyLen = 0;
+		for (; k[keyLen] && p < cap - 1; keyLen++) buf[p++] = k[keyLen];
+		// Pad to a fixed column so the values line up (Linux-style), then "<num> kB".
+		const int col = 15;
+		for (int s = keyLen; s < col && p < cap - 1; s++) buf[p++] = ' ';
+		char num[12];
+		int nlen = utoa(rows[r].val, num);
+		for (int i = 0; i < nlen && p < cap - 1; i++) buf[p++] = num[i];
+		const char* suf = " kB\n";
+		for (int i = 0; suf[i] && p < cap - 1; i++) buf[p++] = suf[i];
+	}
+	buf[p] = 0;
+	return p;
+}
+
 // Length-bounded name compare (avoids strncmp, absent from the freestanding libc):
 // node name `a` (NUL-terminated) equals the `blen`-char component `b`.
 static bool nameEq(const char* a, const char* b, int blen) {
@@ -123,6 +150,18 @@ static int gen_uptime(unsigned off, void* buf, unsigned n) {
 	return (int) cnt;
 }
 
+// Snapshot file: render live /proc/meminfo (served by offset so `cat` terminates).
+static int gen_meminfo(unsigned off, void* buf, unsigned n) {
+	static char s[256];
+	int len = meminfoString(s, sizeof s, sysMemTotalKb(), sysMemFreeKb(),
+			sysHeapTotalKb(), sysHeapFreeKb());
+	if (off >= (unsigned) len)
+		return 0;
+	unsigned cnt = n < (unsigned) (len - off) ? n : (unsigned) (len - off);
+	memcpy(buf, s + off, cnt);
+	return (int) cnt;
+}
+
 SynthFs::SynthFs() {
 	root = mk(SK_DIR, "/", 0555);
 	m_disks = addDir(root, "disks");
@@ -134,6 +173,7 @@ SynthFs::SynthFs() {
 	addGen(m_dev, "zero", gen_zero, 0666);
 	addGen(m_dev, "random", gen_random, 0444);
 	addGen(m_proc, "uptime", gen_uptime, 0444);
+	addGen(m_proc, "meminfo", gen_meminfo, 0444);
 }
 
 int SynthFs::mount() { return 0; }

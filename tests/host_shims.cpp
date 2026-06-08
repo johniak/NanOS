@@ -8,6 +8,7 @@
 #include <arch/console.h>
 #include <arch/input.h>
 #include "memory_manager.h"
+#include "SynthFs.h"
 #include <cstdio>
 
 // memory_manager.h declares malloc/free/realloc/calloc with C++ linkage (no
@@ -40,3 +41,12 @@ void setKernelStack(unsigned) {}
 void halt_or_hlt() {}
 }
 extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)
+
+// /proc/meminfo data sources live in the kernel (Kernel.cpp, not in the test build);
+// stub them with fixed figures so SynthFs links and the meminfo file is readable.
+namespace kernel {
+unsigned sysMemTotalKb() { return 131072; }   // 128 MiB
+unsigned sysMemFreeKb()  { return 120000; }
+unsigned sysHeapTotalKb() { return 5120; }
+unsigned sysHeapFreeKb()  { return 5000; }
+}
