@@ -362,6 +362,24 @@ int SynthFs::stat(String path, FileStat& out) {
 	return 0;
 }
 
+// Append a directory entry by name + type.
+static void pushEntry(List<DirEntry>& out, const char* name, NodeType type) {
+	DirEntry de;
+	int k = 0;
+	for (; name[k] && k < 255; k++)
+		de.name[k] = name[k];
+	de.name[k] = 0;
+	de.type = type;
+	out.add(de);
+}
+
+// Every directory lists "." (itself) and ".." (parent) first, like a Unix directory —
+// so `ls -la` shows them. (`ls` without -a hides dotfiles.)
+static void pushDotEntries(List<DirEntry>& out) {
+	pushEntry(out, ".", NODE_DIR);
+	pushEntry(out, "..", NODE_DIR);
+}
+
 int SynthFs::readdir(String path, List<DirEntry>& out) {
 	int pid = 0;
 	const char* file = 0;
@@ -369,6 +387,7 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 		ProcInfo pi;
 		if (!ProcTable::infoByPid(pid, &pi))
 			return -1;
+		pushDotEntries(out);
 		for (int i = 0; PROC_FILES[i]; i++) {
 			DirEntry de;
 			int k = 0;
@@ -384,6 +403,7 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 	SynthNode* n = walk((char*) path);
 	if (!n || n->kind != SK_DIR)
 		return -1;
+	pushDotEntries(out);
 	for (int i = 0; i < n->nchild; i++) {
 		DirEntry de;
 		int k = 0;
