@@ -7,8 +7,6 @@
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
 #include "SynthFs.h"
-#include "Framebuffer.h"
-#include "Font8x16.h"
 #include "Scheduler.h"
 #include <arch/sched.h>
 #include "Syscall.h"
@@ -18,6 +16,7 @@
 #include "List.h"
 #include "String.h"
 #include <arch/bootinfo.h>
+#include <arch/console.h>
 #include <arch/mmu.h>
 #include <arch/cpu.h>
 #include <arch/syscall.h>
@@ -89,26 +88,18 @@ void Kernel::initPaging() {
 	g_frames.init(top);
 	arch::bootMemForEachUsable(&g_frames, markFree);
 	arch::mmuInitKernel(g_frames, top);
-	Console::writeLine("paging enabled");
 
-	// If the bootloader gave us a graphics framebuffer (vesafb model), map its MMIO
-	// into the kernel now — before any per-process space is created — so we (and every
-	// process) can draw into it. The framebuffer console takes over in a later stage.
+	// If the bootloader gave us a graphics framebuffer (vesafb model), map its MMIO into
+	// the kernel now — before any per-process space is created, so the mapping is shared —
+	// and hand the console over to it (Linux fbcon style). Boot text from here on renders
+	// as pixel glyphs on the framebuffer.
 	const arch::BootFramebuffer* fb = arch::bootFramebuffer();
 	if (fb) {
 		arch::mmuMapKernelMmio((uint32_t) fb->addr, fb->pitch * fb->height);
-		// Stage B smoke: exercise the MI renderer + 8x16 font on the real framebuffer —
-		// background, R/G/B bars, and a text line. (Stage C turns this into the console.)
-		FbSurface surf = { (uint8_t*) (uint32_t) fb->addr, fb->pitch, fb->width, fb->height,
-				fb->bpp };
-		fbFillRect(surf, 0, 0, surf.width, surf.height, 0x00203A66);
-		fbFillRect(surf, 0, 0,  surf.width, 16, 0x00CC3333);
-		fbFillRect(surf, 0, 16, surf.width, 16, 0x0033CC33);
-		fbFillRect(surf, 0, 32, surf.width, 16, 0x003333CC);
-		const char* msg = "NanOS framebuffer + 8x16 font OK";
-		uint32_t gx = 8;
-		for (const char* p = msg; *p; p++, gx += FONT_W)
-			fbBlitGlyph(surf, fontGlyph((unsigned char) *p), gx, 80, 0x00FFFFFF, 0x00203A66);
+		arch::consoleActivateFramebuffer();
+	}
+	Console::writeLine("paging enabled");
+	if (fb) {
 		Console::write("framebuffer: ");
 		Console::write((int) fb->width);
 		Console::write("x");

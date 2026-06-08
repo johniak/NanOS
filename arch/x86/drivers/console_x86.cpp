@@ -5,7 +5,9 @@
  * This is the machine-dependent console sink; MI Console formatting calls these.
  */
 #include <arch/console.h>
+#include <arch/bootinfo.h>
 #include "IOPort.h"
+#include "FbConsole.h"
 #include <string.h>
 
 namespace {
@@ -13,6 +15,12 @@ namespace {
 unsigned short cursorX = 0;
 unsigned short cursorY = 0;
 volatile unsigned short* videoram = (unsigned short*) 0xB8000;
+
+// Framebuffer console (Linux fbcon model). Selected at runtime once the bootloader
+// framebuffer has been mapped (arch::consoleActivateFramebuffer); until then we use the
+// VGA text path below so early boot text is never lost to an unmapped framebuffer.
+kernel::FbConsole g_fb;
+bool g_useFb = false;
 
 const unsigned char attributeByte = (0 << 4) | (15 & 0x0F);
 // One blank line worth of {char, attribute} pairs, used to clear the bottom row.
@@ -64,6 +72,10 @@ void moveCursor() {
 namespace arch {
 
 void consolePutChar(char c) {
+	if (g_useFb) {
+		g_fb.putChar(c);
+		return;
+	}
 	unsigned char backColour = 0;
 	unsigned char foreColour = 15;
 	unsigned char attributeByte = (backColour << 4) | (foreColour & 0x0F);
@@ -93,6 +105,10 @@ void consolePutChar(char c) {
 }
 
 void consoleClear() {
+	if (g_useFb) {
+		g_fb.clear();
+		return;
+	}
 	unsigned char attributeByte = (0 << 4) | (15 & 0x0F);
 	unsigned short blank = ' ' | (attributeByte << 8);
 	for (int i = 0; i < 80 * 25; i++)
@@ -103,6 +119,10 @@ void consoleClear() {
 }
 
 void consoleSetCursor(unsigned x, unsigned y) {
+	if (g_useFb) {
+		g_fb.setCursor(x, y);
+		return;
+	}
 	cursorX = x;
 	cursorY = y;
 	moveCursor();
@@ -110,6 +130,19 @@ void consoleSetCursor(unsigned x, unsigned y) {
 
 void consoleInit() {
 	consoleClear();
+}
+
+// Switch the console onto the bootloader's framebuffer (the fbcon takeover). Called
+// once, after the framebuffer MMIO has been mapped (see Kernel::initPaging). No-op if
+// the bootloader gave no framebuffer (we stay in VGA text mode).
+void consoleActivateFramebuffer() {
+	const BootFramebuffer* fb = bootFramebuffer();
+	if (!fb)
+		return;
+	kernel::FbSurface s = { (uint8_t*) (uint32_t) fb->addr, fb->pitch,
+			fb->width, fb->height, fb->bpp };
+	g_fb.init(s);
+	g_useFb = true;
 }
 
 }  // namespace arch

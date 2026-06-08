@@ -15,4 +15,8 @@ void consolePutChar(char c);                 // interpret \b \t \r \n, place gly
 void consoleClear();
 void consoleSetCursor(unsigned x, unsigned y);
 
+// Take the console over to the bootloader's linear framebuffer (Linux fbcon style).
+// Must be called after the framebuffer MMIO is mapped; a no-op when there is none.
+void consoleActivateFramebuffer();
+
 }
