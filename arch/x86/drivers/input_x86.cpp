@@ -16,6 +16,7 @@
 #include "Scheduler.h"
 #include "Signal.h"             // SIGINT / SIGQUIT numbers
 #include "SignalDispatch.h"     // kernel::consoleSignal / hasPendingSignalCurrent
+#include "Syscall.h"            // kernel::EAGAIN (O_NONBLOCK no-data return)
 
 namespace {
 kernel::LineDiscipline g_line;
@@ -78,8 +79,11 @@ void inputFeedScancode(unsigned char sc) {
 		kernel::Scheduler::wake(g_inputWaiter);
 }
 
-int inputRead(char* buf, unsigned n) {
+int inputRead(char* buf, unsigned n, int nonblock) {
 	if (g_raw) {
+		if (nonblock && rawEmpty()) {              // O_NONBLOCK: never block, no data now
+			return -EAGAIN;
+		}
 		while (rawEmpty()) {                       // block until a byte arrives
 			g_inputWaiter = kernel::Scheduler::current();
 			kernel::Scheduler::block();            // deschedule; keyboard IRQ wakes us
@@ -93,6 +97,9 @@ int inputRead(char* buf, unsigned n) {
 		while (i < n && !rawEmpty())
 			buf[i++] = (char) rawPop();
 		return (int) i;
+	}
+	if (nonblock && !g_line.lineReady()) {         // O_NONBLOCK cooked: no full line yet
+		return -EAGAIN;
 	}
 	while (!g_line.lineReady()) {                  // block until a full line is ready
 		g_inputWaiter = kernel::Scheduler::current();

@@ -23,6 +23,7 @@
 #define SYS_nanosleep 162
 #define SYS_clock_gettime 265
 #define SYS_ioctl 54
+#define SYS_fcntl 55
 #define SYS_mmap2 192
 #define SYS_stat 106
 #define SYS_fstat 108

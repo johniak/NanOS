@@ -15,6 +15,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].isConsole = false;
 		fds[i].offset = 0;
 		fds[i].size = 0;
+		fds[i].flags = 0;
 	}
 	// fd 0,1,2 = stdin/stdout/stderr -> console.
 	for (int i = 0; i < 3; i++) {
@@ -34,6 +35,7 @@ int Syscalls::open(String path, int /*flags*/) {
 			fds[fd].path = path;
 			fds[fd].offset = 0;
 			fds[fd].size = st.size;
+			fds[fd].flags = 0;
 			return fd;
 		}
 	}
@@ -52,7 +54,8 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
 	if (fds[fd].isConsole)
-		return arch::inputRead((char*) buf, n);   // cooked line or raw bytes; 0 = EOF
+		// cooked line or raw bytes; 0 = EOF. O_NONBLOCK -> -EAGAIN instead of blocking.
+		return arch::inputRead((char*) buf, n, (fds[fd].flags & O_NONBLOCK) != 0);
 	int r = vfs->read(fds[fd].path, n, fds[fd].offset, buf);
 	if (r < 0)
 		return 0;   // past EOF
@@ -167,6 +170,21 @@ int Syscalls::ioctl(int fd, unsigned cmd, void* arg) {
 	if (fds[fd].isConsole)
 		return -EINVAL;          // no console ioctls (yet)
 	return vfs->ioctl(fds[fd].path, cmd, arg);
+}
+
+int Syscalls::fcntl(int fd, int cmd, int arg) {
+	if (!valid(fd))
+		return -EBADF;
+	switch (cmd) {
+	case F_GETFL:
+		return (int) fds[fd].flags;
+	case F_SETFL:
+		// Only the file status flags are settable; we track O_NONBLOCK (the rest are
+		// stored verbatim but unused). access mode bits are ignored on F_SETFL, per POSIX.
+		fds[fd].flags = (unsigned) arg;
+		return 0;
+	}
+	return -EINVAL;
 }
 
 int Syscalls::mmapInfo(int fd, unsigned* physOut, unsigned* lenOut) {

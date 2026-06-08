@@ -16,12 +16,19 @@ namespace kernel {
 // errno values returned (negated) on error.
 #define ENOENT 2
 #define EBADF 9
+#define EAGAIN 11
 #define EINVAL 22
 #define EROFS 30
 
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
+
+// fcntl commands + the open/status flags we honor (picolibc/newlib values — userland
+// passes these straight through, so they MUST match <fcntl.h> on the i686-elf target).
+#define F_GETFL 3
+#define F_SETFL 4
+#define O_NONBLOCK 0x4000
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
@@ -51,6 +58,7 @@ class Syscalls {
 		String path;
 		unsigned offset;
 		unsigned size;
+		unsigned flags;     // file status flags (O_NONBLOCK); set via fcntl(F_SETFL)
 	};
 	static const int MAXFD = 32;
 	Fd fds[MAXFD];
@@ -73,6 +81,7 @@ public:
 	int fstat(int fd, LinuxStat* out);
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
+	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL (O_NONBLOCK)
 	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 	// Time. clockGettime fills `out` from a monotonic tick count (1000 Hz => ms); the
 	// dispatch supplies Scheduler::ticks(). nanosleepMs converts a requested timespec to

@@ -28,7 +28,7 @@ void consoleInit() {}
 
 // No real keyboard under the host harness: console reads are immediate EOF (this
 // preserves the pre-blocking-stdin behaviour the Syscalls tests expect).
-int inputRead(char*, unsigned) { return 0; }
+int inputRead(char*, unsigned, int) { return 0; }
 void inputSetRaw(int) {}
 
 // Scheduler arch primitives are hardware (context switch / timer); the host harness

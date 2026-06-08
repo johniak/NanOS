@@ -36,6 +36,15 @@ int open(const char* p, int fl, ...) {
 	return reterr(sys3(SYS_open, (int) abs, fl, 0));
 }
 int close(int fd)                       { return reterr(sys3(SYS_close, fd, 0, 0)); }
+/* fcntl(2): we support F_GETFL/F_SETFL (the O_NONBLOCK status flag) for non-blocking
+ * console reads. The third argument is an int (the flags for F_SETFL). */
+int fcntl(int fd, int cmd, ...) {
+	va_list ap;
+	va_start(ap, cmd);
+	int arg = va_arg(ap, int);
+	va_end(ap);
+	return reterr(sys3(SYS_fcntl, fd, cmd, arg));
+}
 int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off, wh)); }
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
 int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; }

@@ -84,6 +84,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_ioctl:
 		ret = g_sys->ioctl((int) a0, a1, (void*) a2);
 		break;
+	case SYS_fcntl:
+		ret = g_sys->fcntl((int) a0, (int) a1, (int) a2);
+		break;
 	case SYS_mmap2: {
 		// Simplified ABI: a0 = fd, a1 = length, a2 = offset (the libc mmap() wrapper
 		// repacks the 6 POSIX args into these). We support mapping a device's region

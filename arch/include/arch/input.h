@@ -10,12 +10,14 @@
 
 namespace arch {
 
-// Read console input, blocking until something is available. Mode-dependent:
+// Read console input. Mode-dependent:
 //  - cooked (default): returns one committed, line-edited line (echoed by the kernel);
 //  - raw: returns >=1 available raw bytes (no echo, no line editing); arrow keys
 //    arrive as ANSI escape sequences (ESC '[' 'A'/'B'/'C'/'D').
-// Returns the number of bytes copied (0 = EOF on Ctrl-D at an empty cooked line).
-int inputRead(char* buf, unsigned n);
+// Returns the number of bytes copied (0 = EOF on Ctrl-D at an empty cooked line). When
+// `nonblock` is set (O_NONBLOCK on the fd) and no input is available, returns -EAGAIN
+// immediately instead of blocking — the Unix way a game loop polls the keyboard.
+int inputRead(char* buf, unsigned n, int nonblock);
 
 // Select console input mode: 0 = cooked, 1 = raw. A shell switches to raw to run
 // its own line editor, and back to cooked while a child program runs.

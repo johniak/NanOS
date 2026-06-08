@@ -135,7 +135,7 @@ _image: _all _userland _grub2-image
 	# Kernel + init (PID 1) in core; the rest of the programs in bin.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	for p in nsh cat ls sigtest fbtest timetest brktest; do \
+	for p in nsh cat ls sigtest fbtest timetest brktest inputtest; do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 
@@ -169,7 +169,7 @@ SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarra
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -194,6 +194,8 @@ _userland: _userland-glue _userland-sbase
 	$(call link_prog,timetest,$(BINFOLDER)timetest.o)
 	$(CXX) $(USER_CFLAGS) -c user/brktest.c -o $(BINFOLDER)brktest.o
 	$(call link_prog,brktest,$(BINFOLDER)brktest.o)
+	$(CXX) $(USER_CFLAGS) -c user/inputtest.c -o $(BINFOLDER)inputtest.o
+	$(call link_prog,inputtest,$(BINFOLDER)inputtest.o)
 
 # Build the shared startup/header/glue objects once.
 _userland-glue:

@@ -215,6 +215,22 @@ TEST_CASE("clockGettime splits a millisecond tick count into sec/nsec") {
 	CHECK(sc.clockGettime(0, 0, nullptr) == -EINVAL);
 }
 
+TEST_CASE("fcntl gets/sets the file status flags (O_NONBLOCK)") {
+	Syscalls sc(mountFixture(), sink);
+	// A fresh fd starts with no status flags.
+	int fd = sc.open(String("/hello.txt"), 0);
+	CHECK(fd >= 3);
+	CHECK(sc.fcntl(fd, F_GETFL, 0) == 0);
+	CHECK(sc.fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+	CHECK((sc.fcntl(fd, F_GETFL, 0) & O_NONBLOCK) != 0);
+	// Console fd 0 too (this is the one Doom flips to non-blocking).
+	CHECK(sc.fcntl(0, F_SETFL, O_NONBLOCK) == 0);
+	CHECK(sc.fcntl(0, F_GETFL, 0) == O_NONBLOCK);
+	// Bad fd and unknown command.
+	CHECK(sc.fcntl(99, F_GETFL, 0) == -EBADF);
+	CHECK(sc.fcntl(fd, 999, 0) == -EINVAL);
+}
+
 TEST_CASE("nanosleepMs rounds the request up to whole milliseconds") {
 	Syscalls sc(mountFixture(), sink);
 	KTimespec ts;
