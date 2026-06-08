@@ -199,3 +199,34 @@ TEST_CASE("resetForRun clears the exit state so the instance can run again") {
 	CHECK(sc.hasExited() == false);
 	CHECK(sc.code() == 0);
 }
+
+TEST_CASE("clockGettime splits a millisecond tick count into sec/nsec") {
+	Syscalls sc(mountFixture(), sink);
+	KTimespec ts;
+	CHECK(sc.clockGettime(0, 0, &ts) == 0);
+	CHECK(ts.tv_sec == 0);
+	CHECK(ts.tv_nsec == 0);
+	CHECK(sc.clockGettime(1, 1500, &ts) == 0);   // 1.5 s
+	CHECK(ts.tv_sec == 1);
+	CHECK(ts.tv_nsec == 500000000);
+	CHECK(sc.clockGettime(0, 999, &ts) == 0);    // just under a second
+	CHECK(ts.tv_sec == 0);
+	CHECK(ts.tv_nsec == 999000000);
+	CHECK(sc.clockGettime(0, 0, nullptr) == -EINVAL);
+}
+
+TEST_CASE("nanosleepMs rounds the request up to whole milliseconds") {
+	Syscalls sc(mountFixture(), sink);
+	KTimespec ts;
+	ts.tv_sec = 0; ts.tv_nsec = 0;
+	CHECK(sc.nanosleepMs(&ts) == 0);
+	ts.tv_sec = 0; ts.tv_nsec = 1;            // <1 ms still rounds to 1
+	CHECK(sc.nanosleepMs(&ts) == 1);
+	ts.tv_sec = 0; ts.tv_nsec = 500000000;    // 500 ms
+	CHECK(sc.nanosleepMs(&ts) == 500);
+	ts.tv_sec = 2; ts.tv_nsec = 250000000;    // 2.25 s -> 2250 ms
+	CHECK(sc.nanosleepMs(&ts) == 2250);
+	ts.tv_sec = -1; ts.tv_nsec = -5;          // negatives clamp to 0
+	CHECK(sc.nanosleepMs(&ts) == 0);
+	CHECK(sc.nanosleepMs(nullptr) == 0);
+}

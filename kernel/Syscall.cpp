@@ -180,4 +180,24 @@ void Syscalls::exit(int code) {
 	exitCode = code;
 }
 
+int Syscalls::clockGettime(int /*clkId*/, unsigned ticks, KTimespec* out) {
+	// One monotonic clock (the 1000 Hz scheduler tick); we treat every clk_id the
+	// same (REALTIME aliases MONOTONIC since there is no RTC). ticks are milliseconds.
+	if (!out)
+		return -EINVAL;
+	out->tv_sec = (long long) (ticks / 1000);
+	out->tv_nsec = (int) ((ticks % 1000) * 1000000u);
+	return 0;
+}
+
+unsigned Syscalls::nanosleepMs(const KTimespec* req) {
+	if (!req)
+		return 0;
+	long long sec = req->tv_sec < 0 ? 0 : req->tv_sec;
+	int nsec = req->tv_nsec < 0 ? 0 : req->tv_nsec;
+	// Round the sub-millisecond remainder up: a request for <1 ms still sleeps a tick.
+	unsigned ms = (unsigned) sec * 1000u + (unsigned) ((nsec + 999999) / 1000000);
+	return ms;
+}
+
 } /* namespace kernel */

@@ -19,6 +19,8 @@
 #define SYS_lseek 19
 #define SYS_kill 37
 #define SYS_signal 48
+#define SYS_nanosleep 162
+#define SYS_clock_gettime 265
 #define SYS_ioctl 54
 #define SYS_mmap2 192
 #define SYS_stat 106

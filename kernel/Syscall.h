@@ -35,6 +35,15 @@ struct LinuxStat {
 	unsigned st_ino;
 };
 
+// Kernel mirror of picolibc's i686 struct timespec: a 64-bit time_t (tv_sec, 8 bytes
+// at offset 0) followed by a 32-bit tv_nsec at offset 8 (total 12 bytes). Defined here
+// rather than pulled from <time.h> so the host test compiles without libc clashes. The
+// layout MUST match picolibc or the kernel reads/writes the wrong field offsets.
+struct KTimespec {
+	long long tv_sec;
+	int tv_nsec;
+};
+
 class Syscalls {
 	struct Fd {
 		bool used;
@@ -65,6 +74,12 @@ public:
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
+	// Time. clockGettime fills `out` from a monotonic tick count (1000 Hz => ms); the
+	// dispatch supplies Scheduler::ticks(). nanosleepMs converts a requested timespec to
+	// the number of whole milliseconds to block (rounding up); the actual blocking loop
+	// lives in the dispatch (it needs the scheduler/IRQs).
+	int clockGettime(int clkId, unsigned ticks, KTimespec* out);
+	unsigned nanosleepMs(const KTimespec* req);
 	void exit(int code);
 	bool hasExited() { return exited; }
 	int code() { return exitCode; }

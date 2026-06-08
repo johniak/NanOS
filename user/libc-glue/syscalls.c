@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <time.h>
 
 static inline int sys3(int nr, int a, int b, int c) {
 	int r;
@@ -52,10 +53,29 @@ void (*signal(int sig, void (*handler)(int)))(int) {
 }
 int times(void* b)                      { (void) b; return 0; }
 
-/* No real-time clock: a fixed epoch so ls -l renders a stable timestamp. */
+/* Monotonic clock from the kernel (1000 Hz scheduler tick). The kernel timespec is
+ * {int tv_sec; int tv_nsec;}, the same 8-byte layout as picolibc's on i386, so we hand
+ * it the struct pointer directly. */
+int clock_gettime(clockid_t clk, struct timespec* tp) {
+	return reterr(sys3(SYS_clock_gettime, (int) clk, (int) tp, 0));
+}
+
+/* nanosleep(2): block for the requested duration; rem (if given) gets the unslept
+ * remainder when interrupted by a signal. */
+int nanosleep(const struct timespec* req, struct timespec* rem) {
+	return reterr(sys3(SYS_nanosleep, (int) req, (int) rem, 0));
+}
+
+/* gettimeofday now reads the monotonic clock (offset by a fixed epoch so ls -l still
+ * renders a plausible wall-clock timestamp). */
 int gettimeofday(struct timeval* tv, void* tz) {
 	(void) tz;
-	if (tv) { tv->tv_sec = 1700000000; tv->tv_usec = 0; }
+	if (tv) {
+		struct timespec ts = { 0, 0 };
+		clock_gettime(0, &ts);
+		tv->tv_sec = 1700000000 + ts.tv_sec;
+		tv->tv_usec = ts.tv_nsec / 1000;
+	}
 	return 0;
 }
 

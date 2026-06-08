@@ -3,9 +3,11 @@
 #include "Process.h"
 #include "Exec.h"
 #include "SignalDispatch.h"
+#include "Scheduler.h"
 #include <arch/syscall.h>
 #include <arch/input.h>
 #include <arch/mmu.h>
+#include <arch/sched.h>
 #include "Console.h"
 
 namespace kernel {
@@ -121,6 +123,31 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		arch::inputSetRaw((int) a0);
 		ret = 0;
 		break;
+	case SYS_clock_gettime:
+		// a0 = clk_id, a1 = user struct timespec*. User space is active, so write through.
+		ret = g_sys->clockGettime((int) a0, Scheduler::ticks(), (KTimespec*) a1);
+		break;
+	case SYS_nanosleep: {
+		// a0 = req timespec*, a1 = rem timespec* (optional). Block until the deadline,
+		// waking on each timer tick; a signal for us aborts early (restart or -EINTR is
+		// decided at delivery, exactly like a blocking read).
+		unsigned ms = g_sys->nanosleepMs((const KTimespec*) a0);
+		unsigned start = Scheduler::ticks();
+		ret = 0;
+		while (Scheduler::ticks() - start < ms) {
+			if (hasPendingSignalCurrent()) {
+				if (a1) {   // report the unslept remainder
+					unsigned done = Scheduler::ticks() - start;
+					unsigned left = done < ms ? ms - done : 0;
+					g_sys->clockGettime(0, left, (KTimespec*) a1);
+				}
+				ret = -ERESTARTSYS;
+				break;
+			}
+			arch::halt_or_hlt();
+		}
+		break;
+	}
 	}
 	return ret;
 }
