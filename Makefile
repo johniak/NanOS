@@ -6,7 +6,7 @@ include arch/$(ARCH)/arch.mk
 # Machine-independent objects (portable across architectures).
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamFs.o RamBlockDevice.o DeviceManager.o Vfs.o
 MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o Fbdev.o Fb0Device.o KeyboardDevice.o
-MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
+MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
 MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
@@ -139,8 +139,12 @@ _image: _all _userland _grub2-image
 	# Kernel + init (PID 1) in core; the rest of the programs in bin.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	for p in nsh cat ls sigtest fbtest timetest brktest inputtest fstest free doom; do \
+	for p in nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll doom; do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	done
+	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
+	for l in $(USER_LIBS_NDL); do \
+	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# Doom's shareware IWAD on the disk (read-only); the platform layer passes -iwad at it.
 	printf "rm /nanos/doom1.wad\nwrite disk/doom1.wad /nanos/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
@@ -176,7 +180,9 @@ SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarra
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free doom
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll doom
+# Shared libraries (.ndl) shipped to /nanos/lib (see _image).
+USER_LIBS_NDL=greet.ndl
 
 # Userland objects build via per-source-dir pattern rules — only CHANGED files recompile
 # (the old recipe recompiled all ~30 programs+glue every build), and -MMD tracks header
@@ -224,8 +230,29 @@ $(BINFOLDER)inputtest.nxe: $(USER_GLUE) $(BINFOLDER)inputtest.o
 $(BINFOLDER)fstest.nxe:    $(USER_GLUE) $(BINFOLDER)fstest.o
 $(BINFOLDER)free.nxe:      $(USER_GLUE) $(BINFOLDER)free.o
 
-# All programs (init -> /nanos/core, the rest -> /nanos/bin; see _image).
-_userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS)))
+# ---- Stage-2 dynamic-linking demo: greet.ndl (shared lib) + usedll (imports from it) ----
+$(BINFOLDER)greet.o: user/lib/greet.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)greet_import.o: user/lib/greet_import.S
+	@mkdir -p $(BINFOLDER)
+	nasm -f elf $< -o $@
+
+# greet.ndl: a relocatable shared library exporting nx_greet/nx_greeting. No crt0/libc —
+# just the header placeholder (nxhdr.o) + the library code. mknx --dll marks it a library
+# and emits the named export table the loader binds against.
+$(BINFOLDER)greet.ndl: $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $(BINFOLDER)greet.elf $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o
+	$(MKNX) $(BINFOLDER)greet.elf $@ --dll --export nx_greet --export nx_greeting
+
+# usedll: a normal program that imports nx_greet/nx_greeting (via the greet import lib).
+# `--need greet.ndl` records the dependency so the loader loads greet.ndl first.
+$(BINFOLDER)usedll.nxe: $(USER_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(USER_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(USER_LIBS)
+	$(MKNX) $(BINFOLDER)usedll.elf $@ --need greet.ndl
+
+# All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
+_userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which
 # breaks Doom's tentative globals) and warnings off; -DNORMALUNIX -DLINUX select the POSIX

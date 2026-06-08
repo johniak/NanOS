@@ -26,6 +26,16 @@ namespace {
 const uint32_t NX_BRK_BASE = 0x20000000;
 const uint32_t NX_BRK_MAX  = NX_BRK_BASE + 32u * 1024u * 1024u;
 
+// Shared-library (.ndl) load band: per-module 4 MiB windows from 0x08000000 (128 MiB,
+// just above the identity-mapped RAM) up to the framebuffer window at 0x10000000 — 32
+// modules. It sits ABOVE RAM (like the heap/fb windows) so each module PDE is absent in
+// the kernel directory and map() allocates a PRIVATE page table, rather than mutating a
+// shared kernel page table the way a window inside the identity map would. Each module
+// gets one 4 MiB PDE; teardown/fork walk this band like the heap.
+const uint32_t NX_MOD_BASE   = 0x08000000;
+const uint32_t NX_MOD_STRIDE = 0x00400000;
+const uint32_t NX_MOD_MAX    = 0x10000000;
+
 kernel::FrameAllocator* g_fa = 0;
 uint32_t allocFrame(void*) { return g_fa->alloc(); }
 void freeFrame(void*, uint32_t pa) { g_fa->free(pa); }
@@ -111,6 +121,8 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 	s->impl.freeUserWindow(0x400000);
 	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
 		s->impl.freeUserWindow(va);   // no-op for PDEs the heap never grew into
+	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
+		s->impl.freeUserWindow(va);   // shared-library module windows (no-op if unused)
 	g_fa->free(s->impl.directoryPhys());
 	delete s;
 }
@@ -123,6 +135,8 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	s->impl.copyUserWindowFrom(src->impl, 0x400000);
 	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
 		s->impl.copyUserWindowFrom(src->impl, va);
+	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
+		s->impl.copyUserWindowFrom(src->impl, va);   // duplicate loaded module windows
 	return s;
 }
 
@@ -147,6 +161,10 @@ uint32_t mmuMapUserFb(AddressSpace* s, uint32_t fbPhys, uint32_t bytes) {
 
 uint32_t mmuUserHeapBase() { return NX_BRK_BASE; }
 uint32_t mmuUserHeapMax()  { return NX_BRK_MAX; }
+
+uint32_t mmuModuleBase()   { return NX_MOD_BASE; }
+uint32_t mmuModuleMax()    { return NX_MOD_MAX; }
+uint32_t mmuModuleStride() { return NX_MOD_STRIDE; }
 
 int mmuSetUserBrk(AddressSpace* s, uint32_t oldBrk, uint32_t newBrk) {
 	// Map (grow) or unmap (shrink) whole pages between the two break values. The break is

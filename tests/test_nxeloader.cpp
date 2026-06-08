@@ -109,21 +109,34 @@ static void buildRelocImage(char* buf) {
 	e[0].addr = A(0x40);
 }
 
+// Collects exports reported via the onExport callback.
+struct ExpCollect {
+	char name[8][32];
+	unsigned addr[8];
+	int n;
+};
+static void collectExport(void* ctx, const char* name, unsigned addr) {
+	ExpCollect* c = (ExpCollect*) ctx;
+	strncpy(c->name[c->n], name, 31);
+	c->addr[c->n] = addr;
+	c->n++;
+}
+
 TEST_CASE("NxeLoader applies base relocations with a non-zero delta") {
 	char buf[512];
 	buildRelocImage(buf);
 	const unsigned delta = 0x10000;
 	unsigned entry = 0;
-	NxLoaded m;
-	CHECK(NxeLoader::loadImage(buf, 512, delta, 0, &entry, &m) == 0);
+	ExpCollect ec = {};
+	CHECK(NxeLoader::loadImage(buf, 512, delta, 0, &entry, collectExport, &ec) == 0);
 	// Entry and every relocated word shift by delta.
 	CHECK(entry == A(0x40) + delta);
 	CHECK(*(unsigned*) (buf + 0x40) == A(0x40) + delta);
 	CHECK(*(unsigned*) (buf + 0x44) == A(0x80) + delta);
-	// Export address is relocated; its name is reachable via the helper.
-	CHECK(m.exportCount == 1);
-	CHECK(m.exports[0].addr == A(0x40) + delta);
-	CHECK(strcmp(NxeLoader::exportName(m, m.exports[0]), "go") == 0);
+	// Export address is relocated; its name was reported during the callback.
+	CHECK(ec.n == 1);
+	CHECK(ec.addr[0] == A(0x40) + delta);
+	CHECK(strcmp(ec.name[0], "go") == 0);
 }
 
 TEST_CASE("NxeLoader with delta 0 leaves addresses untouched") {
@@ -134,6 +147,46 @@ TEST_CASE("NxeLoader with delta 0 leaves addresses untouched") {
 	CHECK(entry == A(0x40));
 	CHECK(*(unsigned*) (buf + 0x40) == A(0x40));
 	CHECK(*(unsigned*) (buf + 0x44) == A(0x80));
+}
+
+// Collects needed-library names reported via forEachNeeded.
+struct NeedCollect { char name[8][32]; int n; };
+static void collectNeeded(void* ctx, const char* name) {
+	NeedCollect* c = (NeedCollect*) ctx;
+	strncpy(c->name[c->n], name, 31);
+	c->n++;
+}
+
+TEST_CASE("NxeLoader forEachNeeded reports needed libraries") {
+	char buf[512];
+	memset(buf, 0, 512);
+	NxHeader* h = (NxHeader*) buf;
+	h->magic = NX_MAGIC;
+	h->version = NX_VERSION;
+	h->loadBase = BASE;
+	h->bssStart = A(0x100);
+	h->bssEnd = A(0x100);
+	strcpy(buf + 0x100, "libc.ndl");
+	strcpy(buf + 0x110, "greet.ndl");
+	h->neededTable = A(0x120);
+	h->neededCount = 2;
+	NxNeeded* nd = (NxNeeded*) (buf + 0x120);
+	nd[0].nameOff = A(0x100);
+	nd[1].nameOff = A(0x110);
+
+	NeedCollect nc = {};
+	CHECK(NxeLoader::forEachNeeded(buf, 512, collectNeeded, &nc) == 0);
+	CHECK(nc.n == 2);
+	CHECK(strcmp(nc.name[0], "libc.ndl") == 0);
+	CHECK(strcmp(nc.name[1], "greet.ndl") == 0);
+}
+
+TEST_CASE("NxeLoader forEachNeeded is a no-op without a needed table") {
+	char buf[512];
+	buildImage(buf);   // neededCount == 0
+	NeedCollect nc = {};
+	CHECK(NxeLoader::forEachNeeded(buf, 512, collectNeeded, &nc) == 0);
+	CHECK(nc.n == 0);
 }
 
 TEST_CASE("NxeLoader rejects an out-of-range relocation site") {

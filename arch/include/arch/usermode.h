@@ -24,6 +24,12 @@ uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
 // down to CPL 3. DOES NOT RETURN (the process runs until it exits).
 void archEnterUser(uint32_t entry, uint32_t userEsp, AddressSpace* space);
 
+// Map a relocated shared-library image (`bytes` of code/data, already fixed up for
+// `base` by the loader) into `space` at `base`: fresh private USER|RW frames, the bytes
+// copied in, the tail of the last page and any bss zeroed. Called under the kernel
+// directory (frame allocation touches RAM by identity), like archLoadUser.
+void archLoadModule(AddressSpace* space, uint32_t base, const void* img, uint32_t bytes);
+
 struct TrapFrame;   // opaque syscall/IRQ trap frame (the x86 Registers); see <arch/irq.h>
 
 // Rewrite a syscall trap frame so its `iret` re-enters ring 3 at `entry` with stack

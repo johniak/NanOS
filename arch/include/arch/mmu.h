@@ -68,4 +68,12 @@ uint32_t mmuUserHeapBase();
 uint32_t mmuUserHeapMax();
 int mmuSetUserBrk(AddressSpace*, uint32_t oldBrk, uint32_t newBrk);
 
+// The shared-library (.ndl) load region: a band of per-module 4 MiB windows above the
+// 1 MiB user window and below the framebuffer/heap windows. The dynamic loader assigns
+// each loaded module a base here; mmuModuleStride() is the per-module spacing. Teardown
+// (mmuFreeAddressSpace) and fork (mmuCopyAddressSpace) cover these PDEs like the heap.
+uint32_t mmuModuleBase();
+uint32_t mmuModuleMax();
+uint32_t mmuModuleStride();
+
 }

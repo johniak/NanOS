@@ -11,8 +11,30 @@ static bool inImage(unsigned abs, unsigned sz, unsigned base, unsigned len) {
 	return off + sz <= len && off + sz >= off;
 }
 
+int NxeLoader::forEachNeeded(const void* image, unsigned len, NeededFn fn, void* ctx) {
+	if (len < sizeof(NxHeader))
+		return -1;
+	const NxHeader* h = (const NxHeader*) image;
+	if (h->magic != NX_MAGIC)
+		return -1;
+	const char* img = (const char*) image;
+	unsigned base = h->loadBase;
+	if (!h->neededCount)
+		return 0;
+	if (!inImage(h->neededTable, h->neededCount * sizeof(NxNeeded), base, len))
+		return -3;
+	const NxNeeded* nd = (const NxNeeded*) (img + (h->neededTable - base));
+	for (unsigned i = 0; i < h->neededCount; i++) {
+		if (!inImage(nd[i].nameOff, 1, base, len))
+			return -3;
+		if (fn)
+			fn(ctx, img + (nd[i].nameOff - base));
+	}
+	return 0;
+}
+
 int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
-		ExportResolver resolve, unsigned* entryOut, NxLoaded* out) {
+		ExportResolver resolve, unsigned* entryOut, ExportFn onExport, void* ctx) {
 	if (len < sizeof(NxHeader))
 		return -1;
 	NxHeader* h = (NxHeader*) image;
@@ -34,8 +56,7 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 		}
 	}
 
-	// 2) Bind imports: resolve each name and patch its IAT slot. (Before bss-zeroing in
-	//    case a table or slot shares the post-image vaddr range.)
+	// 2) Bind imports: resolve each name and patch its IAT slot.
 	if (h->importCount) {
 		if (!inImage(h->importTable, h->importCount * sizeof(NxImport), base, len))
 			return -3;
@@ -52,8 +73,8 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 		}
 	}
 
-	// 3) Exports: relocate each exported address so callers see final addresses.
-	const NxExport* exports = 0;
+	// 3) Exports: relocate each exported address and report it. Done before bss-zeroing,
+	//    since the export table/strings can share the bss vaddr range.
 	if (h->exportCount) {
 		if (!inImage(h->exportTable, h->exportCount * sizeof(NxExport), base, len))
 			return -3;
@@ -62,8 +83,9 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 			if (!inImage(ex[i].nameOff, 1, base, len))
 				return -3;
 			ex[i].addr += loadDelta;
+			if (onExport)
+				onExport(ctx, img + (ex[i].nameOff - base), ex[i].addr);
 		}
-		exports = ex;
 	}
 
 	// 4) Zero bss LAST: the tables above can live in the bss vaddr range (they are stored
@@ -74,17 +96,8 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 		memset(img + (h->bssStart - base), 0, h->bssEnd - h->bssStart);
 	}
 
-	unsigned entry = h->entry + loadDelta;
 	if (entryOut)
-		*entryOut = entry;
-	if (out) {
-		out->entry = entry;
-		out->image = image;
-		out->loadBase = base;
-		out->loadDelta = loadDelta;
-		out->exports = exports;
-		out->exportCount = h->exportCount;
-	}
+		*entryOut = h->entry + loadDelta;
 	return 0;
 }
 

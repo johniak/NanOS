@@ -1,5 +1,6 @@
 #include "Exec.h"
 #include "NxeLoader.h"
+#include "DynLoader.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"
 #include "SignalDispatch.h"
@@ -48,16 +49,21 @@ int execProgram(Vfs* vfs, const char* path) {
 	FileStat st;
 	if (vfs->stat(p, st) < 0)
 		return -1;
-	char* image = (char*) 0x400000;
+	char* image = (char*) STAGE_BASE;
 	if (vfs->read(p, st.size, 0, image) < 0)
 		return -1;
 	NxHeader* h = (NxHeader*) image;
 	unsigned entry = 0;
-	int rc = loadStaged(&entry);
-	if (rc < 0)
-		return rc;
-
+	// A program that imports symbols / needs shared libraries goes through the dynamic
+	// linker (loads its .ndl deps into the new space first); otherwise the simple path.
 	arch::AddressSpace* space = arch::mmuCreateAddressSpace();
+	int rc = (h->neededCount || h->importCount)
+			? dynLoadProgram(vfs, image, STAGE_CAP, space, &entry)
+			: loadStaged(&entry);
+	if (rc < 0) {
+		arch::mmuFreeAddressSpace(space);
+		return rc;
+	}
 	const char* argv[] = { path, 0 };
 	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1);
 	ProcTable::current()->space = space;
@@ -83,21 +89,25 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		arch::mmuLoadDirPhys(userDir);
 		return -2;   // -ENOENT
 	}
-	char* image = (char*) 0x400000;
+	char* image = (char*) STAGE_BASE;
 	if (vfs->read(pp, st.size, 0, image) < 0) {
 		arch::mmuLoadDirPhys(userDir);
 		return -1;
 	}
 	NxHeader* h = (NxHeader*) image;
 	unsigned entry = 0;
-	int rc = loadStaged(&entry);
+
+	// Load into a fresh space (dynamic linker if the image imports/needs libraries),
+	// then drop the caller's old image.
+	arch::AddressSpace* newSpace = arch::mmuCreateAddressSpace();
+	int rc = (h->neededCount || h->importCount)
+			? dynLoadProgram(vfs, image, STAGE_CAP, newSpace, &entry)
+			: loadStaged(&entry);
 	if (rc < 0) {
+		arch::mmuFreeAddressSpace(newSpace);
 		arch::mmuLoadDirPhys(userDir);
 		return rc;
 	}
-
-	// Load into a fresh space, then drop the caller's old image.
-	arch::AddressSpace* newSpace = arch::mmuCreateAddressSpace();
 	unsigned esp = arch::archLoadUser(newSpace, h->loadBase, h->bssEnd, argv, argc);
 	if (p->space)
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);

@@ -56,6 +56,21 @@ uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
 		});
 }
 
+void archLoadModule(AddressSpace* space, uint32_t base, const void* img, uint32_t bytes) {
+	// Map a relocated .ndl image into `space` at `base`: fresh private USER frames, the
+	// bytes copied in (the loader already applied relocations + zeroed bss in `img`), the
+	// last page's tail zeroed. Identity-accessible frames -> call under the kernel dir.
+	const unsigned char* src = (const unsigned char*) img;
+	uint32_t end = (bytes + 0xFFF) & ~0xFFFu;
+	for (uint32_t off = 0; off < end; off += 0x1000) {
+		uint32_t f = kernel::g_frames.alloc();
+		memset((void*) f, 0, 0x1000);
+		uint32_t n = bytes - off < 0x1000 ? bytes - off : 0x1000;   // off < bytes <= end
+		memcpy((void*) f, src + off, n);
+		mmuMap(space, base + off, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+	}
+}
+
 void archEnterUser(uint32_t entry, uint32_t userEsp, AddressSpace* space) {
 	__asm__ __volatile__("cli");
 	mmuSwitch(space);
