@@ -14,6 +14,8 @@
 #include "KeyDecoder.h"
 #include "Console.h"
 #include "Scheduler.h"
+#include "Signal.h"             // SIGINT / SIGQUIT numbers
+#include "SignalDispatch.h"     // kernel::consoleSignal / hasPendingSignalCurrent
 
 namespace {
 kernel::LineDiscipline g_line;
@@ -62,6 +64,11 @@ void inputFeedScancode(unsigned char sc) {
 		});
 	} else {
 		g_decoder.feed(sc, [](int ev) {
+			// Cooked-mode control keys generate signals to the foreground process,
+			// like a Unix tty: Ctrl+C -> SIGINT, Ctrl+\ -> SIGQUIT. (Ctrl+Z is wired
+			// for job control in a later stage.)
+			if (ev == 0x03) { kernel::consoleSignal(SIGINT);  return; }
+			if (ev == 0x1C) { kernel::consoleSignal(SIGQUIT); return; }
 			if (ev < 256)              // cooked: arrows ignored
 				g_line.push((char) ev, echoChar);
 		});
@@ -76,6 +83,10 @@ int inputRead(char* buf, unsigned n) {
 		while (rawEmpty()) {                       // block until a byte arrives
 			g_inputWaiter = kernel::Scheduler::current();
 			kernel::Scheduler::block();            // deschedule; keyboard IRQ wakes us
+			if (kernel::hasPendingSignalCurrent()) {   // woken by a signal, not input
+				g_inputWaiter = 0;
+				return -4;                         // -EINTR
+			}
 		}
 		g_inputWaiter = 0;
 		unsigned i = 0;
@@ -86,6 +97,10 @@ int inputRead(char* buf, unsigned n) {
 	while (!g_line.lineReady()) {                  // block until a full line is ready
 		g_inputWaiter = kernel::Scheduler::current();
 		kernel::Scheduler::block();
+		if (kernel::hasPendingSignalCurrent()) {   // woken by a signal, not a full line
+			g_inputWaiter = 0;
+			return -4;                             // -EINTR
+		}
 	}
 	g_inputWaiter = 0;
 	return g_line.takeLine(buf, (int) n);

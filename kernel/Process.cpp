@@ -27,9 +27,15 @@ Process* ProcTable::alloc(int parent) {
 			p->sys = 0;
 			p->exited = false;
 			p->exitCode = 0;
+			p->termSignal = 0;
 			p->kthread = false;
 			p->comm[0] = 0;
 			p->cmdline[0] = 0;
+			sigInit(p->sig);
+			p->stopped = false;
+			p->stopSignal = 0;
+			p->stopReported = false;
+			p->continued = false;
 			return p;
 		}
 	}

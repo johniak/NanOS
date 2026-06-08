@@ -2,6 +2,7 @@
 #include "Syscall.h"
 #include "Process.h"
 #include "Exec.h"
+#include "SignalDispatch.h"
 #include <arch/syscall.h>
 #include <arch/input.h>
 #include "Console.h"
@@ -40,6 +41,15 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		break;
 	case SYS_waitpid:
 		ret = waitProcess((int) a0, (int*) a1);
+		break;
+	case SYS_kill:
+		ret = signalSend((int) a0, (int) a1);
+		break;
+	case SYS_signal:
+		ret = signalAction((int) a0, a1, a2);   // a1 = handler, a2 = sa_restorer
+		break;
+	case SYS_sigprocmask:
+		ret = signalMask((int) a0, a1, (unsigned*) a2);
 		break;
 	case SYS_read:
 		ret = g_sys->read(a0, (void*) a1, a2);

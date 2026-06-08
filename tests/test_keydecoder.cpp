@@ -54,3 +54,40 @@ TEST_CASE("KeyDecoder: extended key release is ignored") {
 	d.feed(0xE0, r); d.feed(0x48 | 0x80, r);   // up release
 	CHECK(r.n == 0);
 }
+
+TEST_CASE("KeyDecoder: Ctrl+letter emits the control code (Ctrl+C = 0x03)") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0x1D, r);   // left Ctrl press -> modifier, no event
+	d.feed(0x2E, r);   // 'c' while Ctrl held -> 0x03
+	REQUIRE(r.n == 1);
+	CHECK(r.ev[0] == 0x03);
+
+	d.feed(0x9D, r);   // Ctrl release -> no event
+	d.feed(0x2E, r);   // 'c' alone -> plain 'c'
+	REQUIRE(r.n == 2);
+	CHECK(r.ev[1] == 'c');
+}
+
+TEST_CASE("KeyDecoder: right Ctrl (0xE0 0x1D) also arms the modifier") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0xE0, r); d.feed(0x1D, r);   // right Ctrl press
+	d.feed(0x20, r);                    // 'd' -> Ctrl+D = 0x04 (EOT)
+	REQUIRE(r.n == 1);
+	CHECK(r.ev[0] == 0x04);
+	d.feed(0xE0, r); d.feed(0x9D, r);   // right Ctrl release
+	d.feed(0x20, r);                    // 'd' alone
+	REQUIRE(r.n == 2);
+	CHECK(r.ev[1] == 'd');
+}
+
+TEST_CASE("KeyDecoder: a held Ctrl emits nothing on its own; digits pass through") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0x1D, r);   // Ctrl down
+	CHECK(r.n == 0);
+	d.feed(0x02, r);   // '1' while Ctrl held: not a letter -> passes through unchanged
+	REQUIRE(r.n == 1);
+	CHECK(r.ev[0] == '1');
+}

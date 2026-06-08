@@ -10,6 +10,7 @@
 #include "Interrupt.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"   // kernel::kernelSyscalls()
+#include "SignalDispatch.h"    // kernel::signalDeliver()
 #include "Exec.h"              // kernel::procExit()
 
 namespace {
@@ -21,6 +22,9 @@ void syscallTrap(kernel::Registers* r) {
 	// procExit does not return.
 	if (kernel::kernelSyscalls()->hasExited())
 		kernel::procExit();
+	// Deliver pending signals on the way back to ring 3 (may terminate / run a handler).
+	if ((r->cs & 3) == 3)
+		kernel::signalDeliver((arch::TrapFrame*) r);
 }
 
 // Issue a Linux-style syscall via int 0x80 (nr in eax, args in ebx/ecx/edx).

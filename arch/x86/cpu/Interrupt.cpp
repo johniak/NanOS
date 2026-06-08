@@ -7,6 +7,7 @@
 #include "Interrupt.h"
 #include "Console.h"
 #include "IOPort.h"
+#include "SignalDispatch.h"   // kernel::signalDeliver()
 
 namespace kernel {
 static IsrHandler interruptHandlers[256];
@@ -40,6 +41,9 @@ extern "C" void irq_handler(kernel::Registers regs) {
 		kernel::IsrHandler handler = kernel::interruptHandlers[regs.int_no];
 		handler(&regs);
 	}
-	//regs.eip=0x1000000;
+	// On the way back to ring 3, deliver pending signals (e.g. a SIGINT posted by the
+	// keyboard IRQ to a CPU-bound foreground process). Skipped for kernel-mode frames.
+	if ((regs.cs & 3) == 3)
+		kernel::signalDeliver((arch::TrapFrame*) &regs);
 }
 

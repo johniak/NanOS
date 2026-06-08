@@ -9,6 +9,8 @@
 #ifndef PROCESS_H_
 #define PROCESS_H_
 
+#include "Signal.h"
+
 namespace kernel {
 
 struct Task;       // scheduler task (Scheduler.h)
@@ -23,9 +25,17 @@ struct Process {
 	Syscalls* sys;       // per-process fd table + exit status
 	bool exited;         // true once it has called exit() (awaiting reap)
 	int exitCode;        // valid once `exited`
+	int termSignal;      // 0 = exited normally; else the signal that killed it
 	bool kthread;        // kernel thread (idle/clock): no user address space
 	char comm[16];       // short name (Linux `comm`)
 	char cmdline[128];   // full command line (argv joined by spaces)
+
+	// Signals + job control.
+	SignalState sig;     // pending/blocked masks + disposition table
+	bool stopped;        // job-control stopped (its task is TASK_STOPPED)
+	int  stopSignal;     // the signal that stopped it (valid while `stopped`)
+	bool stopReported;   // waitpid(WUNTRACED) has already reported this stop
+	bool continued;      // SIGCONT delivered since the last wait report
 };
 
 // A read-only snapshot of one process, the source for /proc and ps. Decoupled from

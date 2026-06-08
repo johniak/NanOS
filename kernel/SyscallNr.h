@@ -17,8 +17,12 @@
 #define SYS_waitpid 7
 #define SYS_execve 11
 #define SYS_lseek 19
+#define SYS_kill 37
+#define SYS_signal 48
 #define SYS_stat 106
 #define SYS_fstat 108
+#define SYS_sigreturn 119
+#define SYS_sigprocmask 126
 #define SYS_getdents64 220
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with

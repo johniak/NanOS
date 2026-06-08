@@ -37,7 +37,7 @@ int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off,
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
 int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; }
 int getpid(void)                        { return 1; }
-int kill(int p, int s)                  { (void) p; (void) s; errno = EINVAL; return -1; }
+int kill(int p, int s)                  { return reterr(sys3(SYS_kill, p, s, 0)); }
 int times(void* b)                      { (void) b; return 0; }
 
 /* No real-time clock: a fixed epoch so ls -l renders a stable timestamp. */
