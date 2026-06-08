@@ -16,6 +16,7 @@ int  signalSend(int pid, int sig);                                  // kill(2)
 int  signalAction(int sig, unsigned handler, unsigned restorer);    // signal(2)
 int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocmask(2)
 void signalDeliver(arch::TrapFrame* tf);   // deliver pending signals at return-to-user
+int  signalReturn(arch::TrapFrame* tf);    // sigreturn(2): restore the pre-handler frame
 void consoleSignal(int sig);               // a cooked-tty control key -> foreground proc
 bool hasPendingSignalCurrent();            // for EINTR in interruptible blocking syscalls
 

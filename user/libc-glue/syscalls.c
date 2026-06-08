@@ -38,6 +38,16 @@ void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
 int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; }
 int getpid(void)                        { return 1; }
 int kill(int p, int s)                  { return reterr(sys3(SYS_kill, p, s, 0)); }
+
+/* signal(2): install a disposition. We pass the libc sigreturn trampoline as the
+ * kernel's sa_restorer; the kernel runs the handler in ring 3 and returns through it.
+ * Returns the previous disposition, or SIG_ERR on error. */
+extern void __nx_sigtramp(void);
+void (*signal(int sig, void (*handler)(int)))(int) {
+	int r = sys3(SYS_signal, sig, (int) handler, (int) &__nx_sigtramp);
+	if (r < 0) { errno = -r; return (void (*)(int)) -1; }   /* SIG_ERR */
+	return (void (*)(int)) r;
+}
 int times(void* b)                      { (void) b; return 0; }
 
 /* No real-time clock: a fixed epoch so ls -l renders a stable timestamp. */

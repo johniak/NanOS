@@ -278,14 +278,29 @@ void signalDeliver(arch::TrapFrame* tf) {
 			continue;                  // ignored / resume handled on post (Stage D)
 		case DISP_STOP:
 			continue;                  // job-control stop wired in Stage D
-		case DISP_HANDLER:
-			(void) tf;                 // user-handler delivery wired in Stage C
-			continue;
+		case DISP_HANDLER: {
+			// Run the user handler in ring 3, with `sig` blocked for its duration.
+			unsigned oldMask = p->sig.blocked;
+			p->sig.blocked |= sigbit(sig);
+			arch::archPushSignalFrame(tf, p->sig.handlers[sig], p->sig.restorer,
+					sig, oldMask);
+			return;                    // one handler per return-to-user; rest after sigreturn
+		}
 		case DISP_TERM:
 		default:
 			procKill(sig);             // frees space, zombifies, wakes parent; no return
 		}
 	}
+}
+
+// SYS_sigreturn: restore the pre-handler context from the user-stack frame and the
+// signal mask that was in effect before the handler ran. Returns the interrupted code's
+// eax (which the dispatch propagates back into the trap frame).
+int signalReturn(arch::TrapFrame* tf) {
+	uint32_t oldMask = 0;   // archSigreturn wants a uint32_t* (== unsigned long* on i686)
+	int rc = arch::archSigreturn(tf, &oldMask);
+	ProcTable::current()->sig.blocked = (unsigned) oldMask;
+	return rc;
 }
 
 // A control key from the cooked-mode tty (Ctrl+C/Ctrl+\/Ctrl+Z) -> deliver `sig` to the

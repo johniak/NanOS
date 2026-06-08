@@ -81,6 +81,58 @@ void archEnterUser(uint32_t entry, uint32_t userEsp, AddressSpace* space) {
 	// not reached
 }
 
+namespace {
+// What we save on the user stack to resume the interrupted context after the handler.
+struct SigContext {
+	uint32_t eip, eflags;
+	uint32_t eax, ecx, edx, ebx;
+	uint32_t esp, ebp, esi, edi;
+	uint32_t oldmask;
+};
+}
+
+void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
+                         int sig, uint32_t oldMask) {
+	// Delivery runs in the target's own context, so its user CR3 is active and the user
+	// stack at useresp is directly writable.
+	kernel::Registers* r = (kernel::Registers*) tf;
+	uint32_t usp = r->useresp;
+
+	usp -= sizeof(SigContext);              // save the interrupted register context
+	SigContext* ctx = (SigContext*) usp;
+	ctx->eip = r->eip;     ctx->eflags = r->eflags;
+	ctx->eax = r->eax;     ctx->ecx = r->ecx;
+	ctx->edx = r->edx;     ctx->ebx = r->ebx;
+	ctx->esp = r->useresp; ctx->ebp = r->ebp;
+	ctx->esi = r->esi;     ctx->edi = r->edi;
+	ctx->oldmask = oldMask;
+
+	usp -= 4; *(uint32_t*) usp = (uint32_t) sig;        // handler's cdecl arg1
+	usp -= 4; *(uint32_t*) usp = restorer;              // handler's return address
+
+	r->eip = handler;       // iret drops into the handler ...
+	r->useresp = usp;       // ... on the freshly built frame
+	r->eflags &= ~0x400u;   // clear DF for the handler (SysV entry convention)
+}
+
+int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut) {
+	kernel::Registers* r = (kernel::Registers*) tf;
+	// The trampoline popped the signum, so useresp now points at the saved context.
+	const SigContext* ctx = (const SigContext*) r->useresp;
+	uint32_t savedEax = ctx->eax;
+
+	r->eip = ctx->eip;
+	r->eflags = (ctx->eflags & 0xCD5u) | 0x202u;   // sanitize: keep status+DF, force IF, IOPL=0
+	r->ecx = ctx->ecx; r->edx = ctx->edx; r->ebx = ctx->ebx;
+	r->ebp = ctx->ebp; r->esi = ctx->esi; r->edi = ctx->edi;
+	r->useresp = ctx->esp;          // restore the original user esp
+	r->eax = savedEax;
+
+	if (oldMaskOut)
+		*oldMaskOut = ctx->oldmask;
+	return (int) savedEax;
+}
+
 void archFrameToUser(TrapFrame* tf, uint32_t entry, uint32_t userEsp) {
 	// The x86 trap frame IS kernel::Registers on the trapping task's kernel stack.
 	// Rewrite it so the ISR's tail `iret` drops into ring 3 at the new image.

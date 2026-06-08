@@ -51,6 +51,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_sigprocmask:
 		ret = signalMask((int) a0, a1, (unsigned*) a2);
 		break;
+	case SYS_sigreturn:
+		ret = signalReturn(tf);   // restores the trap frame; ret = the saved eax
+		break;
 	case SYS_read:
 		ret = g_sys->read(a0, (void*) a1, a2);
 		break;

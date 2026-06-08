@@ -134,7 +134,7 @@ _image: _all _userland _grub2-image
 	# Kernel + init (PID 1) in core; the rest of the programs in bin.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	for p in nsh cat ls; do \
+	for p in nsh cat ls sigtest; do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 
@@ -154,18 +154,21 @@ _clean:
 # ----------------------------------------------------------------------------
 PICOLIBC=/opt/picolibc/i686-elf
 SBASE=user/third_party/sbase
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -Ikernel -Iuser -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
+# kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
+# new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
+# bind mount (kernel/Signal.h == <signal.h> under -I, which broke the userland build).
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
 # the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
-USER_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o
+USER_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)sigtramp.o $(BINFOLDER)nxhdr.o $(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o
 # Per-program libutil subsets and the libutf objects (ls needs UTF + dir/pwd glue).
 SBASE_UTIL_CAT=$(BINFOLDER)eprintf.o $(BINFOLDER)concat.o $(BINFOLDER)writeall.o
 SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarray.o $(BINFOLDER)human.o $(BINFOLDER)fshut.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
-USER_PROGS=init nsh cat ls
+USER_PROGS=init nsh cat ls sigtest
 
 # Link one program: $(call link_prog,<name>,<extra objects>)
 define link_prog
@@ -182,11 +185,14 @@ _userland: _userland-glue _userland-sbase
 	$(call link_prog,cat,$(BINFOLDER)cat.o $(SBASE_UTIL_CAT))
 	$(CXX) $(USER_CFLAGS) -c $(SBASE)/ls.c -o $(BINFOLDER)ls.o
 	$(call link_prog,ls,$(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS))
+	$(CXX) $(USER_CFLAGS) -c user/sigtest.c -o $(BINFOLDER)sigtest.o
+	$(call link_prog,sigtest,$(BINFOLDER)sigtest.o)
 
 # Build the shared startup/header/glue objects once.
 _userland-glue:
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf user/crt0.S -o $(BINFOLDER)crt0.o
+	nasm -f elf user/sigtramp.S -o $(BINFOLDER)sigtramp.o
 	$(CXX) $(USER_CFLAGS) -c user/nxhdr.c -o $(BINFOLDER)nxhdr.o
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/syscalls.c -o $(BINFOLDER)syscalls.o
 	$(CXX) $(USER_CFLAGS) -c user/libc-glue/cwd.c -o $(BINFOLDER)cwd.o

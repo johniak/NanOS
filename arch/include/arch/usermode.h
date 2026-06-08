@@ -30,4 +30,15 @@ struct TrapFrame;   // opaque syscall/IRQ trap frame (the x86 Registers); see <a
 // `userEsp` (used by execve to morph the calling process into a freshly loaded image).
 void archFrameToUser(TrapFrame* tf, uint32_t entry, uint32_t userEsp);
 
+// Push a signal-handler frame onto the user stack and retarget `tf` so the return-to-user
+// `iret` enters `handler(sig)` in ring 3. On the handler's `ret` it lands in the libc
+// trampoline `restorer`, which invokes sigreturn. `oldMask` is the signal mask to be
+// restored at sigreturn (saved inside the frame).
+void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
+                         int sig, uint32_t oldMask);
+
+// SYS_sigreturn: restore `tf` from the user-stack signal frame; writes the mask to be
+// restored to *oldMaskOut and returns the interrupted code's saved eax.
+int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut);
+
 }
