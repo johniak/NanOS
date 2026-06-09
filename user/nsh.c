@@ -21,6 +21,10 @@ int getpgrp(void);                                  /* our own process group    
 
 #define CAP  256
 #define HMAX 32
+/* Max argv entries. A CAP-byte line holds at most CAP/2 tokens (each needs a char + a
+ * separator), and the kernel's execve packs up to 128 vector slots, so 128 covers any line
+ * we can type. Hitting it is reported, never silently truncated. */
+#define ARGV_MAX 128
 
 /* waitpid options + status decoders (our kernel uses the glibc W* encoding). Guarded so
  * they coexist with any picolibc definitions. */
@@ -245,14 +249,21 @@ int main(void) {
 		char cmdsave[CAP];
 		strcpy(cmdsave, line);               /* remember the command for the job table */
 
-		char* argv[16];
+		char* argv[ARGV_MAX + 1];
 		int argc = 0;
 		char* p = line;
-		while (*p && argc < 15) {
+		int overflow = 0;
+		while (*p) {
 			while (*p == ' ') *p++ = 0;
 			if (!*p) break;
+			if (argc >= ARGV_MAX) { overflow = 1; break; }
 			argv[argc++] = p;
 			while (*p && *p != ' ') p++;
+		}
+		if (overflow) {
+			const char* m = "nsh: too many arguments\n";
+			out(m, (int) strlen(m));
+			continue;
 		}
 		argv[argc] = 0;
 		if (argc == 0)
