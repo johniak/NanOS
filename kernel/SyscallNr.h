@@ -31,6 +31,8 @@
 #define SYS_fcntl 55
 #define SYS_mmap2 192
 #define SYS_stat 106
+#define SYS_lstat 107
+#define SYS_readlink 85
 #define SYS_fstat 108
 #define SYS_sigreturn 119
 #define SYS_sigprocmask 126

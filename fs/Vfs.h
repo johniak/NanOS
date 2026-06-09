@@ -5,7 +5,7 @@
 
 namespace kernel {
 
-enum NodeType { NODE_FILE, NODE_DIR, NODE_OTHER };
+enum NodeType { NODE_FILE, NODE_DIR, NODE_OTHER, NODE_SYMLINK };
 
 struct FileStat {
 	NodeType type;
@@ -32,6 +32,12 @@ public:
 	virtual int read(String path, unsigned size, unsigned off, void* buf) = 0; // bytes, <0 err
 	virtual int stat(String path, FileStat& out) = 0;                    // 0 ok, <0 err
 	virtual int readdir(String path, List<DirEntry>& out) = 0;           // 0 ok, <0 err
+
+	// Symbolic-link support. lstat() stats the link itself (no follow); the default is
+	// stat() since a filesystem with no symlinks can't tell them apart. readlink() reads a
+	// link's target; default -EINVAL (-22, "not a symlink") for filesystems without links.
+	virtual int lstat(String path, FileStat& out) { return stat(path, out); }
+	virtual int readlink(String, char*, unsigned) { return -22; }       // -EINVAL
 
 	// Device extensions. Default to "unsupported" so ordinary read-only filesystems
 	// (ext2/ext4) need not implement them; SynthFs overrides them for char devices.
@@ -85,6 +91,8 @@ public:
 	int mount(String mountpoint, FileSystem* fs);
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
+	int lstat(String path, FileStat& out);
+	int readlink(String path, char* buf, unsigned size);
 	int readdir(String path, List<DirEntry>& out);
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);

@@ -344,7 +344,16 @@ int stat(const char* p, struct stat* o) {
 	fillstat(o, &k);
 	return 0;
 }
-int lstat(const char* p, struct stat* o) { return stat(p, o); }   /* no symlinks */
+/* lstat: stat the link itself (the kernel resolves all but the final component). */
+int lstat(const char* p, struct stat* o) {
+	char abs[256];
+	nx_resolve(p, abs);
+	struct knl_stat k;
+	int r = sys3(SYS_lstat, (int) abs, (int) &k, 0);
+	if (r < 0) { errno = -r; return -1; }
+	fillstat(o, &k);
+	return 0;
+}
 int fstat(int fd, struct stat* o) {
 	struct knl_stat k;
 	int r = sys3(SYS_fstat, fd, (int) &k, 0);

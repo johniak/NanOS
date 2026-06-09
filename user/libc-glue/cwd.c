@@ -10,6 +10,13 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "SyscallNr.h"
+
+static inline int sys3(int nr, int a, int b, int c) {
+	int r;
+	__asm__ __volatile__("int $0x80" : "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c) : "memory");
+	return r;
+}
 
 static char g_cwd[256] = "/";
 
@@ -83,9 +90,12 @@ char* getcwd(char* buf, size_t size) {
 	return buf;
 }
 
-/* NanOS has no symlinks; readlink always fails (ls only calls it for S_ISLNK). */
+/* readlink: read a symbolic link's target via the kernel (SYS_readlink). Returns the byte
+ * count (no NUL), or -1/errno; -EINVAL if the path is not a symlink. */
 ssize_t readlink(const char* path, char* buf, size_t bufsiz) {
-	(void) path; (void) buf; (void) bufsiz;
-	errno = EINVAL;
-	return -1;
+	char abs[256];
+	nx_resolve(path, abs);
+	int r = sys3(SYS_readlink, (int) abs, (int) buf, (int) bufsiz);
+	if (r < 0) { errno = -r; return -1; }
+	return r;
 }

@@ -135,6 +135,25 @@ TEST_CASE("ext2 follows a symbolic link to its target") {
 	CHECK(st.size == 18);                              // stat follows the link (target size)
 }
 
+TEST_CASE("ext2 lstat + readlink expose the symlink itself (no follow)") {
+	Ext2Filesystem fs(loadFixture(), 0);
+	fs.mount();
+	FileStat st;
+	REQUIRE(fs.lstat("/link.txt", st) == 0);
+	CHECK(st.type == NODE_SYMLINK);                 // lstat does NOT follow -> it's a link
+	CHECK((st.mode & 0xF000) == 0xA000);            // S_IFLNK format bits
+	char tgt[64] = {0};
+	int n = fs.readlink("/link.txt", tgt, sizeof(tgt) - 1);
+	REQUIRE(n > 0);
+	tgt[n] = 0;
+	CHECK(strcmp(tgt, "/hello.txt") == 0);          // the link's target path
+	// readlink on a non-symlink is -EINVAL; lstat of a regular file is just a file.
+	CHECK(fs.readlink("/hello.txt", tgt, sizeof(tgt)) == -22);
+	FileStat s2;
+	REQUIRE(fs.lstat("/hello.txt", s2) == 0);
+	CHECK(s2.type == NODE_FILE);
+}
+
 TEST_CASE("ext2 reads a hard link as the same file") {
 	// /hardhello.txt is a second directory entry for /hello.txt's inode.
 	Ext2Filesystem fs(loadFixture(), 0);

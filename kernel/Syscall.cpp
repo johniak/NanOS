@@ -327,6 +327,18 @@ int Syscalls::stat(String path, LinuxStat* out) {
 	return 0;
 }
 
+int Syscalls::lstat(String path, LinuxStat* out) {
+	FileStat st;
+	if (vfs->lstat(path, st) < 0)
+		return -ENOENT;
+	fillStat(out, st);   // ext sets st.mode incl. the S_IFLNK format bits for a symlink
+	return 0;
+}
+
+int Syscalls::readlink(String path, char* buf, unsigned size) {
+	return vfs->readlink(path, buf, size);
+}
+
 int Syscalls::fstat(int fd, LinuxStat* out) {
 	if (!valid(fd))
 		return -EBADF;

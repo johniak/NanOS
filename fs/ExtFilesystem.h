@@ -342,18 +342,74 @@ public:
 		return readFile(inode, size, offset, buff);
 	}
 
-	int stat(String path, FileStat& out) {
-		Ext2Inode inode;
-		if (!getInodeByPath(path, inode))
-			return -1;
-		out.type = isDirectory(inode) ? NODE_DIR : NODE_FILE;
+	void fillFileStat(FileStat& out, Ext2Inode& inode) {
+		out.type = isSymlink(inode) ? NODE_SYMLINK
+		         : isDirectory(inode) ? NODE_DIR : NODE_FILE;
 		out.size = inode.lowerSize;
 		out.mode = (unsigned) (unsigned short) inode.typeAndPermisions;
 		out.nlink = (unsigned) (unsigned short) inode.hardlinksCount;
 		out.uid = (unsigned) (unsigned short) inode.userId;
 		out.gid = (unsigned) (unsigned short) inode.groupId;
 		out.mtime = (unsigned) inode.lastmodification;
+	}
+
+	int stat(String path, FileStat& out) {
+		Ext2Inode inode;
+		if (!getInodeByPath(path, inode))   // follows symlinks
+			return -1;
+		fillFileStat(out, inode);
 		return 0;
+	}
+
+	// lstat: stat the link itself (do not follow a symlink in the final component).
+	int lstat(String path, FileStat& out) {
+		Ext2Inode inode;
+		if (!getInodeNoFollow(path, inode))
+			return -1;
+		fillFileStat(out, inode);
+		return 0;
+	}
+
+	// readlink: copy a symbolic link's target (no trailing NUL, like the syscall). Returns
+	// the byte count, -EINVAL if the final component is not a symlink, -ENOENT if missing.
+	int readlink(String path, char* buf, unsigned size) {
+		Ext2Inode inode;
+		if (!getInodeNoFollow(path, inode))
+			return -2;                      // -ENOENT
+		if (!isSymlink(inode))
+			return -22;                     // -EINVAL
+		char tgt[256];
+		if (!readSymlinkTarget(inode, tgt))
+			return -22;
+		unsigned n = 0;
+		while (tgt[n] && n < size) {
+			buf[n] = tgt[n];
+			n++;
+		}
+		return (int) n;
+	}
+
+	// Resolve a path to its inode WITHOUT following a symlink in the last component (the
+	// parent prefix is still followed normally). For lstat/readlink.
+	bool getInodeNoFollow(String path, Ext2Inode& out) {
+		const char* p = (char*) path;
+		if (!p || p[0] != '/')
+			return false;
+		int end = 0;
+		while (p[end]) end++;
+		while (end > 0 && p[end - 1] == '/') end--;   // ignore trailing slashes
+		int start = end;
+		while (start > 0 && p[start - 1] != '/') start--;
+		int len = end - start;
+		if (len <= 0) { out = getInode(2); return true; }   // path is "/" -> root
+		char pp[256];
+		int k = 0;
+		for (int i = 0; i < start && k < 255; i++) pp[k++] = p[i];   // prefix incl. trailing '/'
+		pp[k] = 0;
+		Ext2Inode parent;
+		if (!resolvePath(pp, parent, 0))               // follow symlinks in the prefix
+			return false;
+		return getChildrenInode(parent, p + start, len, out);
 	}
 
 	int readdir(String path, List<DirEntry>& out) {

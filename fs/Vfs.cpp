@@ -121,6 +121,22 @@ int Vfs::stat(String path, FileStat& out) {
 	return fs->stat(rel, out);
 }
 
+int Vfs::lstat(String path, FileStat& out) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->lstat(rel, out);
+}
+
+int Vfs::readlink(String path, char* buf, unsigned size) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->readlink(rel, buf, size);
+}
+
 int Vfs::readdir(String path, List<DirEntry>& out) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);

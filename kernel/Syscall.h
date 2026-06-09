@@ -96,6 +96,8 @@ public:
 	int write(int fd, const void* buf, unsigned n);
 	int lseek(int fd, int off, int whence);
 	int stat(String path, LinuxStat* out);
+	int lstat(String path, LinuxStat* out);                 // stat the link itself (no follow)
+	int readlink(String path, char* buf, unsigned size);    // a symlink's target, or -errno
 	int fstat(int fd, LinuxStat* out);
 	int unlink(String path);              // remove a file (writable fs only)
 	int mkdir(String path, int mode);     // create a directory (writable fs only)

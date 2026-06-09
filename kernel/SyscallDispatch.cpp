@@ -212,6 +212,13 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_stat:
 		ret = g_sys->stat(String((char*) a0), (LinuxStat*) a1);
 		break;
+	case SYS_lstat:
+		ret = g_sys->lstat(String((char*) a0), (LinuxStat*) a1);
+		break;
+	case SYS_readlink:
+		// a0 = path, a1 = buf, a2 = bufsize. Returns byte count (no NUL) or -errno.
+		ret = g_sys->readlink(String((char*) a0), (char*) a1, a2);
+		break;
 	case SYS_fstat:
 		ret = g_sys->fstat(a0, (LinuxStat*) a1);
 		break;
