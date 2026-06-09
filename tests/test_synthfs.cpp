@@ -316,11 +316,12 @@ TEST_CASE("SynthFs /proc: absent pid and bad per-pid file error out") {
 TEST_CASE("statString renders real user/system/idle jiffies + ctxt/processes") {
 	char b[512];
 	// user=1000 sys=500 idle=2500 ticks @1000Hz -> /10 = 100/50/250 jiffies.
-	int n = statString(b, sizeof b, 1000, 500, 2500, 1000, 9999, 42, 1, 3);
+	int n = statString(b, sizeof b, 1000, 500, 2500, 1000, 9999, 42, 1, 3, 1781000000u);
 	CHECK(n > 0);
 	CHECK(strstr(b, "cpu  100 0 50 250 ") != 0);         // aggregate: user nice system idle
 	CHECK(strstr(b, "cpu0 100 0 50 250 ") != 0);
 	CHECK(strstr(b, "\nctxt 9999\n") != 0);
+	CHECK(strstr(b, "\nbtime 1781000000\n") != 0);       // real boot epoch, not a fixed 0
 	CHECK(strstr(b, "\nprocesses 42\n") != 0);           // total forks since boot
 	CHECK(strstr(b, "\nprocs_running 1\n") != 0);
 	CHECK(strstr(b, "\nprocs_blocked 3\n") != 0);

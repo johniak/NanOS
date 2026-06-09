@@ -37,7 +37,8 @@ int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 //   /proc/cpuinfo — one processor entry (model + flags).
 //   /proc/version — kernel identification string.
 int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsigned idleTicks,
-		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked);
+		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked,
+		unsigned btime);
 int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned load15,
 		unsigned runnable, unsigned total, int lastPid);
 int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci);

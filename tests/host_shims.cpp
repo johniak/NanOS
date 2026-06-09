@@ -54,6 +54,10 @@ void cpuIdentify(CpuInfo* out) {
 	for (; f[j]; j++) out->flags[j] = f[j];
 	out->flags[j] = 0;
 }
+
+// No RTC under the host harness; a fixed plausible 2026 epoch keeps /proc/stat's btime
+// renderable in tests.
+unsigned rtcEpoch() { return 1781000000u; }
 }
 extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)
 

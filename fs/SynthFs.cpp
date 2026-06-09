@@ -74,7 +74,8 @@ static int putUint(char* b, int p, int cap, unsigned v) {
 // time, converted from the kernel's tick rate to USER_HZ=100 jiffies; ctxt is the real context-
 // switch count and `processes` the total forks since boot. Format matches Linux for top/htop.
 int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsigned idleTicks,
-		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked) {
+		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked,
+		unsigned btime) {
 	unsigned div = (hz >= 100u) ? hz / 100u : 1u;   // ticks -> jiffies (USER_HZ 100)
 	unsigned u = userTicks / div, s = sysTicks / div, idle = idleTicks / div;
 	int p = 0;
@@ -90,7 +91,7 @@ int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsign
 		p = putStr(buf, p, cap, " 0 0 0 0 0 0\n");
 	}
 	p = putStr(buf, p, cap, "ctxt ");          p = putUint(buf, p, cap, ctxt);     p = putStr(buf, p, cap, "\n");
-	p = putStr(buf, p, cap, "btime 0\n");
+	p = putStr(buf, p, cap, "btime ");         p = putUint(buf, p, cap, btime);    p = putStr(buf, p, cap, "\n");
 	p = putStr(buf, p, cap, "processes ");     p = putUint(buf, p, cap, forks);    p = putStr(buf, p, cap, "\n");
 	p = putStr(buf, p, cap, "procs_running "); p = putUint(buf, p, cap, running);  p = putStr(buf, p, cap, "\n");
 	p = putStr(buf, p, cap, "procs_blocked "); p = putUint(buf, p, cap, blocked);  p = putStr(buf, p, cap, "\n");
@@ -298,8 +299,12 @@ static int gen_stat(unsigned off, void* buf, unsigned n) {
 	procCounts(&total, &running, &blocked);
 	unsigned u, sy, id;
 	ProcTable::cpuTimes(&u, &sy, &id);
+	// btime = the wall-clock second the system booted = now (RTC) minus uptime.
+	unsigned now = arch::rtcEpoch();
+	unsigned uptimeSec = kernel::Scheduler::ticks() / 1000;
+	unsigned btime = now > uptimeSec ? now - uptimeSec : 0;
 	int len = statString(s, sizeof s, u, sy, id, 1000, kernel::Scheduler::contextSwitches(),
-			ProcTable::forksTotal(), running, blocked);
+			ProcTable::forksTotal(), running, blocked, btime);
 	return serveSnap(off, buf, n, s, len);
 }
 
