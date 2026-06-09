@@ -316,11 +316,19 @@ TEST_CASE("loadavgString renders fixed-point loads + runnable/total + last pid")
 	CHECK(strcmp(b, "1.50 0.75 0.00 2/5 7\n") == 0);
 }
 
-TEST_CASE("cpuinfoString + versionString render identification text") {
-	char b[256];
-	CHECK(cpuinfoString(b, sizeof b) > 0);
-	CHECK(strstr(b, "model name\t: NanOS") != 0);
-	CHECK(strstr(b, "processor\t: 0") != 0);
+TEST_CASE("cpuinfoString renders real CPUID fields; versionString the kernel string") {
+	arch::CpuInfo ci;
+	strcpy(ci.vendor, "GenuineIntel");
+	strcpy(ci.brand, "Test CPU @ 2.50GHz");
+	ci.family = 6; ci.model = 42; ci.stepping = 7;
+	strcpy(ci.flags, "fpu tsc sse sse2");
+	char b[384];
+	CHECK(cpuinfoString(b, sizeof b, ci) > 0);
+	CHECK(strstr(b, "vendor_id\t: GenuineIntel") != 0);
+	CHECK(strstr(b, "model name\t: Test CPU @ 2.50GHz") != 0);
+	CHECK(strstr(b, "cpu family\t: 6") != 0);
+	CHECK(strstr(b, "model\t\t: 42") != 0);
+	CHECK(strstr(b, "flags\t\t: fpu tsc sse sse2") != 0);
 	char v[64];
 	CHECK(versionString(v, sizeof v) > 0);
 	CHECK(strstr(v, "NanOS version") != 0);

@@ -11,6 +11,7 @@
  */
 #pragma once
 #include "Vfs.h"
+#include <arch/cpu.h>   // arch::CpuInfo for the /proc/cpuinfo renderer
 
 namespace kernel {
 
@@ -39,7 +40,7 @@ int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsign
 		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked);
 int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned load15,
 		unsigned runnable, unsigned total, int lastPid);
-int cpuinfoString(char* buf, int cap);
+int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci);
 int versionString(char* buf, int cap);
 
 // Live system memory figures in kB. Implemented in the kernel (Kernel.cpp) over the

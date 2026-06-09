@@ -7,6 +7,7 @@
 // SINK (<arch/console.h>) needs a host stand-in — it normally writes VGA memory.
 #include <arch/console.h>
 #include <arch/input.h>
+#include <arch/cpu.h>
 #include "memory_manager.h"
 #include "SynthFs.h"
 #include <cstdio>
@@ -39,6 +40,20 @@ unsigned archKernelCr3() { return 0; }
 void archTimerInit(unsigned) {}
 void setKernelStack(unsigned) {}
 void halt_or_hlt() {}
+
+// CPUID is x86-only; under the host harness fill a representative CpuInfo so the
+// /proc/cpuinfo generator links and renders. (The pure cpuinfoString renderer is tested
+// directly with a fabricated CpuInfo.)
+void cpuIdentify(CpuInfo* out) {
+	const char* v = "HostTestCPU"; int i = 0;
+	for (; v[i]; i++) out->vendor[i] = v[i];
+	out->vendor[i] = 0;
+	out->brand[0] = 0;
+	out->family = 6; out->model = 0; out->stepping = 0;
+	const char* f = "fpu tsc"; int j = 0;
+	for (; f[j]; j++) out->flags[j] = f[j];
+	out->flags[j] = 0;
+}
 }
 extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)
 

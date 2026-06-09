@@ -122,18 +122,23 @@ int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned l
 	return p;
 }
 
-// /proc/cpuinfo: one processor entry. Mostly static (we are a single-core i686 under QEMU).
-int cpuinfoString(char* buf, int cap) {
+// /proc/cpuinfo: one processor entry, filled from real CPUID data (vendor/family/model/
+// brand/flags). cpu MHz is reported 0.000 — we do not calibrate the TSC; the brand string
+// usually carries the nominal speed anyway.
+int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci) {
 	int p = 0;
-	p = putStr(buf, p, cap,
-		"processor\t: 0\n"
-		"vendor_id\t: NanOS\n"
-		"cpu family\t: 6\n"
-		"model\t\t: 0\n"
-		"model name\t: NanOS i686 (QEMU)\n"
-		"cpu MHz\t\t: 0.000\n"
-		"flags\t\t: fpu tsc\n"
-		"\n");
+	p = putStr(buf, p, cap, "processor\t: 0\n");
+	p = putStr(buf, p, cap, "vendor_id\t: ");
+	p = putStr(buf, p, cap, ci.vendor[0] ? ci.vendor : "unknown");
+	p = putStr(buf, p, cap, "\ncpu family\t: ");  p = putUint(buf, p, cap, ci.family);
+	p = putStr(buf, p, cap, "\nmodel\t\t: ");      p = putUint(buf, p, cap, ci.model);
+	p = putStr(buf, p, cap, "\nmodel name\t: ");
+	p = putStr(buf, p, cap, ci.brand[0] ? ci.brand : "unknown");
+	p = putStr(buf, p, cap, "\nstepping\t: ");     p = putUint(buf, p, cap, ci.stepping);
+	p = putStr(buf, p, cap, "\ncpu MHz\t\t: 0.000\n");
+	p = putStr(buf, p, cap, "flags\t\t: ");
+	p = putStr(buf, p, cap, ci.flags[0] ? ci.flags : "fpu");
+	p = putStr(buf, p, cap, "\n\n");
 	buf[p] = 0;
 	return p;
 }
@@ -296,8 +301,10 @@ static int gen_loadavg(unsigned off, void* buf, unsigned n) {
 }
 
 static int gen_cpuinfo(unsigned off, void* buf, unsigned n) {
-	static char s[256];
-	int len = cpuinfoString(s, sizeof s);
+	static char s[384];
+	arch::CpuInfo ci;
+	arch::cpuIdentify(&ci);
+	int len = cpuinfoString(s, sizeof s, ci);
 	return serveSnap(off, buf, n, s, len);
 }
 
