@@ -33,8 +33,7 @@ int Vfs::mount(String mountpoint, String fstype, BlockDevice* dev,
 	if (rc < 0)
 		return rc;
 
-	addMount(mountpoint, fs);
-	return 0;
+	return addMount(mountpoint, fs);
 }
 
 int Vfs::mount(String mountpoint, FileSystem* fs) {
@@ -43,21 +42,24 @@ int Vfs::mount(String mountpoint, FileSystem* fs) {
 	int rc = fs->mount();
 	if (rc < 0)
 		return rc;
-	addMount(mountpoint, fs);
-	return 0;
+	return addMount(mountpoint, fs);
 }
 
-void Vfs::addMount(String mountpoint, FileSystem* fs) {
+int Vfs::addMount(String mountpoint, FileSystem* fs) {
 	Mount m;
 	const char* mp = (char*) mountpoint;
-	int n = 0;
-	while (mp[n] && n < 63) {
+	const int cap = (int) sizeof(m.mountpoint);
+	int len = 0;
+	while (mp[len])
+		len++;
+	if (len >= cap)
+		return -36;            // -ENAMETOOLONG: reject, don't truncate (would misroute paths)
+	for (int n = 0; n < len; n++)
 		m.mountpoint[n] = mp[n];
-		n++;
-	}
-	m.mountpoint[n] = 0;
+	m.mountpoint[len] = 0;
 	m.fs = fs;
 	mounts.add(m);
+	return 0;
 }
 
 // mp is a prefix of path respecting path separators: the char after the match

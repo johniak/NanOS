@@ -55,6 +55,22 @@ TEST_CASE("Vfs mounts a registered type and calls its mount()") {
 	CHECK(t.made->mountCalls == 1);
 }
 
+TEST_CASE("Vfs rejects an over-long mountpoint instead of truncating it") {
+	Vfs vfs;
+	FakeType t("rootfs");
+	vfs.registerType(&t);
+	// 300 chars > the 256-byte mountpoint buffer: must be rejected, not silently cut to a
+	// shorter prefix that would then misroute every path under it.
+	char longmp[302];
+	longmp[0] = '/';
+	for (int i = 1; i < 300; i++) longmp[i] = 'a';
+	longmp[300] = 0;
+	CHECK(vfs.mount(String(longmp), "rootfs", (BlockDevice*)0, 0) == -36);   // -ENAMETOOLONG
+	// A path under the (rejected) mountpoint resolves to nothing, not a truncated mount.
+	List<DirEntry> e;
+	CHECK(vfs.readdir(String(longmp), e) < 0);
+}
+
 TEST_CASE("Vfs errors when no mount matches the path") {
 	Vfs vfs;
 	char dummy[8];

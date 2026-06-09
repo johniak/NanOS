@@ -63,7 +63,7 @@ public:
 
 class Vfs {
 	struct Mount {
-		char mountpoint[64];
+		char mountpoint[256];
 		FileSystem* fs;
 	};
 	List<FileSystemType*> types;
@@ -73,8 +73,9 @@ class Vfs {
 	// with '/'). Returns 0 if no mount matches.
 	FileSystem* resolve(String path, String& relative);
 
-	// Record a mountpoint -> filesystem binding.
-	void addMount(String mountpoint, FileSystem* fs);
+	// Record a mountpoint -> filesystem binding. Returns 0, or -ENAMETOOLONG if the
+	// mountpoint does not fit (rejected rather than silently truncated -> wrong routing).
+	int addMount(String mountpoint, FileSystem* fs);
 
 public:
 	void registerType(FileSystemType* type);
