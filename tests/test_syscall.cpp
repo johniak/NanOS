@@ -306,6 +306,14 @@ TEST_CASE("sys open(O_CREAT)+write+lseek+read on a writable tmpfs mount") {
 	CHECK(sc.unlink(String("/cfg")) == 0);
 	CHECK(sc.open(String("/cfg"), 0) == -ENOENT);
 	CHECK(sc.mkdir(String("/d"), 0755) == 0);
+
+	// A read that fails with a negative error must PROPAGATE, not be masked to 0/EOF.
+	// Reading a directory fd returns -EISDIR; the old code turned every negative into 0.
+	int dfd = sc.open(String("/d"), 0);
+	REQUIRE(dfd >= 3);
+	char dbuf[16];
+	CHECK(sc.read(dfd, dbuf, 16) == -21);   // -EISDIR, not 0
+	sc.close(dfd);
 }
 
 TEST_CASE("fcntl gets/sets the file status flags (O_NONBLOCK)") {

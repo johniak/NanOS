@@ -233,10 +233,9 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 		// cooked line or raw bytes; 0 = EOF. O_NONBLOCK -> -EAGAIN instead of blocking.
 		return arch::inputRead((char*) buf, n, (fds[fd].flags & O_NONBLOCK) != 0);
 	int r = vfs->read(fds[fd].path, n, fds[fd].offset, buf);
-	if (r == -EAGAIN)
-		return -EAGAIN;   // a blocking device (e.g. empty pty) -> the dispatch waits
 	if (r < 0)
-		return 0;   // past EOF
+		return r;   // propagate the error (e.g. -EAGAIN would-block, -EIO device error)
+	// r == 0 is true EOF; r > 0 is data. (Filesystems signal EOF as 0, not a negative.)
 	fds[fd].offset += (unsigned) r;
 	return r;
 }

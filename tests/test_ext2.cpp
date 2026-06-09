@@ -102,8 +102,9 @@ TEST_CASE("ext2 reads honour offset and clamp to file size") {
 	int m = fs.read("/hello.txt", 1000, 10, buf);
 	CHECK(m == 8);                       // 18 - 10
 
-	// offset beyond EOF is an error
-	CHECK(fs.read("/hello.txt", 1, 100, buf) < 0);
+	// offset at/beyond EOF returns 0 bytes (the Unix convention), not an error code —
+	// so the syscall layer can propagate real read errors instead of masking them as EOF.
+	CHECK(fs.read("/hello.txt", 1, 100, buf) == 0);
 }
 
 TEST_CASE("ext2 readdir lists the root directory") {

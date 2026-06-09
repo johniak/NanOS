@@ -382,7 +382,7 @@ public:
 	int readFile(Ext2Inode inode, unsigned size, unsigned offset, void* buff) {
 		unsigned fileSize = (unsigned) inode.lowerSize;
 		if (offset >= fileSize)
-			return -1;
+			return 0;   // at/past EOF: 0 bytes (the Unix convention), NOT an error code
 		if (offset + size > fileSize)
 			size = fileSize - offset;
 		char* out = (char*) buff;
