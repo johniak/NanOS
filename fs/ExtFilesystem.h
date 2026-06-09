@@ -395,10 +395,18 @@ public:
 			if (chunk > size - written)
 				chunk = size - written;
 			unsigned blockAddress = resolveBlock(inode, blockIndex);
-			device->readSectors(
-					this->partitionLba + blockAddress * (blockSize / 512),
-					(blockSize / 512), commonBuff);
-			memcpy(out + written, commonBuff + within, chunk);
+			if (blockAddress == 0) {
+				// Block 0 is never file data (it is the boot/superblock area), so a 0
+				// here means a hole (sparse file) or an unresolvable/corrupt mapping.
+				// Read it as zeros — never as disk block 0's bytes (which used to leak
+				// the superblock into the file silently).
+				memset(out + written, 0, chunk);
+			} else {
+				device->readSectors(
+						this->partitionLba + blockAddress * (blockSize / 512),
+						(blockSize / 512), commonBuff);
+				memcpy(out + written, commonBuff + within, chunk);
+			}
 			written += chunk;
 		}
 		return size;

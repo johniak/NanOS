@@ -99,6 +99,24 @@ TEST_CASE("ext4 resolveBlock returns 0 for a bad extent header") {
 	CHECK(fs.resolveBlock(inode, 0) == 0);
 }
 
+TEST_CASE("ext4 readFile zero-fills an unmapped block instead of leaking disk block 0") {
+	Ext4Filesystem fs(loadExt4(), 0);
+	fs.mount();
+	// A 16-byte file whose extent tree maps nothing (entries = 0): every block resolves
+	// to 0. readFile must return zeros, NOT the bytes of disk block 0 (the superblock).
+	Ext2Inode inode;
+	memset(&inode, 0, sizeof inode);
+	inode.flags = 0x80000;                                   // EXTENTS_FL
+	inode.lowerSize = 16;
+	Ext4ExtentHeader* h = (Ext4ExtentHeader*) &inode.directBlocks[0];
+	h->magic = 0xF30A; h->entries = 0; h->max = 4; h->depth = 0;
+	char buf[16];
+	memset(buf, 0xAB, sizeof buf);
+	CHECK(fs.readFile(inode, 16, 0, buf) == 16);
+	for (int i = 0; i < 16; i++)
+		CHECK(buf[i] == 0);                                  // hole -> zeros, no leak
+}
+
 TEST_CASE("ext4 type probes true on ext4, ext2 probes false") {
 	Ext4FileSystemType e4;
 	Ext2FileSystemType e2;
