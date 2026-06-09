@@ -98,6 +98,7 @@ static void scrollUp(void) {
 
 static void putGlyph(unsigned char ch) {
 	if (g_cx >= g_cols) { g_cx = 0; if (++g_cy > g_bot) { g_cy = g_bot; scrollUp(); } }
+	if (g_cx < 0 || g_cx >= MAXC || g_cy < 0 || g_cy >= MAXR) return;   /* guard g_grid bounds */
 	Cell* c = &g_grid[g_cy][g_cx];
 	c->ch = ch;
 	c->fg = g_rev ? g_bg : (g_bold && g_fg < 8 ? g_fg + 8 : g_fg);
@@ -168,9 +169,8 @@ static void csiFinal(unsigned char f) {
 	case 's': g_savecx = g_cx; g_savecy = g_cy; break;
 	case 'u': g_cx = g_savecx; g_cy = g_savecy; break;
 	case 'h': case 'l':
-		if (g_priv && a == 1049) {             // alternate screen: just clear (no scrollback)
-			clearRegion(0, 0, g_cols - 1, g_rows - 1); g_cx = g_cy = 0;
-		}
+		if (g_priv && a == 1049)               // alternate screen: home only (no scrollback,
+			g_cx = g_cy = 0;                   // and no redundant clear -- the app issues ED/2J)
 		break;                                 // ?25 (cursor visible) etc.: ignored
 	}
 }

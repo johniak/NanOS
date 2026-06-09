@@ -80,7 +80,7 @@ static void initTaskBody() {
 	// fresh terminal — the Linux feel of a boot screen handing off to a login/shell.
 	unsigned t0 = Scheduler::ticks();
 	while (Scheduler::ticks() - t0 < 2000)
-		arch::halt_or_hlt();
+		Scheduler::ioWait();   // yield + re-wake each tick (deferred model: kthreads must yield)
 	Console::clearScreen();
 
 	// Enters ring 3 and does not return on success; only reached if the load fails.
@@ -91,7 +91,7 @@ static void initTaskBody() {
 static void clockTaskBody() {
 	for (;;) {
 		g_bgwork++;
-		arch::halt_or_hlt();   // sleep until the next interrupt
+		Scheduler::ioWait();   // yield + re-wake each tick (kthreads yield voluntarily now)
 	}
 }
 

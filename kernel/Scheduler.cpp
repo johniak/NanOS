@@ -12,9 +12,19 @@ static unsigned char g_kstacks[MAXTASKS][KSTACK_SIZE] __attribute__((aligned(16)
 static int g_ntasks = 0;
 static int g_cur = 0;
 static volatile unsigned g_ticks = 0;
+static volatile bool g_needResched = false;   // a tick asked for a reschedule (deferred)
 
 static bool runnable(TaskState s) { return s == TASK_READY || s == TASK_RUNNING; }
-static void idleBody() { for (;;) arch::halt_or_hlt(); }
+
+// The idle task: sleep until an interrupt, then reschedule. The timer tick wakes I/O
+// waiters (marking them READY) but, since idle runs in ring 0, never preempts here -- so
+// idle must voluntarily yield to anything that became runnable.
+static void idleBody() {
+	for (;;) {
+		arch::halt_or_hlt();
+		Scheduler::schedule();
+	}
+}
 
 int Scheduler::nextRunnable(const TaskState* st, int n, int cur) {
 	for (int i = 1; i <= n; i++) {
@@ -50,6 +60,7 @@ static Task* allocSlot(int id) {
 	t->id = id;
 	t->body = 0;
 	t->state = TASK_READY;
+	t->wantTick = false;
 	t->kstack = g_kstacks[i];
 	t->esp0 = (unsigned) (unsigned long) (t->kstack + KSTACK_SIZE);   // TSS.esp0 for this task
 	return t;
@@ -91,8 +102,37 @@ void Scheduler::schedule() {
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
 }
 
+// Timer tick. Does NOT switch tasks itself: it only advances the clock, re-wakes the I/O
+// retry waiters, and flags that a reschedule is due. The actual context switch happens at
+// the next safe point -- on the return path to ring 3 (preempt()) for a preempted user
+// task, or at a voluntary yield/block in the kernel. This is the deferred-preemption model
+// (à la Linux ret_from_intr): the kernel is never switched out at an arbitrary ring-0
+// instruction, only at well-defined points, which keeps interrupt + syscall frames from
+// interleaving on a task's kernel stack.
 void Scheduler::onTick() {
 	g_ticks++;
+	for (int i = 0; i < g_ntasks; i++)
+		if (g_tasks[i].state == TASK_BLOCKED && g_tasks[i].wantTick) {
+			g_tasks[i].wantTick = false;
+			g_tasks[i].state = TASK_READY;
+		}
+	g_needResched = true;
+}
+
+// Called on the return path from an interrupt to ring 3 (see irq.S): the only place a
+// user task is involuntarily preempted, with a full, clean trap frame on its kernel stack.
+void Scheduler::preempt() {
+	if (g_needResched) {
+		g_needResched = false;
+		schedule();
+	}
+}
+
+// Block in an I/O retry loop (empty pipe/pty, poll, nanosleep): deschedule and ask the
+// timer tick to re-wake us, so we re-test our condition ~every ms instead of busy-spinning.
+void Scheduler::ioWait() {
+	g_tasks[g_cur].wantTick = true;
+	g_tasks[g_cur].state = TASK_BLOCKED;
 	schedule();
 }
 
@@ -102,8 +142,10 @@ void Scheduler::block() {
 }
 
 void Scheduler::wake(Task* t) {
-	if (t)
+	if (t) {
 		t->state = TASK_READY;
+		g_needResched = true;   // consider the freshly-ready task at the next safe point
+	}
 }
 
 void Scheduler::reap(Task* t) {

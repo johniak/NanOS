@@ -72,6 +72,25 @@ TEST_CASE("Pty maps NL->CRLF on slave output (ONLCR)") {
 	CHECK(strncmp(out, "hi\r\n", 4) == 0);
 }
 
+TEST_CASE("Pty slaveWrite is a partial write when the ring is nearly full, never dropping bytes") {
+	Pty p;
+	char big[5000];
+	for (int i = 0; i < 5000; i++) big[i] = 'x';
+	// First chunk fits the 4096-byte ring; a second chunk that would overflow writes only
+	// what fits (partial) so the caller's stdio loops on the remainder -- no bytes lost.
+	int w1 = p.slaveWrite(big, 3000);
+	CHECK(w1 == 3000);
+	int w2 = p.slaveWrite(big, 2000);            // only 1096 slots left
+	CHECK(w2 == 1096);
+	// Ring now completely full: a further write would block (-EAGAIN) until drained.
+	CHECK(p.slaveWrite(big, 1) == -EAGAIN);
+	// Drain the master, then the rest fits.
+	char out[4096];
+	int r = p.masterRead(out, sizeof out);
+	CHECK(r == 4096);
+	CHECK(p.slaveWrite(big, 904) == 904);        // remainder of the 2000-byte write
+}
+
 TEST_CASE("Pty winsize ioctl round-trips") {
 	Pty p;
 	Winsize w = { 40, 100, 0, 0 };

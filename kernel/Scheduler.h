@@ -23,6 +23,7 @@ struct Task {
 	void (*body)();
 	int id;                 // 0 = idle
 	unsigned char* kstack;
+	bool wantTick;          // BLOCKED in an I/O retry loop -> the timer tick re-wakes it
 };
 
 class Scheduler {
@@ -33,8 +34,10 @@ public:
 	                                               // (kesp fabricated by the caller, e.g. fork)
 	static void start();                           // switch into the first runnable task
 	static void schedule();                        // pick next runnable + context switch
-	static void onTick();                          // timer: ticks++ then schedule
+	static void onTick();                          // timer: ticks++, wake I/O waiters, flag resched
+	static void preempt();                         // resched if flagged (called on ret-to-ring3)
 	static void yield() { schedule(); }
+	static void ioWait();                          // BLOCKED until the next tick (I/O retry loop)
 	static void block();                           // current -> BLOCKED, then schedule
 	static void wake(Task* t);                     // -> READY (IRQ-safe: just a flag)
 	static void reap(Task* t);                     // -> FREE: release the slot for reuse

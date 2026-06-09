@@ -27,14 +27,15 @@ IRQ   15,    47
 
 
 [EXTERN irq_handler]
+[EXTERN schedPreempt]
 
 irq_common_stub:
    pushad
 
-   mov ax, ds            
-   push eax                
+   mov ax, ds
+   push eax
 
-   mov ax, 0x10  
+   mov ax, 0x10
    mov ds, ax
    mov es, ax
    mov fs, ax
@@ -42,13 +43,22 @@ irq_common_stub:
 
    call irq_handler
 
-   pop ebx        
+   ; Deferred preemption: switch tasks ONLY on the way back to ring 3, where the kernel
+   ; stack holds a full, clean trap frame. The saved CS sits at [esp+48] here (esp+0=ds,
+   ; +4..35=pushad, +36=int_no, +40=err_code, +44=eip, +48=cs). If we are returning to
+   ; ring 0 (kernel), skip -- the kernel is never preempted at an arbitrary instruction.
+   test dword [esp + 48], 3
+   jz .no_resched
+   call schedPreempt
+.no_resched:
+
+   pop ebx
    mov ds, bx
    mov es, bx
    mov fs, bx
    mov gs, bx
 
   popad
-   add esp, 8     
+   add esp, 8
    sti
-   iret           
+   iret

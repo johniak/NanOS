@@ -118,13 +118,25 @@ int Pty::masterRead(void* buf, unsigned n) {
 
 int Pty::slaveWrite(const void* buf, unsigned n) {
 	const unsigned char* p = (const unsigned char*) buf;
-	for (unsigned i = 0; i < n; i++) {
-		unsigned char c = p[i];
-		if ((m_tio.c_oflag & TO_OPOST) && (m_tio.c_oflag & TO_ONLCR) && c == '\n')
+	bool onlcr = (m_tio.c_oflag & TO_OPOST) && (m_tio.c_oflag & TO_ONLCR);
+	// Partial write: push as many bytes as fit the output ring and return that count, so no
+	// byte is ever dropped. A char needs 2 slots when NL->CRLF expansion applies. When the
+	// ring is completely full we return -EAGAIN and the dispatch blocks until the emulator
+	// drains the master; otherwise the caller's stdio loops on the short count for the rest.
+	unsigned w = 0;
+	while (w < n) {
+		unsigned char c = p[w];
+		int need = (onlcr && c == '\n') ? 2 : 1;
+		if (CAP - m_s2mCount < need)
+			break;                                  // no room for this char: stop (partial)
+		if (need == 2)
 			s2mPush('\r');                          // NL -> CRLF on output
 		s2mPush(c);
+		w++;
 	}
-	return (int) n;
+	if (w == 0)
+		return -EAGAIN;                             // ring full: would block
+	return (int) w;
 }
 
 int Pty::slaveRead(void* buf, unsigned n) {

@@ -64,18 +64,31 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		// happens inside read() itself; an O_NONBLOCK fd returns -EAGAIN to the caller.
 		while (ret == -EAGAIN && !g_sys->nonblock(a0)) {
 			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
-			arch::halt_or_hlt();
+			Scheduler::ioWait();
 			ret = g_sys->read(a0, (void*) a1, a2);
 		}
 		break;
-	case SYS_write:
-		ret = g_sys->write(a0, (const void*) a1, a2);
-		while (ret == -EAGAIN && !g_sys->nonblock(a0)) {
-			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
-			arch::halt_or_hlt();
-			ret = g_sys->write(a0, (const void*) a1, a2);
+	case SYS_write: {
+		// Loop until every byte is written, accumulating short (partial) writes from a pipe
+		// or pty whose ring fills mid-write. -EAGAIN (ring completely full) blocks until the
+		// reader drains; a signal or a non-blocking fd returns the partial count (or the bare
+		// error if nothing was written yet). Userspace always sees a full write or a signal.
+		unsigned done = 0;
+		ret = 0;
+		while (done < a2) {
+			int r = g_sys->write(a0, (const char*) a1 + done, a2 - done);
+			if (r == -EAGAIN) {
+				if (g_sys->nonblock(a0)) { ret = done ? (int) done : -EAGAIN; break; }
+				if (hasPendingSignalCurrent()) { ret = done ? (int) done : -ERESTARTSYS; break; }
+				Scheduler::ioWait();
+				continue;
+			}
+			if (r < 0) { ret = done ? (int) done : r; break; }
+			done += (unsigned) r;
+			ret = (int) done;
 		}
 		break;
+	}
 	case SYS_pipe:
 		ret = g_sys->pipe((int*) a0);
 		break;
@@ -98,7 +111,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 				if (timeout > 0 && Scheduler::ticks() - start >= (unsigned) timeout) {
 					ret = 0; break;            // timed out, nothing ready
 				}
-				arch::halt_or_hlt();
+				Scheduler::ioWait();
 				int r = g_sys->pollScan(pfds, nfds);
 				if (r > 0) { ret = r; break; }
 			}
@@ -209,7 +222,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 				ret = -ERESTARTSYS;
 				break;
 			}
-			arch::halt_or_hlt();
+			Scheduler::ioWait();
 		}
 		break;
 	}

@@ -15,6 +15,11 @@
 extern "C" void taskTrampoline();
 extern "C" void schedulerRunCurrentBody() { kernel::Scheduler::runCurrentBody(); }
 
+// Called from irq_common_stub (irq.S) on the way back to ring 3: perform a deferred
+// reschedule if the timer asked for one. Switching here -- with a full, clean trap frame
+// on the kernel stack -- is the only place a user task is involuntarily preempted.
+extern "C" void schedPreempt() { kernel::Scheduler::preempt(); }
+
 namespace arch {
 
 unsigned archKernelCr3() { return kernel::readCr3(); }   // kernel dir at create time
