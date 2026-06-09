@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static char g_cwd[256] = "/";
 
@@ -61,6 +62,17 @@ void nx_resolve(const char* path, char* out) {
 int chdir(const char* path) {
 	char tmp[256];
 	nx_resolve(path, tmp);
+	/* Validate the target before committing: POSIX chdir must fail (not silently succeed)
+	 * if the path does not exist or is not a directory. */
+	struct stat st;
+	if (stat(tmp, &st) != 0) {
+		errno = ENOENT;
+		return -1;
+	}
+	if (!S_ISDIR(st.st_mode)) {
+		errno = ENOTDIR;
+		return -1;
+	}
 	strcpy(g_cwd, tmp);
 	return 0;
 }
