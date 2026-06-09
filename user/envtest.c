@@ -27,6 +27,28 @@ static char put_entry[] = "PUT=xyz";   /* putenv requires a persistent string */
 int main(void) {
 	expect("TERM inherited", getenv("TERM"), "xterm-256color");
 
+	/* TERMINFO points at the shipped database, and the compiled xterm-256color entry is
+	 * present + readable (magic 0x1A01 classic or 0x1E02 extended-32bit format). */
+	const char* ti = getenv("TERMINFO");
+	expect("TERMINFO set", ti, "/disks/main/nanos/share/terminfo");
+	if (ti) {
+		char p[256];
+		snprintf(p, sizeof p, "%s/x/xterm-256color", ti);
+		FILE* f = fopen(p, "rb");
+		if (!f) { fails++; printf("  FAIL terminfo open %s\n", p); }
+		else {
+			unsigned char b[4] = { 0 };
+			size_t n = fread(b, 1, sizeof b, f);
+			fclose(f);
+			int magic_ok = n >= 2 && ((b[0] == 0x1a && b[1] == 0x01) ||
+			                          (b[0] == 0x1e && b[1] == 0x02));
+			if (!magic_ok) {
+				fails++;
+				printf("  FAIL terminfo magic n=%d %02x %02x\n", (int) n, b[0], b[1]);
+			}
+		}
+	}
+
 	setenv("FOO", "bar", 1);
 	expect("setenv new", getenv("FOO"), "bar");
 

@@ -277,6 +277,7 @@ int main(void) {
 		close(master); close(inp); close(fbfd);
 		char* argv[] = { (char*) "nsh", 0 };
 		char* envp[] = { (char*) "TERM=xterm-256color",
+		                 (char*) "TERMINFO=/disks/main/nanos/share/terminfo",
 		                 (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin", 0 };
 		execve("/disks/main/nanos/bin/nsh.nxe", argv, envp);
 		_exit(127);

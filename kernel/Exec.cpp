@@ -65,8 +65,12 @@ int execProgram(Vfs* vfs, const char* path) {
 		return rc;
 	}
 	const char* argv[] = { path, 0 };
-	const char* envp[] = { "TERM=xterm-256color", 0 };   // PID 1's baseline environment
-	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1, envp, 1);
+	const char* envp[] = {                               // PID 1's baseline environment
+		"TERM=xterm-256color",
+		"TERMINFO=/disks/main/nanos/share/terminfo",
+		0,
+	};
+	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 2, envp, 2);
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
 	ProcTable::setCommand(ProcTable::current(), argv, 1);

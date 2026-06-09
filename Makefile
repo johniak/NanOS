@@ -136,7 +136,7 @@ _image: _all _userland _grub2-image
 	# System volume layout: NanOS itself lives under /nanos (core/bin/lib/kext/config/
 	# cache/logs); non-system user apps live in /apps. GRUB stays in /boot. mkdir is
 	# idempotent across rebuilds.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
 	# Kernel + init (PID 1) in core.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
@@ -160,6 +160,10 @@ _image: _all _userland _grub2-image
 	done
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# terminfo database: the compiled xterm-256color entry (matches TERM), shipped under
+	# /nanos/share/terminfo so a future ncurses finds it via TERMINFO. Copied from the build
+	# container's ncurses (ncurses-base); the on-disk path is dir/<first-letter>/<name>.
+	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /usr/share/terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub
