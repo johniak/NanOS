@@ -25,14 +25,16 @@
 #define NXFORMAT_H
 
 #define NX_MAGIC   0x0045584E   /* 'N','X','E',0 little-endian */
-#define NX_VERSION 2
+#define NX_VERSION 3
 #define NX_FLAG_DLL 1u          /* header.flags bit 0: module is a shared library */
 
-/* An imported symbol: resolve `nameOff` against loaded modules' exports + kernel
- * exports, then store the address into the IAT slot at `slotAddr`. */
+/* An imported symbol: resolve `nameOff` against the exports of the module named `libOff`
+ * (per-DLL namespace, the Windows-PE model), then store the address into the IAT slot at
+ * `slotAddr`. `libOff` == 0 means "no named library" — resolve flat across all modules. */
 typedef struct {
 	unsigned nameOff;    /* abs address of the import's NUL-terminated name */
 	unsigned slotAddr;   /* abs address of the IAT slot (a function pointer) to patch */
+	unsigned libOff;     /* abs address of the source library's name, or 0 = flat */
 } NxImport;
 
 /* An exported symbol: `nameOff` is callable at address `addr` once the module is loaded

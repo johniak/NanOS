@@ -10,13 +10,52 @@ namespace kernel {
 
 namespace {
 
-// The flat symbol table active during a single dynLoadProgram. Loading is serial (exec
-// runs to completion before another starts), so a file-static pointer is enough to give
-// NxeLoader's C-style resolver/visitor callbacks access to it.
-SymTable* g_table = 0;
+// Per-DLL namespace: one export SymTable per loaded library, keyed by soname. An import
+// names its source library (NxImport.libOff) and is resolved against THAT library's table
+// (the Windows-PE model); a nameless import (libOff==0 -> lib=="") falls back to a flat
+// search across all loaded libraries.
+struct LibSet {
+	static const int MAX = 8;
+	char names[MAX][32];
+	SymTable* tables[MAX];
+	int n;
 
-void* resolveSym(const char* name) {
-	return (void*) (g_table ? g_table->find(name) : 0);
+	void init() { n = 0; }
+	bool streq(const char* a, const char* b) {
+		while (*a && *a == *b) { a++; b++; }
+		return *a == *b;
+	}
+	SymTable* create(const char* name) {           // table for a newly loaded library
+		if (n >= MAX)
+			return 0;
+		int i = 0;
+		while (name[i] && i < 31) { names[n][i] = name[i]; i++; }
+		names[n][i] = 0;
+		tables[n] = new SymTable();
+		return tables[n++];
+	}
+	unsigned find(const char* name, const char* lib) const {
+		if (lib && lib[0]) {                        // scoped to the named library
+			for (int i = 0; i < n; i++)
+				if (((LibSet*) this)->streq(names[i], lib))
+					return tables[i]->find(name);
+			return 0;
+		}
+		for (int i = 0; i < n; i++) {               // flat fallback
+			unsigned a = tables[i]->find(name);
+			if (a)
+				return a;
+		}
+		return 0;
+	}
+};
+
+// Active during a single dynLoadProgram (exec is serial), so a file-static pointer
+// suffices for NxeLoader's C-style resolver callback.
+LibSet* g_libs = 0;
+
+void* resolveSym(const char* name, const char* lib) {
+	return (void*) (g_libs ? g_libs->find(name, lib) : 0);
 }
 void onExport(void* ctx, const char* name, unsigned addr) {
 	((SymTable*) ctx)->add(name, addr);
@@ -43,8 +82,8 @@ void libPath(char* out, const char* name) {
 	out[o] = 0;
 }
 
-// Load one .ndl into `space` at `base`, relocating it and registering its exports in
-// `table`. Returns 0 on success, <0 on error.
+// Load one .ndl into `space` at `base`, relocating it and registering its exports in this
+// library's own `table`. Returns 0 on success, <0 on error.
 int loadLibrary(Vfs* vfs, const char* name, unsigned base, arch::AddressSpace* space,
 		SymTable* table) {
 	char path[160];
@@ -83,29 +122,35 @@ int loadLibrary(Vfs* vfs, const char* name, unsigned base, arch::AddressSpace* s
 
 int dynLoadProgram(Vfs* vfs, void* exeImage, unsigned exeCap,
 		arch::AddressSpace* space, unsigned* entryOut) {
-	SymTable* table = new SymTable();
-	g_table = table;
+	LibSet* libs = new LibSet();
+	libs->init();
+	g_libs = libs;
 
 	// Discover the needed libraries (read-only; the image is bound below).
 	NeedList needed;
 	needed.n = 0;
 	int rc = NxeLoader::forEachNeeded(exeImage, exeCap, onNeeded, &needed);
 
-	// Load each needed .ndl into its own module window, building the symbol table.
+	// Load each needed .ndl into its own module window, each building its OWN export table
+	// (keyed by soname) so imports resolve per-library.
 	unsigned base = arch::mmuModuleBase();
 	for (int i = 0; rc == 0 && i < needed.n; i++) {
 		if (base >= arch::mmuModuleMax()) { rc = -1; break; }   // out of module windows
-		rc = loadLibrary(vfs, needed.names[i], base, space, table);
+		SymTable* t = libs->create(needed.names[i]);
+		if (!t) { rc = -1; break; }
+		rc = loadLibrary(vfs, needed.names[i], base, space, t);
 		base += arch::mmuModuleStride();
 	}
 
-	// Finally bind the executable's imports against the flat symbol table (delta 0: the
-	// executable keeps its preferred base). This also relocates + zeroes the EXE's bss.
+	// Finally bind the executable's imports (each scoped to its declared library) — delta 0,
+	// the executable keeps its preferred base. This also relocates + zeroes the EXE's bss.
 	if (rc == 0)
 		rc = NxeLoader::loadImage(exeImage, exeCap, 0, resolveSym, entryOut, 0, 0);
 
-	g_table = 0;
-	delete table;
+	g_libs = 0;
+	for (int i = 0; i < libs->n; i++)
+		delete libs->tables[i];
+	delete libs;
 	return rc;
 }
 

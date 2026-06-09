@@ -16,8 +16,9 @@
 
 namespace kernel {
 
-// Resolve an import name to a function address (0 = not found).
-typedef void* (*ExportResolver)(const char* name);
+// Resolve an import to an address (0 = not found). `lib` names the source library the
+// import declared (per-DLL namespace); "" means resolve flat across all modules.
+typedef void* (*ExportResolver)(const char* name, const char* lib);
 // Visit one exported symbol (name valid only for the duration of the call).
 typedef void (*ExportFn)(void* ctx, const char* name, unsigned addr);
 // Visit one needed-library name (valid only for the duration of the call).

@@ -285,7 +285,7 @@ $(BINFOLDER)libc.ndl: $(BINFOLDER)libc.elf $(MKNX)
 # (generated assembly). A program links this instead of static picolibc; mknx derives the
 # program's import table from the __imp_ slots the linker keeps.
 $(BINFOLDER)libc_import.s: $(BINFOLDER)libc.elf $(MKNX)
-	$(MKNX) $(BINFOLDER)libc.elf $@ --implib --export-all
+	$(MKNX) $(BINFOLDER)libc.elf $@ --implib --export-all --soname libc.ndl
 $(BINFOLDER)libc_import.o: $(BINFOLDER)libc_import.s
 	nasm -f elf $< -o $@
 

@@ -4,12 +4,12 @@
 ;     program just calls nx_greet() and the linker resolves it here;
 ;   - an IAT slot (`__imp_nx_greet`), a function pointer the dynamic loader patches with
 ;     greet.ndl's exported address at load time.
-; mknx derives the program's import table from the global `__imp_<name>` slots, so no
-; descriptor section is needed. Hand-written here; mknx --implib generates the same shape
-; for libc.ndl's whole API.
+; mknx derives the program's import table from the global `__imp_<name>` slots, and tags
+; each with its source library from the slot's section name `.nxlib.<soname>` (per-DLL
+; namespace). Hand-written here; mknx --implib generates the same shape for libc.ndl.
 [BITS 32]
 
-section .data
+section .nxlib.greet.ndl progbits alloc write align=4
 [GLOBAL __imp_nx_greet]
 [GLOBAL __imp_nx_greeting]
 __imp_nx_greet:    dd 0

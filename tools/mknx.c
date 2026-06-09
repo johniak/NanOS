@@ -85,11 +85,13 @@ static unsigned bu32(Buf* b, unsigned v) { unsigned o = b->len; bput(b, &v, 4); 
 int main(int argc, char** argv) {
 	const char* in = 0; const char* out = 0;
 	int isDll = 0, exportAll = 0, implib = 0;
+	const char* soname = 0;          /* --implib: source library the thunks bind to */
 	char* wantExport[512]; int nWantExport = 0;
 	char* needs[64]; int nNeeds = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--dll")) isDll = 1;
 		else if (!strcmp(argv[i], "--implib")) implib = 1;
+		else if (!strcmp(argv[i], "--soname") && i + 1 < argc) soname = argv[++i];
 		else if (!strcmp(argv[i], "--export-all")) exportAll = 1;
 		else if (!strcmp(argv[i], "--export") && i + 1 < argc) wantExport[nWantExport++] = argv[++i];
 		else if (!strcmp(argv[i], "--need") && i + 1 < argc) needs[nNeeds++] = argv[++i];
@@ -173,9 +175,15 @@ int main(int argc, char** argv) {
 			done[nDone++] = nm;
 			// Prefix every identifier with `$` so nasm treats it literally even when the
 			// name collides with a reserved word (e.g. `times`, `abs`); the `$` is not part
-			// of the emitted symbol.
+			// of the emitted symbol. The IAT slot goes in a `.nxlib.<soname>` section so the
+			// program-building mknx can tag each import with its source library (per-DLL
+			// namespace); without --soname it lands in .data (flat resolution).
 			fprintf(o, "section .text\nglobal $%s\n$%s: jmp [$__imp_%s]\n", nm, nm, nm);
-			fprintf(o, "section .data\nglobal $__imp_%s\n$__imp_%s: dd 0\n", nm, nm);
+			if (soname)
+				fprintf(o, "section .nxlib.%s progbits alloc write align=4\n", soname);
+			else
+				fprintf(o, "section .data\n");
+			fprintf(o, "global $__imp_%s\n$__imp_%s: dd 0\n", nm, nm);
 		}
 		free(done);
 		fclose(o);
@@ -245,7 +253,18 @@ int main(int argc, char** argv) {
 			if (strncmp(nm, "__imp_", 6) != 0 || !nm[6]) continue;
 			unsigned nameOff = strs.len;
 			bput(&strs, nm + 6, strlen(nm + 6) + 1);
-			NxImport im = { nameOff, sym[i].st_value };   /* nameOff fixed up below */
+			/* Source library = the slot's section name ".nxlib.<lib>" (per-DLL namespace);
+			 * a slot in any other section (e.g. .data) gets libOff 0 -> resolve flat. */
+			unsigned libOff = 0;
+			unsigned shndx = sym[i].st_shndx;
+			if (shndx < (unsigned) g_nsh) {
+				const char* sn = shname(sh(shndx));
+				if (!strncmp(sn, ".nxlib.", 7) && sn[7]) {
+					libOff = strs.len;
+					bput(&strs, sn + 7, strlen(sn + 7) + 1);
+				}
+			}
+			NxImport im = { nameOff, sym[i].st_value, libOff };   /* offsets fixed up below */
 			bput(&imports, &im, sizeof im);
 			importCount++;
 		}
@@ -270,9 +289,13 @@ int main(int argc, char** argv) {
 	uint32_t needAddr = cur; cur += needed.len;
 	uint32_t strAddr = cur; cur += strs.len;
 
-	/* Fix import/export/needed nameOff (string-pool-relative -> absolute vaddr). */
+	/* Fix import/export/needed nameOff (string-pool-relative -> absolute vaddr); libOff 0
+	 * stays 0 (flat-resolved import). */
 	NxImport* im = (NxImport*) imports.p;
-	for (unsigned i = 0; i < importCount; i++) im[i].nameOff += strAddr;
+	for (unsigned i = 0; i < importCount; i++) {
+		im[i].nameOff += strAddr;
+		if (im[i].libOff) im[i].libOff += strAddr;
+	}
 	NxExport* ex = (NxExport*) exports.p;
 	for (unsigned i = 0; i < exportCount; i++) ex[i].nameOff += strAddr;
 	NxNeeded* nn = (NxNeeded*) needed.p;

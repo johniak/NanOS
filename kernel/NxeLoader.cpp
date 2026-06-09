@@ -65,8 +65,11 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 			if (!inImage(imp[i].nameOff, 1, base, len)
 					|| !inImage(imp[i].slotAddr, sizeof(void*), base, len))
 				return -3;
+			if (imp[i].libOff && !inImage(imp[i].libOff, 1, base, len))
+				return -3;
 			const char* name = (const char*) (img + (imp[i].nameOff - base));
-			void* addr = resolve ? resolve(name) : 0;
+			const char* lib = imp[i].libOff ? (const char*) (img + (imp[i].libOff - base)) : "";
+			void* addr = resolve ? resolve(name, lib) : 0;
 			if (addr == 0)
 				return -2;
 			*(void**) (img + (imp[i].slotAddr - base)) = addr;

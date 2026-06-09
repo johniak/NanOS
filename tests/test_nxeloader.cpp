@@ -4,7 +4,7 @@
 
 using namespace kernel;
 
-static void* fakeResolve(const char* name) {
+static void* fakeResolve(const char* name, const char*) {
 	if (strcmp(name, "write") == 0) return (void*) 0x11110000;
 	if (strcmp(name, "exit") == 0) return (void*) 0x22220000;
 	return 0;   // unknown
@@ -30,8 +30,8 @@ static void buildImage(char* buf) {
 	strcpy(buf + 0xC0, "write");
 	strcpy(buf + 0xC8, "exit");
 	NxImport* imp = (NxImport*) (buf + 0x80);
-	imp[0].nameOff = A(0xC0); imp[0].slotAddr = A(0x180);
-	imp[1].nameOff = A(0xC8); imp[1].slotAddr = A(0x188);
+	imp[0].nameOff = A(0xC0); imp[0].slotAddr = A(0x180); imp[0].libOff = 0;   // flat
+	imp[1].nameOff = A(0xC8); imp[1].slotAddr = A(0x188); imp[1].libOff = 0;
 	buf[0x100] = 0x55; buf[0x13F] = 0x55;   // dirty bss to verify zeroing
 }
 
@@ -75,6 +75,42 @@ TEST_CASE("NxeLoader rejects a too-small buffer") {
 	char buf[8] = {0};
 	unsigned entry = 0;
 	CHECK(NxeLoader::loadImage(buf, 8, 0, fakeResolve, &entry) < 0);
+}
+
+// Records the (name, lib) pairs the resolver was asked for, and resolves per library.
+static char g_lastLib[32];
+static void* libResolve(const char* name, const char* lib) {
+	strncpy(g_lastLib, lib ? lib : "(null)", 31);
+	if (strcmp(lib, "libc.ndl") == 0 && strcmp(name, "printf") == 0) return (void*) 0xAABB0000;
+	if (strcmp(lib, "greet.ndl") == 0 && strcmp(name, "hi") == 0)     return (void*) 0xCCDD0000;
+	return 0;
+}
+
+TEST_CASE("NxeLoader passes each import's library to the resolver (per-DLL namespace)") {
+	char buf[512];
+	memset(buf, 0, 512);
+	NxHeader* h = (NxHeader*) buf;
+	h->magic = NX_MAGIC;
+	h->version = NX_VERSION;
+	h->entry = A(0x40);
+	h->loadBase = BASE;
+	h->bssStart = A(0x100);
+	h->bssEnd = A(0x100);
+	strcpy(buf + 0xC0, "printf");
+	strcpy(buf + 0xD0, "libc.ndl");
+	h->importTable = A(0x80);
+	h->importCount = 1;
+	NxImport* imp = (NxImport*) (buf + 0x80);
+	imp[0].nameOff = A(0xC0); imp[0].slotAddr = A(0x180); imp[0].libOff = A(0xD0);
+
+	unsigned entry = 0;
+	CHECK(NxeLoader::loadImage(buf, 512, 0, libResolve, &entry) == 0);
+	CHECK(strcmp(g_lastLib, "libc.ndl") == 0);                 // library was passed through
+	CHECK(*(void**) (buf + 0x180) == (void*) 0xAABB0000);      // resolved within libc.ndl
+
+	// An import naming a DIFFERENT library for the same symbol must NOT resolve.
+	strcpy(buf + 0xD0, "greet.ndl");
+	CHECK(NxeLoader::loadImage(buf, 512, 0, libResolve, &entry) == -2);
 }
 
 // ---- base relocation -------------------------------------------------------------
