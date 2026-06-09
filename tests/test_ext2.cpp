@@ -135,6 +135,35 @@ TEST_CASE("ext2 follows a symbolic link to its target") {
 	CHECK(st.size == 18);                              // stat follows the link (target size)
 }
 
+TEST_CASE("ext2 resolveBlock follows single and double indirect pointers") {
+	RamBlockDevice* dev = loadFixture();
+	Ext2Filesystem fs(dev, 0);
+	fs.mount();                          // 1 KiB blocks -> 256 pointers per indirect block
+	const unsigned K = 256;
+	Ext2Inode inode;
+	memset(&inode, 0, sizeof inode);
+
+	// Single indirect: file block 12 maps through indirectPtr's pointer block. Put 777 in
+	// slot 5 (block 1000 = LBA 2000), and leave slot 0 a hole.
+	unsigned ind[256]; memset(ind, 0, sizeof ind); ind[5] = 777;
+	dev->writeSectors(1000 * 2, 2, (char*) ind);
+	inode.indirectPtr = 1000;
+	CHECK(fs.resolveBlock(inode, 12 + 5) == 777);
+	CHECK(fs.resolveBlock(inode, 12 + 0) == 0);        // hole
+
+	// Double indirect: file block 12+K -> doubleIndirectPtr[0] -> midblock[0] -> 888.
+	unsigned mid[256]; memset(mid, 0, sizeof mid); mid[0] = 888;
+	dev->writeSectors(1002 * 2, 2, (char*) mid);       // mid pointer block at block 1002
+	unsigned dbl[256]; memset(dbl, 0, sizeof dbl); dbl[0] = 1002;
+	dev->writeSectors(1001 * 2, 2, (char*) dbl);       // top double-indirect block at 1001
+	inode.doubleIndirectPtr = 1001;
+	CHECK(fs.resolveBlock(inode, 12 + K) == 888);
+
+	// Direct blocks still work and the first 12 are unaffected.
+	inode.directBlocks[3] = 42;
+	CHECK(fs.resolveBlock(inode, 3) == 42);
+}
+
 TEST_CASE("ext2 lstat + readlink expose the symlink itself (no follow)") {
 	Ext2Filesystem fs(loadFixture(), 0);
 	fs.mount();
