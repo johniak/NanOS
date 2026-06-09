@@ -17,7 +17,7 @@ namespace {
 
 void syscallTrap(kernel::Registers* r) {
 	unsigned origEax = r->eax;   // syscall number, saved before dispatch (for restart)
-	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx,
+	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx, r->esi, r->edi,
 			(arch::TrapFrame*) r);
 	// If the process exited (SYS_exit set the flag), tear it down and schedule away.
 	// procExit does not return.

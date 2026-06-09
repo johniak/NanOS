@@ -60,7 +60,8 @@ static int consoleSink(const char* buf, unsigned len) {
 
 // MI syscall dispatch: map a syscall number + args to the Syscalls core. The
 // arch trap (int 0x80 on x86) decodes registers and calls this.
-int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame* tf) {
+int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, unsigned a4,
+		arch::TrapFrame* tf) {
 	int ret = -38;   // -ENOSYS
 	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
 	switch (nr) {
@@ -238,19 +239,45 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		ret = g_sys->fcntl((int) a0, (int) a1, (int) a2);
 		break;
 	case SYS_mmap2: {
-		// Simplified ABI: a0 = fd, a1 = length, a2 = offset (the libc mmap() wrapper
-		// repacks the 6 POSIX args into these). We support mapping a device's region
-		// (e.g. /dev/fb0) into the calling process. Returns the user VA, or <0 on error.
-		unsigned phys = 0, len = 0;
-		int r = g_sys->mmapInfo((int) a0, &phys, &len);
-		if (r < 0) {
-			ret = r;
-			break;
+		// ABI (libc mmap wrapper): a0 = length, a1 = prot, a2 = flags, a3 = fd, a4 = offset.
+		// Three kinds: a device region (e.g. /dev/fb0) mapped to its physical pages; an
+		// anonymous mapping (fd < 0) of fresh zeroed pages; and a file-backed mapping (a
+		// regular-file fd) of zeroed pages eagerly filled from the file. Returns the user VA.
+		unsigned length = a0;
+		int prot = (int) a1;
+		int fd = (int) a3;
+		unsigned offset = a4;
+		Process* p = ProcTable::current();
+		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
+		if (fd >= 0) {                          // device region? (fb0 etc.)
+			unsigned phys = 0, dlen = 0;
+			if (g_sys->mmapInfo(fd, &phys, &dlen) >= 0) {
+				unsigned want = (length && length < dlen) ? length : dlen;
+				unsigned va = arch::mmuMapUserFb(space, phys, want);
+				ret = va ? (int) va : -12;   // -ENOMEM
+				break;
+			}
 		}
-		unsigned want = (a1 && a1 < len) ? a1 : len;
-		arch::AddressSpace* space = (arch::AddressSpace*) ProcTable::current()->space;
-		unsigned va = arch::mmuMapUserFb(space, phys, want);
-		ret = va ? (int) va : -12;   // -ENOMEM
+		if (length == 0) { ret = -22; break; }  // -EINVAL
+		if (p->mmapNext == 0)
+			p->mmapNext = arch::mmuMmapBase();
+		unsigned bytes = (length + 0xFFFu) & ~0xFFFu;
+		if (p->mmapNext + bytes > arch::mmuMmapMax()) { ret = -12; break; }   // window full
+		unsigned va = p->mmapNext;
+		// File-backed must be writable so we can load into it; anonymous honors PROT_WRITE (2).
+		int writable = (fd >= 0) ? 1 : ((prot & 2) != 0);
+		if (arch::mmuMapAnon(space, va, bytes, writable) != 0) { ret = -12; break; }
+		p->mmapNext = va + bytes;
+		if (fd >= 0) {                          // file-backed: eager-read the file into the map
+			g_sys->lseek(fd, (int) offset, 0 /*SEEK_SET*/);
+			unsigned got = 0;
+			while (got < length) {
+				int r = g_sys->read(fd, (char*) (va + got), length - got);
+				if (r <= 0) break;              // EOF or error: leave the rest zero-filled
+				got += (unsigned) r;
+			}
+		}
+		ret = (int) va;
 		break;
 	}
 	case SYS_execve: {

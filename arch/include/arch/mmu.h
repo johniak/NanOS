@@ -76,4 +76,12 @@ uint32_t mmuModuleBase();
 uint32_t mmuModuleMax();
 uint32_t mmuModuleStride();
 
+// Anonymous/file-backed mmap window + a primitive to populate it. mmuMapAnon maps `bytes`
+// (page-rounded) of fresh zeroed USER frames at `base` (RW when `writable`), for
+// mmap(MAP_ANONYMOUS) and as the backing store of a file-backed mmap. The dispatch
+// bump-allocates VAs within [mmuMmapBase, mmuMmapMax). Returns 0 on success, -1 on OOM.
+uint32_t mmuMmapBase();
+uint32_t mmuMmapMax();
+int mmuMapAnon(AddressSpace*, uint32_t base, uint32_t bytes, int writable);
+
 }

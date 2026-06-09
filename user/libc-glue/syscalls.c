@@ -292,12 +292,21 @@ int ioctl(int fd, unsigned long request, ...) {
 	return reterr(sys3(SYS_ioctl, fd, (int) request, (int) arg));
 }
 
-/* mmap(2): we repack the six POSIX arguments into our 3-register kernel ABI
- * (fd, length, offset); only shared device mappings (e.g. /dev/fb0) are supported, so
- * addr/prot/flags are ignored. Returns MAP_FAILED ((void*)-1) on error. */
+/* 5-argument syscall (ebx/ecx/edx/esi/edi) for mmap, which needs more than three args. */
+static inline int sys5(int nr, int a, int b, int c, int d, int e) {
+	int r;
+	__asm__ __volatile__("int $0x80"
+		: "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e) : "memory");
+	return r;
+}
+
+/* mmap(2): pass length/prot/flags/fd/offset to the kernel. Supports device mappings
+ * (e.g. /dev/fb0), anonymous mappings (fd < 0), and file-backed mappings (regular-file fd,
+ * eagerly loaded). `addr` is advisory and ignored (the kernel picks the VA). Returns
+ * MAP_FAILED ((void*)-1) on error. */
 void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
-	(void) addr; (void) prot; (void) flags;
-	int r = sys3(SYS_mmap2, fd, (int) length, (int) offset);
+	(void) addr; (void) flags;
+	int r = sys5(SYS_mmap2, (int) length, prot, flags, fd, (int) offset);
 	if (r < 0) { errno = -r; return (void*) -1; }
 	return (void*) r;
 }

@@ -36,6 +36,13 @@ const uint32_t NX_MOD_BASE   = 0x08000000;
 const uint32_t NX_MOD_STRIDE = 0x00400000;
 const uint32_t NX_MOD_MAX    = 0x10000000;
 
+// Anonymous/file-backed mmap window: 0x30000000 (768 MiB) up to +64 MiB. Above the heap
+// window (which tops out at 0x22000000) and everything else, so it is private per process
+// and shares no page tables. The dispatch bump-allocates VAs here for mmap(MAP_ANONYMOUS)
+// and file-backed mmap; teardown/fork walk it like the heap.
+const uint32_t NX_MMAP_BASE = 0x30000000;
+const uint32_t NX_MMAP_MAX  = NX_MMAP_BASE + 64u * 1024u * 1024u;
+
 kernel::FrameAllocator* g_fa = 0;
 uint32_t allocFrame(void*) { return g_fa->alloc(); }
 void freeFrame(void*, uint32_t pa) { g_fa->free(pa); }
@@ -123,6 +130,8 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 		s->impl.freeUserWindow(va);   // no-op for PDEs the heap never grew into
 	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
 		s->impl.freeUserWindow(va);   // shared-library module windows (no-op if unused)
+	for (uint32_t va = NX_MMAP_BASE; va < NX_MMAP_MAX; va += 0x400000)
+		s->impl.freeUserWindow(va);   // mmap window (no-op for PDEs never mapped)
 	g_fa->free(s->impl.directoryPhys());
 	delete s;
 }
@@ -137,6 +146,8 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 		s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
 		s->impl.copyUserWindowFrom(src->impl, va);   // duplicate loaded module windows
+	for (uint32_t va = NX_MMAP_BASE; va < NX_MMAP_MAX; va += 0x400000)
+		s->impl.copyUserWindowFrom(src->impl, va);   // duplicate mmap'd regions across fork
 	return s;
 }
 
@@ -197,6 +208,33 @@ int mmuSetUserBrk(AddressSpace* s, uint32_t oldBrk, uint32_t newBrk) {
 		}
 	}
 	kernel::loadCr3(saved);   // CR3 reload flushes the TLB so the new PTEs are live
+	return rc;
+}
+
+uint32_t mmuMmapBase() { return NX_MMAP_BASE; }
+uint32_t mmuMmapMax()  { return NX_MMAP_MAX; }
+
+// Map `bytes` (rounded up to whole pages) of fresh zeroed frames at [base, base+bytes) in
+// the process address space, USER and (if writable) RW. Used by mmap(MAP_ANONYMOUS) and as
+// the backing store for file-backed mmap. Same kernel-CR3 trap as mmuSetUserBrk: allocating
+// and zeroing frames touches arbitrary RAM by identity, only safe under the kernel dir.
+int mmuMapAnon(AddressSpace* s, uint32_t base, uint32_t bytes, int writable) {
+	uint32_t end = (base + bytes + 0xFFFu) & ~0xFFFu;
+	uint32_t flags = kernel::PTE_PRESENT | kernel::PTE_USER | (writable ? kernel::PTE_RW : 0);
+	uint32_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	int rc = 0;
+	for (uint32_t va = base; va < end; va += 0x1000) {
+		uint32_t f = g_fa->alloc();
+		if (!f) { rc = -1; break; }
+		memset((void*) f, 0, 0x1000);
+		if (!s->impl.map(va, f, flags)) {
+			g_fa->free(f);
+			rc = -1;
+			break;
+		}
+	}
+	kernel::loadCr3(saved);
 	return rc;
 }
 

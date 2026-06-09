@@ -35,6 +35,10 @@ struct Process {
 	unsigned brkCur;     // current program break
 	unsigned brkMax;     // hard ceiling (brkBase + cap)
 
+	// mmap bump pointer: the next free VA in the mmap window. 0 until the first mmap, then
+	// initialised to arch::mmuMmapBase() and advanced per mapping. (No unmap reclaim yet.)
+	unsigned mmapNext;
+
 	// Sessions + process groups (job control). A new process is its own group+session
 	// leader; fork inherits both; setpgid/setsid change them. The tty's foreground process
 	// group (TIOCSPGRP) is the one that receives terminal-generated signals (Ctrl+C).

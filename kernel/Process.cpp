@@ -34,6 +34,7 @@ Process* ProcTable::alloc(int parent) {
 			p->utime = 0;
 			p->stime = 0;
 			p->starttime = (unsigned) Scheduler::ticks();
+			p->mmapNext = 0;         // lazily set to arch::mmuMmapBase() on first mmap
 			p->execed = false;
 			g_forksTotal++;
 			g_lastPid = p->pid;
