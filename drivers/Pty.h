@@ -54,9 +54,9 @@ private:
 	void* m_sigCtx;
 
 	void s2mPush(unsigned char c);
-	void m2sPush(unsigned char c);
+	bool m2sPush(unsigned char c);          // false if the slave input ring is full
 	void echo(unsigned char c);
-	void inputByte(unsigned char c);
+	bool inputByte(unsigned char c);        // false if the byte could not be enqueued (raw, full)
 	void flushLine();
 };
 

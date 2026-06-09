@@ -40,12 +40,13 @@ void Pty::s2mPush(unsigned char c) {
 	m_s2mCount++;
 }
 
-void Pty::m2sPush(unsigned char c) {
+bool Pty::m2sPush(unsigned char c) {
 	if (m_m2sCount >= CAP)
-		return;
+		return false;                // slave input ring full -> caller applies backpressure
 	m_m2s[m_m2sHead] = c;
 	m_m2sHead = (m_m2sHead + 1) % CAP;
 	m_m2sCount++;
+	return true;
 }
 
 // Echo a typed character back to the master for display (NL -> CRLF so the cursor wraps).
@@ -61,14 +62,16 @@ void Pty::flushLine() {
 	m_lineLen = 0;
 }
 
-// One input byte through the line discipline (per termios).
-void Pty::inputByte(unsigned char c) {
+// One input byte through the line discipline (per termios). Returns false only when the
+// byte could not be enqueued because the slave input ring is full (raw mode) — the caller
+// then stops and reports a short/blocked write so the byte is retried, not dropped.
+bool Pty::inputByte(unsigned char c) {
 	if ((m_tio.c_iflag & TI_ICRNL) && c == '\r')
 		c = '\n';
 	if (m_tio.c_lflag & TL_ISIG) {                  // signal-generating control chars
-		if (c == m_tio.c_cc[VINTR]) { if (m_sigFn) m_sigFn(m_sigCtx, SIGINT, m_fgPgrp); return; }
-		if (c == m_tio.c_cc[VQUIT]) { if (m_sigFn) m_sigFn(m_sigCtx, SIGQUIT, m_fgPgrp); return; }
-		if (c == m_tio.c_cc[VSUSP]) { if (m_sigFn) m_sigFn(m_sigCtx, SIGTSTP, m_fgPgrp); return; }
+		if (c == m_tio.c_cc[VINTR]) { if (m_sigFn) m_sigFn(m_sigCtx, SIGINT, m_fgPgrp); return true; }
+		if (c == m_tio.c_cc[VQUIT]) { if (m_sigFn) m_sigFn(m_sigCtx, SIGQUIT, m_fgPgrp); return true; }
+		if (c == m_tio.c_cc[VSUSP]) { if (m_sigFn) m_sigFn(m_sigCtx, SIGTSTP, m_fgPgrp); return true; }
 	}
 	if (m_tio.c_lflag & TL_ICANON) {                // canonical: buffer a line, edit, commit
 		if (c == m_tio.c_cc[VERASE] || c == '\b') {
@@ -76,31 +79,41 @@ void Pty::inputByte(unsigned char c) {
 				m_lineLen--;
 				if (m_tio.c_lflag & TL_ECHO) { s2mPush('\b'); s2mPush(' '); s2mPush('\b'); }
 			}
-			return;
+			return true;
 		}
 		if (c == m_tio.c_cc[VEOF]) {                 // Ctrl+D: commit what we have (EOF if empty)
 			flushLine();
-			return;
+			return true;
 		}
 		if (m_tio.c_lflag & TL_ECHO)
 			echo(c);
-		if (m_lineLen < CAP)
+		if (m_lineLen < CAP)                         // line buffer bounds the canonical line (MAX_CANON)
 			m_line[m_lineLen++] = c;
 		if (c == '\n')
 			flushLine();
-		return;
+		return true;
 	}
-	// Raw mode: byte goes straight through (echo if enabled).
+	// Raw mode: byte goes straight to the slave input ring. If it is full, signal backpressure
+	// (don't echo or drop) so masterWrite returns a short count and the writer retries.
+	if (m_m2sCount >= CAP)
+		return false;
 	if (m_tio.c_lflag & TL_ECHO)
 		echo(c);
 	m2sPush(c);
+	return true;
 }
 
 int Pty::masterWrite(const void* buf, unsigned n) {
 	const unsigned char* p = (const unsigned char*) buf;
-	for (unsigned i = 0; i < n; i++)
-		inputByte(p[i]);
-	return (int) n;
+	unsigned w = 0;
+	while (w < n) {
+		if (!inputByte(p[w]))        // slave input ring full (raw): stop, report what we took
+			break;
+		w++;
+	}
+	if (w == 0 && n > 0)
+		return -EAGAIN;              // nothing fit -> would block (dispatch waits like slaveWrite)
+	return (int) w;
 }
 
 int Pty::masterRead(void* buf, unsigned n) {

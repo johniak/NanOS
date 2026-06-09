@@ -55,6 +55,24 @@ TEST_CASE("Pty raw mode passes bytes through immediately with no echo") {
 	CHECK(p.masterRead(ech, 4) == -EAGAIN);  // no echo
 }
 
+TEST_CASE("Pty raw masterWrite is a partial write when the input ring fills, never dropping") {
+	Pty p;
+	Termios t;
+	p.ioctl(IOCTL_TCGETS, &t);
+	t.c_lflag &= ~(TL_ICANON | TL_ECHO);         // raw: bytes go straight to the slave ring
+	p.ioctl(IOCTL_TCSETS, &t);
+	char big[5000];
+	for (int i = 0; i < 5000; i++) big[i] = 'y';
+	// The 4096-byte input ring fills: masterWrite returns the count that fit (partial), then
+	// -EAGAIN once full, so a bulk writer (paste / pipe into the tty) loses no bytes.
+	int w = p.masterWrite(big, 5000);
+	CHECK(w == 4096);
+	CHECK(p.masterWrite(big, 1) == -EAGAIN);     // full -> would block, not a silent drop
+	char in[4096];
+	CHECK(p.slaveRead(in, sizeof in) == 4096);   // drain
+	CHECK(p.masterWrite(big, 10) == 10);         // room again
+}
+
 TEST_CASE("Pty Ctrl+C raises SIGINT to the foreground group") {
 	Pty p;
 	g_sig = 0;
