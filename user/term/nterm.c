@@ -112,8 +112,15 @@ static void lineFeed(void) { if (++g_cy > g_bot) { g_cy = g_bot; scrollUp(); } }
 /* ---- VT parser ---- */
 enum { S_NORM, S_ESC, S_CSI };
 static int g_state;
-static int g_par[8], g_npar;
+#define NPAR 16        // CSI parameter slots (room for 38;2;r;g;b plus 48;2;r;g;b + attrs)
+static int g_par[NPAR], g_npar;
 static int g_priv;     // CSI '?' private mode
+
+// Map a 24-bit colour to the nearest xterm-256 cube index (truecolor -> 256 downgrade).
+static int rgbToPal(int r, int g, int b) {
+	int lr = (r * 5 + 127) / 255, lg = (g * 5 + 127) / 255, lb = (b * 5 + 127) / 255;
+	return 16 + 36 * lr + 6 * lg + lb;
+}
 
 static void sgr(void) {
 	if (g_npar == 0) { g_par[0] = 0; g_npar = 1; }
@@ -132,6 +139,10 @@ static void sgr(void) {
 		else if (p >= 100 && p <= 107) g_bg = 8 + (p - 100);
 		else if (p == 38 && i + 2 < g_npar && g_par[i + 1] == 5) { g_fg = g_par[i + 2]; i += 2; }
 		else if (p == 48 && i + 2 < g_npar && g_par[i + 1] == 5) { g_bg = g_par[i + 2]; i += 2; }
+		else if (p == 38 && i + 4 < g_npar && g_par[i + 1] == 2) {   // 24-bit fg -> nearest 256
+			g_fg = rgbToPal(g_par[i + 2], g_par[i + 3], g_par[i + 4]); i += 4; }
+		else if (p == 48 && i + 4 < g_npar && g_par[i + 1] == 2) {   // 24-bit bg -> nearest 256
+			g_bg = rgbToPal(g_par[i + 2], g_par[i + 3], g_par[i + 4]); i += 4; }
 	}
 }
 
@@ -199,7 +210,7 @@ static void feed(unsigned char c) {
 			g_par[g_npar - 1] = g_par[g_npar - 1] * 10 + (c - '0');
 			return;
 		}
-		if (c == ';') { if (g_npar < 8) g_par[g_npar++] = 0; return; }
+		if (c == ';') { if (g_npar < NPAR) g_par[g_npar++] = 0; return; }
 		csiFinal(c);
 		g_state = S_NORM;
 		return;
@@ -229,12 +240,30 @@ static void keyEvent(int master, unsigned char code, unsigned char down) {
 	int n = 0;
 	if (ext) {
 		const char* seq = 0;
-		if (sc == 0x48) seq = "\x1b[A";
-		else if (sc == 0x50) seq = "\x1b[B";
-		else if (sc == 0x4d) seq = "\x1b[C";
-		else if (sc == 0x4b) seq = "\x1b[D";
-		if (seq) { write(master, seq, 3); return; }
+		if (sc == 0x48) seq = "\x1b[A";        // up
+		else if (sc == 0x50) seq = "\x1b[B";   // down
+		else if (sc == 0x4d) seq = "\x1b[C";   // right
+		else if (sc == 0x4b) seq = "\x1b[D";   // left
+		else if (sc == 0x47) seq = "\x1b[H";   // home
+		else if (sc == 0x4f) seq = "\x1b[F";   // end
+		else if (sc == 0x49) seq = "\x1b[5~";  // page up
+		else if (sc == 0x51) seq = "\x1b[6~";  // page down
+		else if (sc == 0x52) seq = "\x1b[2~";  // insert
+		else if (sc == 0x53) seq = "\x1b[3~";  // delete
+		if (seq) { int l = 0; while (seq[l]) l++; write(master, seq, l); }
 		return;
+	}
+	{   // Function keys F1-F12 -> xterm sequences (SS3 for F1-F4, CSI ~ for F5+).
+		const char* fk = 0;
+		switch (sc) {
+		case 0x3b: fk = "\x1bOP"; break;  case 0x3c: fk = "\x1bOQ"; break;
+		case 0x3d: fk = "\x1bOR"; break;  case 0x3e: fk = "\x1bOS"; break;
+		case 0x3f: fk = "\x1b[15~"; break; case 0x40: fk = "\x1b[17~"; break;
+		case 0x41: fk = "\x1b[18~"; break; case 0x42: fk = "\x1b[19~"; break;
+		case 0x43: fk = "\x1b[20~"; break; case 0x44: fk = "\x1b[21~"; break;
+		case 0x57: fk = "\x1b[23~"; break; case 0x58: fk = "\x1b[24~"; break;
+		}
+		if (fk) { int l = 0; while (fk[l]) l++; write(master, fk, l); return; }
 	}
 	char ch = g_shift ? kmapsh[sc] : kmap[sc];
 	if (!ch) return;
