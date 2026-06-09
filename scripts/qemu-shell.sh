@@ -23,7 +23,8 @@ cmds = sys.argv[3:]
 s = socket.socket(socket.AF_UNIX); s.connect(mon); time.sleep(0.3); s.recv(65536)
 
 KEYMAP = {' ':'spc','-':'minus','/':'slash','.':'dot',',':'comma','\n':'ret',
-          '_':'shift-minus','=':'equal',':':'shift-semicolon'}
+          '_':'shift-minus','=':'equal',':':'shift-semicolon',
+          "'":'apostrophe','"':'shift-apostrophe'}
 def send(cmd):
     s.sendall(cmd.encode()+b"\n"); time.sleep(0.05)
     try: s.recv(65536)

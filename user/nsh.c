@@ -250,16 +250,41 @@ int main(void) {
 		char cmdsave[CAP];
 		strcpy(cmdsave, line);               /* remember the command for the job table */
 
+		/* Tokenise like a POSIX shell: split on spaces, but 'single' and "double" quotes
+		 * keep spaces inside one argument, and a backslash escapes the next character (in
+		 * double quotes only \" and \\ are special). Tokens are compacted in place (the
+		 * write pointer never overtakes the read pointer), dropping the quote/escape chars. */
 		char* argv[ARGV_MAX + 1];
 		int argc = 0;
-		char* p = line;
+		char* r = line;
 		int overflow = 0;
-		while (*p) {
-			while (*p == ' ') *p++ = 0;
-			if (!*p) break;
+		while (*r) {
+			while (*r == ' ') r++;
+			if (!*r) break;
 			if (argc >= ARGV_MAX) { overflow = 1; break; }
-			argv[argc++] = p;
-			while (*p && *p != ' ') p++;
+			char* w = r;
+			argv[argc++] = w;
+			while (*r && *r != ' ') {
+				if (*r == '\'') {                       /* single quotes: fully literal */
+					r++;
+					while (*r && *r != '\'') *w++ = *r++;
+					if (*r == '\'') r++;
+				} else if (*r == '"') {                 /* double quotes: \" and \\ escape */
+					r++;
+					while (*r && *r != '"') {
+						if (*r == '\\' && (r[1] == '"' || r[1] == '\\')) r++;
+						*w++ = *r++;
+					}
+					if (*r == '"') r++;
+				} else if (*r == '\\' && r[1]) {        /* backslash escapes one char */
+					r++; *w++ = *r++;
+				} else {
+					*w++ = *r++;
+				}
+			}
+			char* next = *r ? r + 1 : r;                /* resume after the delimiter space */
+			*w = 0;                                     /* terminate this token */
+			r = next;
 		}
 		if (overflow) {
 			const char* m = "nsh: too many arguments\n";
