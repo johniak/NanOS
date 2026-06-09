@@ -76,6 +76,21 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_getppid:
 		ret = ProcTable::current()->parent;
 		break;
+	case SYS_times: {
+		// a0 = struct tms* {utime, stime, cutime, cstime} as four 32-bit clock_t (ticks).
+		// Fill it from the running process's real CPU accounting; child times are 0 (we
+		// don't aggregate reaped children yet). Returns the monotonic tick count.
+		Process* p = ProcTable::current();
+		if (a0) {
+			unsigned* t = (unsigned*) a0;
+			t[0] = p ? p->utime : 0;   // tms_utime
+			t[1] = p ? p->stime : 0;   // tms_stime
+			t[2] = 0;                  // tms_cutime (no child-time accounting)
+			t[3] = 0;                  // tms_cstime
+		}
+		ret = (int) Scheduler::ticks();
+		break;
+	}
 	case SYS_waitpid:
 		ret = waitProcess((int) a0, (int*) a1, (int) a2);   // a2 = options (WNOHANG/WUNTRACED)
 		break;

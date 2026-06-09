@@ -135,7 +135,9 @@ void (*signal(int sig, void (*handler)(int)))(int) {
 	if (r < 0) { errno = -r; return (void (*)(int)) -1; }   /* SIG_ERR */
 	return (void (*)(int)) r;
 }
-int times(void* b)                      { (void) b; return 0; }
+/* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the
+ * monotonic tick count. Real per-process CPU accounting, not a 0 stub. */
+int times(void* b)                      { return sys3(SYS_times, (int) b, 0, 0); }
 
 /* Monotonic clock from the kernel (1000 Hz scheduler tick). The kernel timespec is
  * {int tv_sec; int tv_nsec;}, the same 8-byte layout as picolibc's on i386, so we hand

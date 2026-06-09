@@ -21,6 +21,7 @@
 #define SYS_mkdir 39
 #define SYS_execve 11
 #define SYS_lseek 19
+#define SYS_times 43
 #define SYS_brk 45
 #define SYS_kill 37
 #define SYS_signal 48
