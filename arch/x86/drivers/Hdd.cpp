@@ -10,12 +10,12 @@
 namespace kernel {
 
 
-void Hdd::readSectors(int lba, char count, char* buf) {
-	read_ata_pio(lba,count,buf);
+int Hdd::readSectors(int lba, char count, char* buf) {
+	return read_ata_pio(lba, count, buf);
 }
 
-void Hdd::writeSectors(int lba, char count, char* buf) {
-	write_ata_pio(lba,count,buf);
+int Hdd::writeSectors(int lba, char count, char* buf) {
+	return write_ata_pio(lba, count, buf);
 }
 
 } /* namespace kernel */

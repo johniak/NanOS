@@ -14,14 +14,16 @@ AtaBlockDevice::AtaBlockDevice(const char* name) {
 int AtaBlockDevice::readSectors(unsigned lba, unsigned count, void* buf) {
 	char* p = (char*) buf;
 	for (unsigned i = 0; i < count; i++)
-		Hdd::readSectors((int) (lba + i), 1, p + i * 512);
+		if (Hdd::readSectors((int) (lba + i), 1, p + i * 512) != 0)
+			return -5;   // -EIO: the drive flagged an error (don't return silent garbage)
 	return 0;
 }
 
 int AtaBlockDevice::writeSectors(unsigned lba, unsigned count, const void* buf) {
 	char* p = (char*) buf;
 	for (unsigned i = 0; i < count; i++)
-		Hdd::writeSectors((int) (lba + i), 1, p + i * 512);
+		if (Hdd::writeSectors((int) (lba + i), 1, p + i * 512) != 0)
+			return -5;   // -EIO
 	return 0;
 }
 

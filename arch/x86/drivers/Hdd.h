@@ -10,13 +10,14 @@
 
 namespace kernel {
 
-extern "C" void read_ata_pio(int lba, char sect_count, char* buf);
-extern "C" void write_ata_pio(int lba, char sect_count, char* buf);
+// Return 0 on success, non-zero if the drive reported an error (ERR/DF) or DRQ timed out.
+extern "C" int read_ata_pio(int lba, char sect_count, char* buf);
+extern "C" int write_ata_pio(int lba, char sect_count, char* buf);
 
 class Hdd {
 public:
-	static void readSectors(int lba, char count, char* buf);
-	static void writeSectors(int lba, char count, char* buf);
+	static int readSectors(int lba, char count, char* buf);    // 0 ok, non-zero I/O error
+	static int writeSectors(int lba, char count, char* buf);
 };
 
 } /* namespace kernel */
