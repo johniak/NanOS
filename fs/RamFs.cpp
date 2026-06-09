@@ -41,6 +41,7 @@ RamNode* RamFs::mk(const char* name, int len, bool isDir) {
 		n->name[i] = name[i];
 	n->name[len] = 0;
 	n->isDir = isDir;
+	n->mode = isDir ? 0755 : 0644;   // sensible default; create/mkdir override from the arg
 	return n;
 }
 
@@ -168,7 +169,7 @@ int RamFs::write(String path, unsigned size, unsigned off, const void* buf) {
 	return (int) size;
 }
 
-int RamFs::create(String path, unsigned /*mode*/) {
+int RamFs::create(String path, unsigned mode) {
 	const char* leaf;
 	int len;
 	RamNode* parent = walkParent((char*) path, leaf, len);
@@ -186,10 +187,11 @@ int RamFs::create(String path, unsigned /*mode*/) {
 		if (node) free(node);
 		return E_NOSPC;
 	}
+	node->mode = mode & 0777;                // honor the requested permission bits
 	return 0;
 }
 
-int RamFs::mkdir(String path, unsigned /*mode*/) {
+int RamFs::mkdir(String path, unsigned mode) {
 	const char* leaf;
 	int len;
 	RamNode* parent = walkParent((char*) path, leaf, len);
@@ -202,6 +204,7 @@ int RamFs::mkdir(String path, unsigned /*mode*/) {
 		if (node) free(node);
 		return E_NOSPC;
 	}
+	node->mode = mode & 0777;                // honor the requested permission bits
 	return 0;
 }
 
@@ -234,7 +237,8 @@ int RamFs::stat(String path, FileStat& out) {
 		return E_NOENT;
 	out.type = n->isDir ? NODE_DIR : NODE_FILE;
 	out.size = n->isDir ? 0 : n->size;
-	out.mode = n->isDir ? 0x41EDu : 0x81B6u;   // 0755 dir / 0666 file
+	// Type bits (S_IFDIR/S_IFREG) | the stored permission bits.
+	out.mode = (n->isDir ? 0x4000u : 0x8000u) | (n->mode & 0777);
 	out.nlink = 1;
 	out.uid = 0;
 	out.gid = 0;

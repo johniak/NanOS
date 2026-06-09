@@ -108,6 +108,22 @@ TEST_CASE("RamFs type-mismatch and large-growth paths") {
 	CHECK(fs.readdir(String("/none"), e) == -2);
 }
 
+TEST_CASE("RamFs honors the create/mkdir mode instead of a hardcoded permission") {
+	RamFs fs;
+	CHECK(fs.mount() == 0);
+	FileStat st;
+	CHECK(fs.create(String("/secret"), 0600) == 0);
+	CHECK(fs.stat(String("/secret"), st) == 0);
+	CHECK(st.type == NODE_FILE);
+	CHECK((st.mode & 0xF000) == 0x8000);   // S_IFREG
+	CHECK((st.mode & 0777) == 0600);       // the requested perms, not a fixed 0666
+
+	CHECK(fs.mkdir(String("/priv"), 0700) == 0);
+	CHECK(fs.stat(String("/priv"), st) == 0);
+	CHECK((st.mode & 0xF000) == 0x4000);   // S_IFDIR
+	CHECK((st.mode & 0777) == 0700);       // not a fixed 0755
+}
+
 TEST_CASE("RamFs grows directory children past the old 32 cap — no silent -ENOSPC") {
 	RamFs fs;
 	CHECK(fs.mount() == 0);

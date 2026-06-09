@@ -21,6 +21,7 @@ struct RamNode {
 	unsigned char* data;       // file contents (malloc/realloc'd)
 	unsigned size;             // bytes of valid data
 	unsigned cap;              // allocated capacity
+	unsigned mode;             // permission bits (0..0777) as passed to create/mkdir
 	unsigned mtime;
 };
 
