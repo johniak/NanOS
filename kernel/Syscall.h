@@ -10,6 +10,7 @@
 #define SYSCALL_H_
 
 #include "SyscallNr.h"   // SYS_* numbers (shared with userland, plain C)
+#include "Pipe.h"
 
 namespace kernel {
 
@@ -19,6 +20,16 @@ namespace kernel {
 #define EAGAIN 11
 #define EINVAL 22
 #define EROFS 30
+#define EMFILE 24
+#define EPIPE 32
+
+// poll(2) event/revent bits (Linux values; userland passes them straight through).
+#define POLLIN   0x001
+#define POLLOUT  0x004
+#define POLLERR  0x008
+#define POLLHUP  0x010
+#define POLLNVAL 0x020
+struct PollFd { int fd; short events; short revents; };
 
 #define SEEK_SET 0
 #define SEEK_CUR 1
@@ -61,6 +72,8 @@ class Syscalls {
 		unsigned offset;
 		unsigned size;
 		unsigned flags;     // file status flags (O_NONBLOCK); set via fcntl(F_SETFL)
+		Pipe* pipe;         // non-null => this fd is one end of a pipe
+		bool pipeWrite;     // which end (write end if true, read end otherwise)
 	};
 	static const int MAXFD = 32;
 	Fd fds[MAXFD];
@@ -72,8 +85,12 @@ class Syscalls {
 	bool valid(int fd) {
 		return fd >= 0 && fd < MAXFD && fds[fd].used;
 	}
+	int allocFd();                 // lowest free descriptor, or -EMFILE
+	void shareInto(int dst, int src);   // make dst alias src's backing (for dup/dup2)
 public:
 	Syscalls(Vfs* vfs, ConsoleWriteFn cw);
+	Syscalls(const Syscalls& o);   // fork: dup the fd table, bumping pipe-end refcounts
+	~Syscalls();                   // process exit: close fds, dropping pipe-end refcounts
 	int open(String path, int flags);
 	int close(int fd);
 	int read(int fd, void* buf, unsigned n);
@@ -86,6 +103,19 @@ public:
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL (O_NONBLOCK)
+	// Pipes + descriptor duplication. pipe() fills out[0]=read end, out[1]=write end.
+	// dup/dup2 alias an existing descriptor's backing (sharing a pipe end / file / console).
+	int pipe(int out[2]);
+	int dup(int fd);
+	int dup2(int oldfd, int newfd);
+	// Non-blocking poll scan: fills each pollfd's revents and returns the number of fds that
+	// are ready (revents != 0). Blocking + timeout are handled by the dispatch.
+	int pollScan(PollFd* pfds, int nfds);
+	// Pipe readiness, for the dispatch's blocking loops (it owns the scheduler).
+	bool fdReadable(int fd);
+	bool fdWritable(int fd);
+	bool isPipe(int fd) { return valid(fd) && fds[fd].pipe != 0; }
+	bool nonblock(int fd) { return valid(fd) && (fds[fd].flags & O_NONBLOCK) != 0; }
 	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 	// Time. clockGettime fills `out` from a monotonic tick count (1000 Hz => ms); the
 	// dispatch supplies Scheduler::ticks(). nanosleepMs converts a requested timespec to

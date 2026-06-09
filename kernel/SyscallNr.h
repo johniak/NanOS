@@ -32,6 +32,10 @@
 #define SYS_sigreturn 119
 #define SYS_sigprocmask 126
 #define SYS_getdents64 220
+#define SYS_dup 41
+#define SYS_pipe 42
+#define SYS_dup2 63
+#define SYS_poll 168
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with
  * a Linux number we might add later). */

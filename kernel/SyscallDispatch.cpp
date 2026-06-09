@@ -59,10 +59,52 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		break;
 	case SYS_read:
 		ret = g_sys->read(a0, (void*) a1, a2);
+		// A blocking pipe read on an empty pipe returns -EAGAIN; wait (waking each tick as
+		// the writer is scheduled) until data/EOF, or a signal interrupts. Console blocking
+		// happens inside read() itself; O_NONBLOCK returns -EAGAIN to the caller.
+		while (ret == -EAGAIN && g_sys->isPipe(a0) && !g_sys->nonblock(a0)) {
+			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
+			arch::halt_or_hlt();
+			ret = g_sys->read(a0, (void*) a1, a2);
+		}
 		break;
 	case SYS_write:
 		ret = g_sys->write(a0, (const void*) a1, a2);
+		while (ret == -EAGAIN && g_sys->isPipe(a0) && !g_sys->nonblock(a0)) {
+			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
+			arch::halt_or_hlt();
+			ret = g_sys->write(a0, (const void*) a1, a2);
+		}
 		break;
+	case SYS_pipe:
+		ret = g_sys->pipe((int*) a0);
+		break;
+	case SYS_dup:
+		ret = g_sys->dup((int) a0);
+		break;
+	case SYS_dup2:
+		ret = g_sys->dup2((int) a0, (int) a1);
+		break;
+	case SYS_poll: {
+		// a0 = struct pollfd*, a1 = nfds, a2 = timeout ms (-1 = infinite, 0 = non-blocking).
+		PollFd* pfds = (PollFd*) a0;
+		int nfds = (int) a1;
+		int timeout = (int) a2;
+		ret = g_sys->pollScan(pfds, nfds);
+		if (ret == 0 && timeout != 0) {
+			unsigned start = Scheduler::ticks();
+			for (;;) {
+				if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
+				if (timeout > 0 && Scheduler::ticks() - start >= (unsigned) timeout) {
+					ret = 0; break;            // timed out, nothing ready
+				}
+				arch::halt_or_hlt();
+				int r = g_sys->pollScan(pfds, nfds);
+				if (r > 0) { ret = r; break; }
+			}
+		}
+		break;
+	}
 	case SYS_open:
 		ret = g_sys->open(String((char*) a0), a1);
 		break;

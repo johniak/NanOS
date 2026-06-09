@@ -17,6 +17,7 @@
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
+#include <poll.h>
 
 /* Force the stdin stream object to be linked. picolibc's tinystdio pulls stdin/stdout/
  * stderr from libc.a only on reference; programs here use stdout/stderr (printf) but
@@ -48,6 +49,16 @@ int open(const char* p, int fl, ...) {
 	return reterr(sys3(SYS_open, (int) abs, fl, 0));
 }
 int close(int fd)                       { return reterr(sys3(SYS_close, fd, 0, 0)); }
+/* pipe/dup/dup2: descriptor plumbing for shells (pipelines, redirection) and the terminal
+ * (the child puts the pty slave on fd 0/1/2 via dup2). */
+int pipe(int fd[2])                     { return reterr(sys3(SYS_pipe, (int) fd, 0, 0)); }
+int dup(int fd)                         { return reterr(sys3(SYS_dup, fd, 0, 0)); }
+int dup2(int o, int n)                  { return reterr(sys3(SYS_dup2, o, n, 0)); }
+/* poll(2): wait until one of the fds is ready (the terminal emulator's event loop, later
+ * htop/btop). timeout in ms (-1 = block forever, 0 = return immediately). */
+int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
+	return reterr(sys3(SYS_poll, (int) fds, (int) nfds, timeout));
+}
 /* fcntl(2): we support F_GETFL/F_SETFL (the O_NONBLOCK status flag) for non-blocking
  * console reads. The third argument is an int (the flags for F_SETFL). */
 int fcntl(int fd, int cmd, ...) {

@@ -16,12 +16,39 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].offset = 0;
 		fds[i].size = 0;
 		fds[i].flags = 0;
+		fds[i].pipe = 0;
+		fds[i].pipeWrite = false;
 	}
 	// fd 0,1,2 = stdin/stdout/stderr -> console.
 	for (int i = 0; i < 3; i++) {
 		fds[i].used = true;
 		fds[i].isConsole = true;
 	}
+}
+
+// fork(2): a child inherits a copy of the fd table. Copy every descriptor (String paths
+// deep-copy via String's assignment) and, for each open pipe end, bump the matching
+// refcount — parent and child share the same Pipe object, so both ends must be counted.
+Syscalls::Syscalls(const Syscalls& o) {
+	vfs = o.vfs;
+	consoleWrite = o.consoleWrite;
+	exited = o.exited;
+	exitCode = o.exitCode;
+	for (int i = 0; i < MAXFD; i++) {
+		fds[i] = o.fds[i];
+		if (fds[i].used && fds[i].pipe) {
+			if (fds[i].pipeWrite) fds[i].pipe->addWriter();
+			else fds[i].pipe->addReader();
+		}
+	}
+}
+
+// Process exit: close any open descriptors so pipe-end refcounts drop (and pipes free at
+// zero) — this is what lets a reader see EOF once the last writing process is gone.
+Syscalls::~Syscalls() {
+	for (int i = 0; i < MAXFD; i++)
+		if (fds[i].used && fds[i].pipe)
+			close(i);
 }
 
 int Syscalls::open(String path, int flags) {
@@ -45,6 +72,8 @@ int Syscalls::open(String path, int flags) {
 		if (!fds[fd].used) {
 			fds[fd].used = true;
 			fds[fd].isConsole = false;
+			fds[fd].pipe = 0;
+			fds[fd].pipeWrite = false;
 			fds[fd].path = path;
 			fds[fd].offset = 0;
 			fds[fd].size = st.size;
@@ -58,14 +87,144 @@ int Syscalls::open(String path, int flags) {
 int Syscalls::close(int fd) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].pipe) {                       // drop this end; free the pipe when both gone
+		Pipe* p = fds[fd].pipe;
+		if (fds[fd].pipeWrite) p->dropWriter(); else p->dropReader();
+		if (p->readers() == 0 && p->writers() == 0)
+			delete p;
+		fds[fd].pipe = 0;
+		fds[fd].pipeWrite = false;
+	}
 	fds[fd].used = false;
 	fds[fd].isConsole = false;
 	return 0;
 }
 
+// Lowest free descriptor (POSIX), or -EMFILE. Scans from 0 so a closed 0/1/2 is reusable
+// (dup2 onto stdin/stdout/stderr relies on this).
+int Syscalls::allocFd() {
+	for (int fd = 0; fd < MAXFD; fd++)
+		if (!fds[fd].used)
+			return fd;
+	return -EMFILE;
+}
+
+// Make dst an independent descriptor aliasing src's underlying object (dup/dup2). A pipe
+// end bumps the matching refcount so both descriptors keep the pipe alive.
+void Syscalls::shareInto(int dst, int src) {
+	fds[dst].used = true;
+	fds[dst].isConsole = fds[src].isConsole;
+	fds[dst].path = fds[src].path;
+	fds[dst].offset = fds[src].offset;
+	fds[dst].size = fds[src].size;
+	fds[dst].flags = fds[src].flags;
+	fds[dst].pipe = fds[src].pipe;
+	fds[dst].pipeWrite = fds[src].pipeWrite;
+	if (fds[dst].pipe) {
+		if (fds[dst].pipeWrite) fds[dst].pipe->addWriter();
+		else fds[dst].pipe->addReader();
+	}
+}
+
+int Syscalls::pipe(int out[2]) {
+	Pipe* p = new Pipe();
+	p->addReader();
+	p->addWriter();
+	int r = allocFd();
+	if (r < 0) { delete p; return r; }
+	fds[r].used = true; fds[r].isConsole = false; fds[r].path = String();
+	fds[r].offset = 0; fds[r].size = 0; fds[r].flags = 0;
+	fds[r].pipe = p; fds[r].pipeWrite = false;
+	int w = allocFd();
+	if (w < 0) { close(r); return w; }
+	fds[w].used = true; fds[w].isConsole = false; fds[w].path = String();
+	fds[w].offset = 0; fds[w].size = 0; fds[w].flags = 0;
+	fds[w].pipe = p; fds[w].pipeWrite = true;
+	out[0] = r;
+	out[1] = w;
+	return 0;
+}
+
+int Syscalls::dup(int fd) {
+	if (!valid(fd))
+		return -EBADF;
+	int n = allocFd();
+	if (n < 0)
+		return n;
+	shareInto(n, fd);
+	return n;
+}
+
+int Syscalls::dup2(int oldfd, int newfd) {
+	if (!valid(oldfd))
+		return -EBADF;
+	if (newfd < 0 || newfd >= MAXFD)
+		return -EBADF;
+	if (oldfd == newfd)
+		return newfd;
+	if (fds[newfd].used)
+		close(newfd);
+	shareInto(newfd, oldfd);
+	return newfd;
+}
+
+bool Syscalls::fdReadable(int fd) {
+	if (!valid(fd)) return false;
+	if (fds[fd].pipe) return fds[fd].pipe->readable() || fds[fd].pipe->atEof();
+	return true;   // files/devices: assume ready (console handled in the dispatch)
+}
+
+bool Syscalls::fdWritable(int fd) {
+	if (!valid(fd)) return false;
+	if (fds[fd].pipe) return fds[fd].pipe->writable() || fds[fd].pipe->readers() == 0;
+	return true;
+}
+
+// Non-blocking scan: fill revents, return number of ready fds. Console POLLIN readiness is
+// resolved in the dispatch (it knows the input layer); here a console reports POLLOUT ready.
+int Syscalls::pollScan(PollFd* pfds, int nfds) {
+	int ready = 0;
+	for (int i = 0; i < nfds; i++) {
+		short ev = pfds[i].events;
+		short re = 0;
+		int fd = pfds[i].fd;
+		if (fd < 0) {
+			pfds[i].revents = 0;       // negative fd: ignored, never ready
+			continue;
+		}
+		if (!valid(fd)) {
+			re = POLLNVAL;
+		} else if (fds[fd].pipe) {
+			Pipe* p = fds[fd].pipe;
+			if (!fds[fd].pipeWrite) {
+				if ((ev & POLLIN) && (p->readable() || p->atEof())) re |= POLLIN;
+				if (p->atEof()) re |= POLLHUP;
+			} else {
+				if ((ev & POLLOUT) && p->writable()) re |= POLLOUT;
+				if (p->readers() == 0) re |= POLLERR;
+			}
+		} else {
+			// File / device / console: assume immediately ready for whatever was asked.
+			re |= ev & (POLLIN | POLLOUT);
+		}
+		pfds[i].revents = re;
+		if (re)
+			ready++;
+	}
+	return ready;
+}
+
 int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].pipe) {                       // read end of a pipe
+		if (fds[fd].pipeWrite)
+			return -EBADF;                    // can't read the write end
+		int r = fds[fd].pipe->read(buf, n);
+		if (r == 0 && !fds[fd].pipe->atEof())
+			return -EAGAIN;                   // empty but writers remain -> would block
+		return r;                             // r>0 = data; r==0 = EOF (all writers closed)
+	}
 	if (fds[fd].isConsole)
 		// cooked line or raw bytes; 0 = EOF. O_NONBLOCK -> -EAGAIN instead of blocking.
 		return arch::inputRead((char*) buf, n, (fds[fd].flags & O_NONBLOCK) != 0);
@@ -79,6 +238,16 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 int Syscalls::write(int fd, const void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].pipe) {                       // write end of a pipe
+		if (!fds[fd].pipeWrite)
+			return -EBADF;
+		if (fds[fd].pipe->readers() == 0)
+			return -EPIPE;                    // no reader left (would raise SIGPIPE on Linux)
+		int w = fds[fd].pipe->write(buf, n);
+		if (w == 0)
+			return -EAGAIN;                   // full -> would block
+		return w;
+	}
 	if (fds[fd].isConsole)
 		return consoleWrite((const char*) buf, n);
 	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
