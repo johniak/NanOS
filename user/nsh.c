@@ -284,8 +284,11 @@ int main(void) {
 				/* System utility: a flat binary in /nanos/bin ... */
 				snprintf(path, sizeof path, "/disks/main/nanos/bin/%s.nxe", argv[0]);
 				execve(path, argv, envp);    /* returns only if it failed (e.g. ENOENT) */
-				/* ... else a user app, which is a self-contained bundle directory
-				 * /apps/<name>/ holding <name>.nxe plus its data files. */
+				/* ... else an app via /bin, a flat directory of symlinks into the app
+				 * bundles (a program is registered here to be runnable by name) ... */
+				snprintf(path, sizeof path, "/disks/main/bin/%s.nxe", argv[0]);
+				execve(path, argv, envp);
+				/* ... or, as a fallback, the bundle itself /apps/<name>/<name>.nxe. */
 				snprintf(path, sizeof path, "/disks/main/apps/%s/%s.nxe", argv[0], argv[0]);
 				execve(path, argv, envp);
 			}

@@ -231,13 +231,36 @@ public:
 		return dirs;
 	}
 
-	// Resolve an absolute path to its inode. Returns false if any component is
-	// missing.
-	// Walk an absolute path to its inode by parsing components in place (no String/List
-	// allocations per call — like SynthFs/RamFs walk). Empty components are skipped.
+	bool isSymlink(const Ext2Inode& inode) {
+		return ((unsigned short) inode.typeAndPermisions & 0xF000) == 0xA000;
+	}
+
+	// Read a symbolic link's target into `buf` (>= 256 bytes), NUL-terminated. ext stores a
+	// short target (<= 60 bytes) inline in the 60-byte i_block area ("fast symlink"); a
+	// longer one lives in data blocks ("slow symlink"), read via readFile.
+	bool readSymlinkTarget(Ext2Inode& inode, char* buf) {
+		unsigned len = (unsigned) inode.lowerSize;
+		if (len == 0 || len > 255)
+			return false;
+		if (len <= 60)
+			memcpy(buf, &inode.directBlocks[0], len);   // inline target (i_block area)
+		else if (readFile(inode, len, 0, buf) < 0)
+			return false;
+		buf[len] = 0;
+		return true;
+	}
+
+	// Resolve an absolute path to its inode, following symbolic links. Returns false if any
+	// component is missing.
 	bool getInodeByPath(String path, Ext2Inode& out) {
-		const char* p = (char*) path;
-		if (!p || p[0] != '/')
+		return resolvePath((char*) path, out, 0);
+	}
+
+	// Walk an absolute path to its inode by parsing components in place (no String/List
+	// allocations per call). A component that resolves to a symlink is followed by resolving
+	// its (absolute) target; `depth` guards against symlink loops. Empty components skipped.
+	bool resolvePath(const char* p, Ext2Inode& out, int depth) {
+		if (depth > 8 || !p || p[0] != '/')
 			return false;
 		Ext2Inode cur = getInode(2);   // ext2 root inode is #2
 		int i = 1;
@@ -250,6 +273,13 @@ public:
 				Ext2Inode child;
 				if (!getChildrenInode(cur, p + i, len, child))
 					return false;
+				if (isSymlink(child)) {            // follow the link (absolute target only)
+					char tgt[256];
+					if (!readSymlinkTarget(child, tgt) || tgt[0] != '/')
+						return false;
+					if (!resolvePath(tgt, child, depth + 1))
+						return false;
+				}
 				cur = child;
 			}
 			i = (p[j] == '/') ? j + 1 : j;

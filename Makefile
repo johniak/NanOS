@@ -136,7 +136,7 @@ _image: _all _userland _grub2-image
 	# System volume layout: NanOS itself lives under /nanos (core/bin/lib/kext/config/
 	# cache/logs); non-system user apps live in /apps. GRUB stays in /boot. mkdir is
 	# idempotent across rebuilds.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /apps\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
 	# Kernel + init (PID 1) in core.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
@@ -145,10 +145,14 @@ _image: _all _userland _grub2-image
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# Non-system apps -> /apps. Each app is a self-contained BUNDLE directory
-	# /apps/<name>/ holding <name>.nxe (the entry binary) plus any data files.
+	# /apps/<name>/ holding <name>.nxe (the entry binary) plus any data files. /bin is a
+	# flat link farm: a symbolic link /bin/<name>.nxe -> the app's bundle binary, so the
+	# shell can run an app by name without knowing its bundle layout (à la /usr/local/bin).
 	for p in $(APP_PROGS); do \
 	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
 	for l in $(USER_LIBS_NDL); do \

@@ -120,6 +120,31 @@ TEST_CASE("ext2 readdir lists the root directory") {
 	CHECK(hello);
 }
 
+TEST_CASE("ext2 follows a symbolic link to its target") {
+	// /link.txt is a fast symlink -> /hello.txt (target stored inline in the inode).
+	Ext2Filesystem fs(loadFixture(), 0);
+	fs.mount();
+	char buf[64] = {0};
+	int n = fs.read("/link.txt", sizeof(buf) - 1, 0, buf);
+	REQUIRE(n > 0);
+	buf[n] = 0;
+	CHECK(strcmp(buf, "Hello, NanOS VFS!\n") == 0);   // resolved to the target's contents
+	FileStat st;
+	REQUIRE(fs.stat("/link.txt", st) == 0);
+	CHECK(st.size == 18);                              // stat follows the link (target size)
+}
+
+TEST_CASE("ext2 reads a hard link as the same file") {
+	// /hardhello.txt is a second directory entry for /hello.txt's inode.
+	Ext2Filesystem fs(loadFixture(), 0);
+	fs.mount();
+	char buf[64] = {0};
+	int n = fs.read("/hardhello.txt", sizeof(buf) - 1, 0, buf);
+	REQUIRE(n > 0);
+	buf[n] = 0;
+	CHECK(strcmp(buf, "Hello, NanOS VFS!\n") == 0);
+}
+
 TEST_CASE("ext2 readdir on a file (not a directory) errors") {
 	Ext2Filesystem fs(loadFixture(), 0);
 	fs.mount();
