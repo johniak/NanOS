@@ -35,9 +35,10 @@ int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 //   /proc/loadavg — 1/5/15-min load (we report runnable as a coarse 0.NN), runnable/total, last pid.
 //   /proc/cpuinfo — one processor entry (model + flags).
 //   /proc/version — kernel identification string.
-int statString(char* buf, int cap, unsigned uptimeTicks, unsigned hz,
-		unsigned procsTotal, unsigned procsRunning);
-int loadavgString(char* buf, int cap, unsigned runnable, unsigned total, int lastPid);
+int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsigned idleTicks,
+		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked);
+int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned load15,
+		unsigned runnable, unsigned total, int lastPid);
 int cpuinfoString(char* buf, int cap);
 int versionString(char* buf, int cap);
 

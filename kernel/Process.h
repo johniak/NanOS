@@ -41,6 +41,13 @@ struct Process {
 	int pgid;            // process group id (group leader has pgid == pid)
 	int sid;             // session id (session leader has sid == pid)
 
+	// CPU accounting (in timer ticks; the timer attributes each tick to the running process,
+	// split user vs system by the ring it interrupted). Surfaced in /proc/<pid>/stat.
+	unsigned utime;      // ticks spent in ring 3 (user)
+	unsigned stime;      // ticks spent in ring 0 on this process's behalf (system)
+	unsigned starttime;  // tick count when the process was created (Linux field 22)
+	bool execed;         // has called execve at least once (POSIX setpgid restriction)
+
 	// Signals + job control.
 	SignalState sig;     // pending/blocked masks + disposition table
 	bool stopped;        // job-control stopped (its task is TASK_STOPPED)
@@ -58,6 +65,9 @@ struct ProcInfo {
 	int sid;
 	char state;          // 'R' running/ready, 'S' sleeping (blocked), 'Z' zombie
 	bool kthread;
+	unsigned utime;      // user / system CPU ticks + creation tick (Linux stat fields 14,15,22)
+	unsigned stime;
+	unsigned starttime;
 	char comm[16];
 	char cmdline[128];
 };
@@ -99,6 +109,15 @@ public:
 	// Fill `out` (capacity `max`) with the pids of every live process in group `pgid`;
 	// returns the count. Lets the signal layer fan a group signal out, host-tested.
 	static int groupMembers(int pgid, int* out, int max);
+
+	// CPU accounting. The timer calls accountTick once per tick: `fromUser` = it interrupted
+	// ring 3, `idle` = the idle task was running. It bumps the current process's utime/stime
+	// and the global user/system/idle tick counters. cpuTimes/forksTotal/lastPid feed
+	// /proc/stat and /proc/loadavg.
+	static void accountTick(bool fromUser, bool idle);
+	static void cpuTimes(unsigned* user, unsigned* system, unsigned* idle);
+	static unsigned forksTotal();        // processes created since boot (Linux /proc/stat)
+	static int lastPid();                // pid of the most recently created process
 
 	// /proc + ps support.
 	static int snapshot(ProcInfo* out, int max);     // fill `out`, return live count

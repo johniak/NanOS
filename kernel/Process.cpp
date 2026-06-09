@@ -7,12 +7,18 @@ static const int MAXPROC = 16;
 static Process g_procs[MAXPROC];
 static int g_nextPid = 1;
 static Process* g_current = 0;
+static unsigned g_cpuUser, g_cpuSystem, g_cpuIdle;   // global CPU ticks (jiffies) by class
+static unsigned g_forksTotal;                         // processes ever created (since boot)
+static int g_lastPid;                                 // most recently allocated pid
 
 void ProcTable::init() {
 	for (int i = 0; i < MAXPROC; i++)
 		g_procs[i].used = false;
 	g_nextPid = 1;
 	g_current = 0;
+	g_cpuUser = g_cpuSystem = g_cpuIdle = 0;
+	g_forksTotal = 0;
+	g_lastPid = 0;
 }
 
 Process* ProcTable::alloc(int parent) {
@@ -24,6 +30,12 @@ Process* ProcTable::alloc(int parent) {
 			p->parent = parent;
 			p->pgid = p->pid;        // own group + session by default; fork inherits these,
 			p->sid = p->pid;         // setpgid/setsid change them
+			p->utime = 0;
+			p->stime = 0;
+			p->starttime = (unsigned) Scheduler::ticks();
+			p->execed = false;
+			g_forksTotal++;
+			g_lastPid = p->pid;
 			p->task = 0;
 			p->space = 0;
 			p->sys = 0;
@@ -131,6 +143,9 @@ static void fillInfo(const Process* p, ProcInfo* out) {
 	out->sid = p->sid;
 	out->state = stateChar(p);
 	out->kthread = p->kthread;
+	out->utime = p->utime;
+	out->stime = p->stime;
+	out->starttime = p->starttime;
 	copyName(out->comm, sizeof out->comm, p->comm);
 	copyName(out->cmdline, sizeof out->cmdline, p->cmdline);
 }
@@ -230,5 +245,30 @@ int ProcTable::groupMembers(int pgid, int* out, int max) {
 			out[n++] = g_procs[i].pid;
 	return n;
 }
+
+// ---- CPU accounting ------------------------------------------------------------------
+
+void ProcTable::accountTick(bool fromUser, bool idle) {
+	if (idle) {
+		g_cpuIdle++;
+		return;
+	}
+	if (fromUser) {
+		if (g_current) g_current->utime++;
+		g_cpuUser++;
+	} else {
+		if (g_current) g_current->stime++;
+		g_cpuSystem++;
+	}
+}
+
+void ProcTable::cpuTimes(unsigned* user, unsigned* system, unsigned* idle) {
+	if (user) *user = g_cpuUser;
+	if (system) *system = g_cpuSystem;
+	if (idle) *idle = g_cpuIdle;
+}
+
+unsigned ProcTable::forksTotal() { return g_forksTotal; }
+int ProcTable::lastPid() { return g_lastPid; }
 
 }  // namespace kernel

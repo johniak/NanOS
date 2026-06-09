@@ -245,3 +245,34 @@ TEST_CASE("groupMembers: only live processes of the given group are listed") {
 	ProcTable::freeSlot(b);
 	CHECK(ProcTable::groupMembers(a->pid, pids, 8) == 1);   // only a remains
 }
+
+// ---- CPU accounting (Stage 5 hardening) ----------------------------------------------
+
+TEST_CASE("accountTick splits user/system/idle and bumps the current process") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	ProcTable::setCurrent(a);
+	ProcTable::accountTick(true, false);    // user tick for `a`
+	ProcTable::accountTick(true, false);
+	ProcTable::accountTick(false, false);   // system tick for `a`
+	ProcTable::accountTick(false, true);    // idle tick (not attributed to a process)
+	CHECK(a->utime == 2);
+	CHECK(a->stime == 1);
+	unsigned u, s, i;
+	ProcTable::cpuTimes(&u, &s, &i);
+	CHECK(u == 2);
+	CHECK(s == 1);
+	CHECK(i == 1);
+}
+
+TEST_CASE("forksTotal counts every alloc; lastPid tracks the newest") {
+	ProcTable::init();
+	CHECK(ProcTable::forksTotal() == 0);
+	Process* a = ProcTable::alloc(0);
+	Process* b = ProcTable::alloc(a->pid);
+	CHECK(ProcTable::forksTotal() == 2);
+	CHECK(ProcTable::lastPid() == b->pid);
+	ProcTable::freeSlot(b);
+	ProcTable::alloc(a->pid);               // a third process: forks keeps climbing
+	CHECK(ProcTable::forksTotal() == 3);
+}

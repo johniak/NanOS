@@ -12,6 +12,16 @@ static unsigned char g_kstacks[MAXTASKS][KSTACK_SIZE] __attribute__((aligned(16)
 static int g_ntasks = 0;
 static int g_cur = 0;
 static volatile unsigned g_ticks = 0;
+static unsigned g_ctxt = 0;   // total context switches performed (for /proc/stat ctxt)
+static unsigned g_load[3] = { 0, 0, 0 };   // 1/5/15-min load, fixed-point FSHIFT=11
+
+// Linux load-average decay (FSHIFT=11, FIXED_1=2048; the 5-second EXP_1/5/15 constants).
+void loadDecay(unsigned load[3], int runnable) {
+	static const unsigned EXP[3] = { 1884, 2014, 2037 };   // exp(-5s/{60,300,900}s) in FIXED_1
+	unsigned n = (unsigned) (runnable < 0 ? 0 : runnable) << 11;   // runnable * FIXED_1
+	for (int i = 0; i < 3; i++)
+		load[i] = (load[i] * EXP[i] + n * (2048u - EXP[i])) >> 11;
+}
 static volatile bool g_needResched = false;   // a tick asked for a reschedule (deferred)
 
 static bool runnable(TaskState s) { return s == TASK_READY || s == TASK_RUNNING; }
@@ -92,6 +102,7 @@ void Scheduler::schedule() {
 	int next = nextRunnable(st, g_ntasks, g_cur);
 	if (next == g_cur)
 		return;                                   // nothing else to run
+	g_ctxt++;                                     // an actual context switch (for /proc/stat)
 	int prev = g_cur;
 	g_cur = next;
 	if (g_tasks[prev].state == TASK_RUNNING)
@@ -109,14 +120,33 @@ void Scheduler::schedule() {
 // (à la Linux ret_from_intr): the kernel is never switched out at an arbitrary ring-0
 // instruction, only at well-defined points, which keeps interrupt + syscall frames from
 // interleaving on a task's kernel stack.
-void Scheduler::onTick() {
+void Scheduler::onTick(bool fromUser) {
 	g_ticks++;
+	// Attribute this tick to the running process (user vs system by the ring it interrupted),
+	// or to idle when the idle task (slot 0) was running.
+	ProcTable::accountTick(fromUser, g_cur == 0);
+	// Sample the load average every 5 s (the timer is 1000 Hz). Runnable = non-idle tasks
+	// in READY/RUNNING (slot 0 is idle).
+	if (g_ticks % 5000u == 0) {
+		int run = 0;
+		for (int i = 1; i < g_ntasks; i++)
+			if (runnable(g_tasks[i].state))
+				run++;
+		loadDecay(g_load, run);
+	}
 	for (int i = 0; i < g_ntasks; i++)
 		if (g_tasks[i].state == TASK_BLOCKED && g_tasks[i].wantTick) {
 			g_tasks[i].wantTick = false;
 			g_tasks[i].state = TASK_READY;
 		}
 	g_needResched = true;
+}
+
+unsigned Scheduler::contextSwitches() { return g_ctxt; }
+
+void Scheduler::loadAvg(unsigned out[3]) {
+	for (int i = 0; i < 3; i++)
+		out[i] = (g_load[i] * 100u) >> 11;   // fixed-point -> hundredths
 }
 
 // Called on the return path from an interrupt to ring 3 (see irq.S): the only place a

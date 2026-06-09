@@ -296,22 +296,24 @@ TEST_CASE("SynthFs /proc: absent pid and bad per-pid file error out") {
 
 // ---- Stage 5: Linux-format /proc renderers ------------------------------------------
 
-TEST_CASE("statString renders cpu jiffies + processes/procs_running") {
+TEST_CASE("statString renders real user/system/idle jiffies + ctxt/processes") {
 	char b[512];
-	int n = statString(b, sizeof b, 2500, 1000, 4, 1);   // 2500 ticks @1000Hz -> 250 jiffies
+	// user=1000 sys=500 idle=2500 ticks @1000Hz -> /10 = 100/50/250 jiffies.
+	int n = statString(b, sizeof b, 1000, 500, 2500, 1000, 9999, 42, 1, 3);
 	CHECK(n > 0);
-	CHECK(strstr(b, "cpu  0 0 0 250 ") != 0);            // aggregate line, idle = 250 jiffies
-	CHECK(strstr(b, "cpu0 0 0 0 250 ") != 0);
-	CHECK(strstr(b, "\nprocesses 4\n") != 0);
+	CHECK(strstr(b, "cpu  100 0 50 250 ") != 0);         // aggregate: user nice system idle
+	CHECK(strstr(b, "cpu0 100 0 50 250 ") != 0);
+	CHECK(strstr(b, "\nctxt 9999\n") != 0);
+	CHECK(strstr(b, "\nprocesses 42\n") != 0);           // total forks since boot
 	CHECK(strstr(b, "\nprocs_running 1\n") != 0);
 	CHECK(strstr(b, "\nprocs_blocked 3\n") != 0);
 }
 
-TEST_CASE("loadavgString renders load fields + runnable/total + last pid") {
+TEST_CASE("loadavgString renders fixed-point loads + runnable/total + last pid") {
 	char b[96];
-	int n = loadavgString(b, sizeof b, 2, 5, 7);
+	int n = loadavgString(b, sizeof b, 150, 75, 0, 2, 5, 7);   // 1.50 0.75 0.00
 	CHECK(n > 0);
-	CHECK(strcmp(b, "2.00 2.00 2.00 2/5 7\n") == 0);
+	CHECK(strcmp(b, "1.50 0.75 0.00 2/5 7\n") == 0);
 }
 
 TEST_CASE("cpuinfoString + versionString render identification text") {

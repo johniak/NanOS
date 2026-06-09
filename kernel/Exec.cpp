@@ -114,6 +114,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	p->space = newSpace;
 	initBrk(p);                              // fresh image -> empty heap
 	ProcTable::setCommand(p, argv, argc);
+	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
 	sigExecReset(p->sig);                    // caught handlers -> default across exec
 	kernelSyscalls()->resetForRun();
 

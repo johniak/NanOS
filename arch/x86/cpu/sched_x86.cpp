@@ -39,7 +39,11 @@ unsigned archTaskBootstrap(unsigned char* kstackTop, unsigned cr3) {
 	return (unsigned) sp;
 }
 
-static void timerTick(kernel::Registers*) { kernel::Scheduler::onTick(); }
+// The timer tick. The interrupted frame's CS tells us whether we preempted ring 3 (user) or
+// ring 0 (kernel), so the scheduler can split CPU time into user vs system.
+static void timerTick(kernel::Registers* r) {
+	kernel::Scheduler::onTick((r->cs & 3) == 3);
+}
 
 void archTimerInit(unsigned hz) {
 	unsigned divisor = 1193180u / hz;    // 1000 Hz -> 1193

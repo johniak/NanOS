@@ -27,3 +27,20 @@ TEST_CASE("nextRunnable: DONE tasks are skipped like blocked") {
 	TaskState mix[3] = { TASK_READY, TASK_READY, TASK_DONE };
 	CHECK(Scheduler::nextRunnable(mix, 3, 2) == 1);
 }
+
+TEST_CASE("loadDecay: blends toward the runnable count over successive 5s steps") {
+	unsigned load[3] = { 0, 0, 0 };
+	// With a steady runnable count, each EWMA rises toward it; the 1-min average rises
+	// fastest. After one step from 0 with runnable=2, load1 should be > load5 > load15.
+	loadDecay(load, 2);
+	CHECK(load[0] > load[1]);
+	CHECK(load[1] >= load[2]);
+	// Idle (runnable=0) decays everything back toward 0.
+	unsigned before = load[0];
+	loadDecay(load, 0);
+	CHECK(load[0] < before);
+	// Sustained load converges near runnable*FIXED_1 (2*2048=4096); never overshoots it.
+	for (int i = 0; i < 200; i++) loadDecay(load, 2);
+	CHECK(load[0] <= 2u * 2048u);
+	CHECK(load[0] > 2u * 2048u - 50u);   // within ~1% of the target
+}

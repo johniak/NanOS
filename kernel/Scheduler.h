@@ -16,6 +16,11 @@ namespace kernel {
 
 enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_STOPPED, TASK_DONE, TASK_ZOMBIE, TASK_FREE };
 
+// One load-average decay step (the Linux algorithm): every 5 s, blend the three
+// exponentially-weighted moving averages toward the current `runnable` count. Values are
+// fixed-point with FSHIFT=11 (FIXED_1 = 2048). Pure -> host-tested.
+void loadDecay(unsigned load[3], int runnable);
+
 struct Task {
 	unsigned kesp;          // saved kernel esp (the whole context lives on the stack)
 	unsigned esp0;          // top of this task's kernel stack (TSS.esp0 when it runs)
@@ -34,7 +39,9 @@ public:
 	                                               // (kesp fabricated by the caller, e.g. fork)
 	static void start();                           // switch into the first runnable task
 	static void schedule();                        // pick next runnable + context switch
-	static void onTick();                          // timer: ticks++, wake I/O waiters, flag resched
+	static void onTick(bool fromUser);             // timer: ticks++, CPU-account, wake, flag resched
+	static unsigned contextSwitches();             // total context switches (for /proc/stat ctxt)
+	static void loadAvg(unsigned out[3]);          // 1/5/15-min load in hundredths (/proc/loadavg)
 	static void preempt();                         // resched if flagged (called on ret-to-ring3)
 	static void yield() { schedule(); }
 	static void ioWait();                          // BLOCKED until the next tick (I/O retry loop)

@@ -70,39 +70,47 @@ static int putUint(char* b, int p, int cap, unsigned v) {
 	return p;
 }
 
-// /proc/stat: the kernel activity summary. The `cpu`/`cpu0` jiffies line (USER_HZ = 100, so
-// ticks/10) reports the time as idle since we do not split user/sys; ctxt is the tick count,
-// processes/procs_running come from the live table. Format matches Linux closely enough for
-// top/htop to parse.
-int statString(char* buf, int cap, unsigned uptimeTicks, unsigned hz,
-		unsigned procsTotal, unsigned procsRunning) {
-	unsigned jiffies = hz ? uptimeTicks / (hz / 100u ? hz / 100u : 1u) : uptimeTicks;
+// /proc/stat: the kernel activity summary. The `cpu`/`cpu0` line carries real user/system/idle
+// time, converted from the kernel's tick rate to USER_HZ=100 jiffies; ctxt is the real context-
+// switch count and `processes` the total forks since boot. Format matches Linux for top/htop.
+int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsigned idleTicks,
+		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked) {
+	unsigned div = (hz >= 100u) ? hz / 100u : 1u;   // ticks -> jiffies (USER_HZ 100)
+	unsigned u = userTicks / div, s = sysTicks / div, idle = idleTicks / div;
 	int p = 0;
 	for (int cpu = -1; cpu < 1; cpu++) {            // "cpu" aggregate, then "cpu0"
 		p = putStr(buf, p, cap, "cpu");
 		if (cpu >= 0) p = putUint(buf, p, cap, (unsigned) cpu);
 		else          p = putStr(buf, p, cap, " ");  // aggregate line has a double space
 		// user nice system idle iowait irq softirq steal guest guest_nice
-		p = putStr(buf, p, cap, " 0 0 0 ");
-		p = putUint(buf, p, cap, jiffies);
+		p = putStr(buf, p, cap, " "); p = putUint(buf, p, cap, u);
+		p = putStr(buf, p, cap, " 0 ");               // nice
+		p = putUint(buf, p, cap, s);
+		p = putStr(buf, p, cap, " "); p = putUint(buf, p, cap, idle);
 		p = putStr(buf, p, cap, " 0 0 0 0 0 0\n");
 	}
-	p = putStr(buf, p, cap, "ctxt ");          p = putUint(buf, p, cap, uptimeTicks);     p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "ctxt ");          p = putUint(buf, p, cap, ctxt);     p = putStr(buf, p, cap, "\n");
 	p = putStr(buf, p, cap, "btime 0\n");
-	p = putStr(buf, p, cap, "processes ");     p = putUint(buf, p, cap, procsTotal);      p = putStr(buf, p, cap, "\n");
-	p = putStr(buf, p, cap, "procs_running "); p = putUint(buf, p, cap, procsRunning);    p = putStr(buf, p, cap, "\n");
-	p = putStr(buf, p, cap, "procs_blocked "); p = putUint(buf, p, cap, procsTotal > procsRunning ? procsTotal - procsRunning : 0); p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "processes ");     p = putUint(buf, p, cap, forks);    p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "procs_running "); p = putUint(buf, p, cap, running);  p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "procs_blocked "); p = putUint(buf, p, cap, blocked);  p = putStr(buf, p, cap, "\n");
 	buf[p] = 0;
 	return p;
 }
 
-// /proc/loadavg: 1/5/15-minute load averages, runnable/total, last pid. We do not keep a
-// decaying average, so report the instantaneous runnable count as the integer part.
-int loadavgString(char* buf, int cap, unsigned runnable, unsigned total, int lastPid) {
+// /proc/loadavg: the 1/5/15-minute load averages (fixed-point hundredths, computed by the
+// scheduler), runnable/total, and the last pid created.
+int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned load15,
+		unsigned runnable, unsigned total, int lastPid) {
+	unsigned loads[3] = { load1, load5, load15 };
 	int p = 0;
 	for (int i = 0; i < 3; i++) {
-		p = putUint(buf, p, cap, runnable);
-		p = putStr(buf, p, cap, ".00 ");
+		p = putUint(buf, p, cap, loads[i] / 100u);       // integer part
+		p = putStr(buf, p, cap, ".");
+		unsigned frac = loads[i] % 100u;                 // two-digit fraction
+		if (frac < 10) p = putStr(buf, p, cap, "0");
+		p = putUint(buf, p, cap, frac);
+		p = putStr(buf, p, cap, " ");
 	}
 	p = putUint(buf, p, cap, runnable);
 	p = putStr(buf, p, cap, "/");
@@ -251,34 +259,39 @@ static int serveSnap(unsigned off, void* buf, unsigned n, const char* s, int len
 }
 
 // Live process counts for /proc/stat and /proc/loadavg.
-static void procCounts(unsigned* total, unsigned* running, int* lastPid) {
+static void procCounts(unsigned* total, unsigned* running, unsigned* blocked) {
 	ProcInfo arr[16];
 	int t = ProcTable::snapshot(arr, 16);
-	int r = 0, mx = 0;
+	int r = 0, b = 0;
 	for (int i = 0; i < t; i++) {
 		if (arr[i].state == 'R')
 			r++;
-		if (arr[i].pid > mx)
-			mx = arr[i].pid;
+		else if (arr[i].state == 'S')
+			b++;
 	}
 	*total = (unsigned) t;
 	*running = (unsigned) r;
-	*lastPid = mx;
+	*blocked = (unsigned) b;
 }
 
 static int gen_stat(unsigned off, void* buf, unsigned n) {
 	static char s[512];
-	unsigned total, running; int last;
-	procCounts(&total, &running, &last);
-	int len = statString(s, sizeof s, kernel::Scheduler::ticks(), 1000, total, running);
+	unsigned total, running, blocked;
+	procCounts(&total, &running, &blocked);
+	unsigned u, sy, id;
+	ProcTable::cpuTimes(&u, &sy, &id);
+	int len = statString(s, sizeof s, u, sy, id, 1000, kernel::Scheduler::contextSwitches(),
+			ProcTable::forksTotal(), running, blocked);
 	return serveSnap(off, buf, n, s, len);
 }
 
 static int gen_loadavg(unsigned off, void* buf, unsigned n) {
 	static char s[96];
-	unsigned total, running; int last;
-	procCounts(&total, &running, &last);
-	int len = loadavgString(s, sizeof s, running, total, last);
+	unsigned total, running, blocked;
+	procCounts(&total, &running, &blocked);
+	unsigned ld[3];
+	kernel::Scheduler::loadAvg(ld);
+	int len = loadavgString(s, sizeof s, ld[0], ld[1], ld[2], running, total, ProcTable::lastPid());
 	return serveSnap(off, buf, n, s, len);
 }
 
@@ -414,11 +427,12 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p = appendStr(buf, p, cap, pi.cmdline);
 		p = appendStr(buf, p, cap, "\n");
 	} else if (streq(file, "stat")) {
-		// Linux /proc/<pid>/stat: pid (comm) state ppid pgrp session ... — we emit the
-		// leading fields top/ps/htop parse (the rest, mostly counters we don't track, are 0).
-		p += utoa((unsigned) pi.pid, buf + p);
+		// Linux /proc/<pid>/stat fields. We fill the ones top/htop/ps read (state, ppid,
+		// pgrp, session, utime, stime, num_threads, starttime); fields we do not track
+		// (page-fault counters, vsize, rss, ...) are 0.
+		p += utoa((unsigned) pi.pid, buf + p);                  // 1: pid
 		p = appendStr(buf, p, cap, " (");
-		p = appendStr(buf, p, cap, pi.comm);
+		p = appendStr(buf, p, cap, pi.comm);                    // 2: comm
 		p = appendStr(buf, p, cap, ") ");
 		p = appendStr(buf, p, cap, st);                         // 3: state
 		p = appendStr(buf, p, cap, " ");
@@ -427,8 +441,13 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p += utoa((unsigned) pi.pgid, buf + p);                 // 5: pgrp
 		p = appendStr(buf, p, cap, " ");
 		p += utoa((unsigned) pi.sid, buf + p);                  // 6: session
-		// 7: tty_nr, 8: tpgid, then a run of zeroed counters (flags..nice), enough for parsers.
-		p = appendStr(buf, p, cap, " 0 -1 0 0 0 0 0 0 0 0 0 0 0\n");
+		p = appendStr(buf, p, cap, " 0 -1 0 0 0 0 0 ");         // 7-13: tty_nr tpgid flags faults
+		p += utoa(pi.utime, buf + p);                           // 14: utime
+		p = appendStr(buf, p, cap, " ");
+		p += utoa(pi.stime, buf + p);                           // 15: stime
+		p = appendStr(buf, p, cap, " 0 0 20 0 1 0 ");           // 16-21: cutime cstime prio nice threads itreal
+		p += utoa(pi.starttime, buf + p);                       // 22: starttime
+		p = appendStr(buf, p, cap, " 0 0\n");                   // 23-24: vsize rss
 	} else if (streq(file, "status")) {
 		p = appendStr(buf, p, cap, "Name:\t");
 		p = appendStr(buf, p, cap, pi.comm);
