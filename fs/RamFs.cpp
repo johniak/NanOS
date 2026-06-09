@@ -44,6 +44,21 @@ RamNode* RamFs::mk(const char* name, int len, bool isDir) {
 	return n;
 }
 
+// Append a child to a directory, geometrically growing the child array (tmpfs has no
+// per-directory entry limit, so neither do we — no silent -ENOSPC at a magic count).
+bool RamFs::addChild(RamNode* d, RamNode* c) {
+	if (d->nchild >= d->childCap) {
+		int cap = d->childCap ? d->childCap * 2 : 8;
+		RamNode** p = (RamNode**) realloc(d->child, (unsigned) cap * sizeof(RamNode*));
+		if (!p)
+			return false;
+		d->child = p;
+		d->childCap = cap;
+	}
+	d->child[d->nchild++] = c;
+	return true;
+}
+
 RamNode* RamFs::dirChild(RamNode* d, const char* name, int len) {
 	if (!d->isDir)
 		return 0;
@@ -166,9 +181,11 @@ int RamFs::create(String path, unsigned /*mode*/) {
 		existing->size = 0;                  // make-or-truncate
 		return 0;
 	}
-	if (parent->nchild >= 32)
+	RamNode* node = mk(leaf, len, false);
+	if (!node || !addChild(parent, node)) {
+		if (node) free(node);
 		return E_NOSPC;
-	parent->child[parent->nchild++] = mk(leaf, len, false);
+	}
 	return 0;
 }
 
@@ -180,9 +197,11 @@ int RamFs::mkdir(String path, unsigned /*mode*/) {
 		return E_NOENT;
 	if (dirChild(parent, leaf, len))
 		return E_EXIST;
-	if (parent->nchild >= 32)
+	RamNode* node = mk(leaf, len, true);
+	if (!node || !addChild(parent, node)) {
+		if (node) free(node);
 		return E_NOSPC;
-	parent->child[parent->nchild++] = mk(leaf, len, true);
+	}
 	return 0;
 }
 

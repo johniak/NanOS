@@ -15,8 +15,9 @@ namespace kernel {
 struct RamNode {
 	char name[64];
 	bool isDir;
-	RamNode* child[32];        // directory children
-	int nchild;
+	RamNode** child;           // directory children (malloc/realloc'd, grows on demand)
+	int nchild;                // number of children
+	int childCap;              // allocated slots in child[]
 	unsigned char* data;       // file contents (malloc/realloc'd)
 	unsigned size;             // bytes of valid data
 	unsigned cap;              // allocated capacity
@@ -27,6 +28,7 @@ class RamFs: public FileSystem {
 	RamNode* root;
 
 	RamNode* mk(const char* name, int len, bool isDir);
+	bool addChild(RamNode* d, RamNode* c);   // append a child, growing child[] as needed
 	RamNode* dirChild(RamNode* d, const char* name, int len);
 	RamNode* walk(const char* path);
 	// Resolve everything but the last component: returns the parent directory and sets

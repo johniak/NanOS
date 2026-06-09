@@ -108,6 +108,29 @@ TEST_CASE("RamFs type-mismatch and large-growth paths") {
 	CHECK(fs.readdir(String("/none"), e) == -2);
 }
 
+TEST_CASE("RamFs grows directory children past the old 32 cap — no silent -ENOSPC") {
+	RamFs fs;
+	CHECK(fs.mount() == 0);
+	const int N = 100;                       // well past the former fixed child[32]
+	for (int i = 0; i < N; i++) {
+		char p[32];                          // build "/f<i>" without stdio
+		p[0] = '/'; p[1] = 'f';
+		int k = 2, v = i, d = 0;
+		char tmp[8];
+		do { tmp[d++] = (char) ('0' + v % 10); v /= 10; } while (v);
+		while (d) p[k++] = tmp[--d];
+		p[k] = 0;
+		CHECK(fs.create(String(p), 0644) == 0);   // every create must succeed
+	}
+	List<DirEntry> ents;
+	CHECK(fs.readdir(String("/"), ents) == 0);
+	int files = 0;
+	for (int i = 0; i < ents.getCount(); i++)
+		if (ents[i].name[0] == 'f')
+			files++;
+	CHECK(files == N);                       // readdir enumerates all of them
+}
+
 TEST_CASE("RamFs unlink removes a file; dirs and missing names are rejected") {
 	RamFs fs;
 	fs.create(String("/del.txt"), 0644);
