@@ -167,7 +167,9 @@ SynthNode* SynthFs::mk(SynthKind kind, const char* name, unsigned perms) {
 		n->name[i] = name[i];
 	n->name[i] = 0;
 	n->kind = kind;
+	n->child = 0;
 	n->nchild = 0;
+	n->childCap = 0;
 	n->data = 0;
 	n->len = 0;
 	n->gen = 0;
@@ -176,10 +178,24 @@ SynthNode* SynthFs::mk(SynthKind kind, const char* name, unsigned perms) {
 	return n;
 }
 
+// Append a child, geometrically growing the child array. The synthetic tree has no fixed
+// fan-out limit, so neither do we — nodes are never silently dropped at a magic count.
+void SynthFs::addChild(SynthNode* parent, SynthNode* n) {
+	if (parent->nchild >= parent->childCap) {
+		int cap = parent->childCap ? parent->childCap * 2 : 8;
+		SynthNode** p = (SynthNode**) realloc(parent->child,
+				(unsigned) cap * sizeof(SynthNode*));
+		if (!p)
+			return;
+		parent->child = p;
+		parent->childCap = cap;
+	}
+	parent->child[parent->nchild++] = n;
+}
+
 SynthNode* SynthFs::addDir(SynthNode* parent, const char* name) {
 	SynthNode* n = mk(SK_DIR, name, 0555);
-	if (parent->nchild < 32)
-		parent->child[parent->nchild++] = n;
+	addChild(parent, n);
 	return n;
 }
 
@@ -187,22 +203,19 @@ void SynthFs::addStatic(SynthNode* parent, const char* name, const char* data, u
 	SynthNode* n = mk(SK_STATIC, name, 0444);
 	n->data = data;
 	n->len = len;
-	if (parent->nchild < 32)
-		parent->child[parent->nchild++] = n;
+	addChild(parent, n);
 }
 
 void SynthFs::addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms) {
 	SynthNode* n = mk(SK_GEN, name, perms);
 	n->gen = g;
-	if (parent->nchild < 32)
-		parent->child[parent->nchild++] = n;
+	addChild(parent, n);
 }
 
 void SynthFs::addChar(SynthNode* parent, const char* name, CharDevice* dev, unsigned perms) {
 	SynthNode* n = mk(SK_CHARDEV, name, perms);
 	n->dev = dev;
-	if (parent->nchild < 32)
-		parent->child[parent->nchild++] = n;
+	addChild(parent, n);
 }
 
 void SynthFs::addVolume(const char* name) {

@@ -62,6 +62,23 @@ TEST_CASE("SynthFs addVolume shows up under /disks") {
 	CHECK(listed(e1, "main"));
 }
 
+TEST_CASE("SynthFs grows a directory past the old 32-child cap — nothing dropped") {
+	SynthFs fs;
+	const int N = 80;                        // well past the former fixed child[32]
+	for (int i = 0; i < N; i++) {
+		char name[16];
+		snprintf(name, sizeof name, "v%d", i);
+		fs.addVolume(name);                  // each adds a child under /disks
+	}
+	List<DirEntry> e;
+	REQUIRE(fs.readdir("/disks", e) == 0);
+	for (int i = 0; i < N; i++) {
+		char name[16];
+		snprintf(name, sizeof name, "v%d", i);
+		CHECK(listed(e, name));              // every volume must be visible
+	}
+}
+
 TEST_CASE("SynthFs /dev generators: null/zero/random") {
 	SynthFs fs;
 	List<DirEntry> e;

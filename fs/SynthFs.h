@@ -55,8 +55,9 @@ enum SynthKind { SK_DIR, SK_STATIC, SK_GEN, SK_CHARDEV };
 struct SynthNode {
 	char name[64];
 	SynthKind kind;
-	SynthNode* child[32];   // SK_DIR
+	SynthNode** child;      // SK_DIR children (grows on demand)
 	int nchild;
+	int childCap;           // allocated slots in child[]
 	const char* data;       // SK_STATIC
 	unsigned len;
 	SynthGen gen;           // SK_GEN
@@ -71,6 +72,7 @@ class SynthFs: public FileSystem {
 	SynthNode* m_proc;
 
 	SynthNode* mk(SynthKind kind, const char* name, unsigned perms);
+	void addChild(SynthNode* parent, SynthNode* n);   // append, growing child[] as needed
 	SynthNode* dirChild(SynthNode* d, const char* name, int len);
 	SynthNode* walk(const char* path);
 
