@@ -12,6 +12,7 @@
 #include "SyscallNr.h"   // SYS_* numbers (shared with userland, plain C)
 #include "Pipe.h"
 #include "CharDevice.h"  // POLLIN/POLLOUT/... (single source) + device interface
+#include "Termios.h"     // console terminal settings carried by TCGETS/TCSETS
 
 namespace kernel {
 
@@ -76,6 +77,7 @@ class Syscalls {
 	Fd fds[MAXFD];
 	Vfs* vfs;
 	ConsoleWriteFn consoleWrite;
+	Termios consoleTermios;   // real terminal settings for the console fds (0/1/2)
 	bool exited;
 	int exitCode;
 
@@ -100,6 +102,11 @@ public:
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL (O_NONBLOCK)
+	// True when the console termios has canonical mode (ICANON) cleared, i.e. the line
+	// discipline should be raw. The dispatch reads this after a console TCSETS to drive
+	// arch::inputSetRaw, so tcsetattr(raw) actually switches the input mode.
+	bool consoleRaw() { return (consoleTermios.c_lflag & TL_ICANON) == 0; }
+	bool isConsoleFd(int fd) { return valid(fd) && fds[fd].isConsole; }
 	// If `fd` refers to a tty (its device answers TIOCGPGRP), return that tty's foreground
 	// process group; otherwise -1. The dispatch uses this to raise SIGTTIN on a background
 	// process reading the controlling terminal.

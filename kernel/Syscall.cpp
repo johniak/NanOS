@@ -6,11 +6,31 @@
 
 namespace kernel {
 
+// Canonical "cooked" terminal defaults, matching what a Linux tty starts with: line-based
+// input (ICANON), echo on, signal keys on, CR->NL on input, NL->CRLF on output, and the
+// standard control characters. tcgetattr() reads these; tcsetattr() replaces them.
+static void initCookedTermios(Termios& t) {
+	memset(&t, 0, sizeof(t));
+	t.c_iflag = TI_ICRNL | TI_IXON;
+	t.c_oflag = TO_OPOST | TO_ONLCR;
+	t.c_cflag = 0;
+	t.c_lflag = TL_ISIG | TL_ICANON | TL_ECHO | TL_ECHOE | TL_ECHOK;
+	t.c_cc[VINTR] = 3;      // ^C
+	t.c_cc[VQUIT] = 28;     // ^\ .
+	t.c_cc[VERASE] = 0x7f;  // DEL
+	t.c_cc[VKILL] = 21;     // ^U
+	t.c_cc[VEOF] = 4;       // ^D
+	t.c_cc[VSUSP] = 26;     // ^Z
+	t.c_cc[VMIN] = 1;
+	t.c_cc[VTIME] = 0;
+}
+
 Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	this->vfs = vfs;
 	this->consoleWrite = cw;
 	this->exited = false;
 	this->exitCode = 0;
+	initCookedTermios(consoleTermios);
 	for (int i = 0; i < MAXFD; i++) {
 		fds[i].used = false;
 		fds[i].isConsole = false;
@@ -33,6 +53,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 Syscalls::Syscalls(const Syscalls& o) {
 	vfs = o.vfs;
 	consoleWrite = o.consoleWrite;
+	consoleTermios = o.consoleTermios;   // inherit the parent's terminal settings
 	exited = o.exited;
 	exitCode = o.exitCode;
 	for (int i = 0; i < MAXFD; i++) {
@@ -370,17 +391,20 @@ int Syscalls::ioctl(int fd, unsigned cmd, void* arg) {
 	if (!valid(fd))
 		return -EBADF;
 	if (fds[fd].isConsole) {
-		// The console IS a terminal, so answer the termios queries that make isatty() /
-		// tcgetattr() recognize it. We keep no per-console termios state (cooked vs raw is
-		// driven by SYS_termmode), so TCGETS returns a zeroed struct and TCSETS is a no-op.
-		// Everything else (TIOCGPGRP, winsize) stays unsupported on the bare console.
+		// The console IS a terminal. We keep a real Termios for it: TCGETS returns the
+		// current settings and TCSETS replaces them (so tcgetattr/tcsetattr round-trip and
+		// a program can actually flip canonical/echo). The dispatch reads consoleRaw()
+		// after a TCSETS to drive the line discipline. Winsize/pgrp stay unsupported here.
 		switch (cmd) {
 		case IOCTL_TCGETS:
-			if (arg) memset(arg, 0, sizeof(Termios));
+			if (!arg) return -EINVAL;
+			*(Termios*) arg = consoleTermios;
 			return 0;
 		case IOCTL_TCSETS:
 		case IOCTL_TCSETSW:
 		case IOCTL_TCSETSF:
+			if (!arg) return -EINVAL;
+			consoleTermios = *(const Termios*) arg;
 			return 0;
 		default:
 			return -EINVAL;

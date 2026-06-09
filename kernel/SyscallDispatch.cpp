@@ -219,6 +219,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		break;
 	case SYS_ioctl:
 		ret = g_sys->ioctl((int) a0, a1, (void*) a2);
+		// A successful TCSETS on the console must take effect: drive the line discipline
+		// from the new termios (canonical -> cooked, ICANON cleared -> raw), so tcsetattr()
+		// actually switches input modes (the same mechanism SYS_termmode uses directly).
+		if (ret == 0 && g_sys->isConsoleFd((int) a0) &&
+				(a1 == IOCTL_TCSETS || a1 == IOCTL_TCSETSW || a1 == IOCTL_TCSETSF))
+			arch::inputSetRaw(g_sys->consoleRaw() ? 1 : 0);
 		break;
 	case SYS_fcntl:
 		ret = g_sys->fcntl((int) a0, (int) a1, (int) a2);

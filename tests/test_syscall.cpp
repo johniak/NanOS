@@ -95,6 +95,28 @@ TEST_CASE("console fd answers the termios ioctls so isatty() recognizes it") {
 	CHECK(sc.ioctl(fd, 0x5401 /* TCGETS */, termios_buf) < 0);
 }
 
+TEST_CASE("console termios round-trips and TCSETS drives canonical/raw") {
+	Syscalls sc(mountFixture(), sink);
+	// TCGETS returns the real cooked defaults (not a zeroed struct): ICANON + ECHO set.
+	Termios t;
+	REQUIRE(sc.ioctl(0, IOCTL_TCGETS, &t) == 0);
+	CHECK((t.c_lflag & TL_ICANON) != 0);
+	CHECK((t.c_lflag & TL_ECHO) != 0);
+	CHECK(t.c_cc[VINTR] == 3);          // ^C is the interrupt char
+	CHECK(sc.consoleRaw() == false);    // canonical -> cooked
+
+	// Clear ICANON+ECHO and write it back: the change must stick and flip consoleRaw().
+	t.c_lflag &= ~(TL_ICANON | TL_ECHO);
+	REQUIRE(sc.ioctl(0, IOCTL_TCSETS, &t) == 0);
+	CHECK(sc.consoleRaw() == true);
+	Termios back;
+	REQUIRE(sc.ioctl(1, IOCTL_TCGETS, &back) == 0);   // any console fd sees the same state
+	CHECK((back.c_lflag & TL_ICANON) == 0);
+
+	CHECK(sc.isConsoleFd(0));
+	CHECK(!sc.isConsoleFd(99));
+}
+
 TEST_CASE("sys_write to a read-only file is -EROFS") {
 	Syscalls sc(mountFixture(), sink);
 	int fd = sc.open("/hello.txt", 0);
