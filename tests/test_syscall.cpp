@@ -173,6 +173,49 @@ TEST_CASE("sys_getdents64 lists a directory") {
 	CHECK(found);
 }
 
+TEST_CASE("sys_getdents64 has a read cursor: small buffers yield every entry, then EOF") {
+	Syscalls sc(mountFixture(), sink);
+	// Count entries in one big-buffer read (fits the whole directory).
+	int big = sc.open("/boot/grub", 0);
+	char bigbuf[4096];
+	int bn = sc.getdents64(big, bigbuf, sizeof(bigbuf));
+	REQUIRE(bn > 0);
+	int total = 0;
+	for (int p = 0; p < bn;)
+		{ total++; p += *(unsigned short*) (bigbuf + p + 16); }
+	REQUIRE(total >= 2);
+	// A second call on the same fd must now report EOF (cursor consumed the directory).
+	CHECK(sc.getdents64(big, bigbuf, sizeof(bigbuf)) == 0);
+
+	// Now walk the SAME directory through a buffer that holds ~one record per call, looping
+	// until EOF. We must see exactly `total` entries — nothing silently truncated.
+	int fd = sc.open("/boot/grub", 0);
+	char small[64];
+	int seen = 0;
+	bool foundCfg = false;
+	for (;;) {
+		int n = sc.getdents64(fd, small, sizeof(small));
+		REQUIRE(n >= 0);
+		if (n == 0)
+			break;                         // true EOF
+		for (int p = 0; p < n;) {
+			seen++;
+			if (strncmp(small + p + 19, "grub.cfg", 9) == 0)
+				foundCfg = true;
+			p += *(unsigned short*) (small + p + 16);
+		}
+	}
+	CHECK(seen == total);
+	CHECK(foundCfg);
+}
+
+TEST_CASE("sys_getdents64 returns -EINVAL when the buffer can't hold one record") {
+	Syscalls sc(mountFixture(), sink);
+	int fd = sc.open("/boot/grub", 0);
+	char tiny[8];
+	CHECK(sc.getdents64(fd, tiny, sizeof(tiny)) == -22);   // -EINVAL, not a 0/EOF lie
+}
+
 TEST_CASE("sys_lseek SEEK_CUR/SEEK_END and bad whence/offset") {
 	Syscalls sc(mountFixture(), sink);
 	int fd = sc.open("/hello.txt", 0);          // size 18

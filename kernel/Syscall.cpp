@@ -329,6 +329,13 @@ int Syscalls::fstat(int fd, LinuxStat* out) {
 
 // Linux dirent64: u64 d_ino; s64 d_off; u16 d_reclen; u8 d_type; char d_name[];
 // The name starts at byte 19; reclen is 8-byte aligned.
+//
+// getdents64 is a CURSOR: each call returns the next batch of entries that fit in `buf` and
+// returns 0 only at true end-of-directory. We reuse the fd's `offset` as the cursor (the
+// number of entries already handed out), so a caller looping until 0 sees every entry even
+// when the buffer holds only one record at a time. If the buffer can't hold even one record,
+// we return -EINVAL (as Linux does) rather than 0 — a 0 there would be a silent "no more
+// entries" lie that drops the rest of the directory.
 int Syscalls::getdents64(int fd, void* buf, unsigned n) {
 	if (!valid(fd) || fds[fd].isConsole)
 		return -EBADF;
@@ -337,12 +344,16 @@ int Syscalls::getdents64(int fd, void* buf, unsigned n) {
 		return -EBADF;
 	char* out = (char*) buf;
 	unsigned pos = 0;
-	for (int i = 0; i < entries.getCount(); i++) {
+	int i = (int) fds[fd].offset;          // resume where the previous call stopped
+	for (; i < entries.getCount(); i++) {
 		const char* name = entries[i].name;
 		unsigned namelen = (unsigned) strlen(name);
 		unsigned reclen = (19 + namelen + 1 + 7) & ~7u;
-		if (pos + reclen > n)
-			break;
+		if (pos + reclen > n) {
+			if (pos == 0)
+				return -EINVAL;            // buffer too small for a single record
+			break;                         // no room for this one; resume it next call
+		}
 		char* rec = out + pos;
 		memset(rec, 0, reclen);
 		*(unsigned*) (rec + 0) = (unsigned) (i + 1);          // d_ino (low 32)
@@ -352,6 +363,7 @@ int Syscalls::getdents64(int fd, void* buf, unsigned n) {
 			rec[19 + k] = name[k];
 		pos += reclen;
 	}
+	fds[fd].offset = (unsigned) i;         // advance cursor; next call resumes (or hits EOF)
 	return (int) pos;
 }
 

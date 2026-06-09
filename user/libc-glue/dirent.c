@@ -5,10 +5,9 @@
  * byte 16, d_type (u8) at byte 18, the NUL-terminated name at byte 19, each record
  * 8-byte aligned (see kernel/Syscall.cpp). We parse those into our struct dirent.
  *
- * NOTE: the kernel's getdents64 has no read cursor — it returns the WHOLE directory
- * (truncated to the buffer) on every call and never signals EOF. So we read it ONCE
- * in opendir and then just walk the buffer; calling it again would loop forever.
- * Directories larger than DIRBUFSZ are therefore truncated (fine for NanOS today).
+ * The kernel's getdents64 is a cursor: each call fills the buffer with the next batch of
+ * records and returns 0 only at true end-of-directory (see kernel/Syscall.cpp). So we refill
+ * on demand and loop until EOF — directories larger than DIRBUFSZ are NOT truncated.
  */
 #include <dirent.h>
 #include <stdlib.h>
@@ -43,14 +42,18 @@ DIR* opendir(const char* path) {
 	}
 	d->fd = fd;
 	d->bufpos = 0;
-	int n = sys3(SYS_getdents64, fd, (int) d->buf, DIRBUFSZ);   // read all entries once
-	d->buflen = n > 0 ? n : 0;
+	d->buflen = 0;                      // first readdir() pulls the first batch
 	return d;
 }
 
 struct dirent* readdir(DIR* d) {
-	if (d->bufpos >= d->buflen)
-		return 0;                       // exhausted: EOF (no refill — see note above)
+	if (d->bufpos >= d->buflen) {
+		int n = sys3(SYS_getdents64, d->fd, (int) d->buf, DIRBUFSZ);   // next batch
+		if (n <= 0)
+			return 0;                   // 0 = EOF, <0 = error
+		d->buflen = n;
+		d->bufpos = 0;
+	}
 	char* rec = d->buf + d->bufpos;
 	unsigned short reclen = *(unsigned short*) (rec + 16);
 	d->de.d_ino = *(unsigned*) (rec + 0);
