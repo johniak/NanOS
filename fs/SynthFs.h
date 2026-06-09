@@ -29,6 +29,18 @@ int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz);
 int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 		unsigned heapTotalKb, unsigned heapFreeKb);
 
+// More Linux-format /proc renderers (pure -> host-testable). The /proc generators feed them
+// live data (ticks, process counts) via the sys*/Scheduler accessors.
+//   /proc/stat    — the `cpu` jiffies line + ctxt/btime/processes/procs_running.
+//   /proc/loadavg — 1/5/15-min load (we report runnable as a coarse 0.NN), runnable/total, last pid.
+//   /proc/cpuinfo — one processor entry (model + flags).
+//   /proc/version — kernel identification string.
+int statString(char* buf, int cap, unsigned uptimeTicks, unsigned hz,
+		unsigned procsTotal, unsigned procsRunning);
+int loadavgString(char* buf, int cap, unsigned runnable, unsigned total, int lastPid);
+int cpuinfoString(char* buf, int cap);
+int versionString(char* buf, int cap);
+
 // Live system memory figures in kB. Implemented in the kernel (Kernel.cpp) over the
 // frame allocator + byte heap + boot memory map; stubbed in the host test harness.
 unsigned sysMemTotalKb();

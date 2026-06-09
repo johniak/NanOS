@@ -127,6 +127,8 @@ static void copyName(char* dst, int cap, const char* src) {
 static void fillInfo(const Process* p, ProcInfo* out) {
 	out->pid = p->pid;
 	out->ppid = p->parent;
+	out->pgid = p->pgid;
+	out->sid = p->sid;
 	out->state = stateChar(p);
 	out->kthread = p->kthread;
 	copyName(out->comm, sizeof out->comm, p->comm);

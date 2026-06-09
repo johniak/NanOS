@@ -58,6 +58,85 @@ int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 	return p;
 }
 
+// Small append helpers for the /proc renderers below (freestanding: no snprintf).
+static int putStr(char* b, int p, int cap, const char* s) {
+	for (int i = 0; s[i] && p < cap - 1; i++) b[p++] = s[i];
+	return p;
+}
+static int putUint(char* b, int p, int cap, unsigned v) {
+	char num[12];
+	int n = utoa(v, num);
+	for (int i = 0; i < n && p < cap - 1; i++) b[p++] = num[i];
+	return p;
+}
+
+// /proc/stat: the kernel activity summary. The `cpu`/`cpu0` jiffies line (USER_HZ = 100, so
+// ticks/10) reports the time as idle since we do not split user/sys; ctxt is the tick count,
+// processes/procs_running come from the live table. Format matches Linux closely enough for
+// top/htop to parse.
+int statString(char* buf, int cap, unsigned uptimeTicks, unsigned hz,
+		unsigned procsTotal, unsigned procsRunning) {
+	unsigned jiffies = hz ? uptimeTicks / (hz / 100u ? hz / 100u : 1u) : uptimeTicks;
+	int p = 0;
+	for (int cpu = -1; cpu < 1; cpu++) {            // "cpu" aggregate, then "cpu0"
+		p = putStr(buf, p, cap, "cpu");
+		if (cpu >= 0) p = putUint(buf, p, cap, (unsigned) cpu);
+		else          p = putStr(buf, p, cap, " ");  // aggregate line has a double space
+		// user nice system idle iowait irq softirq steal guest guest_nice
+		p = putStr(buf, p, cap, " 0 0 0 ");
+		p = putUint(buf, p, cap, jiffies);
+		p = putStr(buf, p, cap, " 0 0 0 0 0 0\n");
+	}
+	p = putStr(buf, p, cap, "ctxt ");          p = putUint(buf, p, cap, uptimeTicks);     p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "btime 0\n");
+	p = putStr(buf, p, cap, "processes ");     p = putUint(buf, p, cap, procsTotal);      p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "procs_running "); p = putUint(buf, p, cap, procsRunning);    p = putStr(buf, p, cap, "\n");
+	p = putStr(buf, p, cap, "procs_blocked "); p = putUint(buf, p, cap, procsTotal > procsRunning ? procsTotal - procsRunning : 0); p = putStr(buf, p, cap, "\n");
+	buf[p] = 0;
+	return p;
+}
+
+// /proc/loadavg: 1/5/15-minute load averages, runnable/total, last pid. We do not keep a
+// decaying average, so report the instantaneous runnable count as the integer part.
+int loadavgString(char* buf, int cap, unsigned runnable, unsigned total, int lastPid) {
+	int p = 0;
+	for (int i = 0; i < 3; i++) {
+		p = putUint(buf, p, cap, runnable);
+		p = putStr(buf, p, cap, ".00 ");
+	}
+	p = putUint(buf, p, cap, runnable);
+	p = putStr(buf, p, cap, "/");
+	p = putUint(buf, p, cap, total);
+	p = putStr(buf, p, cap, " ");
+	p = putUint(buf, p, cap, (unsigned) (lastPid < 0 ? 0 : lastPid));
+	p = putStr(buf, p, cap, "\n");
+	buf[p] = 0;
+	return p;
+}
+
+// /proc/cpuinfo: one processor entry. Mostly static (we are a single-core i686 under QEMU).
+int cpuinfoString(char* buf, int cap) {
+	int p = 0;
+	p = putStr(buf, p, cap,
+		"processor\t: 0\n"
+		"vendor_id\t: NanOS\n"
+		"cpu family\t: 6\n"
+		"model\t\t: 0\n"
+		"model name\t: NanOS i686 (QEMU)\n"
+		"cpu MHz\t\t: 0.000\n"
+		"flags\t\t: fpu tsc\n"
+		"\n");
+	buf[p] = 0;
+	return p;
+}
+
+// /proc/version: the kernel identification string.
+int versionString(char* buf, int cap) {
+	int p = putStr(buf, 0, cap, "NanOS version 0.1 (i686) #1 SMP\n");
+	buf[p] = 0;
+	return p;
+}
+
 // Length-bounded name compare (avoids strncmp, absent from the freestanding libc):
 // node name `a` (NUL-terminated) equals the `blen`-char component `b`.
 static bool nameEq(const char* a, const char* b, int blen) {
@@ -162,6 +241,59 @@ static int gen_meminfo(unsigned off, void* buf, unsigned n) {
 	return (int) cnt;
 }
 
+// Serve a rendered snapshot buffer by offset (so `cat` reads it once and stops at EOF).
+static int serveSnap(unsigned off, void* buf, unsigned n, const char* s, int len) {
+	if (off >= (unsigned) len)
+		return 0;
+	unsigned cnt = n < (unsigned) (len - off) ? n : (unsigned) (len - off);
+	memcpy(buf, s + off, cnt);
+	return (int) cnt;
+}
+
+// Live process counts for /proc/stat and /proc/loadavg.
+static void procCounts(unsigned* total, unsigned* running, int* lastPid) {
+	ProcInfo arr[16];
+	int t = ProcTable::snapshot(arr, 16);
+	int r = 0, mx = 0;
+	for (int i = 0; i < t; i++) {
+		if (arr[i].state == 'R')
+			r++;
+		if (arr[i].pid > mx)
+			mx = arr[i].pid;
+	}
+	*total = (unsigned) t;
+	*running = (unsigned) r;
+	*lastPid = mx;
+}
+
+static int gen_stat(unsigned off, void* buf, unsigned n) {
+	static char s[512];
+	unsigned total, running; int last;
+	procCounts(&total, &running, &last);
+	int len = statString(s, sizeof s, kernel::Scheduler::ticks(), 1000, total, running);
+	return serveSnap(off, buf, n, s, len);
+}
+
+static int gen_loadavg(unsigned off, void* buf, unsigned n) {
+	static char s[96];
+	unsigned total, running; int last;
+	procCounts(&total, &running, &last);
+	int len = loadavgString(s, sizeof s, running, total, last);
+	return serveSnap(off, buf, n, s, len);
+}
+
+static int gen_cpuinfo(unsigned off, void* buf, unsigned n) {
+	static char s[256];
+	int len = cpuinfoString(s, sizeof s);
+	return serveSnap(off, buf, n, s, len);
+}
+
+static int gen_version(unsigned off, void* buf, unsigned n) {
+	static char s[64];
+	int len = versionString(s, sizeof s);
+	return serveSnap(off, buf, n, s, len);
+}
+
 SynthFs::SynthFs() {
 	root = mk(SK_DIR, "/", 0555);
 	m_disks = addDir(root, "disks");
@@ -174,6 +306,10 @@ SynthFs::SynthFs() {
 	addGen(m_dev, "random", gen_random, 0444);
 	addGen(m_proc, "uptime", gen_uptime, 0444);
 	addGen(m_proc, "meminfo", gen_meminfo, 0444);
+	addGen(m_proc, "stat", gen_stat, 0444);
+	addGen(m_proc, "loadavg", gen_loadavg, 0444);
+	addGen(m_proc, "cpuinfo", gen_cpuinfo, 0444);
+	addGen(m_proc, "version", gen_version, 0444);
 }
 
 int SynthFs::mount() { return 0; }
@@ -278,15 +414,21 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p = appendStr(buf, p, cap, pi.cmdline);
 		p = appendStr(buf, p, cap, "\n");
 	} else if (streq(file, "stat")) {
-		// "<pid> (<comm>) <state> <ppid>\n" — the fields ps cares about first.
+		// Linux /proc/<pid>/stat: pid (comm) state ppid pgrp session ... — we emit the
+		// leading fields top/ps/htop parse (the rest, mostly counters we don't track, are 0).
 		p += utoa((unsigned) pi.pid, buf + p);
 		p = appendStr(buf, p, cap, " (");
 		p = appendStr(buf, p, cap, pi.comm);
 		p = appendStr(buf, p, cap, ") ");
-		p = appendStr(buf, p, cap, st);
+		p = appendStr(buf, p, cap, st);                         // 3: state
 		p = appendStr(buf, p, cap, " ");
-		p += utoa((unsigned) pi.ppid, buf + p);
-		p = appendStr(buf, p, cap, "\n");
+		p += utoa((unsigned) pi.ppid, buf + p);                 // 4: ppid
+		p = appendStr(buf, p, cap, " ");
+		p += utoa((unsigned) pi.pgid, buf + p);                 // 5: pgrp
+		p = appendStr(buf, p, cap, " ");
+		p += utoa((unsigned) pi.sid, buf + p);                  // 6: session
+		// 7: tty_nr, 8: tpgid, then a run of zeroed counters (flags..nice), enough for parsers.
+		p = appendStr(buf, p, cap, " 0 -1 0 0 0 0 0 0 0 0 0 0 0\n");
 	} else if (streq(file, "status")) {
 		p = appendStr(buf, p, cap, "Name:\t");
 		p = appendStr(buf, p, cap, pi.comm);
@@ -296,6 +438,10 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p += utoa((unsigned) pi.pid, buf + p);
 		p = appendStr(buf, p, cap, "\nPPid:\t");
 		p += utoa((unsigned) pi.ppid, buf + p);
+		p = appendStr(buf, p, cap, "\nPgid:\t");
+		p += utoa((unsigned) pi.pgid, buf + p);
+		p = appendStr(buf, p, cap, "\nSid:\t");
+		p += utoa((unsigned) pi.sid, buf + p);
 		p = appendStr(buf, p, cap, "\nKthread:\t");
 		p = appendStr(buf, p, cap, pi.kthread ? "1" : "0");
 		p = appendStr(buf, p, cap, "\n");

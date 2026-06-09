@@ -34,19 +34,19 @@ TEST_CASE("SynthFs stat: virtual dirs are directories") {
 
 TEST_CASE("SynthFs static node: read returns its bytes, honours offset/size") {
 	SynthFs fs;
-	fs.addStatic(fs.proc(), "version", "NanOS v0\n", 9);
+	fs.addStatic(fs.proc(), "selftest", "NanOS v0\n", 9);
 
 	FileStat st;
-	REQUIRE(fs.stat("/proc/version", st) == 0);
+	REQUIRE(fs.stat("/proc/selftest", st) == 0);
 	CHECK(st.type == NODE_FILE);
 	CHECK(st.size == 9);
 
 	char buf[16] = {0};
-	CHECK(fs.read("/proc/version", 9, 0, buf) == 9);
+	CHECK(fs.read("/proc/selftest", 9, 0, buf) == 9);
 	CHECK(strncmp(buf, "NanOS v0\n", 9) == 0);
 
 	char p[8] = {0};
-	CHECK(fs.read("/proc/version", 3, 6, p) == 3);   // bytes [6,9) = "v0\n"
+	CHECK(fs.read("/proc/selftest", 3, 6, p) == 3);   // bytes [6,9) = "v0\n"
 	CHECK(strncmp(p, "v0\n", 3) == 0);
 }
 
@@ -292,4 +292,76 @@ TEST_CASE("SynthFs /proc: absent pid and bad per-pid file error out") {
 	CHECK(fs.read("/proc/1/bogus", sizeof buf, 0, buf) < 0);
 	// /proc/uptime must still be the static node, not a (bogus) pid path.
 	CHECK(fs.read("/proc/uptime", sizeof buf, 0, buf) > 0);
+}
+
+// ---- Stage 5: Linux-format /proc renderers ------------------------------------------
+
+TEST_CASE("statString renders cpu jiffies + processes/procs_running") {
+	char b[512];
+	int n = statString(b, sizeof b, 2500, 1000, 4, 1);   // 2500 ticks @1000Hz -> 250 jiffies
+	CHECK(n > 0);
+	CHECK(strstr(b, "cpu  0 0 0 250 ") != 0);            // aggregate line, idle = 250 jiffies
+	CHECK(strstr(b, "cpu0 0 0 0 250 ") != 0);
+	CHECK(strstr(b, "\nprocesses 4\n") != 0);
+	CHECK(strstr(b, "\nprocs_running 1\n") != 0);
+	CHECK(strstr(b, "\nprocs_blocked 3\n") != 0);
+}
+
+TEST_CASE("loadavgString renders load fields + runnable/total + last pid") {
+	char b[96];
+	int n = loadavgString(b, sizeof b, 2, 5, 7);
+	CHECK(n > 0);
+	CHECK(strcmp(b, "2.00 2.00 2.00 2/5 7\n") == 0);
+}
+
+TEST_CASE("cpuinfoString + versionString render identification text") {
+	char b[256];
+	CHECK(cpuinfoString(b, sizeof b) > 0);
+	CHECK(strstr(b, "model name\t: NanOS") != 0);
+	CHECK(strstr(b, "processor\t: 0") != 0);
+	char v[64];
+	CHECK(versionString(v, sizeof v) > 0);
+	CHECK(strstr(v, "NanOS version") != 0);
+}
+
+TEST_CASE("SynthFs /proc/{stat,loadavg,cpuinfo,version} are readable and terminate") {
+	ProcTable::init();
+	ProcTable::alloc(0);
+	SynthFs fs;
+	const char* files[] = { "/proc/stat", "/proc/loadavg", "/proc/cpuinfo", "/proc/version" };
+	for (int i = 0; i < 4; i++) {
+		char buf[512];
+		int n = fs.read(files[i], sizeof buf, 0, buf);
+		CHECK(n > 0);
+		CHECK(fs.read(files[i], sizeof buf, (unsigned) n, buf) == 0);   // EOF past end
+	}
+}
+
+TEST_CASE("SynthFs /proc/<pid>/stat carries pgrp + session; status has Pgid/Sid") {
+	ProcTable::init();
+	Process* sh = ProcTable::alloc(0);
+	const char* av[] = { "nsh", 0 };
+	ProcTable::setCommand(sh, av, 1);
+	Process* c = ProcTable::alloc(sh->pid);   // child in its own group/session
+	ProcTable::setCommand(c, av, 1);
+	c->pgid = c->pid; c->sid = sh->sid;
+
+	SynthFs fs;
+	char path[40], buf[256];
+	snprintf(path, sizeof path, "/proc/%d/stat", c->pid);
+	memset(buf, 0, sizeof buf);
+	REQUIRE(fs.read(path, sizeof buf, 0, buf) > 0);
+	// "<pid> (nsh) R <ppid> <pgrp> <sid> ..."
+	char want[48];
+	snprintf(want, sizeof want, "(nsh) R %d %d %d ", sh->pid, c->pid, sh->sid);
+	CHECK(strstr(buf, want) != 0);
+
+	snprintf(path, sizeof path, "/proc/%d/status", c->pid);
+	memset(buf, 0, sizeof buf);
+	REQUIRE(fs.read(path, sizeof buf, 0, buf) > 0);
+	char pg[24];
+	snprintf(pg, sizeof pg, "Pgid:\t%d", c->pid);
+	CHECK(strstr(buf, pg) != 0);
+	snprintf(pg, sizeof pg, "Sid:\t%d", sh->sid);
+	CHECK(strstr(buf, pg) != 0);
 }

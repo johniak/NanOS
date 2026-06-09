@@ -54,6 +54,8 @@ struct Process {
 struct ProcInfo {
 	int pid;
 	int ppid;
+	int pgid;            // process group + session ids (for Linux-format /proc/<pid>/stat)
+	int sid;
 	char state;          // 'R' running/ready, 'S' sleeping (blocked), 'Z' zombie
 	bool kthread;
 	char comm[16];
