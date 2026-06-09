@@ -186,23 +186,35 @@ USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
 # the C library (picolibc + syscall/cwd/signal glue + the signal trampoline) now lives in
 # libc.ndl, pulled in by name via the import library instead of static-linked.
-DYN_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o
+# dllimport.o supplies the __imp_ IAT slots for libc.ndl's data symbols (stdout/stderr/
+# stdin/errno); it is in every dynamic program's glue so any stdio-data use resolves.
+DYN_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)dllimport.o
+
+# $(DYNHDR) is empty by default; programs that reference stdio DATA symbols set it (as a
+# target-specific variable on their .nxe) to force-include user/libc-glue/nx-dllimport.h,
+# which redirects stdout/stderr/stdin/errno through the __imp_ slots. It is added ONLY to
+# the PROGRAM compile rules — never to the libc-glue rule (that code is inside libc.ndl and
+# must use the real streams).
+DYNHDR=
 
 # Userland objects build via per-source-dir pattern rules — only CHANGED files recompile
 # (the old recipe recompiled all ~30 programs+glue every build), and -MMD tracks header
 # deps. Linking is a generic %.nxe rule over each program's declared object prerequisites.
 $(BINFOLDER)%.o: user/%.c
 	@mkdir -p $(BINFOLDER)
-	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/libc-glue/%.c
 	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/%.c
-	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/libutil/%.c
-	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/libutf/%.c
-	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/%.S
+	@mkdir -p $(BINFOLDER)
+	nasm -f elf $< -o $@
+$(BINFOLDER)%.o: user/libc-glue/%.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf $< -o $@
 
@@ -223,8 +235,6 @@ $(BINFOLDER)%.nxe: $(MKNX)
 
 # Per-program object sets (USER_GLUE is shared). Doom has its own rule (it needs -lm).
 $(BINFOLDER)init.nxe:      $(USER_GLUE) $(BINFOLDER)init.o
-$(BINFOLDER)cat.nxe:       $(USER_GLUE) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
-$(BINFOLDER)ls.nxe:        $(USER_GLUE) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS)
 $(BINFOLDER)sigtest.nxe:   $(USER_GLUE) $(BINFOLDER)sigtest.o
 $(BINFOLDER)fbtest.nxe:    $(USER_GLUE) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(USER_GLUE) $(BINFOLDER)timetest.o
@@ -271,8 +281,9 @@ LIBC_FORCE=printf fprintf snprintf vsnprintf sprintf vfprintf fputs fputc puts p
   malloc free calloc realloc \
   memcpy memmove memset memcmp memchr \
   strlen strnlen strcmp strncmp strcpy strncpy strcat strncat strchr strrchr strstr \
-  strdup strerror strtok strspn strcspn strpbrk \
-  atoi atol strtol strtoul qsort abs labs \
+  strdup strndup strerror strtok strspn strcspn strpbrk \
+  atoi atol strtol strtoul qsort bsearch abs labs \
+  time localtime strftime \
   exit
 LIBC_UNDEF=$(foreach s,$(LIBC_FORCE),-Wl,--undefined=$(s))
 $(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS)
@@ -304,6 +315,15 @@ $(BINFOLDER)free.nxe: $(DYN_GLUE) $(BINFOLDER)free.o $(BINFOLDER)libc_import.o $
 	$(call link-dyn,free,$(BINFOLDER)free.o)
 $(BINFOLDER)nsh.nxe:  $(DYN_GLUE) $(BINFOLDER)nsh.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
 	$(call link-dyn,nsh,$(BINFOLDER)nsh.o)
+
+# cat/ls use stdio DATA symbols (stdout/stderr via sbase's eprintf/fshut) — they set DYNHDR
+# so their objects compile against nx-dllimport.h (routing those through libc.ndl's slots).
+$(BINFOLDER)cat.nxe: DYNHDR=-include user/libc-glue/nx-dllimport.h
+$(BINFOLDER)cat.nxe: $(DYN_GLUE) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT) $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
+	$(call link-dyn,cat,$(BINFOLDER)cat.o $(SBASE_UTIL_CAT))
+$(BINFOLDER)ls.nxe: DYNHDR=-include user/libc-glue/nx-dllimport.h
+$(BINFOLDER)ls.nxe: $(DYN_GLUE) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS) $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
+	$(call link-dyn,ls,$(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS))
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))

@@ -45,6 +45,7 @@ typedef struct { uint32_t r_offset, r_info; } Elf32_Rel;
 #define R_386_32     1
 #define EM_386       3
 #define STB_GLOBAL   1
+#define STB_WEAK     2
 #define ELF32_R_TYPE(i) ((i) & 0xff)
 #define ELF32_R_SYM(i)  ((i) >> 8)
 #define SHN_UNDEF    0
@@ -160,7 +161,8 @@ int main(int argc, char** argv) {
 		const char** done = malloc(sizeof(char*) * nsym);
 		int nDone = 0;
 		for (int i = 0; i < nsym; i++) {
-			if (ELF32_ST_BIND(sym[i].st_info) != STB_GLOBAL) continue;
+			int bind = ELF32_ST_BIND(sym[i].st_info);
+			if (bind != STB_GLOBAL && bind != STB_WEAK) continue;
 			if (!(symSecFlags(&sym[i]) & SHF_EXECINSTR)) continue;   /* callable code only */
 			const char* nm = symstr + sym[i].st_name;
 			if (!nm[0]) continue;
@@ -223,7 +225,8 @@ int main(int argc, char** argv) {
 	unsigned exportCount = 0;
 	if (isDll && sym) {
 		for (int i = 0; i < nsym; i++) {
-			if (ELF32_ST_BIND(sym[i].st_info) != STB_GLOBAL) continue;
+			int bind = ELF32_ST_BIND(sym[i].st_info);
+			if (bind != STB_GLOBAL && bind != STB_WEAK) continue;   /* weak: stdin/out/err */
 			if (!(symSecFlags(&sym[i]) & SHF_ALLOC)) continue;   /* defined, in a loaded section */
 			const char* nm = symstr + sym[i].st_name;
 			if (!nm[0]) continue;
