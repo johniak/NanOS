@@ -167,3 +167,81 @@ TEST_CASE("snapshot/infoByPid: fields + state char from the task / exit flag") {
 
 	CHECK(!ProcTable::infoByPid(9999, &pi));      // absent pid
 }
+
+// ---- Sessions + process groups (Stage 4) -------------------------------------------
+
+TEST_CASE("alloc: a fresh process leads its own group and session") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	CHECK(p->pgid == p->pid);
+	CHECK(p->sid == p->pid);
+}
+
+TEST_CASE("getpgid/getsid: 0 means the current process; bad pid -> -ESRCH") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	ProcTable::setCurrent(a);
+	CHECK(ProcTable::getpgid(0) == a->pgid);
+	CHECK(ProcTable::getsid(0) == a->sid);
+	CHECK(ProcTable::getpgid(a->pid) == a->pgid);
+	CHECK(ProcTable::getpgid(9999) == -3);
+	CHECK(ProcTable::getsid(9999) == -3);
+}
+
+TEST_CASE("setpgid: a child joins a new group of its own, then an existing one") {
+	ProcTable::init();
+	Process* sh = ProcTable::alloc(0);
+	ProcTable::setCurrent(sh);
+	Process* c1 = ProcTable::alloc(sh->pid);   // inherits via fork in the kernel; here set it
+	c1->pgid = sh->pgid; c1->sid = sh->sid;
+	Process* c2 = ProcTable::alloc(sh->pid);
+	c2->pgid = sh->pgid; c2->sid = sh->sid;
+
+	// c1 becomes its own group leader (pgid 0 -> its pid).
+	CHECK(ProcTable::setpgid(c1->pid, 0) == 0);
+	CHECK(c1->pgid == c1->pid);
+	// c2 joins c1's group (an existing in-session group).
+	CHECK(ProcTable::setpgid(c2->pid, c1->pid) == 0);
+	CHECK(c2->pgid == c1->pid);
+
+	int pids[8];
+	int n = ProcTable::groupMembers(c1->pid, pids, 8);
+	CHECK(n == 2);                              // c1 + c2 share the group
+}
+
+TEST_CASE("setpgid: rejects a non-child and a cross-session move") {
+	ProcTable::init();
+	Process* sh = ProcTable::alloc(0);
+	ProcTable::setCurrent(sh);
+	Process* other = ProcTable::alloc(0);      // not our child, own session
+	CHECK(ProcTable::setpgid(other->pid, 0) == -3);   // -ESRCH: not us / not our child
+	CHECK(ProcTable::setpgid(9999, 0) == -3);
+	CHECK(ProcTable::setpgid(0, -1) == -22);          // -EINVAL
+}
+
+TEST_CASE("setsid: a forked child (not a group leader) starts a new session") {
+	ProcTable::init();
+	Process* sh = ProcTable::alloc(0);
+	ProcTable::setCurrent(sh);
+	Process* c = ProcTable::alloc(sh->pid);
+	c->pgid = sh->pgid; c->sid = sh->sid;      // fork inheritance: NOT a group leader
+	ProcTable::setCurrent(c);
+	int sid = ProcTable::setsid();
+	CHECK(sid == c->pid);
+	CHECK(c->pgid == c->pid);
+	CHECK(c->sid == c->pid);
+	// A group leader cannot setsid again.
+	CHECK(ProcTable::setsid() == -1);          // -EPERM
+}
+
+TEST_CASE("groupMembers: only live processes of the given group are listed") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);          // pgid = a->pid
+	Process* b = ProcTable::alloc(0);
+	b->pgid = a->pid;                          // b joins a's group
+	int pids[8];
+	CHECK(ProcTable::groupMembers(a->pid, pids, 8) == 2);
+	CHECK(ProcTable::groupMembers(b->pid, pids, 8) == 0);   // nobody has b's own pgid
+	ProcTable::freeSlot(b);
+	CHECK(ProcTable::groupMembers(a->pid, pids, 8) == 1);   // only a remains
+}

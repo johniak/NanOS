@@ -46,10 +46,10 @@ static void markFree(void* fa, uint64_t base, uint64_t len) {
 	((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
 }
 
-// PTY terminal-generated signal (Ctrl+C/\/Z on the master) -> the foreground process.
-// (Stage 4 will route by process group; for now consoleSignal targets the foreground pid.)
-static void ptySignal(void*, int sig, int /*pgrp*/) {
-	consoleSignal(sig);
+// PTY terminal-generated signal (Ctrl+C/\/Z on the master) -> the tty's foreground process
+// group (TIOCSPGRP), falling back to the single foreground pid when no group claimed it.
+static void ptySignal(void*, int sig, int pgrp) {
+	consoleSignalGroup(sig, pgrp);
 }
 
 // Mount a physical volume at /disks/<name> and register a marker under the synthetic

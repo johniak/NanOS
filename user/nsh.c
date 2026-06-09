@@ -15,6 +15,8 @@ int waitpid(int pid, int* status, int options);
 int kill(int pid, int sig);
 void _exit(int code);
 int termmode(int raw);                              /* 0 = cooked, 1 = raw    */
+int setpgid(int pid, int pgid);                     /* job control: process groups */
+int tcsetpgrp(int fd, int pgrp);                    /* hand the tty to a fg group  */
 
 #define CAP  256
 #define HMAX 32
@@ -255,8 +257,10 @@ int main(void) {
 			}
 			printf("%s\n", g_jobs[idx].cmd);         /* fg: bring it to the foreground */
 			termmode(0);
+			tcsetpgrp(0, jp);                        /* terminal foreground = the job's group */
 			int st;
 			waitpid(jp, &st, WUNTRACED);
+			tcsetpgrp(0, 0);                         /* reclaim the terminal */
 			if (WIFSTOPPED(st)) {
 				g_jobs[idx].stopped = 1;
 				printf("\n[%d]+  Stopped\t%s\n", idx + 1, g_jobs[idx].cmd);
@@ -276,6 +280,7 @@ int main(void) {
 		termmode(0);                         /* cooked while the child runs */
 		int pid = fork();
 		if (pid == 0) {                      /* child: become the program */
+			setpgid(0, 0);                   /* run in its own process group ... */
 			char* envp[] = { 0 };
 			char path[160];
 			if (argv[0][0] == '/') {         /* explicit path: run it as given */
@@ -295,8 +300,11 @@ int main(void) {
 			printf("nsh: %s: command not found\n", argv[0]);
 			_exit(127);                      /* exec failed */
 		} else if (pid > 0) {                /* parent: wait for it */
+			setpgid(pid, pid);               /* ... (race-free with the child) and own the tty */
+			tcsetpgrp(0, pid);               /* terminal foreground = the child's group */
 			int st;
 			waitpid(pid, &st, WUNTRACED);
+			tcsetpgrp(0, 0);                 /* no foreground group at the prompt */
 			if (WIFSTOPPED(st)) {            /* Ctrl+Z stopped it: record a job */
 				int idx = job_add(pid, cmdsave, 1);
 				printf("\n[%d]+  Stopped\t%s\n", idx + 1, cmdsave);

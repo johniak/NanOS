@@ -38,3 +38,16 @@ speed_t cfgetispeed(const struct termios* t) { return t->c_ispeed; }
 speed_t cfgetospeed(const struct termios* t) { return t->c_ospeed; }
 int cfsetispeed(struct termios* t, speed_t s) { t->c_ispeed = s; return 0; }
 int cfsetospeed(struct termios* t, speed_t s) { t->c_ospeed = s; return 0; }
+
+/* Controlling-terminal foreground process group (job control), via the pty's TIOCSPGRP/
+ * TIOCGPGRP ioctls. The shell calls tcsetpgrp() to hand the terminal to the job it runs in
+ * the foreground, so the tty routes Ctrl+C/Ctrl+Z to that group. */
+int tcsetpgrp(int fd, int pgrp) {
+	return ioctl(fd, TIOCSPGRP, &pgrp);
+}
+int tcgetpgrp(int fd) {
+	int p = 0;
+	if (ioctl(fd, TIOCGPGRP, &p) < 0)
+		return -1;
+	return p;
+}

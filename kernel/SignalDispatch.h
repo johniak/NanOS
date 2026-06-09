@@ -26,6 +26,13 @@ int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocma
 void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall);
 int  signalReturn(arch::TrapFrame* tf);    // sigreturn(2): restore the pre-handler frame
 void consoleSignal(int sig);               // a cooked-tty control key -> foreground proc
+void consoleSignalGroup(int sig, int pgrp);// tty control key -> foreground process GROUP
+int  signalSendGroup(int pgid, int sig);   // post `sig` to every member of a group
+// Process-group / session syscalls (thin glue over ProcTable bookkeeping).
+int  sysSetpgid(int pid, int pgid);
+int  sysGetpgid(int pid);
+int  sysSetsid();
+int  sysGetsid(int pid);
 bool hasPendingSignalCurrent();            // EINTR/restart check for blocking syscalls
 
 }  // namespace kernel

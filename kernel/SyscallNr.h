@@ -35,6 +35,11 @@
 #define SYS_dup 41
 #define SYS_pipe 42
 #define SYS_dup2 63
+#define SYS_setpgid 57
+#define SYS_getpgrp 65
+#define SYS_setsid 66
+#define SYS_getpgid 132
+#define SYS_getsid 147
 #define SYS_poll 168
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with

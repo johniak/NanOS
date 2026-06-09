@@ -149,6 +149,8 @@ int forkProcess(arch::TrapFrame* tf) {
 		child->comm[i] = parent->comm[i];      // inherit name until the child exec's
 	for (int i = 0; i < (int) sizeof child->cmdline; i++)
 		child->cmdline[i] = parent->cmdline[i];
+	child->pgid = parent->pgid;                // inherit the process group + session
+	child->sid = parent->sid;
 	sigForkInherit(child->sig, parent->sig);   // inherit dispositions + mask (no pending)
 
 	Task* t = Scheduler::createBlank(child->pid);
@@ -277,10 +279,17 @@ static void procStop(int sig) {
 	p->stopped = false;
 }
 
-// kill(2): post `sig` to process `pid`. Wakes a blocked target so it can deliver.
+// kill(2): post `sig` to process `pid`. Wakes a blocked target so it can deliver. Per POSIX
+// a non-positive pid targets a process group: pid == 0 is the caller's group, pid < 0 is
+// the group |pid|.
 int signalSend(int pid, int sig) {
 	if (sig < 0 || sig >= NANOS_NSIG)
 		return -22;   // -EINVAL
+	if (pid <= 0) {
+		Process* me = ProcTable::current();
+		int pgid = (pid == 0) ? (me ? me->pgid : 0) : -pid;
+		return signalSendGroup(pgid, sig);
+	}
 	Process* t = ProcTable::byPid(pid);
 	if (!t)
 		return -3;    // -ESRCH
@@ -408,5 +417,52 @@ void consoleSignal(int sig) {
 	if (fg && !fg->kthread)
 		signalSend(fg->pid, sig);
 }
+
+// Post `sig` to every member of process group `pgid` (kill(-pgid)/terminal signals). Reuses
+// signalSend per member so SIGCONT/stop handling and target wakeups stay in one place.
+int signalSendGroup(int pgid, int sig) {
+	if (pgid <= 0)
+		return -3;    // -ESRCH
+	int pids[32];
+	int n = ProcTable::groupMembers(pgid, pids, 32);
+	if (n == 0)
+		return -3;
+	int rc = -3;
+	for (int i = 0; i < n; i++) {
+		Process* p = ProcTable::byPid(pids[i]);
+		if (!p || p->kthread)
+			continue;
+		sigPost(p->sig, sig);
+		if (sig == SIGCONT && p->stopped) {
+			p->stopped = false;
+			p->continued = true;
+			Process* par = ProcTable::byPid(p->parent);
+			if (par) { sigPost(par->sig, SIGCHLD); Scheduler::wake(par->task); }
+		}
+		if (p->task) {
+			if (p->task->state == TASK_BLOCKED)
+				Scheduler::wake(p->task);
+			else if (p->task->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
+				Scheduler::wake(p->task);
+		}
+		rc = 0;
+	}
+	return rc;
+}
+
+// A terminal control key routed to the tty's FOREGROUND PROCESS GROUP (TIOCSPGRP). Falls
+// back to the single foreground pid when no group has claimed the terminal yet.
+void consoleSignalGroup(int sig, int pgrp) {
+	if (pgrp > 0)
+		signalSendGroup(pgrp, sig);
+	else
+		consoleSignal(sig);
+}
+
+// ---- Process-group / session syscalls (glue over ProcTable bookkeeping) --------------
+int sysSetpgid(int pid, int pgid) { return ProcTable::setpgid(pid, pgid); }
+int sysGetpgid(int pid)           { return ProcTable::getpgid(pid); }
+int sysSetsid()                   { return ProcTable::setsid(); }
+int sysGetsid(int pid)            { return ProcTable::getsid(pid); }
 
 }

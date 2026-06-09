@@ -108,6 +108,14 @@ int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; 
 int getpid(void)                        { return 1; }
 int kill(int p, int s)                  { return reterr(sys3(SYS_kill, p, s, 0)); }
 
+/* Sessions + process groups (job control): the shell uses these to put each job in its own
+ * group and hand the terminal to the foreground group, so Ctrl+C hits the whole job. */
+int setpgid(int pid, int pgid)          { return reterr(sys3(SYS_setpgid, pid, pgid, 0)); }
+int getpgid(int pid)                    { return reterr(sys3(SYS_getpgid, pid, 0, 0)); }
+int getpgrp(void)                       { return reterr(sys3(SYS_getpgrp, 0, 0, 0)); }
+int setsid(void)                        { return reterr(sys3(SYS_setsid, 0, 0, 0)); }
+int getsid(int pid)                     { return reterr(sys3(SYS_getsid, pid, 0, 0)); }
+
 /* signal(2): install a disposition. We pass the libc sigreturn trampoline as the
  * kernel's sa_restorer; the kernel runs the handler in ring 3 and returns through it.
  * Returns the previous disposition, or SIG_ERR on error. */

@@ -48,6 +48,21 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_kill:
 		ret = signalSend((int) a0, (int) a1);
 		break;
+	case SYS_setpgid:
+		ret = sysSetpgid((int) a0, (int) a1);
+		break;
+	case SYS_getpgid:
+		ret = sysGetpgid((int) a0);
+		break;
+	case SYS_getpgrp:
+		ret = sysGetpgid(0);                     // getpgrp() == getpgid(0)
+		break;
+	case SYS_setsid:
+		ret = sysSetsid();
+		break;
+	case SYS_getsid:
+		ret = sysGetsid((int) a0);
+		break;
 	case SYS_signal:
 		ret = signalAction((int) a0, a1, a2);   // a1 = handler, a2 = sa_restorer
 		break;

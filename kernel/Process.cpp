@@ -22,6 +22,8 @@ Process* ProcTable::alloc(int parent) {
 			p->used = true;
 			p->pid = g_nextPid++;
 			p->parent = parent;
+			p->pgid = p->pid;        // own group + session by default; fork inherits these,
+			p->sid = p->pid;         // setpgid/setsid change them
 			p->task = 0;
 			p->space = 0;
 			p->sys = 0;
@@ -163,6 +165,68 @@ void ProcTable::setCommand(Process* p, const char* const* argv, int argc) {
 			p->cmdline[c++] = *s;
 	}
 	p->cmdline[c] = 0;
+}
+
+
+// ---- Sessions + process groups (job control) -----------------------------------------
+// Pure process-table bookkeeping. `pid == 0` selects the current process.
+
+int ProcTable::getpgid(int pid) {
+	Process* p = pid ? byPid(pid) : g_current;
+	return p ? p->pgid : -3;            // -ESRCH
+}
+
+int ProcTable::getsid(int pid) {
+	Process* p = pid ? byPid(pid) : g_current;
+	return p ? p->sid : -3;
+}
+
+// setpgid(pid, pgid): put `pid` into group `pgid` (pgid 0 -> a new group named by the pid).
+// Allowed only for the caller itself or one of its children, and only within the caller's
+// session; the target group must be the process's own pid (new group) or an existing group
+// in the same session.
+int ProcTable::setpgid(int pid, int pgid) {
+	Process* p = pid ? byPid(pid) : g_current;
+	if (!p)
+		return -3;                      // -ESRCH
+	if (pgid < 0)
+		return -22;                     // -EINVAL
+	if (pgid == 0)
+		pgid = p->pid;
+	int cur = g_current ? g_current->pid : 0;
+	if (p != g_current && p->parent != cur)
+		return -3;                      // not us and not our child
+	if (g_current && p->sid != g_current->sid)
+		return -1;                      // -EPERM: moving across sessions
+	if (pgid != p->pid) {               // joining an existing group: it must be in-session
+		Process* leader = byPid(pgid);
+		if (!leader || leader->sid != p->sid)
+			return -1;                  // -EPERM
+	}
+	p->pgid = pgid;
+	return 0;
+}
+
+// setsid(): the caller leaves its group and creates a brand-new session + group it leads
+// (sid == pgid == pid). Fails if it is already a process-group leader (POSIX), which a
+// freshly forked child never is (it inherited the parent's pgid).
+int ProcTable::setsid() {
+	Process* p = g_current;
+	if (!p)
+		return -3;
+	if (p->pgid == p->pid)
+		return -1;                      // -EPERM: already a group leader
+	p->sid = p->pid;
+	p->pgid = p->pid;
+	return p->sid;
+}
+
+int ProcTable::groupMembers(int pgid, int* out, int max) {
+	int n = 0;
+	for (int i = 0; i < MAXPROC && n < max; i++)
+		if (g_procs[i].used && g_procs[i].pgid == pgid)
+			out[n++] = g_procs[i].pid;
+	return n;
 }
 
 }  // namespace kernel

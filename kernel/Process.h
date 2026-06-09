@@ -35,6 +35,12 @@ struct Process {
 	unsigned brkCur;     // current program break
 	unsigned brkMax;     // hard ceiling (brkBase + cap)
 
+	// Sessions + process groups (job control). A new process is its own group+session
+	// leader; fork inherits both; setpgid/setsid change them. The tty's foreground process
+	// group (TIOCSPGRP) is the one that receives terminal-generated signals (Ctrl+C).
+	int pgid;            // process group id (group leader has pgid == pid)
+	int sid;             // session id (session leader has sid == pid)
+
 	// Signals + job control.
 	SignalState sig;     // pending/blocked masks + disposition table
 	bool stopped;        // job-control stopped (its task is TASK_STOPPED)
@@ -76,6 +82,21 @@ public:
 	// *childOut, or 0 if there is none. Distinct from reapChild (which reaps the dead).
 	static int reapStopped(int parentPid, int wantPid, Process** childOut);
 	static void freeSlot(Process* p);    // release a process slot after teardown
+
+	// Sessions + process groups. All operate on the current process unless `pid` names
+	// another; `pid == 0` means the current process. Pure process-table bookkeeping
+	// (host-tested); the syscall glue + signal routing live in Exec.cpp.
+	//   setpgid(pid,pgid): join/leave a group. pgid==0 -> pgid=pid (new group). The target
+	//     must be the caller or a child in the caller's session; -errno on violation.
+	//   setsid(): the caller becomes leader of a brand-new session + group (sid=pgid=pid),
+	//     unless it is already a group leader (-EPERM). Returns the new sid.
+	static int setpgid(int pid, int pgid);
+	static int getpgid(int pid);         // -ESRCH if no such process
+	static int setsid();
+	static int getsid(int pid);
+	// Fill `out` (capacity `max`) with the pids of every live process in group `pgid`;
+	// returns the count. Lets the signal layer fan a group signal out, host-tested.
+	static int groupMembers(int pgid, int* out, int max);
 
 	// /proc + ps support.
 	static int snapshot(ProcInfo* out, int max);     // fill `out`, return live count
