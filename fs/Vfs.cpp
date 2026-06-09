@@ -143,6 +143,14 @@ int Vfs::ioctl(String path, unsigned cmd, void* arg) {
 	return fs->ioctl(rel, cmd, arg);
 }
 
+short Vfs::pollReady(String path, short events) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return 0;
+	return fs->pollReady(rel, events);
+}
+
 int Vfs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);

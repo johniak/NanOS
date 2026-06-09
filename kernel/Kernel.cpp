@@ -11,6 +11,8 @@
 #include "Fbdev.h"
 #include "Fb0Device.h"
 #include "KeyboardDevice.h"
+#include "Pty.h"
+#include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
 #include "Scheduler.h"
 #include <arch/sched.h>
 #include "Syscall.h"
@@ -42,6 +44,12 @@ unsigned sysHeapFreeKb()  { return heapFreeBytes() / 1024u; }
 // usable ranges via <arch/bootinfo.h>).
 static void markFree(void* fa, uint64_t base, uint64_t len) {
 	((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
+}
+
+// PTY terminal-generated signal (Ctrl+C/\/Z on the master) -> the foreground process.
+// (Stage 4 will route by process group; for now consoleSignal targets the foreground pid.)
+static void ptySignal(void*, int sig, int /*pgrp*/) {
+	consoleSignal(sig);
 }
 
 // Mount a physical volume at /disks/<name> and register a marker under the synthetic
@@ -201,6 +209,16 @@ void Kernel::start() {
 	KeyboardDevice* kbd = new KeyboardDevice();
 	kbdRegister(kbd);
 	root->addChar(root->dev(), "input0", kbd, 0444);
+	okEnd();
+
+	// Pseudo-terminal: /dev/ptmx (master, held by the userspace terminal emulator) +
+	// /dev/pts0 (slave, the shell's controlling tty). One pair for the single console for
+	// now. Ctrl+C etc. on the master route to the foreground process via consoleSignal.
+	okBegin("PTY /dev/ptmx + /dev/pts0");
+	Pty* pty = new Pty();
+	pty->setSignalFn(ptySignal, 0);
+	root->addChar(root->dev(), "ptmx", new PtyMaster(pty), 0666);
+	root->addChar(root->dev(), "pts0", new PtySlave(pty), 0666);
 	okEnd();
 
 	// Install the syscall interface over the VFS, then a (silent) boot sanity syscall.

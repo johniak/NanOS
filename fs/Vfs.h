@@ -38,6 +38,9 @@ public:
 	virtual int write(String, unsigned, unsigned, const void*) { return -30; }  // -EROFS
 	virtual int ioctl(String, unsigned, void*) { return -22; }                  // -EINVAL
 	virtual int mmapInfo(String, unsigned*, unsigned*) { return -22; }          // -EINVAL
+	// poll() readiness for a path: return the ready subset of `events`. Default = ready
+	// (ordinary files don't block); SynthFs forwards to the char device.
+	virtual short pollReady(String, short events) { return events; }
 
 	// Write extensions. Default to read-only (-EROFS); a writable fs (RamFs/tmpfs)
 	// overrides them. create() makes-or-truncates a regular file.
@@ -85,6 +88,7 @@ public:
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
+	short pollReady(String path, short events);
 	int create(String path, unsigned mode);
 	int unlink(String path);
 	int mkdir(String path, unsigned mode);

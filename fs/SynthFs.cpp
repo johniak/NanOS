@@ -366,6 +366,13 @@ int SynthFs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
 	return n->dev->mmapInfo(physOut, lenOut);
 }
 
+short SynthFs::pollReady(String path, short events) {
+	SynthNode* n = walk((char*) path);
+	if (!n || n->kind != SK_CHARDEV)
+		return events;         // non-device nodes: treat as always ready
+	return n->dev->pollReady(events);
+}
+
 int SynthFs::stat(String path, FileStat& out) {
 	int pid = 0;
 	const char* file = 0;

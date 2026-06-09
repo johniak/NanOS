@@ -81,6 +81,7 @@ public:
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
+	short pollReady(String path, short events);
 
 private:
 	int readNode(String path, unsigned size, unsigned off, void* buf);   // static-tree read

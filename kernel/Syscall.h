@@ -11,6 +11,7 @@
 
 #include "SyscallNr.h"   // SYS_* numbers (shared with userland, plain C)
 #include "Pipe.h"
+#include "CharDevice.h"  // POLLIN/POLLOUT/... (single source) + device interface
 
 namespace kernel {
 
@@ -23,12 +24,7 @@ namespace kernel {
 #define EMFILE 24
 #define EPIPE 32
 
-// poll(2) event/revent bits (Linux values; userland passes them straight through).
-#define POLLIN   0x001
-#define POLLOUT  0x004
-#define POLLERR  0x008
-#define POLLHUP  0x010
-#define POLLNVAL 0x020
+// poll(2) event/revent bits live in CharDevice.h (included above) — single source.
 struct PollFd { int fd; short events; short revents; };
 
 #define SEEK_SET 0

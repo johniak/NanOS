@@ -59,10 +59,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		break;
 	case SYS_read:
 		ret = g_sys->read(a0, (void*) a1, a2);
-		// A blocking pipe read on an empty pipe returns -EAGAIN; wait (waking each tick as
+		// A blocking read on an empty pipe or pty returns -EAGAIN; wait (waking each tick as
 		// the writer is scheduled) until data/EOF, or a signal interrupts. Console blocking
-		// happens inside read() itself; O_NONBLOCK returns -EAGAIN to the caller.
-		while (ret == -EAGAIN && g_sys->isPipe(a0) && !g_sys->nonblock(a0)) {
+		// happens inside read() itself; an O_NONBLOCK fd returns -EAGAIN to the caller.
+		while (ret == -EAGAIN && !g_sys->nonblock(a0)) {
 			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
 			arch::halt_or_hlt();
 			ret = g_sys->read(a0, (void*) a1, a2);
@@ -70,7 +70,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		break;
 	case SYS_write:
 		ret = g_sys->write(a0, (const void*) a1, a2);
-		while (ret == -EAGAIN && g_sys->isPipe(a0) && !g_sys->nonblock(a0)) {
+		while (ret == -EAGAIN && !g_sys->nonblock(a0)) {
 			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
 			arch::halt_or_hlt();
 			ret = g_sys->write(a0, (const void*) a1, a2);

@@ -34,6 +34,11 @@ public:
 	int write(unsigned off, const void* buf, unsigned n);   // unsupported
 	int ioctl(unsigned cmd, void* arg);                     // unsupported
 	int mmapInfo(unsigned* physOut, unsigned* lenOut);      // unsupported
+	// poll(): readable when an event is queued (so the terminal emulator's poll loop
+	// doesn't spin reading an empty device).
+	short pollReady(short events) {
+		return (short) (((events & POLLIN) && m_head != m_tail) ? POLLIN : 0);
+	}
 };
 
 // The keyboard sink the arch IRQ path feeds (set once at boot). kbdFeed is a no-op until
