@@ -4,7 +4,9 @@
 
 namespace kernel {
 
-static const int MAXTASKS = 8;
+// At least ProcTable::MAX (16) user tasks + the idle and clock kernel threads, so the
+// scheduler is not the bottleneck below the process-table limit (was an artificial 8).
+static const int MAXTASKS = 18;
 static const int KSTACK_SIZE = 8192;
 
 static Task g_tasks[MAXTASKS];

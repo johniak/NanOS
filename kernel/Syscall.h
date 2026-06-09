@@ -73,7 +73,7 @@ class Syscalls {
 		Pipe* pipe;         // non-null => this fd is one end of a pipe
 		bool pipeWrite;     // which end (write end if true, read end otherwise)
 	};
-	static const int MAXFD = 32;
+	static const int MAXFD = 128;   // per-process fd table (was an artificial 32; heap-backed)
 	Fd fds[MAXFD];
 	Vfs* vfs;
 	ConsoleWriteFn consoleWrite;
