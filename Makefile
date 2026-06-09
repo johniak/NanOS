@@ -190,12 +190,12 @@ USER_LIBS_NDL=greet.ndl libc.ndl
 # stdin/errno); it is in every dynamic program's glue so any stdio-data use resolves.
 DYN_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)dllimport.o
 
-# $(DYNHDR) is empty by default; programs that reference stdio DATA symbols set it (as a
-# target-specific variable on their .nxe) to force-include user/libc-glue/nx-dllimport.h,
-# which redirects stdout/stderr/stdin/errno through the __imp_ slots. It is added ONLY to
-# the PROGRAM compile rules — never to the libc-glue rule (that code is inside libc.ndl and
-# must use the real streams).
-DYNHDR=
+# All shipped programs are dynamically linked against libc.ndl, so PROGRAM objects are
+# compiled with nx-dllimport.h force-included (it redirects stdio data symbols stdout/
+# stderr/stdin/errno through the __imp_ slots). It is added ONLY to the program compile
+# rules below — NEVER to the libc-glue rule, since that code lives inside libc.ndl and must
+# use the real streams.
+DYNHDR=-include user/libc-glue/nx-dllimport.h
 
 # Userland objects build via per-source-dir pattern rules — only CHANGED files recompile
 # (the old recipe recompiled all ~30 programs+glue every build), and -MMD tracks header
@@ -226,21 +226,29 @@ $(MKNX): tools/mknx.c kernel/NxFormat.h
 	@mkdir -p $(BINFOLDER)
 	cc -O2 -Wall -Ikernel -o $@ tools/mknx.c
 
-# Link a .nxe from its object prerequisites (declared per program below). `--emit-relocs`
-# keeps the absolute (R_386_32) relocations in the ELF so mknx can build the relocation
-# table — the .nxe becomes loadable at any base (delta applied by the loader).
+# Generic DYNAMIC link: every program links its objects + the import library (NO static
+# libc) and declares "needed: libc.ndl", so the loader maps libc.ndl and binds its imports
+# by name. `--emit-relocs` keeps the R_386_32 relocations so mknx can build the relocation
+# table (the .nxe loads at any base). Each program below just declares its object prereqs.
 $(BINFOLDER)%.nxe: $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) $(USER_LIBS)
-	$(MKNX) $(@:.nxe=.elf) $@
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) -lgcc
+	$(MKNX) $(@:.nxe=.elf) $@ --need libc.ndl
 
-# Per-program object sets (USER_GLUE is shared). Doom has its own rule (it needs -lm).
-$(BINFOLDER)init.nxe:      $(USER_GLUE) $(BINFOLDER)init.o
-$(BINFOLDER)sigtest.nxe:   $(USER_GLUE) $(BINFOLDER)sigtest.o
-$(BINFOLDER)fbtest.nxe:    $(USER_GLUE) $(BINFOLDER)fbtest.o
-$(BINFOLDER)timetest.nxe:  $(USER_GLUE) $(BINFOLDER)timetest.o
-$(BINFOLDER)brktest.nxe:   $(USER_GLUE) $(BINFOLDER)brktest.o
-$(BINFOLDER)inputtest.nxe: $(USER_GLUE) $(BINFOLDER)inputtest.o
-$(BINFOLDER)fstest.nxe:    $(USER_GLUE) $(BINFOLDER)fstest.o
+# Per-program object sets: DYN_GLUE (crt0+nxhdr+dllimport) + program objects + the libc
+# import library; libc.ndl is a prereq so it is built/shipped. Doom + usedll have explicit
+# rules (extra math / a second needed library).
+DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl
+$(BINFOLDER)init.nxe:      $(DYN_DEPS) $(BINFOLDER)init.o
+$(BINFOLDER)nsh.nxe:       $(DYN_DEPS) $(BINFOLDER)nsh.o
+$(BINFOLDER)free.nxe:      $(DYN_DEPS) $(BINFOLDER)free.o
+$(BINFOLDER)cat.nxe:       $(DYN_DEPS) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
+$(BINFOLDER)ls.nxe:        $(DYN_DEPS) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS)
+$(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
+$(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
+$(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o
+$(BINFOLDER)brktest.nxe:   $(DYN_DEPS) $(BINFOLDER)brktest.o
+$(BINFOLDER)inputtest.nxe: $(DYN_DEPS) $(BINFOLDER)inputtest.o
+$(BINFOLDER)fstest.nxe:    $(DYN_DEPS) $(BINFOLDER)fstest.o
 
 # ---- Stage-2 dynamic-linking demo: greet.ndl (shared lib) + usedll (imports from it) ----
 $(BINFOLDER)greet.o: user/lib/greet.c
@@ -257,11 +265,11 @@ $(BINFOLDER)greet.ndl: $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $(BINFOLDER)greet.elf $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o
 	$(MKNX) $(BINFOLDER)greet.elf $@ --dll --export nx_greet --export nx_greeting
 
-# usedll: a normal program that imports nx_greet/nx_greeting (via the greet import lib).
-# `--need greet.ndl` records the dependency so the loader loads greet.ndl first.
-$(BINFOLDER)usedll.nxe: $(USER_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(USER_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(USER_LIBS)
-	$(MKNX) $(BINFOLDER)usedll.elf $@ --need greet.ndl
+# usedll: imports printf from libc.ndl AND nx_greet/nx_greeting from greet.ndl — two needed
+# libraries, so it has its own rule with both --need flags.
+$(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(BINFOLDER)greet.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc_import.o -lgcc
+	$(MKNX) $(BINFOLDER)usedll.elf $@ --need libc.ndl --need greet.ndl
 
 # ---- Stage 3: the shared C library libc.ndl + its import library ----
 # libc.ndl bundles picolibc + the syscall/cwd porting glue into ONE relocatable shared
@@ -282,8 +290,12 @@ LIBC_FORCE=printf fprintf snprintf vsnprintf sprintf vfprintf fputs fputc puts p
   memcpy memmove memset memcmp memchr \
   strlen strnlen strcmp strncmp strcpy strncpy strcat strncat strchr strrchr strstr \
   strdup strndup strerror strtok strspn strcspn strpbrk \
-  atoi atol strtol strtoul qsort bsearch abs labs \
+  strcasecmp strncasecmp \
+  atoi atol atof strtol strtoul qsort bsearch abs labs \
+  ftell fseek remove rename system \
   time localtime strftime \
+  sin cos tan asin acos atan atan2 sqrt pow exp log log10 \
+  fabs floor ceil ldexp frexp fmod modf \
   exit
 LIBC_UNDEF=$(foreach s,$(LIBC_FORCE),-Wl,--undefined=$(s))
 $(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS)
@@ -300,31 +312,6 @@ $(BINFOLDER)libc_import.s: $(BINFOLDER)libc.elf $(MKNX)
 $(BINFOLDER)libc_import.o: $(BINFOLDER)libc_import.s
 	nasm -f elf $< -o $@
 
-# Dynamically-linked programs: startup glue + the import library, NO static libc; each
-# declares "needed: libc.ndl" so the loader maps libc.ndl and binds the imports by name.
-# `link-dyn` = link the program objects ($2) into $1.elf with the import lib, then mknx it.
-# Only function-only programs migrate cleanly here: a program that references stdio data
-# symbols (stdout/stderr/stdin, errno) directly needs dllimport-style indirection we don't
-# emit, so those (cat/ls/doom) stay statically linked for now.
-define link-dyn
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)$(1).elf $(DYN_GLUE) $(2) $(BINFOLDER)libc_import.o -lgcc
-	$(MKNX) $(BINFOLDER)$(1).elf $(BINFOLDER)$(1).nxe --need libc.ndl
-endef
-
-$(BINFOLDER)free.nxe: $(DYN_GLUE) $(BINFOLDER)free.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
-	$(call link-dyn,free,$(BINFOLDER)free.o)
-$(BINFOLDER)nsh.nxe:  $(DYN_GLUE) $(BINFOLDER)nsh.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
-	$(call link-dyn,nsh,$(BINFOLDER)nsh.o)
-
-# cat/ls use stdio DATA symbols (stdout/stderr via sbase's eprintf/fshut) — they set DYNHDR
-# so their objects compile against nx-dllimport.h (routing those through libc.ndl's slots).
-$(BINFOLDER)cat.nxe: DYNHDR=-include user/libc-glue/nx-dllimport.h
-$(BINFOLDER)cat.nxe: $(DYN_GLUE) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT) $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
-	$(call link-dyn,cat,$(BINFOLDER)cat.o $(SBASE_UTIL_CAT))
-$(BINFOLDER)ls.nxe: DYNHDR=-include user/libc-glue/nx-dllimport.h
-$(BINFOLDER)ls.nxe: $(DYN_GLUE) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS) $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
-	$(call link-dyn,ls,$(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS))
-
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
 
@@ -333,7 +320,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
 # replaces the shipped backends. Built as the `doom` program in USER_PROGS.
 DOOM_DIR=user/third_party/doomgeneric
-DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -w -fcommon -fno-pic -fno-stack-protector
+DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector
 DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
 
 # Per-object rules (with -MMD header tracking) so only CHANGED Doom sources recompile
@@ -344,11 +331,14 @@ $(BINFOLDER)%.o: $(DOOM_DIR)/%.c
 $(BINFOLDER)doomgeneric_nanos.o: user/doomgeneric_nanos.c
 	$(CXX) $(DOOM_CFLAGS) -MMD -MP -c $< -o $@
 
-# Doom links with -lm (renderer trig/sqrt), so it gets an explicit rule overriding the
-# generic %.nxe one. Objects build via the $(DOOM_DIR)/%.c pattern rule above.
-$(BINFOLDER)doom.nxe: $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)doom.elf $(USER_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(USER_LIBS) -lm
-	$(MKNX) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe
+# Doom links dynamically against libc.ndl (functions via the import library, math from the
+# symbols force-included into libc.ndl — no static -lm). A trailing -lc is a FALLBACK that
+# statically pulls only still-unresolved symbols: read-only const tables like _ctype_b
+# (importing immutable data has no shared-state benefit, unlike stdout/errno). Functions are
+# already resolved by the thunks, so their libc.a members are not pulled.
+$(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)doom.elf $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc_import.o -L$(PICOLIBC)/lib -lc -lgcc
+	$(MKNX) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe --need libc.ndl
 
 # Pull in all userland header-dependency files (.d), so a changed header recompiles only
 # the objects that include it. Missing on a clean build -> everything compiles (correct).
