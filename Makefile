@@ -157,7 +157,8 @@ _iso: _all
 
 _clean:
 	-rm $(BINFOLDER)*.o $(BINFOLDER)*.d $(BINFOLDER)kernel.bin
-	-rm $(BINFOLDER)*.elf $(BINFOLDER)*.nxe $(BINFOLDER)mknx
+	-rm $(BINFOLDER)*.elf $(BINFOLDER)*.nxe $(BINFOLDER)*.ndl $(BINFOLDER)*.a $(BINFOLDER)mknx
+	-rm -rf $(BINFOLDER)libimp
 
 # ----------------------------------------------------------------------------
 # Userland: .nxe programs link against ported picolibc + our syscall glue (own
@@ -186,9 +187,7 @@ USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
 # the C library (picolibc + syscall/cwd/signal glue + the signal trampoline) now lives in
 # libc.ndl, pulled in by name via the import library instead of static-linked.
-# dllimport.o supplies the __imp_ IAT slots for libc.ndl's data symbols (stdout/stderr/
-# stdin/errno); it is in every dynamic program's glue so any stdio-data use resolves.
-DYN_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o $(BINFOLDER)dllimport.o
+DYN_GLUE=$(BINFOLDER)crt0.o $(BINFOLDER)nxhdr.o
 
 # All shipped programs are dynamically linked against libc.ndl, so PROGRAM objects are
 # compiled with nx-dllimport.h force-included (it redirects stdio data symbols stdout/
@@ -231,13 +230,14 @@ $(MKNX): tools/mknx.c kernel/NxFormat.h
 # by name. `--emit-relocs` keeps the R_386_32 relocations so mknx can build the relocation
 # table (the .nxe loads at any base). Each program below just declares its object prereqs.
 $(BINFOLDER)%.nxe: $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) -lgcc
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) $(filter %.a,$^) -lgcc
 	$(MKNX) $(@:.nxe=.elf) $@ --need libc.ndl
 
-# Per-program object sets: DYN_GLUE (crt0+nxhdr+dllimport) + program objects + the libc
-# import library; libc.ndl is a prereq so it is built/shipped. Doom + usedll have explicit
-# rules (extra math / a second needed library).
-DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl
+# Per-program object sets: DYN_GLUE (crt0+nxhdr) + program objects + the libc import
+# library (an ARCHIVE — the linker pulls only the members the program references, so it
+# imports just the symbols it uses). libc.ndl is a prereq so it is built/shipped. Doom +
+# usedll have explicit rules (extra math / a second needed library).
+DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl
 $(BINFOLDER)init.nxe:      $(DYN_DEPS) $(BINFOLDER)init.o
 $(BINFOLDER)nsh.nxe:       $(DYN_DEPS) $(BINFOLDER)nsh.o
 $(BINFOLDER)free.nxe:      $(DYN_DEPS) $(BINFOLDER)free.o
@@ -267,8 +267,8 @@ $(BINFOLDER)greet.ndl: $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o $(MKNX)
 
 # usedll: imports printf from libc.ndl AND nx_greet/nx_greeting from greet.ndl — two needed
 # libraries, so it has its own rule with both --need flags.
-$(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(BINFOLDER)greet.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc_import.o -lgcc
+$(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl $(BINFOLDER)greet.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)usedll.elf $@ --need libc.ndl --need greet.ndl
 
 # ---- Stage 3: the shared C library libc.ndl + its import library ----
@@ -304,13 +304,16 @@ $(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS)
 $(BINFOLDER)libc.ndl: $(BINFOLDER)libc.elf $(MKNX)
 	$(MKNX) $(BINFOLDER)libc.elf $@ --dll --export-all
 
-# Import library: a `name: jmp [__imp_name]` thunk + IAT slot per libc.ndl function export
-# (generated assembly). A program links this instead of static picolibc; mknx derives the
-# program's import table from the __imp_ slots the linker keeps.
-$(BINFOLDER)libc_import.s: $(BINFOLDER)libc.elf $(MKNX)
-	$(MKNX) $(BINFOLDER)libc.elf $@ --implib --export-all --soname libc.ndl
-$(BINFOLDER)libc_import.o: $(BINFOLDER)libc_import.s
-	nasm -f elf $< -o $@
+# Import library libc.ndl.a: an ARCHIVE with ONE member per export — a `name: jmp
+# [__imp_name]` thunk + IAT slot for each function, a slot-only member for each data symbol
+# (stdout/errno, reached via nx-dllimport.h). A program links the archive instead of static
+# picolibc; the linker pulls ONLY referenced members, so the program imports just what it
+# uses (not all ~130 symbols). mknx writes one .s per symbol into a dir; we assemble + ar.
+$(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX)
+	rm -rf $(BINFOLDER)libimp && mkdir -p $(BINFOLDER)libimp
+	$(MKNX) $(BINFOLDER)libc.elf $(BINFOLDER)libimp --implib --export-all --soname libc.ndl
+	for f in $(BINFOLDER)libimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
+	rm -f $@ && ar rcs $@ $(BINFOLDER)libimp/*.o
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
@@ -336,8 +339,8 @@ $(BINFOLDER)doomgeneric_nanos.o: user/doomgeneric_nanos.c
 # statically pulls only still-unresolved symbols: read-only const tables like _ctype_b
 # (importing immutable data has no shared-state benefit, unlike stdout/errno). Functions are
 # already resolved by the thunks, so their libc.a members are not pulled.
-$(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc_import.o $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)doom.elf $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc_import.o -L$(PICOLIBC)/lib -lc -lgcc
+$(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)doom.elf $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a -L$(PICOLIBC)/lib -lc -lgcc
 	$(MKNX) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe --need libc.ndl
 
 # Pull in all userland header-dependency files (.d), so a changed header recompiles only
