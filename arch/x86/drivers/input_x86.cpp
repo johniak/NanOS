@@ -74,8 +74,15 @@ void inputFeedScancode(unsigned char sc) {
 			if (ev == 0x03) { kernel::consoleSignal(SIGINT);  return; }
 			if (ev == 0x1C) { kernel::consoleSignal(SIGQUIT); return; }
 			if (ev == 0x1A) { kernel::consoleSignal(SIGTSTP); return; }
-			if (ev < 256)              // cooked: arrows ignored
+			if (ev < 256) {
 				g_line.push((char) ev, echoChar);
+			} else {                   // arrow -> ANSI escape bytes into the canonical line,
+				g_line.push(0x1B, echoChar);             // exactly as a Unix tty delivers them
+				g_line.push('[', echoChar);              // to a program reading cooked input
+				g_line.push(ev == kernel::KEY_UP    ? 'A' :
+				            ev == kernel::KEY_DOWN  ? 'B' :
+				            ev == kernel::KEY_RIGHT ? 'C' : 'D', echoChar);
+			}
 		});
 	}
 	// Wake the blocked reader once its read is satisfiable.
