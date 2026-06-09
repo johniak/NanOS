@@ -76,8 +76,23 @@ TEST_CASE("sys ioctl/write/mmapInfo route to a device fd; console fd rejects the
 	CHECK(p == 0x1234000u);
 	CHECK(l == 0x2000u);
 
-	CHECK(sc.ioctl(1, 0, buf) < 0);              // console fd: no ioctl
+	CHECK(sc.ioctl(1, 0, buf) < 0);              // console fd: unknown ioctl rejected
 	CHECK(sc.mmapInfo(1, &p, &l) < 0);           // console fd: not mmappable
+}
+
+TEST_CASE("console fd answers the termios ioctls so isatty() recognizes it") {
+	Syscalls sc(mountFixture(), sink);
+	char termios_buf[64];
+	// TCGETS / TCSETS succeed on the console (it is a terminal) -> isatty() == true.
+	CHECK(sc.ioctl(0, 0x5401 /* TCGETS */, termios_buf) == 0);
+	CHECK(sc.ioctl(1, 0x5402 /* TCSETS */, termios_buf) == 0);
+	// But the console is not a job-control tty: TIOCGPGRP stays unsupported.
+	CHECK(sc.ioctl(0, 0x540F /* TIOCGPGRP */, termios_buf) < 0);
+	CHECK(sc.ttyPgrp(0) == -1);
+	// A regular file is not a terminal: TCGETS fails (-> isatty() false, errno ENOTTY).
+	int fd = sc.open("/hello.txt", 0);
+	REQUIRE(fd >= 3);
+	CHECK(sc.ioctl(fd, 0x5401 /* TCGETS */, termios_buf) < 0);
 }
 
 TEST_CASE("sys_write to a read-only file is -EROFS") {

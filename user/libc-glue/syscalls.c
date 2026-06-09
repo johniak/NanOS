@@ -104,8 +104,17 @@ int rename(const char* oldp, const char* newp) {
 	return 0;
 }
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
-int isatty(int fd)                      { return fd == 0 || fd == 1 || fd == 2; }
-int getpid(void)                        { return 1; }
+/* isatty(2): a fd is a terminal iff TCGETS (tcgetattr) succeeds on it — exactly how glibc
+ * decides. Console + pty-slave answer it; files/pipes/fb0 do not (-> errno ENOTTY). */
+int isatty(int fd) {
+	char termios_buf[64];
+	if (sys3(SYS_ioctl, fd, 0x5401 /* TCGETS */, (int) termios_buf) == 0)
+		return 1;
+	errno = ENOTTY;
+	return 0;
+}
+int getpid(void)                        { return reterr(sys3(SYS_getpid, 0, 0, 0)); }
+int getppid(void)                       { return reterr(sys3(SYS_getppid, 0, 0, 0)); }
 int kill(int p, int s)                  { return reterr(sys3(SYS_kill, p, s, 0)); }
 
 /* Sessions + process groups (job control): the shell uses these to put each job in its own

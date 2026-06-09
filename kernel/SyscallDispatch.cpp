@@ -42,6 +42,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_fork:
 		ret = forkProcess(tf);
 		break;
+	case SYS_getpid:
+		ret = ProcTable::current()->pid;
+		break;
+	case SYS_getppid:
+		ret = ProcTable::current()->parent;
+		break;
 	case SYS_waitpid:
 		ret = waitProcess((int) a0, (int*) a1, (int) a2);   // a2 = options (WNOHANG/WUNTRACED)
 		break;

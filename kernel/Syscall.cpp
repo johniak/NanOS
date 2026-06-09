@@ -1,6 +1,7 @@
 #include "Syscall.h"
 #include "List.h"
 #include "string.h"
+#include "Termios.h"
 #include <arch/input.h>
 
 namespace kernel {
@@ -357,8 +358,23 @@ int Syscalls::getdents64(int fd, void* buf, unsigned n) {
 int Syscalls::ioctl(int fd, unsigned cmd, void* arg) {
 	if (!valid(fd))
 		return -EBADF;
-	if (fds[fd].isConsole)
-		return -EINVAL;          // no console ioctls (yet)
+	if (fds[fd].isConsole) {
+		// The console IS a terminal, so answer the termios queries that make isatty() /
+		// tcgetattr() recognize it. We keep no per-console termios state (cooked vs raw is
+		// driven by SYS_termmode), so TCGETS returns a zeroed struct and TCSETS is a no-op.
+		// Everything else (TIOCGPGRP, winsize) stays unsupported on the bare console.
+		switch (cmd) {
+		case IOCTL_TCGETS:
+			if (arg) memset(arg, 0, sizeof(Termios));
+			return 0;
+		case IOCTL_TCSETS:
+		case IOCTL_TCSETSW:
+		case IOCTL_TCSETSF:
+			return 0;
+		default:
+			return -EINVAL;
+		}
+	}
 	return vfs->ioctl(fds[fd].path, cmd, arg);
 }
 

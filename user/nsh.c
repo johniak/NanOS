@@ -280,6 +280,11 @@ int main(void) {
 				printf("%s\n", *e);
 			continue;
 		}
+		if (!strcmp(argv[0], "tty")) {        // report pid/ppid + whether stdin is a terminal
+			printf("pid %d ppid %d  stdin: %s\n",
+			       getpid(), getppid(), isatty(0) ? "a tty" : "not a tty");
+			continue;
+		}
 		if (!strcmp(argv[0], "jobs")) {
 			for (int i = 0; i < NJOBS; i++)
 				if (g_jobs[i].used)
