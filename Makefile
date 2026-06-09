@@ -194,9 +194,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest doom
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm doom
 SYS_PROGS=nsh cat ls free
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest doom
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm doom
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -231,6 +231,9 @@ $(BINFOLDER)%.o: user/%.S
 $(BINFOLDER)%.o: user/libc-glue/%.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf $< -o $@
+$(BINFOLDER)%.o: user/term/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 
 # mknx: host build tool (native cc) that turns the linked ELF into a .nxe/.ndl —
 # extracts the load image + R_386_32 base relocations + exports/imports, replacing
@@ -266,6 +269,7 @@ $(BINFOLDER)inputtest.nxe: $(DYN_DEPS) $(BINFOLDER)inputtest.o
 $(BINFOLDER)fstest.nxe:    $(DYN_DEPS) $(BINFOLDER)fstest.o
 $(BINFOLDER)pipetest.nxe:  $(DYN_DEPS) $(BINFOLDER)pipetest.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
+$(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vtfont.o
 
 # ---- Stage-2 dynamic-linking demo: greet.ndl (shared lib) + usedll (imports from it) ----
 $(BINFOLDER)greet.o: user/lib/greet.c
