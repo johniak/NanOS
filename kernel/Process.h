@@ -74,6 +74,9 @@ struct ProcInfo {
 
 class ProcTable {
 public:
+	// Hard ceiling on live processes (kernel threads included). Snapshot buffers should be
+	// sized to this so a /proc or signal-broadcast scan can never silently miss a process.
+	static const int MAX = 16;
 	static void init();
 	static Process* alloc(int parent);   // a free slot with a fresh pid, or 0
 	static Process* current();           // the running process (0 before set)

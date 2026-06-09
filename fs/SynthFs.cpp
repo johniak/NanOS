@@ -265,8 +265,8 @@ static int serveSnap(unsigned off, void* buf, unsigned n, const char* s, int len
 
 // Live process counts for /proc/stat and /proc/loadavg.
 static void procCounts(unsigned* total, unsigned* running, unsigned* blocked) {
-	ProcInfo arr[16];
-	int t = ProcTable::snapshot(arr, 16);
+	ProcInfo arr[ProcTable::MAX];
+	int t = ProcTable::snapshot(arr, ProcTable::MAX);
 	int r = 0, b = 0;
 	for (int i = 0; i < t; i++) {
 		if (arr[i].state == 'R')
@@ -634,8 +634,8 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 		out.add(de);
 	}
 	if (n == m_proc) {                          // append one dir per live process
-		ProcInfo procs[32];
-		int np = ProcTable::snapshot(procs, 32);
+		ProcInfo procs[ProcTable::MAX];
+		int np = ProcTable::snapshot(procs, ProcTable::MAX);
 		for (int i = 0; i < np; i++) {
 			DirEntry de;
 			int k = utoa((unsigned) procs[i].pid, de.name);

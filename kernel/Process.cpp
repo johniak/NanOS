@@ -3,7 +3,8 @@
 
 namespace kernel {
 
-static const int MAXPROC = 16;
+const int ProcTable::MAX;                    // out-of-line definition for ODR-use
+static const int MAXPROC = ProcTable::MAX;   // single source of truth (see Process.h)
 static Process g_procs[MAXPROC];
 static int g_nextPid = 1;
 static Process* g_current = 0;

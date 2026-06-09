@@ -171,9 +171,9 @@ int forkProcess(arch::TrapFrame* tf) {
 // members, they must receive SIGHUP then SIGCONT so they are not left blocked forever.
 // Call AFTER marking the dying process exited, so the orphan test sees it as gone.
 static void orphanCheckOnExit(Process* dying) {
-	ProcInfo arr[16];
-	int n = ProcTable::snapshot(arr, 16);
-	int done[16], nd = 0;
+	ProcInfo arr[ProcTable::MAX];
+	int n = ProcTable::snapshot(arr, ProcTable::MAX);
+	int done[ProcTable::MAX], nd = 0;
 	for (int i = 0; i < n; i++) {
 		if (arr[i].ppid != dying->pid || arr[i].pgid == dying->pgid)
 			continue;
@@ -320,8 +320,8 @@ int signalSend(int pid, int sig) {
 	if (pid == -1) {  // broadcast: every process we may signal, except init (pid 1) and self
 		Process* me = ProcTable::current();
 		int self = me ? me->pid : 0;
-		ProcInfo arr[16];
-		int n = ProcTable::snapshot(arr, 16);
+		ProcInfo arr[ProcTable::MAX];
+		int n = ProcTable::snapshot(arr, ProcTable::MAX);
 		int rc = -3;
 		for (int i = 0; i < n; i++) {
 			if (arr[i].pid == 1 || arr[i].pid == self || arr[i].kthread)

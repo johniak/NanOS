@@ -168,6 +168,21 @@ TEST_CASE("snapshot/infoByPid: fields + state char from the task / exit flag") {
 	CHECK(!ProcTable::infoByPid(9999, &pi));      // absent pid
 }
 
+TEST_CASE("snapshot into a ProcTable::MAX buffer captures every process — no truncation") {
+	ProcTable::init();
+	// Fill the table to its hard ceiling.
+	int made = 0;
+	for (int i = 0; i < ProcTable::MAX; i++)
+		if (ProcTable::alloc(0)) made++;
+	CHECK(made == ProcTable::MAX);
+	CHECK(ProcTable::alloc(0) == nullptr);          // full: alloc fails honestly
+
+	// A buffer sized to MAX must hold them all; the count can never exceed MAX.
+	ProcInfo arr[ProcTable::MAX];
+	int n = ProcTable::snapshot(arr, ProcTable::MAX);
+	CHECK(n == ProcTable::MAX);
+}
+
 // ---- Sessions + process groups (Stage 4) -------------------------------------------
 
 TEST_CASE("alloc: a fresh process leads its own group and session") {
