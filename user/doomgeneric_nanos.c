@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
 	chdir("/tmp");
 	/* Point Doom at the shareware WAD on the read-only disk (the built-in IWAD search
 	 * uses paths we don't have, so pass it explicitly). */
-	char* dargv[] = { "doom", "-iwad", "/disks/main/apps/doom1.wad", 0 };
+	char* dargv[] = { "doom", "-iwad", "/disks/main/apps/doom/doom1.wad", 0 };
 	doomgeneric_Create(3, dargv);
 	for (;;)
 		doomgeneric_Tick();

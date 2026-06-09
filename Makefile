@@ -144,16 +144,18 @@ _image: _all _userland _grub2-image
 	for p in $(SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
-	# Non-system apps (games/demos/tests) -> /apps.
+	# Non-system apps -> /apps. Each app is a self-contained BUNDLE directory
+	# /apps/<name>/ holding <name>.nxe (the entry binary) plus any data files.
 	for p in $(APP_PROGS); do \
-	  printf "rm /apps/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
 	for l in $(USER_LIBS_NDL); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
-	# Doom's shareware IWAD lives next to the app in /apps (the platform layer -iwad's it).
-	printf "rm /apps/doom1.wad\nwrite disk/doom1.wad /apps/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
+	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub

@@ -280,13 +280,14 @@ int main(void) {
 			char path[160];
 			if (argv[0][0] == '/') {         /* explicit path: run it as given */
 				execve(argv[0], argv, envp);
-			} else {                         /* search the program directories in order:
-			                                  * system utilities first, then user apps */
-				const char* dirs[] = { "/disks/main/nanos/bin", "/disks/main/apps", 0 };
-				for (int i = 0; dirs[i]; i++) {
-					snprintf(path, sizeof path, "%s/%s.nxe", dirs[i], argv[0]);
-					execve(path, argv, envp); /* returns only if it failed (e.g. ENOENT) */
-				}
+			} else {
+				/* System utility: a flat binary in /nanos/bin ... */
+				snprintf(path, sizeof path, "/disks/main/nanos/bin/%s.nxe", argv[0]);
+				execve(path, argv, envp);    /* returns only if it failed (e.g. ENOENT) */
+				/* ... else a user app, which is a self-contained bundle directory
+				 * /apps/<name>/ holding <name>.nxe plus its data files. */
+				snprintf(path, sizeof path, "/disks/main/apps/%s/%s.nxe", argv[0], argv[0]);
+				execve(path, argv, envp);
 			}
 			printf("nsh: %s: command not found\n", argv[0]);
 			_exit(127);                      /* exec failed */
