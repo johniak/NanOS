@@ -118,6 +118,11 @@ public:
 	static void cpuTimes(unsigned* user, unsigned* system, unsigned* idle);
 	static unsigned forksTotal();        // processes created since boot (Linux /proc/stat)
 	static int lastPid();                // pid of the most recently created process
+	// Job-control orphan handling: a group is orphaned when no member has a live parent in a
+	// different group of the same session; an orphaned group with stopped members must get
+	// SIGHUP+SIGCONT when its last attaching process exits. Both pure -> host-tested.
+	static bool isOrphanedGroup(int pgid);
+	static bool groupHasStopped(int pgid);
 
 	// /proc + ps support.
 	static int snapshot(ProcInfo* out, int max);     // fill `out`, return live count

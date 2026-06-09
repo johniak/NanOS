@@ -276,3 +276,34 @@ TEST_CASE("forksTotal counts every alloc; lastPid tracks the newest") {
 	ProcTable::alloc(a->pid);               // a third process: forks keeps climbing
 	CHECK(ProcTable::forksTotal() == 3);
 }
+
+// ---- Job-control POSIX hardening -----------------------------------------------------
+
+TEST_CASE("setpgid: a child that has exec'd can no longer be moved (-EACCES)") {
+	ProcTable::init();
+	Process* sh = ProcTable::alloc(0);
+	ProcTable::setCurrent(sh);
+	Process* c = ProcTable::alloc(sh->pid);
+	c->pgid = sh->pgid; c->sid = sh->sid;
+	c->execed = true;                          // child called execve
+	CHECK(ProcTable::setpgid(c->pid, 0) == -13);   // -EACCES
+}
+
+TEST_CASE("isOrphanedGroup: a live in-session out-of-group parent keeps a group attached") {
+	ProcTable::init();
+	Process* sh = ProcTable::alloc(0);         // group sh, session sh
+	Process* c = ProcTable::alloc(sh->pid);    // child leads its own group, same session
+	c->pgid = c->pid; c->sid = sh->sid;
+	CHECK(!ProcTable::isOrphanedGroup(c->pid));    // sh is a live outside-but-in-session parent
+	sh->exited = true;                         // parent leaves
+	CHECK(ProcTable::isOrphanedGroup(c->pid));     // now orphaned
+	CHECK(!ProcTable::isOrphanedGroup(999));       // empty group is not "orphaned"
+}
+
+TEST_CASE("groupHasStopped: true once a member is job-control stopped") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	CHECK(!ProcTable::groupHasStopped(a->pid));
+	a->stopped = true;
+	CHECK(ProcTable::groupHasStopped(a->pid));
+}

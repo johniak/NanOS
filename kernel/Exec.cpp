@@ -161,12 +161,37 @@ int forkProcess(arch::TrapFrame* tf) {
 	return child->pid;                          // parent sees the child's pid
 }
 
+// When a process exits it may orphan one of its children's process groups (POSIX): a group
+// that loses its last live, in-session, out-of-group parent. If such a group has stopped
+// members, they must receive SIGHUP then SIGCONT so they are not left blocked forever.
+// Call AFTER marking the dying process exited, so the orphan test sees it as gone.
+static void orphanCheckOnExit(Process* dying) {
+	ProcInfo arr[16];
+	int n = ProcTable::snapshot(arr, 16);
+	int done[16], nd = 0;
+	for (int i = 0; i < n; i++) {
+		if (arr[i].ppid != dying->pid || arr[i].pgid == dying->pgid)
+			continue;
+		int g = arr[i].pgid;
+		bool seen = false;
+		for (int k = 0; k < nd; k++) if (done[k] == g) seen = true;
+		if (seen)
+			continue;
+		done[nd++] = g;
+		if (ProcTable::isOrphanedGroup(g) && ProcTable::groupHasStopped(g)) {
+			signalSendGroup(g, SIGHUP);
+			signalSendGroup(g, SIGCONT);
+		}
+	}
+}
+
 // SYS_exit tail: free the address space we are standing on (after switching to the
 // kernel directory so we never free the live CR3), zombify the task, schedule away.
 void procExit() {
 	Process* p = ProcTable::current();
 	p->exitCode = p->sys->code();
 	p->exited = true;
+	orphanCheckOnExit(p);    // re-parent fallout: SIGHUP+SIGCONT any newly-orphaned stopped group
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
@@ -248,6 +273,7 @@ static void procKill(int sig) {
 	p->termSignal = sig;
 	p->exitCode = sig;
 	p->exited = true;
+	orphanCheckOnExit(p);    // same orphan-group handling as a normal exit
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
@@ -286,6 +312,20 @@ static void procStop(int sig) {
 int signalSend(int pid, int sig) {
 	if (sig < 0 || sig >= NANOS_NSIG)
 		return -22;   // -EINVAL
+	if (pid == -1) {  // broadcast: every process we may signal, except init (pid 1) and self
+		Process* me = ProcTable::current();
+		int self = me ? me->pid : 0;
+		ProcInfo arr[16];
+		int n = ProcTable::snapshot(arr, 16);
+		int rc = -3;
+		for (int i = 0; i < n; i++) {
+			if (arr[i].pid == 1 || arr[i].pid == self || arr[i].kthread)
+				continue;
+			if (signalSend(arr[i].pid, sig) == 0)
+				rc = 0;
+		}
+		return rc;
+	}
 	if (pid <= 0) {
 		Process* me = ProcTable::current();
 		int pgid = (pid == 0) ? (me ? me->pgid : 0) : -pid;

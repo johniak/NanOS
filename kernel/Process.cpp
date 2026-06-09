@@ -213,6 +213,8 @@ int ProcTable::setpgid(int pid, int pgid) {
 	int cur = g_current ? g_current->pid : 0;
 	if (p != g_current && p->parent != cur)
 		return -3;                      // not us and not our child
+	if (p != g_current && p->execed)
+		return -13;                     // -EACCES: a child cannot be moved after it execs
 	if (g_current && p->sid != g_current->sid)
 		return -1;                      // -EPERM: moving across sessions
 	if (pgid != p->pid) {               // joining an existing group: it must be in-session
@@ -270,5 +272,29 @@ void ProcTable::cpuTimes(unsigned* user, unsigned* system, unsigned* idle) {
 
 unsigned ProcTable::forksTotal() { return g_forksTotal; }
 int ProcTable::lastPid() { return g_lastPid; }
+
+// A process group is orphaned when no member has a parent that is alive, in a different
+// group, but the same session (POSIX). When a process exit orphans a group with stopped
+// members, the kernel must send it SIGHUP + SIGCONT. Pure -> host-tested.
+bool ProcTable::isOrphanedGroup(int pgid) {
+	bool any = false;
+	for (int i = 0; i < MAXPROC; i++) {
+		Process* m = &g_procs[i];
+		if (!m->used || m->pgid != pgid)
+			continue;
+		any = true;
+		Process* par = byPid(m->parent);
+		if (par && par->used && !par->exited && par->pgid != pgid && par->sid == m->sid)
+			return false;               // a live outside-but-in-session parent keeps it attached
+	}
+	return any;                         // empty group is not "orphaned" (nothing to signal)
+}
+
+bool ProcTable::groupHasStopped(int pgid) {
+	for (int i = 0; i < MAXPROC; i++)
+		if (g_procs[i].used && g_procs[i].pgid == pgid && g_procs[i].stopped)
+			return true;
+	return false;
+}
 
 }  // namespace kernel
