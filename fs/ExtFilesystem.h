@@ -114,7 +114,7 @@ protected:
 	char commonBuff[4096];
 	Ext2BaseSuperblockFields baseSuperBlock;
 	Ext2ExtendedSuperblockFields extendedSuperblock;
-	Ext2BlockGroupDescriptor blockGroupDescriptors[100];
+	Ext2BlockGroupDescriptor* blockGroupDescriptors;   // allocated to the real group count
 	int blockGroupsCount;
 	int partitionLba;
 	int blockSize;
@@ -124,6 +124,7 @@ public:
 	ExtFilesystem(BlockDevice* device, unsigned partitionLba) {
 		this->device = device;
 		this->partitionLba = partitionLba;
+		this->blockGroupDescriptors = 0;
 	}
 
 	// Map a file-relative block index to an absolute filesystem block number.
@@ -165,12 +166,20 @@ public:
 		// block 2 for 1 KiB blocks, block 1 otherwise.
 		int bgdtBlock = (blockSize == 1024) ? 2 : 1;
 		int sectorCount = (blockGroupsCount * descSize + 511) / 512 + 1;
+		// The descriptor table grows with the disk and can exceed the 4 KiB scratch buffer
+		// (e.g. 64-bit 64-byte descriptors past ~64 groups), so read it into a table-sized
+		// buffer and size the descriptor array to the real group count — no fixed [100] cap
+		// (which silently overflowed) and no commonBuff overrun on large filesystems.
+		blockGroupDescriptors = (Ext2BlockGroupDescriptor*) malloc(
+				(unsigned) blockGroupsCount * sizeof(Ext2BlockGroupDescriptor));
+		char* bgdtBuf = (char*) malloc((unsigned) sectorCount * 512);
 		device->readSectors(this->partitionLba + bgdtBlock * (blockSize / 512),
-				sectorCount, commonBuff);
+				sectorCount, bgdtBuf);
 		for (int g = 0; g < blockGroupsCount; g++)
 			memcpy((void*) &blockGroupDescriptors[g],
-					(void*) (commonBuff + g * descSize),
+					(void*) (bgdtBuf + g * descSize),
 					sizeof(Ext2BlockGroupDescriptor));
+		free(bgdtBuf);
 	}
 
 	void printInfo() {
