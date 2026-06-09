@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 int fork(void);                                                  /* libc glue */
 int execve(const char* path, char* const argv[], char* const envp[]);
@@ -306,6 +307,15 @@ int main(void) {
 		if (!strcmp(argv[0], "tty")) {        // report pid/ppid + whether stdin is a terminal
 			printf("pid %d ppid %d  stdin: %s\n",
 			       getpid(), getppid(), isatty(0) ? "a tty" : "not a tty");
+			continue;
+		}
+		if (!strcmp(argv[0], "date")) {       // wall-clock time from gettimeofday (CMOS RTC)
+			struct timeval tv = { 0, 0 };
+			gettimeofday(&tv, 0);
+			long e = (long) tv.tv_sec;
+			long tod = e % 86400;             /* seconds into the (UTC) day */
+			printf("epoch %ld  %02ld:%02ld:%02ld UTC\n",
+			       e, tod / 3600, (tod % 3600) / 60, tod % 60);
 			continue;
 		}
 		if (!strcmp(argv[0], "jobs")) {

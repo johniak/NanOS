@@ -456,12 +456,16 @@ void Syscalls::exit(int code) {
 	exitCode = code;
 }
 
-int Syscalls::clockGettime(int /*clkId*/, unsigned ticks, KTimespec* out) {
-	// One monotonic clock (the 1000 Hz scheduler tick); we treat every clk_id the
-	// same (REALTIME aliases MONOTONIC since there is no RTC). ticks are milliseconds.
+int Syscalls::clockGettime(int clkId, unsigned ticks, unsigned realtimeSec, KTimespec* out) {
+	// ticks are milliseconds since boot (1000 Hz). CLOCK_REALTIME (0) is wall-clock time:
+	// the RTC's whole seconds plus the sub-second part of the monotonic tick. Every other
+	// clock id is monotonic: seconds since boot. (CLOCK_REALTIME == 0, MONOTONIC == 1.)
 	if (!out)
 		return -EINVAL;
-	out->tv_sec = (long long) (ticks / 1000);
+	unsigned long long sec = ticks / 1000;
+	if (clkId == 0)
+		sec = realtimeSec;        // wall clock from the RTC (whole seconds)
+	out->tv_sec = (long long) sec;
 	out->tv_nsec = (int) ((ticks % 1000) * 1000000u);
 	return 0;
 }

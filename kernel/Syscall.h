@@ -129,7 +129,9 @@ public:
 	// dispatch supplies Scheduler::ticks(). nanosleepMs converts a requested timespec to
 	// the number of whole milliseconds to block (rounding up); the actual blocking loop
 	// lives in the dispatch (it needs the scheduler/IRQs).
-	int clockGettime(int clkId, unsigned ticks, KTimespec* out);
+	// CLOCK_MONOTONIC (and default): seconds/nanos from `ticks` (1000 Hz => ms since boot).
+	// CLOCK_REALTIME: wall clock = `realtimeSec` (from the RTC) + the sub-second tick part.
+	int clockGettime(int clkId, unsigned ticks, unsigned realtimeSec, KTimespec* out);
 	unsigned nanosleepMs(const KTimespec* req);
 	void exit(int code);
 	bool hasExited() { return exited; }

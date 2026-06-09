@@ -281,19 +281,22 @@ TEST_CASE("resetForRun clears the exit state so the instance can run again") {
 	CHECK(sc.code() == 0);
 }
 
-TEST_CASE("clockGettime splits a millisecond tick count into sec/nsec") {
+TEST_CASE("clockGettime: MONOTONIC from ticks, REALTIME from the RTC seconds") {
 	Syscalls sc(mountFixture(), sink);
 	KTimespec ts;
-	CHECK(sc.clockGettime(0, 0, &ts) == 0);
-	CHECK(ts.tv_sec == 0);
-	CHECK(ts.tv_nsec == 0);
-	CHECK(sc.clockGettime(1, 1500, &ts) == 0);   // 1.5 s
+	// CLOCK_MONOTONIC (1): seconds come from the uptime tick count.
+	CHECK(sc.clockGettime(1, 1500, 0, &ts) == 0);          // 1.5 s uptime
 	CHECK(ts.tv_sec == 1);
 	CHECK(ts.tv_nsec == 500000000);
-	CHECK(sc.clockGettime(0, 999, &ts) == 0);    // just under a second
+	// CLOCK_REALTIME (0): whole seconds come from the RTC value, sub-second from the tick.
+	CHECK(sc.clockGettime(0, 1500, 1700000000u, &ts) == 0);
+	CHECK(ts.tv_sec == 1700000000);
+	CHECK(ts.tv_nsec == 500000000);
+	// MONOTONIC ignores the realtime seconds entirely.
+	CHECK(sc.clockGettime(1, 999, 1700000000u, &ts) == 0); // just under a second
 	CHECK(ts.tv_sec == 0);
 	CHECK(ts.tv_nsec == 999000000);
-	CHECK(sc.clockGettime(0, 0, nullptr) == -EINVAL);
+	CHECK(sc.clockGettime(0, 0, 0, nullptr) == -EINVAL);
 }
 
 TEST_CASE("sys open(O_CREAT)+write+lseek+read on a writable tmpfs mount") {

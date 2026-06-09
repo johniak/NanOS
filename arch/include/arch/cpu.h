@@ -25,4 +25,9 @@ struct CpuInfo {
 };
 void cpuIdentify(CpuInfo* out);
 
+// Current wall-clock time as seconds since the Unix epoch, read from the platform's
+// real-time clock (x86: the CMOS RTC). Used by clock_gettime(CLOCK_REALTIME) and
+// gettimeofday so timestamps are real, not a fabricated fixed epoch. Returns 0 if no RTC.
+unsigned rtcEpoch();
+
 }

@@ -5,6 +5,7 @@
 #include "SignalDispatch.h"
 #include "Scheduler.h"
 #include <arch/syscall.h>
+#include <arch/cpu.h>
 #include <arch/input.h>
 #include <arch/mmu.h>
 #include <arch/sched.h>
@@ -283,8 +284,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		ret = 0;
 		break;
 	case SYS_clock_gettime:
-		// a0 = clk_id, a1 = user struct timespec*. User space is active, so write through.
-		ret = g_sys->clockGettime((int) a0, Scheduler::ticks(), (KTimespec*) a1);
+		// a0 = clk_id, a1 = user struct timespec*. Pass the RTC wall-clock seconds so
+		// CLOCK_REALTIME is real time; CLOCK_MONOTONIC ignores it. User space is active.
+		ret = g_sys->clockGettime((int) a0, Scheduler::ticks(), arch::rtcEpoch(),
+				(KTimespec*) a1);
 		break;
 	case SYS_nanosleep: {
 		// a0 = req timespec*, a1 = rem timespec* (optional). Block until the deadline,
@@ -298,7 +301,8 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 				if (a1) {   // report the unslept remainder
 					unsigned done = Scheduler::ticks() - start;
 					unsigned left = done < ms ? ms - done : 0;
-					g_sys->clockGettime(0, left, (KTimespec*) a1);
+					// Convert the unslept ms into a duration timespec: monotonic (no epoch).
+					g_sys->clockGettime(1 /*MONOTONIC*/, left, 0, (KTimespec*) a1);
 				}
 				ret = -ERESTARTSYS;
 				break;

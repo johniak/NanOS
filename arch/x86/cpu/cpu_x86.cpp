@@ -108,4 +108,55 @@ void cpuIdentify(CpuInfo* out) {
 	}
 }
 
+// ---- CMOS real-time clock (for clock_gettime(CLOCK_REALTIME) / gettimeofday) ----------
+namespace {
+inline unsigned char cmosRead(int reg) {
+	unsigned char v;
+	__asm__ __volatile__("outb %%al, $0x70" : : "a"((unsigned char) reg));
+	__asm__ __volatile__("inb $0x71, %%al" : "=a"(v));
+	return v;
+}
+inline unsigned char bcd2bin(unsigned char v) { return (unsigned char) ((v & 0x0F) + (v >> 4) * 10); }
+inline bool isLeap(unsigned y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
+}
+
+unsigned rtcEpoch() {
+	// Read the CMOS RTC, retrying until two consecutive reads agree (the RTC may update
+	// mid-read; bit 7 of register 0x0A is "update in progress").
+	unsigned char s = 0, mi = 0, h = 0, d = 0, mo = 0, y = 0;
+	unsigned char ls = 0xFF, lmi = 0xFF, lh = 0xFF, ld = 0xFF, lmo = 0xFF, ly = 0xFF;
+	for (int tries = 0; tries < 100; tries++) {
+		while (cmosRead(0x0A) & 0x80) { }     // wait out update-in-progress
+		s = cmosRead(0x00); mi = cmosRead(0x02); h = cmosRead(0x04);
+		d = cmosRead(0x07); mo = cmosRead(0x08); y = cmosRead(0x09);
+		if (s == ls && mi == lmi && h == lh && d == ld && mo == lmo && y == ly)
+			break;
+		ls = s; lmi = mi; lh = h; ld = d; lmo = mo; ly = y;
+	}
+	unsigned char regB = cmosRead(0x0B);
+	bool pm = false;
+	if (!(regB & 0x04)) {                     // BCD mode -> convert to binary
+		pm = (h & 0x80) != 0;                 // preserve the 12-hour PM flag before stripping
+		s = bcd2bin(s); mi = bcd2bin(mi); h = bcd2bin((unsigned char) (h & 0x7F));
+		d = bcd2bin(d); mo = bcd2bin(mo); y = bcd2bin(y);
+	} else {
+		pm = (h & 0x80) != 0;
+		h = (unsigned char) (h & 0x7F);
+	}
+	if (!(regB & 0x02)) {                     // 12-hour mode -> normalise to 24-hour
+		if (h == 12) h = 0;
+		if (pm) h = (unsigned char) (h + 12);
+	}
+	unsigned year = 2000u + y;                // assume the 21st century (no RTC century reg used)
+	if (mo < 1 || mo > 12) return 0;          // garbage RTC -> no time
+	static const unsigned cum[] = { 0,31,59,90,120,151,181,212,243,273,304,334 };
+	unsigned long long days = 0;
+	for (unsigned yy = 1970; yy < year; yy++)
+		days += isLeap(yy) ? 366 : 365;
+	days += cum[mo - 1];
+	if (mo > 2 && isLeap(year)) days += 1;
+	days += (d ? d - 1 : 0);
+	return (unsigned) (days * 86400ULL + (unsigned) h * 3600u + (unsigned) mi * 60u + s);
+}
+
 }

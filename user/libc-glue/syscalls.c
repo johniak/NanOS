@@ -152,14 +152,14 @@ int nanosleep(const struct timespec* req, struct timespec* rem) {
 	return reterr(sys3(SYS_nanosleep, (int) req, (int) rem, 0));
 }
 
-/* gettimeofday now reads the monotonic clock (offset by a fixed epoch so ls -l still
- * renders a plausible wall-clock timestamp). */
+/* gettimeofday reads CLOCK_REALTIME (clk 0), which the kernel backs with the CMOS RTC,
+ * so tv_sec is the real Unix time — no fabricated fixed epoch. */
 int gettimeofday(struct timeval* tv, void* tz) {
 	(void) tz;
 	if (tv) {
 		struct timespec ts = { 0, 0 };
-		clock_gettime(0, &ts);
-		tv->tv_sec = 1700000000 + ts.tv_sec;
+		clock_gettime(0, &ts);          /* CLOCK_REALTIME */
+		tv->tv_sec = ts.tv_sec;
 		tv->tv_usec = ts.tv_nsec / 1000;
 	}
 	return 0;
