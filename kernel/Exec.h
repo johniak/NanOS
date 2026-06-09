@@ -22,11 +22,11 @@ namespace kernel {
 // error; does NOT return on success (the process runs until it exits).
 int execProgram(Vfs* vfs, const char* path);
 
-// execve(2): replace the current process's image with <path> (.nxe). `argv`/`argc`
-// are already copied into kernel memory. On success rewrites *tf so the syscall's
-// iret enters the new program (no meaningful return); returns <0 on a load error.
+// execve(2): replace the current process's image with <path> (.nxe). `argv`/`argc` and
+// `envp`/`envc` are already copied into kernel memory. On success rewrites *tf so the
+// syscall's iret enters the new program (no meaningful return); returns <0 on a load error.
 int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
-		arch::TrapFrame* tf);
+		const char* const* envp, int envc, arch::TrapFrame* tf);
 
 // fork(2): create a child process — eager copy of the current process's address
 // space + fd table — that resumes from the same trap frame *tf with a return value

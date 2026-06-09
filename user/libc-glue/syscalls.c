@@ -163,14 +163,22 @@ int waitpid(int pid, int* status, int options) {
 	return reterr(sys3(SYS_waitpid, pid, (int) status, options));
 }
 
+/* The process environment. getenv()/setenv() (picolibc) read `environ` directly — both
+ * live here in libc.ndl, so that reference is module-local (no import). crt0 lives in the
+ * program ELF and cannot reach a data symbol across the .ndl boundary by name (only the
+ * Windows-style __imp_ slot), so it publishes envp through this exported FUNCTION instead,
+ * which functions import cleanly via the jmp thunk. */
+char** environ = 0;
+void __nx_set_environ(char** e) { environ = e; }
+
 /* Replace the current process image with <path>. On success it does not return (the
  * kernel rewrites the trap frame so the iret lands in the new program); on failure it
- * returns -1 with errno set. envp is accepted for the POSIX signature but unused. */
+ * returns -1 with errno set. A NULL envp inherits the caller's current environment. */
 int execve(const char* path, char* const argv[], char* const envp[]) {
-	(void) envp;
 	char abs[256];
 	nx_resolve(path, abs);
-	return reterr(sys3(SYS_execve, (int) abs, (int) argv, 0));
+	if (!envp) envp = environ;
+	return reterr(sys3(SYS_execve, (int) abs, (int) argv, (int) envp));
 }
 
 /* Console input mode: 0 = cooked (line-edited), 1 = raw (per-key). The shell uses

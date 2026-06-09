@@ -15,10 +15,11 @@ namespace arch {
 struct AddressSpace;   // opaque per-process space (<arch/mmu.h>)
 
 // Map a staged program image (already at its load base in the kernel staging window,
-// bss zeroed) plus a heap and a stack into `space`, writing the SysV argv image onto
+// bss zeroed) plus a heap and a stack into `space`, writing the SysV argv+envp image onto
 // the stack. Returns the initial user esp (pointing at argc).
 uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
-                      const char* const* argv, int argc);
+                      const char* const* argv, int argc,
+                      const char* const* envp, int envc);
 
 // Enter ring 3 at `entry` with stack `userEsp` in `space`. Switches CR3 and `iret`s
 // down to CPL 3. DOES NOT RETURN (the process runs until it exits).

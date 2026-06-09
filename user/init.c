@@ -7,10 +7,11 @@
  * will go before the exec.
  */
 int execve(const char* path, char* const argv[], char* const envp[]);  /* libc glue */
+/* `environ` (the kernel-provided environment, TERM=…) comes from nx-dllimport.h, which is
+ * force-included for program objects; it maps to libc.ndl's environ via the import slot. */
 
 int main(void) {
 	char* argv[] = { "nsh", 0 };
-	char* envp[] = { 0 };
-	execve("/disks/main/nanos/bin/nsh.nxe", argv, envp);
+	execve("/disks/main/nanos/bin/nsh.nxe", argv, environ);   /* forward our environment */
 	return 127;   /* only reached if exec failed */
 }

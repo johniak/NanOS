@@ -65,7 +65,8 @@ int execProgram(Vfs* vfs, const char* path) {
 		return rc;
 	}
 	const char* argv[] = { path, 0 };
-	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1);
+	const char* envp[] = { "TERM=xterm-256color", 0 };   // PID 1's baseline environment
+	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 1, envp, 1);
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
 	ProcTable::setCommand(ProcTable::current(), argv, 1);
@@ -78,7 +79,7 @@ int execProgram(Vfs* vfs, const char* path) {
 // process's user CR3; stage + load under the kernel directory (where 0x400000 is
 // identity-mapped), then rewrite the trap frame so the iret enters the new image.
 int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
-		arch::TrapFrame* tf) {
+		const char* const* envp, int envc, arch::TrapFrame* tf) {
 	Process* p = ProcTable::current();
 	unsigned userDir = arch::mmuCurrentDirPhys();
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
@@ -108,7 +109,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		arch::mmuLoadDirPhys(userDir);
 		return rc;
 	}
-	unsigned esp = arch::archLoadUser(newSpace, h->loadBase, h->bssEnd, argv, argc);
+	unsigned esp = arch::archLoadUser(newSpace, h->loadBase, h->bssEnd, argv, argc, envp, envc);
 	if (p->space)
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 	p->space = newSpace;

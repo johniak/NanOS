@@ -30,10 +30,12 @@ extern FILE **__imp_stdin;
 extern FILE **__imp_stdout;
 extern FILE **__imp_stderr;
 extern int   *__imp_errno;
+extern char ***__imp_environ;
 
-#define stdin  (*__imp_stdin)
-#define stdout (*__imp_stdout)
-#define stderr (*__imp_stderr)
-#define errno  (*__imp_errno)
+#define stdin   (*__imp_stdin)
+#define stdout  (*__imp_stdout)
+#define stderr  (*__imp_stderr)
+#define errno   (*__imp_errno)
+#define environ (*__imp_environ)
 
 #endif

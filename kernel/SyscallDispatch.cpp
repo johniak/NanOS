@@ -191,12 +191,14 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		break;
 	}
 	case SYS_execve: {
-		// Deep-copy path + argv from the caller's (currently active) user space into
+		// Deep-copy path + argv + envp from the caller's (currently active) user space into
 		// kernel buffers before execve swaps CR3 to the kernel directory to stage and
 		// load the new image (after which the caller's user pointers are unmapped).
 		static char pathBuf[256];
 		static char argBuf[16][128];
 		static const char* argPtrs[17];
+		static char envBuf[16][128];
+		static const char* envPtrs[17];
 		copyStr(pathBuf, (const char*) a0, sizeof pathBuf);
 		const char* const* uargv = (const char* const*) a1;
 		int argc = 0;
@@ -206,7 +208,15 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		for (int i = 0; i < argc; i++)
 			argPtrs[i] = argBuf[i];
 		argPtrs[argc] = 0;
-		ret = execve(g_vfs, pathBuf, argPtrs, argc, tf);   // on success rewrites tf, no return here
+		const char* const* uenvp = (const char* const*) a2;
+		int envc = 0;
+		if (uenvp)
+			for (; envc < 16 && uenvp[envc]; envc++)
+				copyStr(envBuf[envc], uenvp[envc], sizeof envBuf[envc]);
+		for (int i = 0; i < envc; i++)
+			envPtrs[i] = envBuf[i];
+		envPtrs[envc] = 0;
+		ret = execve(g_vfs, pathBuf, argPtrs, argc, envPtrs, envc, tf);   // rewrites tf, no return
 		break;
 	}
 	case SYS_brk: {

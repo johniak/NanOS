@@ -270,6 +270,16 @@ int main(void) {
 			if (argc == 1) out("\n", 1);
 			continue;
 		}
+		if (!strcmp(argv[0], "env")) {
+			if (argc > 1) {                       // env NAME -> print just that value
+				const char* v = getenv(argv[1]);
+				if (v) printf("%s\n", v);
+				continue;
+			}
+			for (char** e = environ; e && *e; e++)   // env -> dump the whole environment
+				printf("%s\n", *e);
+			continue;
+		}
 		if (!strcmp(argv[0], "jobs")) {
 			for (int i = 0; i < NJOBS; i++)
 				if (g_jobs[i].used)

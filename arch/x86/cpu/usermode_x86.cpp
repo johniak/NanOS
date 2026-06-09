@@ -26,7 +26,8 @@ const uint32_t USER_STACK_BOT = 0x780000;   // 512 KiB user stack (top of the us
 namespace arch {
 
 uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
-                      const char* const* argv, int argc) {
+                      const char* const* argv, int argc,
+                      const char* const* envp, int envc) {
 	// Image (code/data/bss) -> fresh private USER frames, copying the staged bytes
 	// (identity-mapped in the kernel dir). NxeLoader already zeroed the staged bss.
 	uint32_t imgEnd = (bssEnd + 0xFFF) & ~0xFFFu;
@@ -48,7 +49,7 @@ uint32_t archLoadUser(AddressSpace* space, uint32_t loadBase, uint32_t bssEnd,
 	auto stackPhys = [&](uint32_t va) -> uint32_t {
 		return stackFrames[(va - USER_STACK_BOT) >> 12] + (va & 0xFFFu);
 	};
-	return kernel::buildUserStack(USER_STACK_TOP, argv, argc,
+	return kernel::buildUserStack(USER_STACK_TOP, argv, argc, envp, envc,
 		[&](uint32_t va, const void* src, unsigned len) {
 			const unsigned char* s = (const unsigned char*) src;
 			for (unsigned i = 0; i < len; i++)
