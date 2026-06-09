@@ -49,7 +49,7 @@ void cpuIdentify(CpuInfo* out) {
 	for (; v[i]; i++) out->vendor[i] = v[i];
 	out->vendor[i] = 0;
 	out->brand[0] = 0;
-	out->family = 6; out->model = 0; out->stepping = 0;
+	out->family = 6; out->model = 0; out->stepping = 0; out->khz = 0;
 	const char* f = "fpu tsc"; int j = 0;
 	for (; f[j]; j++) out->flags[j] = f[j];
 	out->flags[j] = 0;

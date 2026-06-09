@@ -62,6 +62,7 @@ inline int appendFlag(char* dst, int p, int cap, const char* f) {
 	dst[p] = 0;
 	return p;
 }
+unsigned tscCalibrateKHz();   // defined below (TSC frequency in kHz, cached)
 }
 
 void cpuIdentify(CpuInfo* out) {
@@ -96,6 +97,8 @@ void cpuIdentify(CpuInfo* out) {
 	if (featEcx & (1u << 0))  p = appendFlag(out->flags, p, (int) sizeof out->flags, "sse3");
 	if (featEcx & (1u << 19)) p = appendFlag(out->flags, p, (int) sizeof out->flags, "sse4_1");
 
+	out->khz = (featEdx & (1u << 4)) ? tscCalibrateKHz() : 0;   // measure TSC if present
+
 	out->brand[0] = 0;                     // extended leaves 0x80000002-4: brand string
 	cpuid(0x80000000u, &a, &b, &c, &d);
 	if (a >= 0x80000004u) {
@@ -106,6 +109,54 @@ void cpuIdentify(CpuInfo* out) {
 		}
 		out->brand[48] = 0;
 	}
+}
+
+// ---- TSC frequency calibration (for /proc/cpuinfo "cpu MHz") --------------------------
+namespace {
+inline unsigned char inb(unsigned short port) {
+	unsigned char v;
+	__asm__ __volatile__("inb %1, %0" : "=a"(v) : "Nd"(port));
+	return v;
+}
+inline void outb(unsigned short port, unsigned char v) {
+	__asm__ __volatile__("outb %0, %1" : : "a"(v), "Nd"(port));
+}
+inline unsigned long long rdtsc() {
+	unsigned lo, hi;
+	__asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+	return ((unsigned long long) hi << 32) | lo;
+}
+// Measure the TSC frequency in kHz by gating PIT channel 2 (the speaker timer, NOT the
+// system tick on channel 0) for a known ~10 ms and counting TSC ticks across it. Cached
+// after the first call (calibration busy-waits). 0 if the CPU lacks a TSC.
+unsigned tscCalibrateKHz() {
+	static unsigned cached = 0xFFFFFFFFu;
+	if (cached != 0xFFFFFFFFu)
+		return cached;
+	const unsigned PIT_HZ = 1193182u;
+	const unsigned MS = 10u;
+	unsigned count = PIT_HZ * MS / 1000u;        // ~11932 ticks = 10 ms
+	// Enable the channel-2 gate (port 0x61 bit0), keep the speaker off (bit1=0).
+	unsigned char p61 = (unsigned char) ((inb(0x61) & ~0x02) | 0x01);
+	outb(0x61, p61);
+	outb(0x43, 0xB0);                            // ch2, lobyte/hibyte, mode 0 (one-shot)
+	outb(0x42, (unsigned char) (count & 0xFF));
+	outb(0x42, (unsigned char) ((count >> 8) & 0xFF));
+	// Restart the count: toggle the gate low then high.
+	unsigned char g = (unsigned char) (inb(0x61) & ~0x01);
+	outb(0x61, g);
+	outb(0x61, (unsigned char) (g | 0x01));
+	unsigned long long t0 = rdtsc();
+	unsigned guard = 0;
+	while (!(inb(0x61) & 0x20)) {                // wait for ch2 OUT high = terminal count
+		if (++guard == 0) break;                 // ~4e9 spin guard (never reached in practice)
+	}
+	// The delta over ~10 ms fits in 32 bits even at tens of GHz, so cast before dividing
+	// (a 32-bit divide is a native instruction; a 64-bit one would need libgcc __udivdi3).
+	unsigned dt = (unsigned) (rdtsc() - t0);
+	cached = dt / MS;                            // ticks per ms = kHz
+	return cached;
+}
 }
 
 // ---- CMOS real-time clock (for clock_gettime(CLOCK_REALTIME) / gettimeofday) ----------

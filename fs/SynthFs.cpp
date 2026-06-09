@@ -136,7 +136,13 @@ int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci) {
 	p = putStr(buf, p, cap, "\nmodel name\t: ");
 	p = putStr(buf, p, cap, ci.brand[0] ? ci.brand : "unknown");
 	p = putStr(buf, p, cap, "\nstepping\t: ");     p = putUint(buf, p, cap, ci.stepping);
-	p = putStr(buf, p, cap, "\ncpu MHz\t\t: 0.000\n");
+	// Real measured clock (kHz -> MHz with a 3-digit fraction), 0.000 only if no TSC.
+	p = putStr(buf, p, cap, "\ncpu MHz\t\t: ");    p = putUint(buf, p, cap, ci.khz / 1000);
+	unsigned frac = ci.khz % 1000;
+	p = putStr(buf, p, cap, ".");
+	p = putStr(buf, p, cap, frac < 10 ? "00" : frac < 100 ? "0" : "");
+	p = putUint(buf, p, cap, frac);
+	p = putStr(buf, p, cap, "\n");
 	p = putStr(buf, p, cap, "flags\t\t: ");
 	p = putStr(buf, p, cap, ci.flags[0] ? ci.flags : "fpu");
 	p = putStr(buf, p, cap, "\n\n");

@@ -21,6 +21,7 @@ struct CpuInfo {
 	unsigned family;   // display family/model/stepping (leaf 1)
 	unsigned model;
 	unsigned stepping;
+	unsigned khz;      // measured TSC frequency in kHz (0 if no TSC); for /proc/cpuinfo MHz
 	char flags[128];   // space-separated feature flags (fpu, tsc, sse, ...)
 };
 void cpuIdentify(CpuInfo* out);

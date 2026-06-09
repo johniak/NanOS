@@ -339,6 +339,7 @@ TEST_CASE("cpuinfoString renders real CPUID fields; versionString the kernel str
 	strcpy(ci.vendor, "GenuineIntel");
 	strcpy(ci.brand, "Test CPU @ 2.50GHz");
 	ci.family = 6; ci.model = 42; ci.stepping = 7;
+	ci.khz = 2500500;                                  // 2500.500 MHz
 	strcpy(ci.flags, "fpu tsc sse sse2");
 	char b[384];
 	CHECK(cpuinfoString(b, sizeof b, ci) > 0);
@@ -346,6 +347,7 @@ TEST_CASE("cpuinfoString renders real CPUID fields; versionString the kernel str
 	CHECK(strstr(b, "model name\t: Test CPU @ 2.50GHz") != 0);
 	CHECK(strstr(b, "cpu family\t: 6") != 0);
 	CHECK(strstr(b, "model\t\t: 42") != 0);
+	CHECK(strstr(b, "cpu MHz\t\t: 2500.500") != 0);    // measured clock, 3-digit fraction
 	CHECK(strstr(b, "flags\t\t: fpu tsc sse sse2") != 0);
 	char v[64];
 	CHECK(versionString(v, sizeof v) > 0);
