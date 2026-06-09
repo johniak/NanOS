@@ -17,6 +17,7 @@ namespace kernel {
 
 // errno values returned (negated) on error.
 #define ENOENT 2
+#define E2BIG 7
 #define EBADF 9
 #define EAGAIN 11
 #define EINVAL 22

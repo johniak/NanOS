@@ -17,6 +17,7 @@
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <poll.h>
 
 /* Force the stdin stream object to be linked. picolibc's tinystdio pulls stdin/stdout/
@@ -172,13 +173,96 @@ int waitpid(int pid, int* status, int options) {
 	return reterr(sys3(SYS_waitpid, pid, (int) status, options));
 }
 
-/* The process environment. getenv()/setenv() (picolibc) read `environ` directly — both
- * live here in libc.ndl, so that reference is module-local (no import). crt0 lives in the
- * program ELF and cannot reach a data symbol across the .ndl boundary by name (only the
- * Windows-style __imp_ slot), so it publishes envp through this exported FUNCTION instead,
- * which functions import cleanly via the jmp thunk. */
+/* The process environment. getenv() (picolibc) reads `environ` directly — both live here
+ * in libc.ndl, so that reference is module-local (no import). crt0 lives in the program ELF
+ * and cannot reach a data symbol across the .ndl boundary by name (only the Windows-style
+ * __imp_ slot), so it publishes envp through this exported FUNCTION instead, which functions
+ * import cleanly via the jmp thunk. */
 char** environ = 0;
 void __nx_set_environ(char** e) { environ = e; }
+
+/* Environment mutation (setenv/unsetenv/putenv). We define these here rather than use
+ * picolibc's because the initial `environ` points at the argv+envp image on the user stack,
+ * not the heap — picolibc's would try to free()/realloc() those entries. On the first
+ * mutation we copy to a heap-owned NULL-terminated array we fully control; getenv() keeps
+ * seeing the same `environ`. (Replaced entries are intentionally leaked — bounded + simple.) */
+static int env_owned = 0;
+
+static int env_count(void) {
+	int n = 0;
+	if (environ) while (environ[n]) n++;
+	return n;
+}
+
+static int env_find(const char* name, int* nlOut) {
+	int nl = 0;
+	while (name[nl] && name[nl] != '=') nl++;
+	if (nlOut) *nlOut = nl;
+	if (environ)
+		for (int i = 0; environ[i]; i++)
+			if (strncmp(environ[i], name, nl) == 0 && environ[i][nl] == '=')
+				return i;
+	return -1;
+}
+
+/* Make `environ` a heap array with room for `extra` more entries (plus the NULL slot). */
+static int env_reserve(int extra) {
+	int n = env_count();
+	char** arr = (char**) malloc((n + extra + 1) * sizeof(char*));
+	if (!arr) { errno = ENOMEM; return -1; }
+	for (int i = 0; i < n; i++) arr[i] = environ[i];
+	arr[n] = 0;
+	if (env_owned) free(environ);
+	environ = arr;
+	env_owned = 1;
+	return 0;
+}
+
+int setenv(const char* name, const char* value, int overwrite) {
+	if (!name || !*name || strchr(name, '=')) { errno = EINVAL; return -1; }
+	int nl, idx = env_find(name, &nl);
+	if (idx >= 0 && !overwrite) return 0;
+	int vl = (int) strlen(value);
+	char* entry = (char*) malloc(nl + 1 + vl + 1);
+	if (!entry) { errno = ENOMEM; return -1; }
+	memcpy(entry, name, nl);
+	entry[nl] = '=';
+	memcpy(entry + nl + 1, value, vl + 1);
+	if (idx >= 0) {
+		if (!env_owned && env_reserve(0) < 0) { free(entry); return -1; }
+		environ[idx] = entry;
+		return 0;
+	}
+	if (env_reserve(1) < 0) { free(entry); return -1; }
+	int n = env_count();
+	environ[n] = entry;
+	environ[n + 1] = 0;
+	return 0;
+}
+
+int unsetenv(const char* name) {
+	if (!name || !*name || strchr(name, '=')) { errno = EINVAL; return -1; }
+	int nl, idx = env_find(name, &nl);
+	if (idx < 0) return 0;
+	if (!env_owned && env_reserve(0) < 0) return -1;
+	for (int i = idx; environ[i]; i++) environ[i] = environ[i + 1];   /* shift incl. NULL */
+	return 0;
+}
+
+int putenv(char* str) {
+	/* POSIX: `str` becomes part of the environment (caller must keep it alive). */
+	int nl, idx = env_find(str, &nl);
+	if (idx >= 0) {
+		if (!env_owned && env_reserve(0) < 0) return -1;
+		environ[idx] = str;
+		return 0;
+	}
+	if (env_reserve(1) < 0) return -1;
+	int n = env_count();
+	environ[n] = str;
+	environ[n + 1] = 0;
+	return 0;
+}
 
 /* Replace the current process image with <path>. On success it does not return (the
  * kernel rewrites the trap frame so the iret lands in the new program); on failure it

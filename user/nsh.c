@@ -280,6 +280,18 @@ int main(void) {
 				printf("%s\n", *e);
 			continue;
 		}
+		if (!strcmp(argv[0], "export") || !strcmp(argv[0], "setenv")) {
+			for (int i = 1; i < argc; i++) {       // export NAME=VALUE (or NAME -> empty)
+				char* eq = strchr(argv[i], '=');
+				if (eq) { *eq = 0; setenv(argv[i], eq + 1, 1); }
+				else setenv(argv[i], "", 1);
+			}
+			continue;
+		}
+		if (!strcmp(argv[0], "unset") || !strcmp(argv[0], "unsetenv")) {
+			for (int i = 1; i < argc; i++) unsetenv(argv[i]);
+			continue;
+		}
 		if (!strcmp(argv[0], "tty")) {        // report pid/ppid + whether stdin is a terminal
 			printf("pid %d ppid %d  stdin: %s\n",
 			       getpid(), getppid(), isatty(0) ? "a tty" : "not a tty");
@@ -341,7 +353,7 @@ int main(void) {
 			signal(SIGTSTP, SIG_DFL);
 			signal(SIGTTIN, SIG_DFL);
 			signal(SIGTTOU, SIG_DFL);
-			char* envp[] = { 0 };
+			char** envp = environ;           /* children inherit the shell's environment */
 			char path[160];
 			if (argv[0][0] == '/') {         /* explicit path: run it as given */
 				execve(argv[0], argv, envp);

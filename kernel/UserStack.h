@@ -20,7 +20,7 @@ template <class WriteFn>
 uint32_t buildUserStack(uint32_t userTop, const char* const* argv, int argc,
 		const char* const* envp, int envc, WriteFn write) {
 	uint32_t sp = userTop;
-	uint32_t aptr[64], eptr[64];
+	uint32_t aptr[128], eptr[128];   // matches the kernel execve cap (ARG_MAXVEC)
 
 	// 1) Copy the env strings, then the argv strings, top-down; record each one's user VA.
 	for (int i = envc - 1; i >= 0; i--) {

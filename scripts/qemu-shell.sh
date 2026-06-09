@@ -14,7 +14,7 @@ qemu-system-i386 -drive file="$IMG",format=raw \
     -display none -monitor unix:"$MON",server,nowait \
     -no-reboot -d int -D "$LOG" &
 QPID=$!
-sleep 5   # boot to the prompt
+sleep "${BOOT_WAIT:-9}"   # boot to the prompt (override via BOOT_WAIT=secs)
 
 CMDS="$*" python3 - "$MON" "$PPM" "$@" <<'PY'
 import socket, sys, time, os
@@ -23,7 +23,7 @@ cmds = sys.argv[3:]
 s = socket.socket(socket.AF_UNIX); s.connect(mon); time.sleep(0.3); s.recv(65536)
 
 KEYMAP = {' ':'spc','-':'minus','/':'slash','.':'dot',',':'comma','\n':'ret',
-          '_':'shift-minus'}
+          '_':'shift-minus','=':'equal',':':'shift-semicolon'}
 def send(cmd):
     s.sendall(cmd.encode()+b"\n"); time.sleep(0.05)
     try: s.recv(65536)

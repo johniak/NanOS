@@ -194,9 +194,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest doom
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest doom
 SYS_PROGS=nsh cat ls free
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest doom
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest doom
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -265,6 +265,7 @@ $(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o
 $(BINFOLDER)brktest.nxe:   $(DYN_DEPS) $(BINFOLDER)brktest.o
+$(BINFOLDER)envtest.nxe:   $(DYN_DEPS) $(BINFOLDER)envtest.o
 $(BINFOLDER)inputtest.nxe: $(DYN_DEPS) $(BINFOLDER)inputtest.o
 $(BINFOLDER)fstest.nxe:    $(DYN_DEPS) $(BINFOLDER)fstest.o
 $(BINFOLDER)pipetest.nxe:  $(DYN_DEPS) $(BINFOLDER)pipetest.o

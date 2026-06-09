@@ -23,6 +23,34 @@ static void copyStr(char* dst, const char* src, int cap) {
 	dst[i] = 0;
 }
 
+// execve argument limits. A single shared buffer packs all argv+envp strings (mirroring
+// Linux's page-bounded ARG_MAX) and the pointer arrays cap the vector length — no fixed
+// per-string limit. Overflowing either is reported as -E2BIG, never a silent truncation.
+static const int ARG_STRBYTES = 16384;
+static const int ARG_MAXVEC   = 128;
+
+// Copy a NULL-terminated user string vector into the packed buffer `buf` (cap ARG_STRBYTES,
+// running cursor *used) and fill ptrs[] (cap ARG_MAXVEC). Returns the count, or -E2BIG if
+// either the vector length or the byte budget would be exceeded.
+static int copyVec(const char* const* uvec, const char** ptrs, char* buf, int* used) {
+	int n = 0;
+	if (!uvec) return 0;
+	for (; uvec[n]; n++) {
+		if (n >= ARG_MAXVEC) return -E2BIG;
+		const char* s = uvec[n];
+		ptrs[n] = buf + *used;
+		int i = 0;
+		while (s[i]) {
+			if (*used + i >= ARG_STRBYTES - 1) return -E2BIG;
+			buf[*used + i] = s[i];
+			i++;
+		}
+		buf[*used + i] = 0;
+		*used += i + 1;
+	}
+	return n;
+}
+
 static int consoleSink(const char* buf, unsigned len) {
 	for (unsigned i = 0; i < len; i++)
 		Console::write(buf[i]);
@@ -201,26 +229,16 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 		// kernel buffers before execve swaps CR3 to the kernel directory to stage and
 		// load the new image (after which the caller's user pointers are unmapped).
 		static char pathBuf[256];
-		static char argBuf[16][128];
-		static const char* argPtrs[17];
-		static char envBuf[16][128];
-		static const char* envPtrs[17];
+		static char strBuf[ARG_STRBYTES];          // packed argv+envp strings (shared budget)
+		static const char* argPtrs[ARG_MAXVEC + 1];
+		static const char* envPtrs[ARG_MAXVEC + 1];
 		copyStr(pathBuf, (const char*) a0, sizeof pathBuf);
-		const char* const* uargv = (const char* const*) a1;
-		int argc = 0;
-		if (uargv)
-			for (; argc < 16 && uargv[argc]; argc++)
-				copyStr(argBuf[argc], uargv[argc], sizeof argBuf[argc]);
-		for (int i = 0; i < argc; i++)
-			argPtrs[i] = argBuf[i];
+		int used = 0;
+		int argc = copyVec((const char* const*) a1, argPtrs, strBuf, &used);
+		if (argc < 0) { ret = argc; break; }       // -E2BIG: too many/too-long arguments
 		argPtrs[argc] = 0;
-		const char* const* uenvp = (const char* const*) a2;
-		int envc = 0;
-		if (uenvp)
-			for (; envc < 16 && uenvp[envc]; envc++)
-				copyStr(envBuf[envc], uenvp[envc], sizeof envBuf[envc]);
-		for (int i = 0; i < envc; i++)
-			envPtrs[i] = envBuf[i];
+		int envc = copyVec((const char* const*) a2, envPtrs, strBuf, &used);
+		if (envc < 0) { ret = envc; break; }        // -E2BIG: environment too large
 		envPtrs[envc] = 0;
 		ret = execve(g_vfs, pathBuf, argPtrs, argc, envPtrs, envc, tf);   // rewrites tf, no return
 		break;
