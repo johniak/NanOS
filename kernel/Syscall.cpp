@@ -362,6 +362,15 @@ int Syscalls::ioctl(int fd, unsigned cmd, void* arg) {
 	return vfs->ioctl(fds[fd].path, cmd, arg);
 }
 
+int Syscalls::ttyPgrp(int fd) {
+	if (!valid(fd) || fds[fd].pipe || fds[fd].isConsole)
+		return -1;               // not a device fd -> not a tty
+	int pgrp = -1;
+	if (vfs->ioctl(fds[fd].path, 0x540Fu /* TIOCGPGRP */, &pgrp) < 0)
+		return -1;               // the device does not implement TIOCGPGRP -> not a tty
+	return pgrp;
+}
+
 int Syscalls::unlink(String path) {
 	return vfs->unlink(path);
 }

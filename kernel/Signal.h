@@ -60,6 +60,12 @@
 #ifndef SIGTSTP
 #define SIGTSTP 20
 #endif
+#ifndef SIGTTIN
+#define SIGTTIN 21
+#endif
+#ifndef SIGTTOU
+#define SIGTTOU 22
+#endif
 
 #define NANOS_NSIG 32   // disposition-table size; valid signals are 1..NANOS_NSIG-1
 

@@ -17,6 +17,7 @@ void _exit(int code);
 int termmode(int raw);                              /* 0 = cooked, 1 = raw    */
 int setpgid(int pid, int pgid);                     /* job control: process groups */
 int tcsetpgrp(int fd, int pgrp);                    /* hand the tty to a fg group  */
+int getpgrp(void);                                  /* our own process group       */
 
 #define CAP  256
 #define HMAX 32
@@ -32,6 +33,29 @@ int tcsetpgrp(int fd, int pgrp);                    /* hand the tty to a fg grou
 #ifndef SIGCONT
 #define SIGCONT       18
 #endif
+/* Job-control signal numbers (must match kernel/Signal.h). */
+#ifndef SIGINT
+#define SIGINT        2
+#endif
+#ifndef SIGQUIT
+#define SIGQUIT       3
+#endif
+#ifndef SIGTSTP
+#define SIGTSTP       20
+#endif
+#ifndef SIGTTIN
+#define SIGTTIN       21
+#endif
+#ifndef SIGTTOU
+#define SIGTTOU       22
+#endif
+#ifndef SIG_IGN
+#define SIG_IGN       ((void (*)(int)) 1)
+#endif
+#ifndef SIG_DFL
+#define SIG_DFL       ((void (*)(int)) 0)
+#endif
+void (*signal(int sig, void (*handler)(int)))(int);   /* libc glue */
 #ifndef WIFSTOPPED
 #define WIFSTOPPED(s) (((s) & 0xff) == 0x7f)
 #endif
@@ -191,6 +215,19 @@ static int readline(char* line) {
 
 int main(void) {
 	char line[CAP];
+
+	// Become a job-control shell (the Linux model): lead our own process group, own the
+	// terminal, and ignore the job-control signals so a child's Ctrl+C/Ctrl+Z and our own
+	// tcsetpgrp() (a background-group tty op while a child runs) never hit the shell. exec
+	// resets these to default in children, so the foreground job gets normal Ctrl+C.
+	signal(SIGINT, SIG_IGN);
+	signal(SIGQUIT, SIG_IGN);
+	signal(SIGTSTP, SIG_IGN);
+	signal(SIGTTIN, SIG_IGN);
+	signal(SIGTTOU, SIG_IGN);
+	setpgid(0, 0);
+	tcsetpgrp(0, getpgrp());
+
 	termmode(1);                             /* our own line editor */
 
 	for (;;) {
@@ -260,7 +297,7 @@ int main(void) {
 			tcsetpgrp(0, jp);                        /* terminal foreground = the job's group */
 			int st;
 			waitpid(jp, &st, WUNTRACED);
-			tcsetpgrp(0, 0);                         /* reclaim the terminal */
+			tcsetpgrp(0, getpgrp());                 /* reclaim the terminal */
 			if (WIFSTOPPED(st)) {
 				g_jobs[idx].stopped = 1;
 				printf("\n[%d]+  Stopped\t%s\n", idx + 1, g_jobs[idx].cmd);
@@ -281,6 +318,14 @@ int main(void) {
 		int pid = fork();
 		if (pid == 0) {                      /* child: become the program */
 			setpgid(0, 0);                   /* run in its own process group ... */
+			/* Restore default signal handling: the shell ignores the job-control signals,
+			 * and SIG_IGN survives exec (POSIX), so a child would otherwise ignore Ctrl+C.
+			 * Real shells reset them to default in the child before exec. */
+			signal(SIGINT, SIG_DFL);
+			signal(SIGQUIT, SIG_DFL);
+			signal(SIGTSTP, SIG_DFL);
+			signal(SIGTTIN, SIG_DFL);
+			signal(SIGTTOU, SIG_DFL);
 			char* envp[] = { 0 };
 			char path[160];
 			if (argv[0][0] == '/') {         /* explicit path: run it as given */
@@ -304,7 +349,7 @@ int main(void) {
 			tcsetpgrp(0, pid);               /* terminal foreground = the child's group */
 			int st;
 			waitpid(pid, &st, WUNTRACED);
-			tcsetpgrp(0, 0);                 /* no foreground group at the prompt */
+			tcsetpgrp(0, getpgrp());         /* reclaim the terminal for the shell */
 			if (WIFSTOPPED(st)) {            /* Ctrl+Z stopped it: record a job */
 				int idx = job_add(pid, cmdsave, 1);
 				printf("\n[%d]+  Stopped\t%s\n", idx + 1, cmdsave);

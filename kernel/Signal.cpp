@@ -13,6 +13,8 @@ SigDefault sigDefaultAction(int sig) {
 		return SD_CONT;                // resume a stopped process
 	case SIGSTOP:
 	case SIGTSTP:
+	case SIGTTIN:
+	case SIGTTOU:
 		return SD_STOP;                // stop (job control)
 	case SIGQUIT:
 	case SIGILL:

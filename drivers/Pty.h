@@ -68,7 +68,14 @@ public:
 	explicit PtyMaster(Pty* p) : m_pty(p) {}
 	int read(unsigned, void* b, unsigned n) { return m_pty->masterRead(b, n); }
 	int write(unsigned, const void* b, unsigned n) { return m_pty->masterWrite(b, n); }
-	int ioctl(unsigned cmd, void* arg) { return m_pty->ioctl(cmd, arg); }
+	// The master is the emulator side, NOT a controlling terminal: reject the foreground-
+	// process-group ioctls so a TIOCGPGRP probe (the SIGTTIN check) treats it as a non-tty
+	// and never stops the emulator for reading the master. Other ioctls (termios) pass.
+	int ioctl(unsigned cmd, void* arg) {
+		if (cmd == IOCTL_TIOCGPGRP || cmd == IOCTL_TIOCSPGRP)
+			return -EINVAL;
+		return m_pty->ioctl(cmd, arg);
+	}
 	int mmapInfo(unsigned*, unsigned*) { return -1; }
 	short pollReady(short events) {
 		short r = events & POLLOUT;                 // master write never blocks

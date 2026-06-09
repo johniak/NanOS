@@ -72,7 +72,17 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 	case SYS_sigreturn:
 		ret = signalReturn(tf);   // restores the trap frame; ret = the saved eax
 		break;
-	case SYS_read:
+	case SYS_read: {
+		// Background tty read: a process not in the terminal's foreground group reading its
+		// controlling tty is stopped with SIGTTIN (POSIX), unless its group is orphaned (-EIO).
+		int fgpg = g_sys->ttyPgrp((int) a0);
+		Process* me = ProcTable::current();
+		if (fgpg > 0 && me && fgpg != me->pgid) {
+			if (ProcTable::isOrphanedGroup(me->pgid)) { ret = -5; break; }   // -EIO
+			signalSendGroup(me->pgid, SIGTTIN);
+			ret = -ERESTARTSYS;
+			break;
+		}
 		ret = g_sys->read(a0, (void*) a1, a2);
 		// A blocking read on an empty pipe or pty returns -EAGAIN; wait (waking each tick as
 		// the writer is scheduled) until data/EOF, or a signal interrupts. Console blocking
@@ -83,6 +93,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, arch::TrapFrame
 			ret = g_sys->read(a0, (void*) a1, a2);
 		}
 		break;
+	}
 	case SYS_write: {
 		// Loop until every byte is written, accumulating short (partial) writes from a pipe
 		// or pty whose ring fills mid-write. -EAGAIN (ring completely full) blocks until the

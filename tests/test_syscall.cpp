@@ -281,3 +281,15 @@ TEST_CASE("nanosleepMs rounds the request up to whole milliseconds") {
 	CHECK(sc.nanosleepMs(&ts) == 0);
 	CHECK(sc.nanosleepMs(nullptr) == 0);
 }
+
+TEST_CASE("ttyPgrp returns -1 for non-tty fds (console, regular file)") {
+	Syscalls sc(mountFixture(), sink);
+	CHECK(sc.ttyPgrp(0) == -1);             // fd 0 is the console, not a pty
+	CHECK(sc.ttyPgrp(1) == -1);
+	int fd = sc.open(String("/hello.txt"), 0);   // a regular file in the ext2 fixture
+	if (fd >= 0) {
+		CHECK(sc.ttyPgrp(fd) == -1);        // a file's device has no TIOCGPGRP
+		sc.close(fd);
+	}
+	CHECK(sc.ttyPgrp(99) == -1);            // bad fd
+}

@@ -99,6 +99,10 @@ public:
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL (O_NONBLOCK)
+	// If `fd` refers to a tty (its device answers TIOCGPGRP), return that tty's foreground
+	// process group; otherwise -1. The dispatch uses this to raise SIGTTIN on a background
+	// process reading the controlling terminal.
+	int ttyPgrp(int fd);
 	// Pipes + descriptor duplication. pipe() fills out[0]=read end, out[1]=write end.
 	// dup/dup2 alias an existing descriptor's backing (sharing a pipe end / file / console).
 	int pipe(int out[2]);
