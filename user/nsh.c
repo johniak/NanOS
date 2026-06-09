@@ -273,13 +273,21 @@ int main(void) {
 			argv[0] = lsargv[0]; argv[1] = lsargv[1]; argv[2] = 0; argc = 2;
 		}
 
-		char path[160];
-		snprintf(path, sizeof path, "/disks/main/nanos/bin/%s.nxe", argv[0]);
 		termmode(0);                         /* cooked while the child runs */
 		int pid = fork();
 		if (pid == 0) {                      /* child: become the program */
 			char* envp[] = { 0 };
-			execve(path, argv, envp);
+			char path[160];
+			if (argv[0][0] == '/') {         /* explicit path: run it as given */
+				execve(argv[0], argv, envp);
+			} else {                         /* search the program directories in order:
+			                                  * system utilities first, then user apps */
+				const char* dirs[] = { "/disks/main/nanos/bin", "/disks/main/apps", 0 };
+				for (int i = 0; dirs[i]; i++) {
+					snprintf(path, sizeof path, "%s/%s.nxe", dirs[i], argv[0]);
+					execve(path, argv, envp); /* returns only if it failed (e.g. ENOENT) */
+				}
+			}
 			printf("nsh: %s: command not found\n", argv[0]);
 			_exit(127);                      /* exec failed */
 		} else if (pid > 0) {                /* parent: wait for it */

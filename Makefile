@@ -133,21 +133,27 @@ _grub2-image:
 	./scripts/create-grub2-image.sh
 
 _image: _all _userland _grub2-image
-	# System volume layout: everything NanOS lives under /nanos (core/bin/lib/kext/
-	# config/cache/logs). GRUB stays in /boot. mkdir is idempotent across rebuilds.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
-	# Kernel + init (PID 1) in core; the rest of the programs in bin.
+	# System volume layout: NanOS itself lives under /nanos (core/bin/lib/kext/config/
+	# cache/logs); non-system user apps live in /apps. GRUB stays in /boot. mkdir is
+	# idempotent across rebuilds.
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /apps\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	# Kernel + init (PID 1) in core.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	for p in nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll doom; do \
+	# System utilities -> /nanos/bin.
+	for p in $(SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	done
+	# Non-system apps (games/demos/tests) -> /apps.
+	for p in $(APP_PROGS); do \
+	  printf "rm /apps/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
 	for l in $(USER_LIBS_NDL); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
-	# Doom's shareware IWAD on the disk (read-only); the platform layer passes -iwad at it.
-	printf "rm /nanos/doom1.wad\nwrite disk/doom1.wad /nanos/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# Doom's shareware IWAD lives next to the app in /apps (the platform layer -iwad's it).
+	printf "rm /apps/doom1.wad\nwrite disk/doom1.wad /apps/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub
@@ -180,8 +186,11 @@ SBASE_UTIL_CAT=$(BINFOLDER)eprintf.o $(BINFOLDER)concat.o $(BINFOLDER)writeall.o
 SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarray.o $(BINFOLDER)human.o $(BINFOLDER)fshut.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
-# Programs built (init -> /nanos/core, the rest -> /nanos/bin; see _image).
+# Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
+# -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
 USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll doom
+SYS_PROGS=nsh cat ls free
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll doom
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
