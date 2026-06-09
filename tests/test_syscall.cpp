@@ -349,6 +349,13 @@ TEST_CASE("fcntl gets/sets the file status flags (O_NONBLOCK)") {
 	CHECK(sc.fcntl(fd, F_GETFL, 0) == 0);
 	CHECK(sc.fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
 	CHECK((sc.fcntl(fd, F_GETFL, 0) & O_NONBLOCK) != 0);
+	// F_SETFL must NOT store flags we don't implement: setting an unsupported bit (0x1000)
+	// alongside O_NONBLOCK keeps only O_NONBLOCK, so F_GETFL never reports a flag we ignore.
+	CHECK(sc.fcntl(fd, F_SETFL, O_NONBLOCK | 0x1000) == 0);
+	CHECK(sc.fcntl(fd, F_GETFL, 0) == O_NONBLOCK);
+	// Clearing it works too.
+	CHECK(sc.fcntl(fd, F_SETFL, 0) == 0);
+	CHECK((sc.fcntl(fd, F_GETFL, 0) & O_NONBLOCK) == 0);
 	// Console fd 0 too (this is the one Doom flips to non-blocking).
 	CHECK(sc.fcntl(0, F_SETFL, O_NONBLOCK) == 0);
 	CHECK(sc.fcntl(0, F_GETFL, 0) == O_NONBLOCK);

@@ -449,9 +449,12 @@ int Syscalls::fcntl(int fd, int cmd, int arg) {
 	case F_GETFL:
 		return (int) fds[fd].flags;
 	case F_SETFL:
-		// Only the file status flags are settable; we track O_NONBLOCK (the rest are
-		// stored verbatim but unused). access mode bits are ignored on F_SETFL, per POSIX.
-		fds[fd].flags = (unsigned) arg;
+		// F_SETFL changes only the file STATUS flags, and we genuinely implement just one
+		// (O_NONBLOCK). Toggle that bit and leave the rest of the descriptor's flags as they
+		// were at open — don't store flags we don't honor (that would let F_GETFL report a
+		// behaviour we never apply). Unsupported status bits are ignored, as on Linux.
+		fds[fd].flags = (fds[fd].flags & ~(unsigned) O_NONBLOCK)
+		              | ((unsigned) arg & (unsigned) O_NONBLOCK);
 		return 0;
 	}
 	return -EINVAL;
