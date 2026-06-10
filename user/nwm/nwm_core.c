@@ -14,6 +14,44 @@ static void close_box(const struct nw_window *w, int *cx, int *cy)
 	*cy = w->y + (NW_TITLEBAR_H - NW_CLOSE) / 2;
 }
 
+/* ---- scene damage ----------------------------------------------------------------- */
+static void damage(struct nw_server *s, int x, int y, int w, int h)
+{
+	if (w <= 0 || h <= 0)
+		return;
+	int x1 = x + w, y1 = y + h;
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+	if (x1 > s->screen_w) x1 = s->screen_w;
+	if (y1 > s->screen_h) y1 = s->screen_h;
+	if (x >= x1 || y >= y1)
+		return;
+	if (!s->dmg) {
+		s->dmg_x0 = x; s->dmg_y0 = y; s->dmg_x1 = x1; s->dmg_y1 = y1; s->dmg = 1;
+	} else {
+		if (x  < s->dmg_x0) s->dmg_x0 = x;
+		if (y  < s->dmg_y0) s->dmg_y0 = y;
+		if (x1 > s->dmg_x1) s->dmg_x1 = x1;
+		if (y1 > s->dmg_y1) s->dmg_y1 = y1;
+	}
+	s->dirty = 1;
+}
+static void damage_frame(struct nw_server *s, int idx)
+{
+	struct nw_window *w = &s->win[idx];
+	damage(s, w->x, w->y, w->cw + 2 * NW_BORDER, NW_TITLEBAR_H + w->ch + NW_BORDER);
+}
+
+int nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h)
+{
+	if (!s->dmg)
+		return 0;
+	*x = s->dmg_x0; *y = s->dmg_y0;
+	*w = s->dmg_x1 - s->dmg_x0; *h = s->dmg_y1 - s->dmg_y0;
+	s->dmg = 0;
+	return 1;
+}
+
 /* ---- output ring ------------------------------------------------------------------ */
 static void emit(struct nw_server *s, int client, uint32_t type, uint32_t window,
                  int a, int b, int c, int d, const unsigned char *pay, uint32_t len)
@@ -62,11 +100,14 @@ static void set_focus(struct nw_server *s, int idx)
 		return;
 	int old = s->focus;
 	s->focus = idx;
-	if (old >= 0 && s->win[old].used)
+	if (old >= 0 && s->win[old].used) {
 		emit_win(s, old, NW_EVT_FOCUS, 0, 0, 0, 0, 0, 0);
-	if (idx >= 0 && s->win[idx].used)
+		damage_frame(s, old);            /* title bar color changes */
+	}
+	if (idx >= 0 && s->win[idx].used) {
 		emit_win(s, idx, NW_EVT_FOCUS, 1, 0, 0, 0, 0, 0);
-	s->dirty = 1;
+		damage_frame(s, idx);
+	}
 }
 
 /* ---- window table ----------------------------------------------------------------- */
@@ -86,6 +127,7 @@ static int find_by_id(const struct nw_server *s, uint32_t id)
 }
 static void destroy_window(struct nw_server *s, int idx)
 {
+	damage_frame(s, idx);          /* the area it occupied must be repainted */
 	z_remove(s, idx);
 	s->win[idx].used = 0;
 	s->win[idx].buf  = 0;       /* the shell frees the backing buffer it allocated */
@@ -173,17 +215,18 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 	if (sy < 0) sy = 0;
 	if (sx >= s->screen_w) sx = s->screen_w - 1;
 	if (sy >= s->screen_h) sy = s->screen_h - 1;
-	if (sx != s->cursor_x || sy != s->cursor_y)
-		s->dirty = 1;
+	/* NOTE: cursor motion does NOT dirty the scene — the cursor is a cheap overlay the shell
+	 * repaints every frame, so plain mouse movement never repaints windows. */
 
 	int left_now = buttons & NW_BTN_LEFT;
 	int left_was = s->buttons & NW_BTN_LEFT;
 
 	if (s->drag_win >= 0) {
 		if (left_now) {
+			damage_frame(s, s->drag_win);            /* erase the old position */
 			s->win[s->drag_win].x = sx - s->drag_dx;
 			s->win[s->drag_win].y = sy - s->drag_dy;
-			s->dirty = 1;
+			damage_frame(s, s->drag_win);            /* paint the new position */
 		} else {
 			s->drag_win = -1;          /* drop on release */
 		}
@@ -311,7 +354,9 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		if (idx < 0 || s->win[idx].client != client)
 			break;
 		commit_rect(&s->win[idx], m->a, m->b, m->c, m->d, payload, m->length);
-		s->dirty = 1;
+		/* damage just the committed rect, in screen coordinates */
+		damage(s, s->win[idx].x + NW_BORDER + m->a, s->win[idx].y + NW_TITLEBAR_H + m->b,
+		       m->c, m->d);
 		break;
 	}
 	case NW_REQ_DESTROY_WINDOW: {

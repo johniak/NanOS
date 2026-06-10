@@ -48,10 +48,13 @@ enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 #define CLIENT_COMMITCAP (512 * 1024)   /* max COMMIT payload reassembled per client */
 #define NWNOTE_PATH "/disks/main/apps/nwnote/nwnote.nxe"
 
-/* framebuffer */
+/* framebuffer + the cached scene (desktop+windows, NO cursor) */
 static uint8_t  *g_fb;
 static uint32_t  g_pitch, g_xres, g_yres;
-static uint32_t *g_back;
+static uint32_t *g_scene;                 /* composed scene, blitted to fb by damage rect */
+static struct nw_surface g_scene_surf;    /* wraps g_scene (stride = xres)                */
+static struct nw_surface g_fb_surf;       /* wraps the LFB (stride = pitch/4)             */
+static int g_prev_cx = -1, g_prev_cy = -1;/* last drawn cursor position                   */
 
 /* per-client shell state (parallel to nw_server's client slots) */
 static int             cl_req[NW_MAX_CLIENTS], cl_evt[NW_MAX_CLIENTS], cl_pid[NW_MAX_CLIENTS];
@@ -199,13 +202,41 @@ static void flush_output(int slot)
 	}
 }
 
-static void composite(void)
+/* Copy a rectangle of the cached scene to the framebuffer (honouring fb pitch). */
+static void blit_scene(int x, int y, int w, int h)
 {
-	struct nw_surface back;
-	back.px = g_back; back.w = (int) g_xres; back.h = (int) g_yres; back.stride = (int) g_xres;
-	nw_compose(&S, &back);
-	for (uint32_t y = 0; y < g_yres; y++)
-		memcpy(g_fb + (size_t) y * g_pitch, g_back + (size_t) y * g_xres, (size_t) g_xres * 4);
+	if (x < 0) { w += x; x = 0; }
+	if (y < 0) { h += y; y = 0; }
+	if (x + w > (int) g_xres) w = (int) g_xres - x;
+	if (y + h > (int) g_yres) h = (int) g_yres - y;
+	if (w <= 0 || h <= 0)
+		return;
+	for (int r = 0; r < h; r++)
+		memcpy(g_fb + (size_t) (y + r) * g_pitch + (size_t) x * 4,
+		       g_scene + (size_t) (y + r) * g_xres + x, (size_t) w * 4);
+}
+
+/* Present a frame: erase the old cursor, blit only the damaged scene region (if the scene
+ * changed), then draw the cursor as an overlay on the framebuffer. Plain mouse motion costs
+ * a few tiny blits — never a full-screen repaint. */
+static void present(void)
+{
+	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
+		return;                                  /* nothing changed */
+	if (g_prev_cx >= 0)
+		blit_scene(g_prev_cx, g_prev_cy, NW_CURSOR_W, NW_CURSOR_H);   /* erase old cursor */
+	if (S.dirty) {
+		nw_compose_scene(&S, &g_scene_surf);
+		int dx, dy, dw, dh;
+		if (nw_take_damage(&S, &dx, &dy, &dw, &dh))
+			blit_scene(dx, dy, dw, dh);          /* only the changed region */
+		else
+			blit_scene(0, 0, (int) g_xres, (int) g_yres);   /* first frame / fallback */
+		S.dirty = 0;
+	}
+	blit_scene(S.cursor_x, S.cursor_y, NW_CURSOR_W, NW_CURSOR_H);     /* scene under cursor */
+	nw_draw_cursor(&g_fb_surf, S.cursor_x, S.cursor_y);
+	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
 
 int main(void)
@@ -218,8 +249,12 @@ int main(void)
 	g_xres = var.xres; g_yres = var.yres; g_pitch = fix.line_length;
 	g_fb = (uint8_t *) mmap(0, fix.smem_len, 3, 1, fbfd, 0);
 	if (g_fb == (uint8_t *) -1 || !g_fb) { printf("nwm: fb mmap failed\n"); return 1; }
-	g_back = (uint32_t *) malloc((size_t) g_xres * g_yres * 4);
-	if (!g_back) { printf("nwm: no memory for backbuffer\n"); return 1; }
+	g_scene = (uint32_t *) malloc((size_t) g_xres * g_yres * 4);
+	if (!g_scene) { printf("nwm: no memory for scene buffer\n"); return 1; }
+	g_scene_surf.px = g_scene; g_scene_surf.w = (int) g_xres; g_scene_surf.h = (int) g_yres;
+	g_scene_surf.stride = (int) g_xres;
+	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
+	g_fb_surf.stride = (int) (g_pitch / 4);
 
 	int in0 = open("/dev/input0", O_RDONLY | O_NONBLOCK);
 	int in1 = open("/dev/input1", O_RDONLY | O_NONBLOCK);
@@ -236,7 +271,7 @@ int main(void)
 	spawn_client(1, NWNOTE_PATH);
 
 	S.dirty = 1;
-	composite();                              /* first frame: desktop + cursor */
+	present();                                /* first frame: desktop + cursor */
 
 	for (;;) {
 		struct pollfd pfd[2 + NW_MAX_CLIENTS * 2];
@@ -266,7 +301,7 @@ int main(void)
 
 		reconcile_buffers();
 
-		if (S.dirty) { composite(); S.dirty = 0; }
+		present();   /* recomposes only on scene damage; always cheap cursor overlay */
 
 		/* flush queued events; drop clients whose ring overflowed */
 		for (int i = 0; i < NW_MAX_CLIENTS; i++) {

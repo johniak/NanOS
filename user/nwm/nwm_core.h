@@ -76,7 +76,10 @@ struct nw_server {
 	int   client_used[NW_MAX_CLIENTS];
 	int   client_dead[NW_MAX_CLIENTS];  /* output overran its ring -> shell disconnects */
 
-	int   dirty;                    /* something visible changed -> shell recomposites */
+	int   dirty;                    /* the SCENE changed -> shell recomposes it          */
+	/* Accumulated scene-damage bounding box (screen px) since the last present; the shell
+	 * blits only this region of the recomposed scene to the framebuffer. */
+	int   dmg, dmg_x0, dmg_y0, dmg_x1, dmg_y1;
 };
 
 /* ---- lifecycle ---- */
@@ -101,6 +104,9 @@ const unsigned char *nw_outq_peek(struct nw_server *s, int client, uint32_t *len
 void nw_outq_ack(struct nw_server *s, int client, uint32_t n);
 int  nw_client_is_dead(const struct nw_server *s, int client);
 uint32_t nw_outq_pending(const struct nw_server *s, int client);
+/* Take the accumulated scene-damage rect (and clear it). Returns 1 with the box in
+ * *x,*y,*w,*h when there is damage, else 0 (nothing changed since the last present). */
+int  nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h);
 
 /* ---- exposed pure helpers (also for tests) ---- */
 int  nw_hit(const struct nw_server *s, int sx, int sy, int *region);  /* topmost window or -1 */

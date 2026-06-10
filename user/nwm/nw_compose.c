@@ -65,18 +65,18 @@ static void draw_window(const struct nw_window *w, int focused, const struct nw_
 	}
 }
 
-static void draw_cursor(int x, int y, const struct nw_surface *back)
+void nw_draw_cursor(const struct nw_surface *dst, int x, int y)
 {
-	for (int r = 0; r < 16; r++) {
+	for (int r = 0; r < NW_CURSOR_H; r++) {
 		const char *row = CURSOR[r];
 		for (int c = 0; row[c]; c++) {
-			if (row[c] == 'X')      nw_put_pixel(back, x + c, y + r, COL_CURSOR_FG);
-			else if (row[c] == '.') nw_put_pixel(back, x + c, y + r, COL_CURSOR_BG);
+			if (row[c] == 'X')      nw_put_pixel(dst, x + c, y + r, COL_CURSOR_FG);
+			else if (row[c] == '.') nw_put_pixel(dst, x + c, y + r, COL_CURSOR_BG);
 		}
 	}
 }
 
-void nw_compose(const struct nw_server *s, const struct nw_surface *back)
+void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back)
 {
 	nw_fill_rect(back, 0, 0, back->w, back->h, COL_DESKTOP);
 	for (int z = 0; z < s->zn; z++) {            /* back to front */
@@ -84,5 +84,10 @@ void nw_compose(const struct nw_server *s, const struct nw_surface *back)
 		if (s->win[idx].used)
 			draw_window(&s->win[idx], idx == s->focus, back);
 	}
-	draw_cursor(s->cursor_x, s->cursor_y, back);
+}
+
+void nw_compose(const struct nw_server *s, const struct nw_surface *back)
+{
+	nw_compose_scene(s, back);
+	nw_draw_cursor(back, s->cursor_x, s->cursor_y);
 }

@@ -286,6 +286,27 @@ TEST_CASE("clicking the empty desktop clears focus") {
 	CHECK(count(ev, NW_EVT_FOCUS) == 1);            // FOCUS-out of the old window
 }
 
+TEST_CASE("scene damage: create/commit mark a rect; a plain cursor move does not") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	int x, y, w, h;
+	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 0);   // fresh: nothing damaged
+	create_win(s, 0, 100, 80, "w");
+	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 1);    // create marked damage
+	CHECK(w > 0); CHECK(h > 0);
+	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 0);    // taking it cleared it
+	nw_pointer(&s, 400, 300, 0);                        // cursor-only move
+	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 0);    // overlay: no scene damage
+	int wi = s.focus;
+	std::vector<uint32_t> buf((size_t) 100 * 80, 0);
+	s.win[wi].buf = buf.data();
+	uint32_t px[4] = { 1, 2, 3, 4 };
+	nw_msg cm{}; cm.type = NW_REQ_COMMIT; cm.window = s.win[wi].id;
+	cm.a = 0; cm.b = 0; cm.c = 2; cm.d = 2; cm.length = sizeof px;
+	nw_client_msg(&s, 0, &cm, (const unsigned char*) px);
+	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 1);    // commit marked the damaged rect
+}
+
 TEST_CASE("disconnect drops the client's windows") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
