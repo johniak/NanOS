@@ -40,6 +40,19 @@ image: docker-image
 iso: docker-image
 	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _iso'
 
+# GNU bash (optional, external). The bash sources AND its build scaffolding (nx-gcc wrapper,
+# build.sh, config.cache, port patches) live in a SEPARATE fork repo — NOT here. This target
+# only runs that build inside the cross-toolchain container (both repos bind-mounted) and
+# copies the resulting bash.nxe into bin/, where _image installs it as the /apps/bash bundle.
+# Absent fork => the target errors clearly; `make image` itself never depends on this, so a
+# missing fork can't break a normal build.
+BASH_FORK ?= $(HOME)/Projects/bash-nanos
+bash: docker-image
+	@test -f "$(BASH_FORK)/nanos/build.sh" || { echo "bash fork not found at $(BASH_FORK)/nanos (set BASH_FORK=/path/to/bash-nanos)"; exit 1; }
+	docker run --rm -v $(CURDIR):/src -v "$(BASH_FORK)":/bash -w /bash $(DOCKER_IMAGE) sh /bash/nanos/build.sh build
+	cp "$(BASH_FORK)/nanos/bash.nxe" $(BINFOLDER)bash.nxe
+	@echo "staged $(BINFOLDER)bash.nxe — run 'make image' to install it into /apps/bash"
+
 run: image
 	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
 
@@ -158,6 +171,14 @@ _image: _all _userland _grub2-image
 	for l in $(USER_LIBS_NDL); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
+	# GNU bash (optional): installed as an /apps/bash bundle + /bin link ONLY if `make bash`
+	# staged bin/bash.nxe from the external fork. Skipped silently otherwise.
+	if [ -f $(BINFOLDER)bash.nxe ]; then \
+	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# terminfo database: the compiled xterm-256color entry (matches TERM), shipped under
