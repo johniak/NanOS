@@ -76,6 +76,27 @@ void nw_draw_cursor(const struct nw_surface *dst, int x, int y)
 	}
 }
 
+#define COL_PANEL    0x1a2028
+#define COL_BTN      0x3a4450
+#define COL_BTN_SD   0x8a4040     /* shutdown button: reddish */
+#define COL_BTN_TEXT 0xffffff
+
+static void draw_button(const struct nw_server *s, int id, const char *label,
+                        uint32_t bg, const struct nw_surface *back)
+{
+	int x, y, w, h;
+	nw_panel_button_rect(s, id, &x, &y, &w, &h);
+	nw_fill_rect(back, x, y, w, h, bg);
+	nw_draw_text(back, x + 6, y + (h - NW_FONT_H) / 2, label, COL_BTN_TEXT, bg);
+}
+
+static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
+{
+	nw_fill_rect(back, 0, 0, back->w, NW_PANEL_H, COL_PANEL);
+	draw_button(s, NW_PANEL_SHUTDOWN, "Shutdown", COL_BTN_SD, back);
+	draw_button(s, NW_PANEL_QUIT, "Quit", COL_BTN, back);
+}
+
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back)
 {
 	nw_fill_rect(back, 0, 0, back->w, back->h, COL_DESKTOP);
@@ -84,6 +105,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back)
 		if (s->win[idx].used)
 			draw_window(&s->win[idx], idx == s->focus, back);
 	}
+	draw_panel(s, back);                         /* menu bar always on top */
 }
 
 void nw_compose(const struct nw_server *s, const struct nw_surface *back)

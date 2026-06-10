@@ -208,6 +208,33 @@ int nw_hit(const struct nw_server *s, int sx, int sy, int *region)
 	return -1;
 }
 
+/* ---- top panel (menu bar) --------------------------------------------------------- */
+void nw_panel_button_rect(const struct nw_server *s, int id, int *x, int *y, int *w, int *h)
+{
+	const int GW = 8;                            /* glyph width */
+	int qw = 4 * GW + 12;                        /* "Quit"     */
+	int sw = 8 * GW + 12;                        /* "Shutdown" */
+	int qx = s->screen_w - qw - 6;
+	int sxb = qx - sw - 6;
+	*y = 2; *h = NW_PANEL_H - 4;
+	if (id == NW_PANEL_SHUTDOWN) { *x = sxb; *w = sw; }
+	else                         { *x = qx;  *w = qw; }   /* default: quit */
+}
+
+int nw_panel_hit(const struct nw_server *s, int x, int y)
+{
+	if (y < 0 || y >= NW_PANEL_H)
+		return NW_PANEL_NONE;
+	int bx, by, bw, bh;
+	nw_panel_button_rect(s, NW_PANEL_QUIT, &bx, &by, &bw, &bh);
+	if (x >= bx && x < bx + bw && y >= by && y < by + bh)
+		return NW_PANEL_QUIT;
+	nw_panel_button_rect(s, NW_PANEL_SHUTDOWN, &bx, &by, &bw, &bh);
+	if (x >= bx && x < bx + bw && y >= by && y < by + bh)
+		return NW_PANEL_SHUTDOWN;
+	return NW_PANEL_NONE;
+}
+
 /* ---- pointer ---------------------------------------------------------------------- */
 void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 {
@@ -230,6 +257,11 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 		} else {
 			s->drag_win = -1;          /* drop on release */
 		}
+	} else if (left_now && !left_was && sy < NW_PANEL_H) {   /* press on the top panel */
+		int b = nw_panel_hit(s, sx, sy);
+		if (b == NW_PANEL_QUIT)          s->want_quit = 1;
+		else if (b == NW_PANEL_SHUTDOWN) s->want_shutdown = 1;
+		/* panel area: consume, never reaches the windows below */
 	} else if (left_now && !left_was) {    /* press edge on the desktop */
 		int region;
 		int widx = nw_hit(s, sx, sy, &region);

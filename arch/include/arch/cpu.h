@@ -13,6 +13,10 @@ void cpuDisableInterrupts();
 void cpuEnableInterrupts();
 void cpuHalt();
 
+// Power the machine off (x86: the ACPI/QEMU shutdown ports). Does not return; if the
+// platform can't power off it halts forever.
+void powerOff();
+
 // CPU identification for /proc/cpuinfo (x86: CPUID). Machine-independent shape so the MI
 // /proc layer can render it; the x86 implementation fills it from CPUID leaves.
 struct CpuInfo {

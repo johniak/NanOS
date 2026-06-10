@@ -42,6 +42,17 @@ void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts() { __asm__ __volatile__("sti"); }
 void cpuHalt() { __asm__ __volatile__("hlt"); }
 
+// Power off via the ACPI PM1a control port. QEMU's i440fx exposes it at 0x604 (newer),
+// the PIIX4 at 0xB004 (older); 0x4004 covers VirtualBox. SLP_EN|SLP_TYP=0x2000. We try all
+// then halt — on real hardware without these ports this just stops the CPU.
+void powerOff() {
+	__asm__ __volatile__("cli");
+	__asm__ __volatile__("outw %0, %1" : : "a"((unsigned short) 0x2000), "Nd"((unsigned short) 0x604));
+	__asm__ __volatile__("outw %0, %1" : : "a"((unsigned short) 0x2000), "Nd"((unsigned short) 0xB004));
+	__asm__ __volatile__("outw %0, %1" : : "a"((unsigned short) 0x2000), "Nd"((unsigned short) 0x4004));
+	for (;;) __asm__ __volatile__("hlt");
+}
+
 // Repoint TSS.esp0 (where the CPU lands on the next ring3->ring0 trap). The scheduler
 // calls this on every switch with the next task's kernel-stack top.
 void setKernelStack(unsigned esp0) { g_gdt.setKernelStack(esp0); }

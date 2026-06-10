@@ -22,6 +22,10 @@
 #include "nw_compose.h"
 #include "nwproto.h"
 #include "nw_gfx.h"
+#include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
+
+/* Power the machine off via the kernel (privileged port I/O lives in the kernel). */
+static void sys_poweroff(void) { __asm__ __volatile__("int $0x80" : : "a"(SYS_reboot) : "memory"); }
 
 extern void *mmap(void *addr, unsigned long length, int prot, int flags, int fd, long off);
 int ioctl(int fd, unsigned long request, ...);
@@ -301,6 +305,14 @@ int main(void)
 
 		reconcile_buffers();
 
+		if (S.want_shutdown) {                 /* Shutdown button: power the machine off */
+			termmode(0);
+			memset(g_fb, 0, (size_t) g_pitch * g_yres);
+			sys_poweroff();                    /* does not return */
+		}
+		if (S.want_quit)                       /* Quit button: leave the desktop */
+			break;
+
 		present();   /* recomposes only on scene damage; always cheap cursor overlay */
 
 		/* flush queued events; drop clients whose ring overflowed */
@@ -315,6 +327,6 @@ int main(void)
 
 	termmode(0);
 	memset(g_fb, 0, (size_t) g_pitch * g_yres);   /* clear the desktop on the way out */
-	printf("nwm: all windows closed\n");
+	printf("nwm: exit\n");
 	return 0;
 }

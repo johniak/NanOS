@@ -48,6 +48,7 @@
 #define SYS_getpgid 132
 #define SYS_getsid 147
 #define SYS_poll 168
+#define SYS_reboot 88      /* power the machine off (arch::powerOff); does not return */
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with
  * a Linux number we might add later). */

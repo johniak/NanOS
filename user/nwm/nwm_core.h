@@ -22,8 +22,12 @@ enum {
 	NW_TITLEBAR_H  = 18,
 	NW_CLOSE       = 12,    /* close box side, inside the title bar */
 	NW_TITLE_MAX   = 64,
-	NW_CLIP_MAX    = 256
+	NW_CLIP_MAX    = 256,
+	NW_PANEL_H     = 20     /* top menu bar height (always on top, holds Quit/Shutdown) */
 };
+
+/* Panel button ids (nw_panel_hit). */
+enum { NW_PANEL_NONE = 0, NW_PANEL_QUIT = 1, NW_PANEL_SHUTDOWN = 2 };
 
 /* Normalised /dev/input0 scancodes we special-case (bit7=extended, bits0-6=set-1). */
 enum {
@@ -76,6 +80,8 @@ struct nw_server {
 	int   client_used[NW_MAX_CLIENTS];
 	int   client_dead[NW_MAX_CLIENTS];  /* output overran its ring -> shell disconnects */
 
+	int   want_quit, want_shutdown; /* a panel button was clicked -> the shell acts       */
+
 	int   dirty;                    /* the SCENE changed -> shell recomposes it          */
 	/* Accumulated scene-damage bounding box (screen px) since the last present; the shell
 	 * blits only this region of the recomposed scene to the framebuffer. */
@@ -107,6 +113,11 @@ uint32_t nw_outq_pending(const struct nw_server *s, int client);
 /* Take the accumulated scene-damage rect (and clear it). Returns 1 with the box in
  * *x,*y,*w,*h when there is damage, else 0 (nothing changed since the last present). */
 int  nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h);
+/* Top-panel buttons. nw_panel_hit returns NW_PANEL_* for a point (0 if not on a button);
+ * nw_panel_button_rect gives a button's screen rect (for drawing). Shared so compose and
+ * hit-testing agree on geometry. */
+int  nw_panel_hit(const struct nw_server *s, int x, int y);
+void nw_panel_button_rect(const struct nw_server *s, int id, int *x, int *y, int *w, int *h);
 
 /* ---- exposed pure helpers (also for tests) ---- */
 int  nw_hit(const struct nw_server *s, int sx, int sy, int *region);  /* topmost window or -1 */

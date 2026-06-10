@@ -39,7 +39,7 @@ TEST_CASE("unfocused window draws with the inactive title color, focused on top"
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
 	nw_msg cm{}; cm.type = NW_REQ_CREATE_WINDOW; cm.a = 50; cm.b = 30; cm.length = 1;
 	nw_client_msg(&s, 0, &cm, (const unsigned char*) "a");
-	int a = s.focus; s.win[a].x = 10; s.win[a].y = 10;
+	int a = s.focus; s.win[a].x = 10; s.win[a].y = 30;   // below the top panel
 	nw_client_msg(&s, 0, &cm, (const unsigned char*) "b");
 	int b = s.focus; s.win[b].x = 100; s.win[b].y = 100;
 	CHECK(a != b);
@@ -48,6 +48,6 @@ TEST_CASE("unfocused window draws with the inactive title color, focused on top"
 	nw_surface back; back.px = px.data(); back.w = 300; back.h = 200; back.stride = 300;
 	nw_compose(&s, &back);
 	auto at = [&](int x, int y) { return px[(size_t) y * 300 + x]; };
-	CHECK(at(10 + 4, 10 + 4) == 0x586070u);        // window a: unfocused title
+	CHECK(at(10 + 4, 30 + 4) == 0x586070u);        // window a: unfocused title
 	CHECK(at(100 + 4, 100 + 4) == 0x3a78c0u);      // window b: focused title
 }

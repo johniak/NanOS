@@ -355,6 +355,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		arch::inputSetRaw((int) a0);
 		ret = 0;
 		break;
+	case SYS_reboot:
+		arch::powerOff();          // does not return
+		ret = 0;
+		break;
 	case SYS_clock_gettime:
 		// a0 = clk_id, a1 = user struct timespec*. Pass the RTC wall-clock seconds so
 		// CLOCK_REALTIME is real time; CLOCK_MONOTONIC ignores it. User space is active.

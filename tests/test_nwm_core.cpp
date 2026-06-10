@@ -307,6 +307,28 @@ TEST_CASE("scene damage: create/commit mark a rect; a plain cursor move does not
 	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 1);    // commit marked the damaged rect
 }
 
+TEST_CASE("panel buttons hit-test and clicks set the quit/shutdown flags") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	int x, y, w, h;
+	nw_panel_button_rect(&s, NW_PANEL_QUIT, &x, &y, &w, &h);
+	CHECK(nw_panel_hit(&s, x + 1, y + 1) == NW_PANEL_QUIT);
+	nw_panel_button_rect(&s, NW_PANEL_SHUTDOWN, &x, &y, &w, &h);
+	CHECK(nw_panel_hit(&s, x + 1, y + 1) == NW_PANEL_SHUTDOWN);
+	CHECK(nw_panel_hit(&s, 5, 5) == NW_PANEL_NONE);        // empty part of the bar
+	CHECK(nw_panel_hit(&s, 400, 400) == NW_PANEL_NONE);    // below the bar
+
+	nw_panel_button_rect(&s, NW_PANEL_QUIT, &x, &y, &w, &h);
+	nw_pointer(&s, x + 2, y + 2, NW_BTN_LEFT);
+	CHECK(s.want_quit == 1);
+
+	nw_server s2; nw_server_init(&s2, 800, 600);
+	std::vector<unsigned char> ob2(8192); nw_client_connect(&s2, 0, ob2.data(), ob2.size());
+	nw_panel_button_rect(&s2, NW_PANEL_SHUTDOWN, &x, &y, &w, &h);
+	nw_pointer(&s2, x + 2, y + 2, NW_BTN_LEFT);
+	CHECK(s2.want_shutdown == 1);
+}
+
 TEST_CASE("disconnect drops the client's windows") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
