@@ -47,6 +47,12 @@ nwui_node *nwui_column(nwui *u, ...);   /* nwui_column(u, a, b, c, (nwui_node*)0
 nwui_node *nwui_row(nwui *u, ...);
 nwui_node *nwui_box(nwui *u, nwui_node *child);
 
+/* Non-variadic container building (FFI-friendly for Rust/other languages): make an empty
+ * column/row, then append children. nwui_add returns the parent so calls chain. */
+nwui_node *nwui_vbox(nwui *u);                              /* empty column */
+nwui_node *nwui_hbox(nwui *u);                              /* empty row    */
+nwui_node *nwui_add(nwui_node *parent, nwui_node *child);
+
 /* ---- layout props (setters return the node, so they chain) ---- */
 nwui_node *nwui_pad(nwui_node *n, int pad);
 nwui_node *nwui_gap(nwui_node *n, int gap);

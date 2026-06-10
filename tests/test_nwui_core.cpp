@@ -166,6 +166,20 @@ TEST_CASE("box centers its single child with padding; size/colors setters; get_t
 	delete u;
 }
 
+TEST_CASE("nwui_vbox/hbox/add build containers imperatively (FFI-friendly path)") {
+	nwui *u = new nwui; nwui_init(u);
+	nwui_node *col = nwui_vbox(u);
+	CHECK(col->kind == NWUI_COLUMN);
+	CHECK(nwui_add(col, nwui_label(u, "a")) == col);   // returns the parent
+	nwui_add(col, nwui_label(u, "b"));
+	CHECK(col->nchild == 2);
+	nwui_node *row = nwui_hbox(u);
+	CHECK(row->kind == NWUI_ROW);
+	nwui_add(row, nwui_label(u, "x"));
+	CHECK(row->nchild == 1);
+	delete u;
+}
+
 TEST_CASE("CONFIGURE sets the window size + requests relayout; CLOSE stops the loop") {
 	nwui *u = new nwui; nwui_init(u);
 	nwui_set_root(u, nwui_label(u, "x"));

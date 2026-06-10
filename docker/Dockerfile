@@ -84,6 +84,18 @@ RUN set -eux; \
     ninja -C build install; \
     cd /; rm -rf /tmp/picolibc /tmp/picolibc-i686-elf.txt
 
+# Rust toolchain (trailing layer — never invalidates the C toolchain cache). For writing
+# NanOS apps in Rust against the C-ABI libnwui. We compile for a CUSTOM bare i686 target with
+# no SIMD + soft-float (matching the C userland / the emulated CPU), which needs nightly +
+# rust-src to build core/alloc for it (-Z build-std).
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+ENV PATH="/opt/cargo/bin:${PATH}"
+RUN set -eux; \
+    wget -q -O /tmp/rustup.sh https://sh.rustup.rs; \
+    sh /tmp/rustup.sh -y --default-toolchain nightly --profile minimal --component rust-src; \
+    rm /tmp/rustup.sh; \
+    rustc --version
+
 # Marker the Makefile checks to know it is running inside the build container.
 RUN touch /etc/nanos-build
 

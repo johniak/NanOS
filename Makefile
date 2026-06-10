@@ -227,9 +227,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform
 SYS_PROGS=nsh cat ls free nwm
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -341,6 +341,16 @@ $(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a
 $(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwform.elf $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)nwform.elf $@ --need libnwui.ndl
+# rustform: the SAME demo written in RUST, proving the C-ABI libnwui is language-agnostic. A
+# cargo staticlib (no_std, -Z build-std for the bare i686-nanos target) is linked with crt0 +
+# the import libraries, then mknx'd like any app; --need libnwui.ndl pulls the whole chain.
+RUST_TARGET=user/rust/i686-nanos.json
+RUST_LIB=user/rust/rustform/target/i686-nanos/release/librustform.a
+$(RUST_LIB): user/rust/rustform/src/lib.rs user/rust/rustform/src/nanos.rs user/rust/rustform/Cargo.toml $(RUST_TARGET)
+	cd user/rust/rustform && cargo build -Z build-std=core,alloc -Z json-target-spec --target ../i686-nanos.json --release
+$(BINFOLDER)rustform.nxe: $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)rustform.elf $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX) $(BINFOLDER)rustform.elf $@ --need libnwui.ndl
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
 

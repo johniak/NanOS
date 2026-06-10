@@ -93,6 +93,16 @@ nwui_node *nwui_box(nwui *u, nwui_node *child)
 	return n;
 }
 
+nwui_node *nwui_vbox(nwui *u) { return nwui_alloc(u, NWUI_COLUMN); }
+nwui_node *nwui_hbox(nwui *u) { return nwui_alloc(u, NWUI_ROW); }
+
+nwui_node *nwui_add(nwui_node *parent, nwui_node *child)
+{
+	if (parent && child && parent->nchild < NWUI_MAX_CHILD)
+		parent->child[parent->nchild++] = child;
+	return parent;
+}
+
 /* ---- setters ---------------------------------------------------------------------- */
 nwui_node *nwui_pad(nwui_node *n, int pad)        { n->pad = pad; return n; }
 nwui_node *nwui_gap(nwui_node *n, int gap)        { n->gap = gap; return n; }

@@ -13,3 +13,4 @@ coverage/
 *.gcda
 *.gcno
 *.gcov
+user/rust/rustform/target/
