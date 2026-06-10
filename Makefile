@@ -397,6 +397,9 @@ $(BINFOLDER)%.o: kext/%.cpp
 $(BINFOLDER)%.o: kext/mouse/%.cpp
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: kext/kbd/%.cpp
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
 
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
@@ -405,8 +408,12 @@ $(BINFOLDER)mouse.nkext: $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mous
 	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mouse_ps2.o -lgcc
 	$(MKNX) $(@:.nkext=.elf) $@
+$(BINFOLDER)kbd.nkext: $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o $(MKNX) kext/kext.ld
+	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o -lgcc
+	$(MKNX) $(@:.nkext=.elf) $@
 
-KEXTS=mouse
+KEXTS=kbd mouse
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which

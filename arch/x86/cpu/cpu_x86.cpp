@@ -4,7 +4,6 @@
 #include <arch/cpu.h>
 #include "Gdt.h"
 #include "Idt.h"
-#include "Keyboard.h"
 
 namespace {
 // The GDT/IDT live for the kernel's lifetime: the CPU registers point at the
@@ -12,7 +11,6 @@ namespace {
 // so no global constructor is required.
 kernel::Gdt g_gdt;
 kernel::Idt g_idt;
-kernel::Keyboard g_keyboard;
 
 // Boot kernel stack for the very first ring3->ring0 trap (the syscall self-test and
 // before the scheduler runs). Once the scheduler is live, each task supplies its own
@@ -36,8 +34,8 @@ void cpuInit() {
 	g_gdt.loadTss();
 	g_idt.initialize();
 	faultInit();
-	// Legacy PC input: the PS/2 keyboard (IRQ1).
-	g_keyboard.initialize();
+	// PS/2 input drivers (keyboard IRQ1, mouse IRQ12) are NOT in the kernel — they are
+	// loadable modules (kbd.nkext / mouse.nkext) loaded from /nanos/kext at boot.
 }
 
 void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
