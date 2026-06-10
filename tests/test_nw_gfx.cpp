@@ -8,6 +8,7 @@ struct Buf {
 	nw_surface s;
 	Buf(int w, int h) : px((size_t) w * h, 0u) {
 		s.px = px.data(); s.w = w; s.h = h; s.stride = w;
+		nw_surface_noclip(&s);
 	}
 	uint32_t at(int x, int y) const { return px[(size_t) y * s.stride + x]; }
 };
@@ -86,4 +87,34 @@ TEST_CASE("blit copies a sub-rect and clips against both surfaces") {
 	nw_blit(&dst2.s, -1, -1, &src.s, 0, 0, 4, 4);
 	CHECK(dst2.at(0, 0) == (uint32_t) (0x100 + 5));   // src(1,1) maps to dst(0,0)
 	CHECK(dst2.at(2, 2) == (uint32_t) (0x100 + 15));  // src(3,3) maps to dst(2,2)
+}
+
+TEST_CASE("scissor confines fill_rect to the clip rect; noclip restores full drawing") {
+	Buf b(10, 10);
+	nw_surface_clip(&b.s, 2, 2, 4, 4);                // clip to [2,6)x[2,6)
+	nw_fill_rect(&b.s, 0, 0, 10, 10, 0xAB);           // a full-surface fill...
+	CHECK(b.at(2, 2) == 0xABu);                        // ...only lands inside the scissor
+	CHECK(b.at(5, 5) == 0xABu);
+	CHECK(b.at(1, 1) == 0u);                           // outside: untouched
+	CHECK(b.at(6, 6) == 0u);
+	nw_surface_noclip(&b.s);
+	nw_fill_rect(&b.s, 0, 0, 10, 10, 0xCD);           // now the whole surface fills
+	CHECK(b.at(1, 1) == 0xCDu);
+	CHECK(b.at(9, 9) == 0xCDu);
+}
+
+TEST_CASE("scissor confines put_pixel and blit to the clip rect") {
+	Buf b(10, 10);
+	nw_surface_clip(&b.s, 3, 3, 2, 2);                // clip to [3,5)x[3,5)
+	nw_put_pixel(&b.s, 4, 4, 0x11);                    // inside
+	nw_put_pixel(&b.s, 7, 7, 0x22);                    // outside -> dropped
+	CHECK(b.at(4, 4) == 0x11u);
+	CHECK(b.at(7, 7) == 0u);
+	Buf src(4, 4);
+	for (int i = 0; i < 16; i++) src.px[i] = 0x100u + i;
+	nw_blit(&b.s, 2, 2, &src.s, 0, 0, 4, 4);          // would cover [2,6)x[2,6); scissor cuts it
+	CHECK(b.at(3, 3) == (uint32_t) (0x100 + 1 * 4 + 1));   // src(1,1) -> dst(3,3), inside clip
+	CHECK(b.at(4, 4) == (uint32_t) (0x100 + 2 * 4 + 2));   // src(2,2) -> dst(4,4), inside clip
+	CHECK(b.at(2, 2) == 0u);                           // dst(2,2) is outside the scissor
+	CHECK(b.at(5, 5) == 0u);                           // dst(5,5) is outside the scissor
 }

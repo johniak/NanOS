@@ -121,6 +121,9 @@ const unsigned char *nw_outq_peek(struct nw_server *s, int client, uint32_t *len
 void nw_outq_ack(struct nw_server *s, int client, uint32_t n);
 int  nw_client_is_dead(const struct nw_server *s, int client);
 uint32_t nw_outq_pending(const struct nw_server *s, int client);
+/* Read the accumulated scene-damage rect WITHOUT clearing it (so present() can scissor the
+ * recompose to it before consuming it). Returns 1 + the box, else 0. */
+int  nw_peek_damage(const struct nw_server *s, int *x, int *y, int *w, int *h);
 /* Take the accumulated scene-damage rect (and clear it). Returns 1 with the box in
  * *x,*y,*w,*h when there is damage, else 0 (nothing changed since the last present). */
 int  nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h);

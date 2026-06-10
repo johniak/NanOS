@@ -42,14 +42,20 @@ static void damage_frame(struct nw_server *s, int idx)
 	damage(s, w->x, w->y, w->cw + 2 * NW_BORDER, NW_TITLEBAR_H + w->ch + NW_BORDER);
 }
 
-int nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h)
+int nw_peek_damage(const struct nw_server *s, int *x, int *y, int *w, int *h)
 {
 	if (!s->dmg)
 		return 0;
 	*x = s->dmg_x0; *y = s->dmg_y0;
 	*w = s->dmg_x1 - s->dmg_x0; *h = s->dmg_y1 - s->dmg_y0;
-	s->dmg = 0;
 	return 1;
+}
+
+int nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h)
+{
+	int got = nw_peek_damage(s, x, y, w, h);
+	s->dmg = 0;
+	return got;
 }
 
 /* ---- output ring ------------------------------------------------------------------ */

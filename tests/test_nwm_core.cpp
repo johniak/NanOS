@@ -307,6 +307,21 @@ TEST_CASE("scene damage: create/commit mark a rect; a plain cursor move does not
 	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 1);    // commit marked the damaged rect
 }
 
+TEST_CASE("nw_peek_damage reads the damage rect without clearing it") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	int x, y, w, h;
+	CHECK(nw_peek_damage(&s, &x, &y, &w, &h) == 0);    // fresh: nothing to peek
+	create_win(s, 0, 100, 80, "w");
+	int px, py, pw, ph;
+	CHECK(nw_peek_damage(&s, &px, &py, &pw, &ph) == 1);  // peek sees the create damage
+	CHECK(nw_peek_damage(&s, &x, &y, &w, &h) == 1);      // ...and a second peek still sees it
+	CHECK(x == px); CHECK(y == py); CHECK(w == pw); CHECK(h == ph);  // same box, not cleared
+	CHECK(nw_take_damage(&s, &x, &y, &w, &h) == 1);      // take returns the same box
+	CHECK(x == px); CHECK(y == py); CHECK(w == pw); CHECK(h == ph);
+	CHECK(nw_peek_damage(&s, &x, &y, &w, &h) == 0);      // now cleared
+}
+
 TEST_CASE("panel buttons hit-test and clicks set the quit/shutdown flags") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());

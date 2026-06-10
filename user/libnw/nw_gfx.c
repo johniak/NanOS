@@ -9,20 +9,45 @@
 /* The shared userland console font: 256 glyphs, 16 bytes each, MSB = leftmost pixel. */
 extern const unsigned char nx_font8x16[256][16];
 
+void nw_surface_clip(struct nw_surface *s, int x, int y, int w, int h)
+{
+	s->clip_x0 = x; s->clip_y0 = y; s->clip_x1 = x + w; s->clip_y1 = y + h;
+}
+void nw_surface_noclip(struct nw_surface *s)
+{
+	s->clip_x0 = s->clip_y0 = s->clip_x1 = s->clip_y1 = 0;
+}
+
+/* The drawable bounds: the surface [0,w)x[0,h) intersected with the scissor when it is active. */
+static void nw_bounds(const struct nw_surface *s, int *x0, int *y0, int *x1, int *y1)
+{
+	*x0 = 0; *y0 = 0; *x1 = s->w; *y1 = s->h;
+	if (s->clip_x1 > s->clip_x0 && s->clip_y1 > s->clip_y0) {   /* scissor active */
+		if (s->clip_x0 > *x0) *x0 = s->clip_x0;
+		if (s->clip_y0 > *y0) *y0 = s->clip_y0;
+		if (s->clip_x1 < *x1) *x1 = s->clip_x1;
+		if (s->clip_y1 < *y1) *y1 = s->clip_y1;
+	}
+}
+
 void nw_put_pixel(const struct nw_surface *s, int x, int y, uint32_t rgb)
 {
-	if (x < 0 || y < 0 || x >= s->w || y >= s->h)
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
+	if (x < bx0 || y < by0 || x >= bx1 || y >= by1)
 		return;
 	s->px[(long) y * s->stride + x] = rgb;
 }
 
 void nw_fill_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32_t rgb)
 {
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
 	int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
-	if (x0 < 0) x0 = 0;
-	if (y0 < 0) y0 = 0;
-	if (x1 > s->w) x1 = s->w;
-	if (y1 > s->h) y1 = s->h;
+	if (x0 < bx0) x0 = bx0;
+	if (y0 < by0) y0 = by0;
+	if (x1 > bx1) x1 = bx1;
+	if (y1 > by1) y1 = by1;
 	for (int yy = y0; yy < y1; yy++) {
 		uint32_t *row = s->px + (long) yy * s->stride;
 		for (int xx = x0; xx < x1; xx++)
@@ -59,11 +84,13 @@ void nw_blit(const struct nw_surface *dst, int dx, int dy,
 	if (sy < 0) { h += sy; dy -= sy; sy = 0; }
 	if (sx + w > src->w) w = src->w - sx;
 	if (sy + h > src->h) h = src->h - sy;
-	/* clip the destination rect to dst bounds, shifting the source in step */
-	if (dx < 0) { w += dx; sx -= dx; dx = 0; }
-	if (dy < 0) { h += dy; sy -= dy; dy = 0; }
-	if (dx + w > dst->w) w = dst->w - dx;
-	if (dy + h > dst->h) h = dst->h - dy;
+	/* clip the destination rect to dst drawable bounds (surface ∩ scissor), shifting src */
+	int bx0, by0, bx1, by1;
+	nw_bounds(dst, &bx0, &by0, &bx1, &by1);
+	if (dx < bx0) { int d = bx0 - dx; w -= d; sx += d; dx = bx0; }
+	if (dy < by0) { int d = by0 - dy; h -= d; sy += d; dy = by0; }
+	if (dx + w > bx1) w = bx1 - dx;
+	if (dy + h > by1) h = by1 - dy;
 	if (w <= 0 || h <= 0)
 		return;
 	for (int r = 0; r < h; r++) {

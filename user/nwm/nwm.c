@@ -250,9 +250,14 @@ static void present(void)
 	if (g_prev_cx >= 0)
 		blit_scene(g_prev_cx, g_prev_cy, NW_CURSOR_W, NW_CURSOR_H);   /* erase old cursor */
 	if (S.dirty) {
-		nw_compose_scene(&S, &g_scene_surf);
 		int dx, dy, dw, dh;
-		if (nw_take_damage(&S, &dx, &dy, &dw, &dh))
+		int have = nw_peek_damage(&S, &dx, &dy, &dw, &dh);
+		if (have) nw_surface_clip(&g_scene_surf, dx, dy, dw, dh);  /* recompose only the damage */
+		else      nw_surface_noclip(&g_scene_surf);
+		nw_compose_scene(&S, &g_scene_surf);     /* clipped: cost ∝ damage, not whole screen */
+		nw_surface_noclip(&g_scene_surf);
+		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it */
+		if (have)
 			blit_scene(dx, dy, dw, dh);          /* only the changed region */
 		else
 			blit_scene(0, 0, (int) g_xres, (int) g_yres);   /* first frame / fallback */

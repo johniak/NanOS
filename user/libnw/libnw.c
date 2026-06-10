@@ -94,6 +94,7 @@ nw_win *nw_create_window(nw_display *d, int w, int h, const char *title)
 void nw_win_surface(nw_win *win, struct nw_surface *out)
 {
 	out->px = win->px; out->w = win->w; out->h = win->h; out->stride = win->w;
+	nw_surface_noclip(out);                  /* clients draw to the whole window buffer */
 }
 int      nw_win_width(nw_win *win)  { return win->w; }
 int      nw_win_height(nw_win *win) { return win->h; }

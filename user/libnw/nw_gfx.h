@@ -18,7 +18,17 @@ struct nw_surface {
 	uint32_t *px;   /* pixels, 0x00RRGGBB each */
 	int       w, h; /* size in pixels */
 	int       stride; /* row stride in PIXELS */
+	/* Optional scissor: drawing is confined to this rect (in surface pixels). ACTIVE only
+	 * when clip_x1 > clip_x0 && clip_y1 > clip_y0; a zero-initialised surface has NO scissor
+	 * (draws to the full w*h). Use nw_surface_clip / nw_surface_noclip to set it. This is how
+	 * the compositor recomposes only the damaged region instead of the whole scene. */
+	int       clip_x0, clip_y0, clip_x1, clip_y1;
 };
+
+/* Confine subsequent drawing on `s` to the rectangle (x,y,w,h) (intersected with the surface
+ * by the primitives). nw_surface_noclip removes the scissor (full-surface drawing). */
+void nw_surface_clip(struct nw_surface *s, int x, int y, int w, int h);
+void nw_surface_noclip(struct nw_surface *s);
 
 /* All coordinates may be partially or fully off-surface; everything clips. */
 void nw_put_pixel(const struct nw_surface *s, int x, int y, uint32_t rgb);

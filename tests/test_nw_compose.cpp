@@ -21,6 +21,7 @@ TEST_CASE("compose paints desktop, a focused window's title/content, and the cur
 
 	std::vector<uint32_t> px((size_t) 200 * 150, 0);
 	nw_surface back; back.px = px.data(); back.w = 200; back.h = 150; back.stride = 200;
+	nw_surface_noclip(&back);
 	nw_compose(&s, &back);
 
 	auto at = [&](int x, int y) { return px[(size_t) y * 200 + x]; };
@@ -46,6 +47,7 @@ TEST_CASE("unfocused window draws with the inactive title color, focused on top"
 
 	std::vector<uint32_t> px((size_t) 300 * 200, 0);
 	nw_surface back; back.px = px.data(); back.w = 300; back.h = 200; back.stride = 300;
+	nw_surface_noclip(&back);
 	nw_compose(&s, &back);
 	auto at = [&](int x, int y) { return px[(size_t) y * 300 + x]; };
 	CHECK(at(10 + 4, 30 + 4) == 0x586070u);        // window a: unfocused title
