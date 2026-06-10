@@ -145,7 +145,7 @@ $(BINFOLDER)%.o: %.S
 _grub2-image:
 	./scripts/create-grub2-image.sh
 
-_image: _all _userland _grub2-image
+_image: _all _userland _kext _grub2-image
 	# System volume layout: NanOS itself lives under /nanos (core/bin/lib/kext/config/
 	# cache/logs); non-system user apps live in /apps. GRUB stays in /boot. mkdir is
 	# idempotent across rebuilds.
@@ -174,6 +174,10 @@ _image: _all _userland _grub2-image
 	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
 	for l in $(USER_LIBS_NDL); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	done
+	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot.
+	for m in $(KEXTS); do \
+	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# GNU bash (optional): installed as an /apps/bash bundle + /bin link ONLY if `make bash`
 	# staged bin/bash.nxe from the external fork. Skipped silently otherwise.
@@ -223,9 +227,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest doom
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom
 SYS_PROGS=nsh cat ls free
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest doom
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -297,6 +301,7 @@ $(BINFOLDER)brktest.nxe:   $(DYN_DEPS) $(BINFOLDER)brktest.o
 $(BINFOLDER)envtest.nxe:   $(DYN_DEPS) $(BINFOLDER)envtest.o
 $(BINFOLDER)mmaptest.nxe:  $(DYN_DEPS) $(BINFOLDER)mmaptest.o
 $(BINFOLDER)inputtest.nxe: $(DYN_DEPS) $(BINFOLDER)inputtest.o
+$(BINFOLDER)mousetest.nxe: $(DYN_DEPS) $(BINFOLDER)mousetest.o
 $(BINFOLDER)fstest.nxe:    $(DYN_DEPS) $(BINFOLDER)fstest.o
 $(BINFOLDER)pipetest.nxe:  $(DYN_DEPS) $(BINFOLDER)pipetest.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
@@ -363,6 +368,47 @@ $(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX)
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
 
+# ----------------------------------------------------------------------------
+# Kernel modules (nkext): loadable drivers built SEPARATELY from kernel.bin, shipped to
+# /nanos/kext and loaded at boot (kernel/KextLoader). A kext is an NxFormat module (like a
+# .ndl) but its imports resolve to the KERNEL export table (KernelExports), not libc.ndl. Kext
+# code is ring-0 freestanding C++ (no picolibc); -Iinclude gives the freestanding string.h and
+# we deliberately omit -Ilib so the macOS case-insensitivity trap can't bite when building in
+# /src. (See docs/filesystem.md: /nanos/kext.)
+KEXT_CFLAGS=-ffreestanding -nostdlib -nostdinc++ --no-exceptions --no-rtti \
+  -fno-sized-deallocation -fno-leading-underscore -fno-pic -fno-stack-protector \
+  -Iarch/include -Ikernel -Idrivers -Iinclude
+
+# Kernel import library for kexts, GENERATED from kexports.def (single source of truth): a
+# module links these thunks/slots (__imp_knx_* in section .nxlib.kernel), which mknx turns
+# into "kernel"-scoped imports the loader binds against KernelExports.
+$(BINFOLDER)kimports.S: kernel/kexports.def
+	@mkdir -p $(BINFOLDER)
+	@awk 'BEGIN{print "[BITS 32]"; print "section .nxlib.kernel progbits alloc write align=4"} \
+	  /^KX\(/{ n=$$0; sub(/^KX\(/,"",n); sub(/\).*/,"",n); k[++c]=n; print "[GLOBAL __imp_" n "]"; print "__imp_" n ": dd 0" } \
+	  END{ print "section .text"; for(i=1;i<=c;i++){ print "[GLOBAL " k[i] "]"; print k[i] ": jmp [__imp_" k[i] "]" } }' $< > $@
+$(BINFOLDER)kimports.o: $(BINFOLDER)kimports.S
+	nasm -f elf $< -o $@
+
+# Kext source objects (NOT in kernel SOURCES; never linked into kernel.bin).
+$(BINFOLDER)%.o: kext/%.cpp
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: kext/mouse/%.cpp
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
+
+# Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
+# linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
+KEXT_GLUE=$(BINFOLDER)nxhdr.o $(BINFOLDER)kimports.o $(BINFOLDER)kext_rt.o
+$(BINFOLDER)mouse.nkext: $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mouse_ps2.o $(MKNX) kext/kext.ld
+	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mouse_ps2.o -lgcc
+	$(MKNX) $(@:.nkext=.elf) $@
+
+KEXTS=mouse
+_kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
+
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which
 # breaks Doom's tentative globals) and warnings off; -DNORMALUNIX -DLINUX select the POSIX
 # code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
@@ -401,7 +447,7 @@ $(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $
 HOST_CXX=g++
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Iarch/x86/boot -Iarch/x86/mm
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Iarch/x86/boot -Iarch/x86/mm -Ikext/mouse
 HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage
 TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
@@ -410,8 +456,9 @@ TEST_SRCS=$(wildcard tests/*.cpp)
 TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp lib/String.cpp
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp arch/x86/mm/AddressSpace.cpp
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
+TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
