@@ -239,6 +239,9 @@ void Kernel::start() {
 	pty->setSignalFn(ptySignal, 0);
 	root->addChar(root->dev(), "ptmx", new PtyMaster(pty), 0666);
 	root->addChar(root->dev(), "pts0", new PtySlave(pty), 0666);
+	// /dev/tty = the controlling terminal. With one pty it is the same slave as pts0, so a
+	// program (bash) can open("/dev/tty") to reach its terminal without knowing the pts name.
+	root->addChar(root->dev(), "tty", new PtySlave(pty), 0666);
 	okEnd();
 
 	// Install the syscall interface over the VFS, then a (silent) boot sanity syscall.
