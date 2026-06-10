@@ -1,8 +1,8 @@
 /*
  * libnw.h — the NanWM client library: connect to the compositor (over the inherited pipe
  * pair on fds 3/4), create a window, draw into its pixel buffer, commit damage, and pump
- * the event queue. This is the client's GetMessage/DispatchMessage loop. Statically linked
- * into each GUI client; uses the client's libc for I/O.
+ * the event queue. This is the client's GetMessage/DispatchMessage loop. Shipped as the
+ * shared library libnw.ndl (the user32/gdi32 of NanWM); clients import it by name.
  */
 #ifndef LIBNW_H
 #define LIBNW_H

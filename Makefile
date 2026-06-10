@@ -227,11 +227,11 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform
 SYS_PROGS=nsh cat ls free nwm
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
-USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl
+USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
 # the C library (picolibc + syscall/cwd/signal glue + the signal trampoline) now lives in
 # libc.ndl, pulled in by name via the import library instead of static-linked.
@@ -273,6 +273,9 @@ $(BINFOLDER)%.o: user/nwm/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/nwnote/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/nwform/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 # libnw (user/libnw): the client API + protocol codec + gfx, STATICALLY linked into the
@@ -333,6 +336,11 @@ $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o 
 $(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)nwnote.elf $@ --need libnw.ndl
+# nwform uses ONLY the toolkit (+ libc for snprintf/exit); --need libnwui.ndl pulls the whole
+# chain libnwui->libnw->libc via the recursive loader.
+$(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwform.elf $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX) $(BINFOLDER)nwform.elf $@ --need libnwui.ndl
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
 
@@ -408,6 +416,21 @@ $(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX)
 	$(MKNX) $(BINFOLDER)libnw.elf $(BINFOLDER)libnwimp --implib --export-all --soname libnw.ndl
 	for f in $(BINFOLDER)libnwimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwimp/*.o
+
+# ---- libnwui.ndl: the UI toolkit (the comctl32 of NanWM) ----
+# Composable widget tree + flex layout + paint, exporting the nwui_* API. Uses libnw (gfx) AND
+# libc (malloc); links both import libraries and declares both needs. A client that --need
+# libnwui.ndl gets the whole chain app->libnwui->libnw->libc via the recursive loader.
+LIBNWUI_OBJS=$(BINFOLDER)nwui_core.o $(BINFOLDER)nwui_paint.o $(BINFOLDER)nwui.o
+$(BINFOLDER)libnwui.elf: $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+$(BINFOLDER)libnwui.ndl: $(BINFOLDER)libnwui.elf $(MKNX)
+	$(MKNX) $(BINFOLDER)libnwui.elf $@ --dll --export-all --need libnw.ndl --need libc.ndl
+$(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX)
+	rm -rf $(BINFOLDER)libnwuiimp && mkdir -p $(BINFOLDER)libnwuiimp
+	$(MKNX) $(BINFOLDER)libnwui.elf $(BINFOLDER)libnwuiimp --implib --export-all --soname libnwui.ndl
+	for f in $(BINFOLDER)libnwuiimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
+	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwuiimp/*.o
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))

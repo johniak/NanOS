@@ -105,9 +105,19 @@ nwui_node *nwui_colors(nwui_node *n, uint32_t fg, uint32_t bg)
 
 void nwui_set_text(nwui_node *n, const char *text)
 {
-	set_caption(n, text);
+	if (n->kind == NWUI_TEXTFIELD) {            /* set/replace the field's value + reset caret */
+		int i = 0;
+		if (text && n->tbuf)
+			for (; text[i] && i < n->tcap - 1; i++)
+				n->tbuf[i] = text[i];
+		if (n->tbuf) n->tbuf[i] = 0;
+		n->tlen = i;
+		n->caret = i;
+	} else {
+		set_caption(n, text);
+	}
 	n->dirty = 1;
-	if (n->owner) n->owner->layout_dirty = 1;   /* caption width may have changed */
+	if (n->owner) n->owner->layout_dirty = 1;   /* size may have changed */
 }
 
 const char *nwui_get_text(nwui_node *n)

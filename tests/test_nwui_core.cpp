@@ -118,6 +118,13 @@ TEST_CASE("textfield: click focuses, keys edit the app buffer, backspace + paste
 	p.type = NW_EV_PASTE; p.text = "XY"; p.text_len = 2;
 	nwui_dispatch(u, &p);                     // -> "hiXY"
 	CHECK(strcmp(tb, "hiXY") == 0);
+	nwui_set_text(tf, "");                    // programmatic clear resets the buffer + caret
+	CHECK(strcmp(tb, "") == 0);
+	CHECK(tf->tlen == 0);
+	CHECK(tf->caret == 0);
+	nwui_set_text(tf, "abc");
+	CHECK(strcmp(tb, "abc") == 0);
+	CHECK(tf->caret == 3);
 	delete u;
 }
 

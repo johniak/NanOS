@@ -70,4 +70,9 @@ void       nwui_layout(nwui *u);                     /* measure(root)+arrange to
 nwui_node *nwui_hit(nwui_node *n, int px, int py);   /* deepest node under the point, or NULL */
 int        nwui_dispatch(nwui *u, const struct nw_event *ev);  /* route one event; 0 = closed */
 
+/* ---- paint (nwui_paint.c, uses nw_gfx) ---- */
+/* Render the tree into surface `s`: full repaint on layout change, else only dirty nodes.
+ * Writes the damaged rect to *x,*y,*w,*h and returns 1 if anything was painted, else 0. */
+int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int *h);
+
 #endif /* NWUI_CORE_H */
