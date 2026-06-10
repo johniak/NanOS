@@ -91,3 +91,47 @@ TEST_CASE("KeyDecoder: a held Ctrl emits nothing on its own; digits pass through
 	REQUIRE(r.n == 1);
 	CHECK(r.ev[0] == '1');
 }
+
+TEST_CASE("KeyDecoder: Shift produces uppercase letters and upper-glyph symbols") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0x2A, r);   // left Shift press -> modifier, no event
+	CHECK(r.n == 0);
+	d.feed(0x1E, r);   // 'a' -> 'A'
+	d.feed(0x05, r);   // '4' -> '$'
+	d.feed(0x09, r);   // '8' -> '*'
+	d.feed(0x0A, r);   // '9' -> '('
+	d.feed(0x34, r);   // '.' -> '>'
+	d.feed(0x2B, r);   // '\' -> '|'
+	d.feed(0x27, r);   // ';' -> ':'
+	REQUIRE(r.n == 7);
+	CHECK(r.ev[0] == 'A');
+	CHECK(r.ev[1] == '$');
+	CHECK(r.ev[2] == '*');
+	CHECK(r.ev[3] == '(');
+	CHECK(r.ev[4] == '>');
+	CHECK(r.ev[5] == '|');
+	CHECK(r.ev[6] == ':');
+}
+
+TEST_CASE("KeyDecoder: releasing Shift returns to the unshifted glyphs") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0x36, r);   // right Shift press
+	d.feed(0x1E, r);   // 'A'
+	d.feed(0xB6, r);   // right Shift release
+	d.feed(0x1E, r);   // 'a'
+	REQUIRE(r.n == 2);
+	CHECK(r.ev[0] == 'A');
+	CHECK(r.ev[1] == 'a');
+}
+
+TEST_CASE("KeyDecoder: Ctrl wins over Shift (Ctrl+Shift+C is still 0x03)") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0x1D, r);   // Ctrl press
+	d.feed(0x2A, r);   // Shift press
+	d.feed(0x2E, r);   // 'c' -> control code regardless of Shift
+	REQUIRE(r.n == 1);
+	CHECK(r.ev[0] == 0x03);
+}

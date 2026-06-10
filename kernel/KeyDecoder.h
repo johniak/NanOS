@@ -5,7 +5,7 @@
  * a byte (0..255: printable ASCII, '\n' for Enter, 0x08 for Backspace, or a control
  * code 0x01..0x1A when Ctrl is held with a letter, e.g. Ctrl+C -> 0x03) or one of
  * the KEY_* arrow codes (>255). Handles the 0xE0 extended prefix, tracks the Ctrl
- * modifier, and ignores key releases. The cooked path reuses scancodeAscii().
+ * and Shift modifiers, and ignores key releases. The cooked path reuses scancodeAscii().
  * Host-testable (template emit).
  */
 #ifndef KEYDECODER_H_
@@ -23,12 +23,15 @@ enum {
 class KeyDecoder {
 	bool m_ext;    // a 0xE0 extended-key prefix was just seen
 	bool m_ctrl;   // a Ctrl key (left 0x1D or extended-right 0xE0 0x1D) is held
+	bool m_shift;  // a Shift key (left 0x2A or right 0x36) is held
 public:
-	KeyDecoder() : m_ext(false), m_ctrl(false) {}
+	KeyDecoder() : m_ext(false), m_ctrl(false), m_shift(false) {}
 
 	// US scancode (set 1) -> ASCII, or 0 for non-text keys. '\b' for Backspace,
-	// '\n' for Enter. Defined in KeyDecoder.cpp.
+	// '\n' for Enter. scancodeAsciiShift is the Shift-held variant (uppercase letters
+	// + upper-glyph symbols). Both defined in KeyDecoder.cpp.
 	static char scancodeAscii(unsigned char sc);
+	static char scancodeAsciiShift(unsigned char sc);
 
 	// Feed one scancode; emit(int) is called once per produced event. emit is a
 	// forwarding reference so a stateful sink (e.g. a recorder) accumulates.
@@ -55,15 +58,20 @@ public:
 		}
 		if (sc == 0x1D) { m_ctrl = true;  return; }   // left Ctrl press
 		if (sc == 0x9D) { m_ctrl = false; return; }   // left Ctrl release
+		if (sc == 0x2A || sc == 0x36) { m_shift = true;  return; }   // Shift press (L/R)
+		if (sc == 0xAA || sc == 0xB6) { m_shift = false; return; }   // Shift release (L/R)
 		if (sc & 0x80)
 			return;                  // key release
-		char a = scancodeAscii(sc);
-		if (a == 0)
-			return;
-		if (m_ctrl && ((a >= 'a' && a <= 'z') || a == '\\')) {
-			emit(a & 0x1F);   // Ctrl+letter / Ctrl+\ -> control code (Ctrl+C=0x03, Ctrl+\=0x1C)
+		// Ctrl combos key off the UNSHIFTED letter so Ctrl+C works whether or not Shift is
+		// held (and 'A'&0x1F == 'a'&0x1F anyway); plain text uses the shifted glyph.
+		char base = scancodeAscii(sc);
+		if (m_ctrl && ((base >= 'a' && base <= 'z') || base == '\\')) {
+			emit(base & 0x1F);   // Ctrl+letter / Ctrl+\ -> control code (Ctrl+C=0x03, Ctrl+\=0x1C)
 			return;
 		}
+		char a = m_shift ? scancodeAsciiShift(sc) : base;
+		if (a == 0)
+			return;
 		emit((int) (unsigned char) (a == '\b' ? 0x08 : a));
 	}
 };
