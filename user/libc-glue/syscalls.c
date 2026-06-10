@@ -61,6 +61,34 @@ int dup2(int o, int n)                  { return reterr(sys3(SYS_dup2, o, n, 0))
 int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
 	return reterr(sys3(SYS_poll, (int) fds, (int) nfds, timeout));
 }
+/* select(2) over poll: NanOS has no select syscall, but readline/bash use select() to wait
+ * for input. Translate the fd_sets into pollfds (up to 64 fds — ample for a shell), poll,
+ * then translate the ready set back. Returns the number of ready fds. */
+#include <sys/select.h>
+int select(int nfds, fd_set* r, fd_set* w, fd_set* e, struct timeval* tv) {
+	struct pollfd pf[64];
+	int map[64], n = 0;
+	if (nfds > 64) nfds = 64;
+	(void) e;   /* exceptfds: NanOS poll has no out-of-band class; report none ready */
+	for (int fd = 0; fd < nfds; fd++) {
+		short ev = 0;
+		if (r && FD_ISSET(fd, r)) ev |= POLLIN;
+		if (w && FD_ISSET(fd, w)) ev |= POLLOUT;
+		if (ev) { pf[n].fd = fd; pf[n].events = ev; pf[n].revents = 0; map[n] = fd; n++; }
+	}
+	int timeout = tv ? (int) (tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1;
+	int pr = poll(pf, (nfds_t) n, timeout);
+	if (pr < 0) return -1;
+	if (r) FD_ZERO(r);
+	if (w) FD_ZERO(w);
+	if (e) FD_ZERO(e);
+	int count = 0;
+	for (int i = 0; i < n; i++) {
+		if (r && (pf[i].revents & (POLLIN | POLLHUP | POLLERR))) { FD_SET(map[i], r); count++; }
+		if (w && (pf[i].revents & POLLOUT)) { FD_SET(map[i], w); count++; }
+	}
+	return count;
+}
 /* fcntl(2): F_GETFL/F_SETFL (O_NONBLOCK), F_GETFD/F_SETFD (FD_CLOEXEC), and
  * F_DUPFD/F_DUPFD_CLOEXEC (duplicate to the lowest fd >= arg). The third argument is an
  * int (flags for F_SET*, the fd floor for F_DUPFD); harmless for the no-arg F_GET* forms. */
@@ -119,6 +147,10 @@ int isatty(int fd) {
 int getpid(void)                        { return reterr(sys3(SYS_getpid, 0, 0, 0)); }
 int getppid(void)                       { return reterr(sys3(SYS_getppid, 0, 0, 0)); }
 int kill(int p, int s)                  { return reterr(sys3(SYS_kill, p, s, 0)); }
+/* raise(3): defined here (not pulled from picolibc) because picolibc's signal.c bundles
+ * raise WITH signal, which we override — so importing raise would drag a conflicting signal.
+ * As a glue symbol it is auto-excluded from the picolibc auto-export. */
+int raise(int s)                        { return kill(getpid(), s); }
 
 /* Sessions + process groups (job control): the shell uses these to put each job in its own
  * group and hand the terminal to the foreground group, so Ctrl+C hits the whole job. */
@@ -153,6 +185,29 @@ int sigaction(int sig, const struct sigaction* act, struct sigaction* old) {
 		old->sa_flags = 0;
 		memset(&old->sa_mask, 0, sizeof old->sa_mask);
 	}
+	return 0;
+}
+
+/* sigprocmask(2): sigset_t is a 32-bit unsigned long here, so it maps straight onto the
+ * kernel's bitmask. picolibc uses BSD `how` values (SETMASK=0, BLOCK=1, UNBLOCK=2) but the
+ * kernel uses the Linux numbering (BLOCK=0, UNBLOCK=1, SETMASK=2), so translate. A NULL set
+ * queries without changing (BLOCK an empty set). */
+int sigprocmask(int how, const sigset_t* set, sigset_t* old) {
+	int khow = set ? (how == SIG_BLOCK ? 0 : how == SIG_UNBLOCK ? 1 : 2) : 0;
+	unsigned o = 0;
+	int r = sys3(SYS_sigprocmask, khow, set ? (int) (unsigned) *set : 0, (int) &o);
+	if (r < 0) { errno = -r; return -1; }
+	if (old) *old = (sigset_t) o;
+	return 0;
+}
+
+/* getentropy(3): no hardware RNG; fill the buffer from a weak LCG seeded once. NOT
+ * cryptographically secure — just enough for picolibc's arc4random seeding to run. */
+int getentropy(void* buf, size_t n) {
+	static unsigned seed = 0x9e3779b9u;
+	unsigned char* p = (unsigned char*) buf;
+	if (n > 256) { errno = EIO; return -1; }   /* getentropy caps at 256 bytes */
+	for (size_t i = 0; i < n; i++) { seed = seed * 1103515245u + 12345u; p[i] = (unsigned char) (seed >> 16); }
 	return 0;
 }
 /* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the

@@ -326,31 +326,22 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 # library exporting the C API, linked at the .ndl preferred base (the loader relocates it
 # per process). We do NOT --whole-archive picolibc: that would pull its own sbrk/signal
 # (clashing with our kernel-backed glue) and objects needing unimplemented syscalls
-# (getentropy/sigprocmask). Instead our glue overrides sbrk/signal and a curated
-# --undefined list force-includes the public functions programs use (their transitive
-# deps come along automatically); whatever is pulled becomes the exported API.
-# The signal/sigreturn glue + its trampoline live in libc.ndl (our `signal` overrides
-# picolibc's, which would need sigprocmask). `abort`/`raise` are deliberately NOT forced:
-# picolibc's signal.c defines both raise AND signal, so pulling them would clash with our
-# signal.
-LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o
-LIBC_FORCE=printf fprintf snprintf vsnprintf sprintf vfprintf fputs fputc puts putchar \
-  fwrite fread fopen fclose fflush fgets fgetc perror \
-  malloc free calloc realloc \
-  memcpy memmove memset memcmp memchr \
-  strlen strnlen strcmp strncmp strcpy strncpy strcat strncat strchr strrchr strstr \
-  strdup strndup strerror strtok strspn strcspn strpbrk \
-  strcasecmp strncasecmp \
-  atoi atol atof strtol strtoul qsort bsearch abs labs \
-  ftell fseek remove rename system \
-  time localtime strftime \
-  sin cos tan asin acos atan atan2 sqrt pow exp log log10 \
-  fabs floor ceil ldexp frexp fmod modf \
-  exit
-LIBC_UNDEF=$(foreach s,$(LIBC_FORCE),-Wl,--undefined=$(s))
-$(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS)
+# (getentropy/sigprocmask). Instead our glue overrides those, and we export-all the rest of
+# picolibc via the generated --undefined list below (see the libc.elf rule).
+LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
+  $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o
+# libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
+# our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
+# (minus glue) so the linker pulls it in; because these are --undefined refs (not
+# --whole-archive), a glue-defined symbol satisfies its ref and picolibc's conflicting
+# version is never pulled. This lets ported programs (bash) detect/link any libc function
+# instead of falling back to broken K&R paths. Depends on Makefile so the rule re-runs.
+$(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS) Makefile
+	$(CROSS)nm $(LIBC_GLUE_OBJS) | awk '$$2=="T"{print $$3}' | sort -u > $(BINFOLDER)glue.syms
+	$(CROSS)nm $(PICOLIBC)/lib/libc.a | awk '$$2=="T"{print $$3}' | sort -u > $(BINFOLDER)pico.syms
+	comm -23 $(BINFOLDER)pico.syms $(BINFOLDER)glue.syms | sed 's/^/-Wl,--undefined=/' > $(BINFOLDER)libc.undef
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o \
-	  $(LIBC_GLUE_OBJS) $(LIBC_UNDEF) -L$(PICOLIBC)/lib -lc -lgcc
+	  $(LIBC_GLUE_OBJS) @$(BINFOLDER)libc.undef -L$(PICOLIBC)/lib -lc -lgcc
 $(BINFOLDER)libc.ndl: $(BINFOLDER)libc.elf $(MKNX)
 	$(MKNX) $(BINFOLDER)libc.elf $@ --dll --export-all
 

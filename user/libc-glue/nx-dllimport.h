@@ -16,6 +16,16 @@
 #ifndef NX_DLLIMPORT_H
 #define NX_DLLIMPORT_H
 
+/* picolibc's ctype classification table `_ctype_b` is a const DATA export of libc.ndl, and
+ * the ctype macros (isalpha/isdigit/...) index it by address. Route it through its dllimport
+ * slot like the stream/errno data below. This MUST come before any <ctype.h> is pulled in:
+ * with the macro active, the header's own `extern const char _ctype_b[];` expands to
+ * `extern const char (*__imp__ctype_b)[];` — the very slot declaration we want (a pointer the
+ * loader fills with the table's address). We also declare it here so a TU that reaches
+ * `_ctype_b` without including <ctype.h> still resolves (a compatible redeclaration). */
+extern const char (*__imp__ctype_b)[];
+#define _ctype_b (*__imp__ctype_b)
+
 #include <stdio.h>
 #include <errno.h>
 

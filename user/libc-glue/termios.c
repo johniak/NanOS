@@ -24,6 +24,12 @@ int tcflush(int fd, int queue) {
 	return 0;   /* no persistent queues to flush in our buffers */
 }
 
+/* tcflow/tcdrain/tcsendbreak: NanOS has no hardware flow control, output draining, or break
+ * generation, so these are accepted no-ops (readline calls tcflow to start/stop output). */
+int tcflow(int fd, int action)         { (void) fd; (void) action; return 0; }
+int tcdrain(int fd)                    { (void) fd; return 0; }
+int tcsendbreak(int fd, int duration)  { (void) fd; (void) duration; return 0; }
+
 /* Put the termios into raw mode (no canonical line editing, no echo, no signal chars, no
  * output post-processing) — what TUIs and readline use. Mirrors glibc's cfmakeraw. */
 void cfmakeraw(struct termios* t) {
