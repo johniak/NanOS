@@ -131,4 +131,10 @@ void inputSetRaw(int raw) {
 	g_decoder = kernel::KeyDecoder();
 }
 
+bool inputReady() {
+	// Same condition inputRead would block on: raw mode needs a buffered byte, cooked mode a
+	// committed line. (Mirrors the wake test in inputFeedScancode.)
+	return g_raw ? !rawEmpty() : g_line.lineReady();
+}
+
 }  // namespace arch

@@ -23,4 +23,9 @@ int inputRead(char* buf, unsigned n, int nonblock);
 // its own line editor, and back to cooked while a child program runs.
 void inputSetRaw(int raw);
 
+// Is a read of console input satisfiable right now (raw: a byte is buffered; cooked: a full
+// line is ready)? Gives poll()/select() on the console accurate POLLIN readiness — readline
+// relies on it to echo per keystroke (it batches redisplay while input looks pending).
+bool inputReady();
+
 }

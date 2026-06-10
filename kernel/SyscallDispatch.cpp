@@ -58,6 +58,25 @@ static int consoleSink(const char* buf, unsigned len) {
 	return (int) len;
 }
 
+// pollScan() reports the console as always POLLIN-ready because it is MI and can't see the
+// keyboard layer; refine that here with the real state (arch::inputReady) so poll()/select()
+// on the console blocks until a key is actually available. readline depends on this: it
+// batches its redisplay while input looks pending, so a console that always claims "readable"
+// makes it defer the echo of every keystroke until Enter. Returns the corrected ready count.
+static int pollScanConsoleAware(Syscalls* g_sys, PollFd* pfds, int nfds) {
+	int ret = g_sys->pollScan(pfds, nfds);
+	if (arch::inputReady())
+		return ret;
+	int n = 0;
+	for (int i = 0; i < nfds; i++) {
+		if (pfds[i].fd >= 0 && g_sys->isConsoleFd(pfds[i].fd))
+			pfds[i].revents &= ~POLLIN;     // no key buffered -> not readable
+		if (pfds[i].revents)
+			n++;
+	}
+	return n;
+}
+
 // MI syscall dispatch: map a syscall number + args to the Syscalls core. The
 // arch trap (int 0x80 on x86) decodes registers and calls this.
 int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, unsigned a4,
@@ -180,7 +199,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		PollFd* pfds = (PollFd*) a0;
 		int nfds = (int) a1;
 		int timeout = (int) a2;
-		ret = g_sys->pollScan(pfds, nfds);
+		ret = pollScanConsoleAware(g_sys, pfds, nfds);
 		if (ret == 0 && timeout != 0) {
 			unsigned start = Scheduler::ticks();
 			for (;;) {
@@ -189,7 +208,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 					ret = 0; break;            // timed out, nothing ready
 				}
 				Scheduler::ioWait();
-				int r = g_sys->pollScan(pfds, nfds);
+				int r = pollScanConsoleAware(g_sys, pfds, nfds);
 				if (r > 0) { ret = r; break; }
 			}
 		}
