@@ -231,7 +231,7 @@ USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free
 SYS_PROGS=nsh cat ls free nwm
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
-USER_LIBS_NDL=greet.ndl libc.ndl
+USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
 # the C library (picolibc + syscall/cwd/signal glue + the signal trampoline) now lives in
 # libc.ndl, pulled in by name via the import library instead of static-linked.
@@ -323,7 +323,12 @@ $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vtfont.o
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
 $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
-$(BINFOLDER)nwnote.nxe:    $(DYN_DEPS) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
+# nwnote links the libnw import library (+ libc.ndl.a for crt0's exit thunk) and declares only
+# --need libnw.ndl; the recursive loader auto-loads libc.ndl (libnw's dependency), exactly like
+# a Windows app that links user32 and gets ntdll transitively.
+$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX) $(BINFOLDER)nwnote.elf $@ --need libnw.ndl
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
 
@@ -382,6 +387,23 @@ $(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX)
 	$(MKNX) $(BINFOLDER)libc.elf $(BINFOLDER)libimp --implib --export-all --soname libc.ndl
 	for f in $(BINFOLDER)libimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libimp/*.o
+
+# ---- libnw.ndl: the shared window-client library (the user32/gdi32 of NanWM) ----
+# A real shared library (like greet.ndl/libc.ndl): the protocol codec + gfx + client API in
+# ONE relocatable module, exporting the nw_* API. It USES libc (malloc/read/write/poll), so
+# it links the libc import library and declares `--need libc.ndl`; the recursive loader
+# (kernel/DynLoader.cpp) pulls libc.ndl in automatically when a client loads libnw.ndl.
+LIBNW_OBJS=$(BINFOLDER)libnw.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
+$(BINFOLDER)libnw.elf: $(BINFOLDER)nxhdr.o $(LIBNW_OBJS) $(BINFOLDER)libc.ndl.a
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNW_OBJS) $(BINFOLDER)libc.ndl.a -lgcc
+$(BINFOLDER)libnw.ndl: $(BINFOLDER)libnw.elf $(MKNX)
+	$(MKNX) $(BINFOLDER)libnw.elf $@ --dll --export-all --need libc.ndl
+# Import library libnw.ndl.a (clients link this; the nw_* thunks bind to libnw.ndl at load).
+$(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX)
+	rm -rf $(BINFOLDER)libnwimp && mkdir -p $(BINFOLDER)libnwimp
+	$(MKNX) $(BINFOLDER)libnw.elf $(BINFOLDER)libnwimp --implib --export-all --soname libnw.ndl
+	for f in $(BINFOLDER)libnwimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
+	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwimp/*.o
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))

@@ -25,6 +25,12 @@ struct LibSet {
 		while (*a && *a == *b) { a++; b++; }
 		return *a == *b;
 	}
+	bool has(const char* name) {                    // is this library already loaded?
+		for (int i = 0; i < n; i++)
+			if (streq(names[i], name))
+				return true;
+		return false;
+	}
 	SymTable* create(const char* name) {           // table for a newly loaded library
 		if (n >= MAX)
 			return 0;
@@ -82,19 +88,29 @@ void libPath(char* out, const char* name) {
 	out[o] = 0;
 }
 
-// Load one .ndl into `space` at `base`, relocating it and registering its exports in this
-// library's own `table`. Returns 0 on success, <0 on error.
-int loadLibrary(Vfs* vfs, const char* name, unsigned base, arch::AddressSpace* space,
-		SymTable* table) {
+// Per-exec loader state (exec is serial, so file-static is fine). g_nextBase hands out the
+// next module window; loaded libraries are deduped via g_libs (a name already in the LibSet
+// is already mapped + bound).
+Vfs* g_vfs = 0;
+arch::AddressSpace* g_space = 0;
+unsigned g_nextBase = 0;
+
+// Recursively ensure library `name` and its WHOLE dependency graph are loaded, dependencies
+// first (post-order) — the Windows/dyld model: a .ndl declares the libraries IT needs, and
+// the loader walks the graph, so a client that links libnw.ndl gets libc.ndl automatically.
+// Each library binds its imports against everything loaded so far and registers its exports
+// in its own soname-keyed table. Diamonds load once (deduped by g_libs).
+int ensureLib(const char* name) {
+	if (g_libs->has(name))
+		return 0;                                           // already loaded
 	char path[160];
 	libPath(path, name);
 	String p((char*) path);
 	FileStat st;
-	if (vfs->stat(p, st) < 0)
+	if (g_vfs->stat(p, st) < 0)
 		return -1;
-	// Peek the header to size the staging buffer (it must hold the image + its bss).
 	NxHeader hdr;
-	if (vfs->read(p, sizeof hdr, 0, &hdr) < 0 || hdr.magic != NX_MAGIC)
+	if (g_vfs->read(p, sizeof hdr, 0, &hdr) < 0 || hdr.magic != NX_MAGIC)
 		return -1;
 	unsigned imageBytes = hdr.bssEnd - hdr.loadBase;        // mapped extent (image + bss)
 	unsigned cap = st.size > imageBytes ? st.size : imageBytes;
@@ -102,20 +118,37 @@ int loadLibrary(Vfs* vfs, const char* name, unsigned base, arch::AddressSpace* s
 	unsigned char* buf = new unsigned char[cap];
 	for (unsigned i = 0; i < cap; i++)
 		buf[i] = 0;
-	if (vfs->read(p, st.size, 0, buf) < 0) {
+	if (g_vfs->read(p, st.size, 0, buf) < 0) {
 		delete[] buf;
 		return -1;
 	}
-	unsigned delta = base - hdr.loadBase;                   // relocate to the assigned base
-	unsigned entry = 0;
-	int rc = NxeLoader::loadImage(buf, cap, delta, resolveSym, &entry, onExport, table);
+	// Load THIS library's own needed libraries first (transitive resolution).
+	NeedList sub;
+	sub.n = 0;
+	int rc = NxeLoader::forEachNeeded(buf, cap, onNeeded, &sub);
+	for (int i = 0; rc == 0 && i < sub.n; i++)
+		rc = ensureLib(sub.names[i]);
 	if (rc < 0) {
 		delete[] buf;
 		return rc;
 	}
-	arch::archLoadModule(space, base, buf, imageBytes);     // map the relocated image
+	if (g_nextBase >= arch::mmuModuleMax()) {               // out of module windows
+		delete[] buf;
+		return -1;
+	}
+	unsigned base = g_nextBase;
+	g_nextBase += arch::mmuModuleStride();
+	SymTable* table = g_libs->create(name);
+	if (!table) {
+		delete[] buf;
+		return -1;
+	}
+	unsigned entry = 0;
+	rc = NxeLoader::loadImage(buf, cap, base - hdr.loadBase, resolveSym, &entry, onExport, table);
+	if (rc == 0)
+		arch::archLoadModule(g_space, base, buf, imageBytes);
 	delete[] buf;
-	return 0;
+	return rc;
 }
 
 }  // namespace
@@ -125,22 +158,16 @@ int dynLoadProgram(Vfs* vfs, void* exeImage, unsigned exeCap,
 	LibSet* libs = new LibSet();
 	libs->init();
 	g_libs = libs;
+	g_vfs = vfs;
+	g_space = space;
+	g_nextBase = arch::mmuModuleBase();
 
-	// Discover the needed libraries (read-only; the image is bound below).
+	// Discover + recursively load the executable's needed libraries (each + its deps).
 	NeedList needed;
 	needed.n = 0;
 	int rc = NxeLoader::forEachNeeded(exeImage, exeCap, onNeeded, &needed);
-
-	// Load each needed .ndl into its own module window, each building its OWN export table
-	// (keyed by soname) so imports resolve per-library.
-	unsigned base = arch::mmuModuleBase();
-	for (int i = 0; rc == 0 && i < needed.n; i++) {
-		if (base >= arch::mmuModuleMax()) { rc = -1; break; }   // out of module windows
-		SymTable* t = libs->create(needed.names[i]);
-		if (!t) { rc = -1; break; }
-		rc = loadLibrary(vfs, needed.names[i], base, space, t);
-		base += arch::mmuModuleStride();
-	}
+	for (int i = 0; rc == 0 && i < needed.n; i++)
+		rc = ensureLib(needed.names[i]);
 
 	// Finally bind the executable's imports (each scoped to its declared library) — delta 0,
 	// the executable keeps its preferred base. This also relocates + zeroes the EXE's bss.
@@ -148,6 +175,8 @@ int dynLoadProgram(Vfs* vfs, void* exeImage, unsigned exeCap,
 		rc = NxeLoader::loadImage(exeImage, exeCap, 0, resolveSym, entryOut, 0, 0);
 
 	g_libs = 0;
+	g_vfs = 0;
+	g_space = 0;
 	for (int i = 0; i < libs->n; i++)
 		delete libs->tables[i];
 	delete libs;
