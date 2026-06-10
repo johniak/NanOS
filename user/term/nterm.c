@@ -324,10 +324,13 @@ int main(void) {
 		static char shellvar[160];
 		strcpy(shellvar, "SHELL=");
 		strncat(shellvar, shell, sizeof shellvar - 7);
+		static char homevar[160];   // $HOME, or `cd` with no args fails "HOME not set"
+		strcpy(homevar, "HOME=");
+		strncat(homevar, (pw && pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : "/", sizeof homevar - 6);
 		char* argv[] = { name0, 0 };
 		char* envp[] = { (char*) "TERM=xterm-256color",
 		                 (char*) "TERMINFO=/disks/main/nanos/share/terminfo",
-		                 (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin", shellvar, 0 };
+		                 (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin", shellvar, homevar, 0 };
 		execve(shell, argv, envp);
 		char* fbargv[] = { (char*) "nsh", 0 };
 		execve("/disks/main/nanos/bin/nsh.nxe", fbargv, envp);

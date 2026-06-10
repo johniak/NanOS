@@ -39,18 +39,24 @@ int main(void) {
 	static char name0[64];
 	shell_argv0(shell, name0, sizeof name0);
 
-	/* Hand the login shell a Unix-like environment: $SHELL (the login shell, as login(1)
-	 * sets it) and a default $PATH so it can run the system utilities by name. TERM/TERMINFO
+	/* Hand the login shell a Unix-like environment, as login(1) does: $SHELL (the login
+	 * shell), $HOME (from the passwd entry — without it `cd` with no args fails "HOME not
+	 * set"), and a default $PATH so it can run the system utilities by name. TERM/TERMINFO
 	 * already come from the kernel via `environ`. */
 	static char shellvar[160];
 	strcpy(shellvar, "SHELL=");
 	strncat(shellvar, shell, sizeof shellvar - 7);
 
+	static char homevar[160];
+	strcpy(homevar, "HOME=");
+	strncat(homevar, (pw && pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : "/", sizeof homevar - 6);
+
 	char* newenv[64];
 	int n = 0;
-	for (char** e = environ; *e && n < 60; e++)
+	for (char** e = environ; *e && n < 59; e++)
 		newenv[n++] = *e;
 	newenv[n++] = shellvar;
+	newenv[n++] = homevar;
 	newenv[n++] = (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin";
 	newenv[n] = 0;
 
