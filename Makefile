@@ -215,7 +215,7 @@ SBASE=user/third_party/sbase
 # kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
 # new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
 # bind mount (kernel/Signal.h == <signal.h> under -I, which broke the userland build).
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
 # the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
@@ -227,9 +227,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom
-SYS_PROGS=nsh cat ls free
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote
+SYS_PROGS=nsh cat ls free nwm
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -275,12 +275,12 @@ $(BINFOLDER)%.o: user/nwm/%.c
 $(BINFOLDER)%.o: user/nwnote/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-# libnw shared library (user/libnw): the client API + protocol codec + gfx. NO DYNHDR — the
-# library code lives inside libnw.ndl and must NOT redirect stdio through __imp_ slots (same
-# rule as the libc-glue objects). nwproto.o/nw_gfx.o are also linked statically into nwm.
+# libnw (user/libnw): the client API + protocol codec + gfx, STATICALLY linked into the
+# compositor and each GUI client (so it shares that program's libc.ndl). Compiled WITH
+# DYNHDR like any program object. nwproto.o/nw_gfx.o are shared by nwm and the clients.
 $(BINFOLDER)%.o: user/libnw/%.c
 	@mkdir -p $(BINFOLDER)
-	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 
 # mknx: host build tool (native cc) that turns the linked ELF into a .nxe/.ndl —
 # extracts the load image + R_386_32 base relocations + exports/imports, replacing
@@ -320,6 +320,10 @@ $(BINFOLDER)fstest.nxe:    $(DYN_DEPS) $(BINFOLDER)fstest.o
 $(BINFOLDER)pipetest.nxe:  $(DYN_DEPS) $(BINFOLDER)pipetest.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vtfont.o
+# NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
+# (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
+$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
+$(BINFOLDER)nwnote.nxe:    $(DYN_DEPS) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
 
