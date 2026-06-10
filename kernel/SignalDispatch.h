@@ -28,6 +28,11 @@ int  signalReturn(arch::TrapFrame* tf);    // sigreturn(2): restore the pre-hand
 void consoleSignal(int sig);               // a cooked-tty control key -> foreground proc
 void consoleSignalGroup(int sig, int pgrp);// tty control key -> foreground process GROUP
 int  signalSendGroup(int pgid, int sig);   // post `sig` to every member of a group
+// The console's foreground process group (job-control singleton for the physical terminal):
+// set by tcsetpgrp (SYS_ioctl TIOCSPGRP on a console fd), read by tcgetpgrp + the SIGTTIN
+// gate. 0 = no group has claimed the terminal.
+void consoleSetPgrp(int pgrp);
+int  consoleGetPgrp();
 // Process-group / session syscalls (thin glue over ProcTable bookkeeping).
 int  sysSetpgid(int pid, int pgid);
 int  sysGetpgid(int pid);

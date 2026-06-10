@@ -145,7 +145,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_read: {
 		// Background tty read: a process not in the terminal's foreground group reading its
 		// controlling tty is stopped with SIGTTIN (POSIX), unless its group is orphaned (-EIO).
-		int fgpg = g_sys->ttyPgrp((int) a0);
+		// The console is a job-control tty too: its foreground pgrp lives in the kernel
+		// singleton (consoleGetPgrp), other ttys answer via their device (ttyPgrp).
+		int fgpg = g_sys->isConsoleFd((int) a0) ? consoleGetPgrp() : g_sys->ttyPgrp((int) a0);
 		Process* me = ProcTable::current();
 		if (fgpg > 0 && me && fgpg != me->pgid) {
 			if (ProcTable::isOrphanedGroup(me->pgid)) { ret = -5; break; }   // -EIO
@@ -252,6 +254,17 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->getdents64(a0, (void*) a1, a2);
 		break;
 	case SYS_ioctl:
+		// The console's foreground-process-group ioctls (tcgetpgrp/tcsetpgrp) are job-control
+		// state of the physical terminal, not of any one fd-table -> handled here against the
+		// kernel singleton (Syscalls::ioctl would only -EINVAL them). This makes the console a
+		// real job-control tty, exactly like the pty's Pty::ioctl.
+		if (g_sys->isConsoleFd((int) a0) &&
+				(a1 == IOCTL_TIOCGPGRP || a1 == IOCTL_TIOCSPGRP)) {
+			if (!a2) { ret = -EINVAL; break; }
+			if (a1 == IOCTL_TIOCGPGRP) { *(int*) a2 = consoleGetPgrp(); ret = 0; }
+			else                       { consoleSetPgrp(*(int*) a2);    ret = 0; }
+			break;
+		}
 		ret = g_sys->ioctl((int) a0, a1, (void*) a2);
 		// A successful TCSETS on the console must take effect: drive the line discipline
 		// from the new termios (canonical -> cooked, ICANON cleared -> raw), so tcsetattr()

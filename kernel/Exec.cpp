@@ -18,6 +18,15 @@ namespace kernel {
 // group. 0 = no foreground (the shell is at its prompt).
 static int g_foregroundPid = 0;
 
+// The console's FOREGROUND PROCESS GROUP — the singleton job-control state for the physical
+// terminal (the kernel analogue of Pty::m_fgPgrp). Set by tcsetpgrp on a console fd
+// (SYS_ioctl TIOCSPGRP) and read by tcgetpgrp / the SIGTTIN gate. 0 = no group has claimed
+// the terminal (a shell without job control, e.g. nsh) -> consoleSignal falls back to the
+// single waited-on pid above.
+static int g_consolePgrp = 0;
+void consoleSetPgrp(int pgrp) { g_consolePgrp = pgrp; }
+int  consoleGetPgrp()         { return g_consolePgrp; }
+
 // Reset a process's brk/sbrk heap to empty (no pages mapped yet) at the fixed high-VA
 // base. Called whenever a fresh address space is installed (program launch / execve).
 static void initBrk(Process* p) {
@@ -74,6 +83,11 @@ int execProgram(Vfs* vfs, const char* path) {
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
 	ProcTable::setCommand(ProcTable::current(), argv, 1);
+	// init (this process) is the console's controlling session leader: seed the console's
+	// foreground process group with its pgrp, exactly as a tty's pgrp is set when a session
+	// leader acquires the controlling terminal. Without this a job-control shell (bash) that
+	// syncs to the foreground group before its own tcsetpgrp would SIGTTIN-stop itself at boot.
+	g_consolePgrp = ProcTable::current()->pgid;
 	kernelSyscalls()->resetForRun();
 	arch::archEnterUser(entry, esp, space);   // never returns
 	return 0;                                 // unreachable
@@ -462,6 +476,13 @@ int signalReturn(arch::TrapFrame* tf) {
 // A control key from the cooked-mode tty (Ctrl+C/Ctrl+\/Ctrl+Z) -> deliver `sig` to the
 // foreground process (the child the shell is blocked on in waitpid).
 void consoleSignal(int sig) {
+	// Job control active (a shell ran tcsetpgrp on the console): deliver to the whole
+	// foreground process group, like a real tty. Otherwise fall back to the single pid the
+	// shell is waiting on (nsh, which never claims the terminal).
+	if (g_consolePgrp > 0) {
+		signalSendGroup(g_consolePgrp, sig);
+		return;
+	}
 	if (g_foregroundPid <= 0)
 		return;
 	Process* fg = ProcTable::byPid(g_foregroundPid);
