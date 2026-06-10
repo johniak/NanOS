@@ -364,6 +364,50 @@ TEST_CASE("fcntl gets/sets the file status flags (O_NONBLOCK)") {
 	CHECK(sc.fcntl(fd, 999, 0) == -EINVAL);
 }
 
+TEST_CASE("fcntl FD_CLOEXEC + F_DUPFD; closeCloexec closes only marked fds") {
+	Syscalls sc(mountFixture(), sink);
+	int fd = sc.open(String("/hello.txt"), 0);
+	REQUIRE(fd >= 3);
+	CHECK(sc.fcntl(fd, F_GETFD, 0) == 0);                 // FD_CLOEXEC off by default
+	CHECK(sc.fcntl(fd, F_SETFD, FD_CLOEXEC) == 0);
+	CHECK(sc.fcntl(fd, F_GETFD, 0) == FD_CLOEXEC);
+	int d = sc.fcntl(fd, F_DUPFD, 10);                    // lowest free fd >= 10
+	CHECK(d >= 10);
+	CHECK(sc.fcntl(d, F_GETFD, 0) == 0);                  // dup does NOT inherit cloexec
+	int dc = sc.fcntl(fd, F_DUPFD_CLOEXEC, 20);
+	CHECK(dc >= 20);
+	CHECK(sc.fcntl(dc, F_GETFD, 0) == FD_CLOEXEC);        // ...but F_DUPFD_CLOEXEC sets it
+	sc.closeCloexec();                                    // closes fd + dc, keeps d + console
+	char b[4];
+	CHECK(sc.read(fd, b, 4) == -EBADF);
+	CHECK(sc.read(dc, b, 4) == -EBADF);
+	CHECK(sc.read(d, b, 1) >= 0);
+	CHECK(sc.fcntl(1, F_GETFD, 0) == 0);                  // console fd untouched
+}
+
+TEST_CASE("O_CLOEXEC marks the fd at open; O_APPEND writes land at end-of-file") {
+	Vfs* vfs = new Vfs();
+	static RamFsType rt;
+	vfs->registerType(&rt);
+	vfs->mount("/", "tmpfs", (BlockDevice*) 0, 0);
+	Syscalls sc(vfs, sink);
+	int c = sc.open(String("/c"), O_CREAT | O_CLOEXEC | 1 /*O_WRONLY*/);
+	REQUIRE(c >= 3);
+	CHECK(sc.fcntl(c, F_GETFD, 0) == FD_CLOEXEC);
+	sc.close(c);
+	// O_APPEND: writes always go to the end, even after a seek to 0 -> appended, not overwritten.
+	int w = sc.open(String("/log"), O_CREAT | O_APPEND | 1);
+	REQUIRE(w >= 3);
+	CHECK(sc.write(w, "aaa", 3) == 3);
+	sc.lseek(w, 0, SEEK_SET);
+	CHECK(sc.write(w, "bb", 2) == 2);
+	sc.close(w);
+	int r = sc.open(String("/log"), 0);
+	char buf[8] = {0};
+	CHECK(sc.read(r, buf, 8) == 5);
+	CHECK(strncmp(buf, "aaabb", 5) == 0);
+}
+
 TEST_CASE("nanosleepMs rounds the request up to whole milliseconds") {
 	Syscalls sc(mountFixture(), sink);
 	KTimespec ts;

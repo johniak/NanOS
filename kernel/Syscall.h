@@ -33,13 +33,22 @@ struct PollFd { int fd; short events; short revents; };
 #define SEEK_CUR 1
 #define SEEK_END 2
 
-// fcntl commands + the open/status flags we honor (picolibc/newlib values — userland
-// passes these straight through, so they MUST match <fcntl.h> on the i686-elf target).
+// fcntl commands + the open/status flags we honor (picolibc/newlib values for i686-elf —
+// userland passes these straight through, so they MUST match <fcntl.h> on the target,
+// verified against /opt/picolibc/i686-elf/include/sys/_default_fcntl.h).
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
 #define F_GETFL 3
 #define F_SETFL 4
-#define O_NONBLOCK 0x4000
+#define F_DUPFD_CLOEXEC 14
+#define FD_CLOEXEC 1
+#define O_ACCMODE 3            // O_RDONLY(0) | O_WRONLY(1) | O_RDWR(2)
 #define O_CREAT 0x40
 #define O_TRUNC 0x200
+#define O_APPEND 0x400
+#define O_NONBLOCK 0x4000
+#define O_CLOEXEC 0x40000
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
@@ -69,7 +78,8 @@ class Syscalls {
 		String path;
 		unsigned offset;
 		unsigned size;
-		unsigned flags;     // file status flags (O_NONBLOCK); set via fcntl(F_SETFL)
+		unsigned flags;     // file status flags (O_NONBLOCK/O_APPEND); set at open / fcntl(F_SETFL)
+		bool cloexec;       // FD_CLOEXEC: close this fd on execve (fcntl F_SETFD / O_CLOEXEC)
 		Pipe* pipe;         // non-null => this fd is one end of a pipe
 		bool pipeWrite;     // which end (write end if true, read end otherwise)
 	};
@@ -84,7 +94,7 @@ class Syscalls {
 	bool valid(int fd) {
 		return fd >= 0 && fd < MAXFD && fds[fd].used;
 	}
-	int allocFd();                 // lowest free descriptor, or -EMFILE
+	int allocFd(int from = 0);     // lowest free descriptor >= from, or -EMFILE
 	void shareInto(int dst, int src);   // make dst alias src's backing (for dup/dup2)
 public:
 	Syscalls(Vfs* vfs, ConsoleWriteFn cw);
@@ -103,7 +113,8 @@ public:
 	int mkdir(String path, int mode);     // create a directory (writable fs only)
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
-	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL (O_NONBLOCK)
+	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL, F_GETFD/F_SETFD, F_DUPFD[_CLOEXEC]
+	void closeCloexec();                   // close every FD_CLOEXEC descriptor (called at execve)
 	// True when the console termios has canonical mode (ICANON) cleared, i.e. the line
 	// discipline should be raw. The dispatch reads this after a console TCSETS to drive
 	// arch::inputSetRaw, so tcsetattr(raw) actually switches the input mode.

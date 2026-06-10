@@ -60,8 +60,9 @@ int dup2(int o, int n)                  { return reterr(sys3(SYS_dup2, o, n, 0))
 int poll(struct pollfd* fds, nfds_t nfds, int timeout) {
 	return reterr(sys3(SYS_poll, (int) fds, (int) nfds, timeout));
 }
-/* fcntl(2): we support F_GETFL/F_SETFL (the O_NONBLOCK status flag) for non-blocking
- * console reads. The third argument is an int (the flags for F_SETFL). */
+/* fcntl(2): F_GETFL/F_SETFL (O_NONBLOCK), F_GETFD/F_SETFD (FD_CLOEXEC), and
+ * F_DUPFD/F_DUPFD_CLOEXEC (duplicate to the lowest fd >= arg). The third argument is an
+ * int (flags for F_SET*, the fd floor for F_DUPFD); harmless for the no-arg F_GET* forms. */
 int fcntl(int fd, int cmd, ...) {
 	va_list ap;
 	va_start(ap, cmd);

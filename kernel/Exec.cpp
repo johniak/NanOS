@@ -121,6 +121,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	ProcTable::setCommand(p, argv, argc);
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
 	sigExecReset(p->sig);                    // caught handlers -> default across exec
+	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
 	kernelSyscalls()->resetForRun();
 
 	arch::archFrameToUser(tf, entry, esp);   // iret will enter the new program ...

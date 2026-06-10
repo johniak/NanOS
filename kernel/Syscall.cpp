@@ -37,6 +37,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].offset = 0;
 		fds[i].size = 0;
 		fds[i].flags = 0;
+		fds[i].cloexec = false;
 		fds[i].pipe = 0;
 		fds[i].pipeWrite = false;
 	}
@@ -100,6 +101,7 @@ int Syscalls::open(String path, int flags) {
 			fds[fd].offset = 0;
 			fds[fd].size = st.size;
 			fds[fd].flags = (unsigned) flags;
+			fds[fd].cloexec = (flags & O_CLOEXEC) != 0;   // O_CLOEXEC -> close on execve
 			return fd;
 		}
 	}
@@ -119,16 +121,26 @@ int Syscalls::close(int fd) {
 	}
 	fds[fd].used = false;
 	fds[fd].isConsole = false;
+	fds[fd].cloexec = false;
 	return 0;
 }
 
-// Lowest free descriptor (POSIX), or -EMFILE. Scans from 0 so a closed 0/1/2 is reusable
-// (dup2 onto stdin/stdout/stderr relies on this).
-int Syscalls::allocFd() {
-	for (int fd = 0; fd < MAXFD; fd++)
+// Lowest free descriptor >= from (POSIX), or -EMFILE. `from` defaults to 0, so a closed
+// 0/1/2 is reusable (dup2); F_DUPFD passes a floor.
+int Syscalls::allocFd(int from) {
+	if (from < 0) from = 0;
+	for (int fd = from; fd < MAXFD; fd++)
 		if (!fds[fd].used)
 			return fd;
 	return -EMFILE;
+}
+
+// Close every descriptor marked FD_CLOEXEC. Called by execve so the new image does not
+// inherit the shell's private fds (history files, pipe ends, etc.).
+void Syscalls::closeCloexec() {
+	for (int fd = 0; fd < MAXFD; fd++)
+		if (fds[fd].used && fds[fd].cloexec)
+			close(fd);
 }
 
 // Make dst an independent descriptor aliasing src's underlying object (dup/dup2). A pipe
@@ -140,6 +152,7 @@ void Syscalls::shareInto(int dst, int src) {
 	fds[dst].offset = fds[src].offset;
 	fds[dst].size = fds[src].size;
 	fds[dst].flags = fds[src].flags;
+	fds[dst].cloexec = false;   // a dup'd fd never inherits FD_CLOEXEC (POSIX); F_DUPFD_CLOEXEC sets it after
 	fds[dst].pipe = fds[src].pipe;
 	fds[dst].pipeWrite = fds[src].pipeWrite;
 	if (fds[dst].pipe) {
@@ -155,12 +168,12 @@ int Syscalls::pipe(int out[2]) {
 	int r = allocFd();
 	if (r < 0) { delete p; return r; }
 	fds[r].used = true; fds[r].isConsole = false; fds[r].path = String();
-	fds[r].offset = 0; fds[r].size = 0; fds[r].flags = 0;
+	fds[r].offset = 0; fds[r].size = 0; fds[r].flags = 0; fds[r].cloexec = false;
 	fds[r].pipe = p; fds[r].pipeWrite = false;
 	int w = allocFd();
 	if (w < 0) { close(r); return w; }
 	fds[w].used = true; fds[w].isConsole = false; fds[w].path = String();
-	fds[w].offset = 0; fds[w].size = 0; fds[w].flags = 0;
+	fds[w].offset = 0; fds[w].size = 0; fds[w].flags = 0; fds[w].cloexec = false;
 	fds[w].pipe = p; fds[w].pipeWrite = true;
 	out[0] = r;
 	out[1] = w;
@@ -276,6 +289,8 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 	}
 	if (fds[fd].isConsole)
 		return consoleWrite((const char*) buf, n);
+	if (fds[fd].flags & O_APPEND)             // O_APPEND: each write lands at end-of-file
+		fds[fd].offset = fds[fd].size;
 	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
 	// (e.g. /dev/fb0) accepts the write.
 	int r = vfs->write(fds[fd].path, n, fds[fd].offset, buf);
@@ -456,6 +471,20 @@ int Syscalls::fcntl(int fd, int cmd, int arg) {
 		fds[fd].flags = (fds[fd].flags & ~(unsigned) O_NONBLOCK)
 		              | ((unsigned) arg & (unsigned) O_NONBLOCK);
 		return 0;
+	case F_GETFD:
+		return fds[fd].cloexec ? FD_CLOEXEC : 0;
+	case F_SETFD:
+		fds[fd].cloexec = (arg & FD_CLOEXEC) != 0;
+		return 0;
+	case F_DUPFD:
+	case F_DUPFD_CLOEXEC: {
+		int n = allocFd(arg);            // lowest free descriptor >= arg
+		if (n < 0)
+			return n;
+		shareInto(n, fd);                // shareInto clears cloexec...
+		fds[n].cloexec = (cmd == F_DUPFD_CLOEXEC);   // ...F_DUPFD_CLOEXEC re-sets it
+		return n;
+	}
 	}
 	return -EINVAL;
 }
