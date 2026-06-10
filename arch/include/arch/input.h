@@ -23,6 +23,11 @@ int inputRead(char* buf, unsigned n, int nonblock);
 // its own line editor, and back to cooked while a child program runs.
 void inputSetRaw(int raw);
 
+// Feed one raw PS/2 scancode into the console/evdev input layer (cooked line discipline +
+// /dev/input0). The in-kernel PS/2 keyboard driver used to call this directly; now the
+// loadable keyboard kext does, via the knx_feed_scancode kernel export.
+void inputFeedScancode(unsigned char sc);
+
 // Is a read of console input satisfiable right now (raw: a byte is buffered; cooked: a full
 // line is ready)? Gives poll()/select() on the console accurate POLLIN readiness — readline
 // relies on it to echo per keystroke (it batches redisplay while input looks pending).

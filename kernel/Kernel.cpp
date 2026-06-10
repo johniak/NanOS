@@ -12,6 +12,8 @@
 #include "Fb0Device.h"
 #include "KeyboardDevice.h"
 #include "Pty.h"
+#include "KernelExports.h"   // kernel symbols exported to loadable modules (nkext)
+#include "KextLoader.h"      // load /nanos/kext/*.nkext at boot
 #include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
 #include "Scheduler.h"
 #include <arch/sched.h>
@@ -201,6 +203,7 @@ void Kernel::start() {
 	// physical disk is NOT mounted at "/" but under /disks/main.
 	SynthFs* root = new SynthFs();
 	vfs->mount("/", root);
+	kernelExportsInit(root);   // loadable modules add /dev/input<N> through this root
 	okBegin("Mounting ext filesystem at /disks/main");
 	mountVolume(vfs, root, "main", hd0, firstPartitionLba(hd0));   // discovered from the MBR
 	okEnd();
@@ -242,6 +245,12 @@ void Kernel::start() {
 	// /dev/tty = the controlling terminal. With one pty it is the same slave as pts0, so a
 	// program (bash) can open("/dev/tty") to reach its terminal without knowing the pts name.
 	root->addChar(root->dev(), "tty", new PtySlave(pty), 0666);
+	okEnd();
+
+	// Load kernel modules (nkext) from /nanos/kext — the PS/2 keyboard + mouse drivers live
+	// here, NOT in the kernel image. Each registers its IRQ + /dev node from its nkext_init().
+	okBegin("Loading kernel modules /nanos/kext");
+	loadAllKexts(vfs, "/disks/main/nanos/kext");
 	okEnd();
 
 	// Install the syscall interface over the VFS, then a (silent) boot sanity syscall.

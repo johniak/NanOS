@@ -1,0 +1,16 @@
+/*
+ * kexports.def — the kernel's symbol export list for loadable modules (nkext), the
+ * EXPORT_SYMBOL of NanOS. SINGLE SOURCE OF TRUTH: KernelExports.cpp expands it to build the
+ * runtime resolver table, and the Makefile expands it (awk) to generate the kext import
+ * stub (`__imp_<name>` slots + thunks in section .nxlib.kernel). A module that imports a name
+ * NOT listed here fails to load (loud error) — never resolved silently.
+ *
+ * X-macro: each KX(name) names one exported, stable extern "C" kernel symbol.
+ */
+KX(knx_malloc)
+KX(knx_free)
+KX(knx_log)
+KX(knx_uptime_us)
+KX(knx_register_irq)
+KX(knx_feed_scancode)
+KX(knx_add_input_dev)
