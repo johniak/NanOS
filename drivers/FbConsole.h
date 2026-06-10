@@ -20,9 +20,13 @@ class FbConsole {
 	int m_esc;                 // 0 = normal, 1 = saw ESC, 2 = in CSI
 	int m_par[4], m_npar;      // accumulated CSI numeric parameters
 	bool m_bold;
+	uint32_t m_curx, m_cury;   // cell where the cursor underline is currently drawn
+	bool m_curShown;
 
 	void handleEscape(char c);
 	void applySgr();
+	void drawCursor();         // paint the underline cursor at the current cell
+	void eraseCursor();        // clear the previously-drawn underline
 public:
 	FbConsole();
 

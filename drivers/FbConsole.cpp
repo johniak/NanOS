@@ -15,7 +15,22 @@ static const uint32_t kAnsiBright[8] = {
 
 FbConsole::FbConsole()
 	: m_surf{ 0, 0, 0, 0, 0 }, m_cols(0), m_rows(0), m_cx(0), m_cy(0),
-	  m_fg(kDefaultFg), m_bg(0x00000000), m_esc(0), m_npar(0), m_bold(false) {}
+	  m_fg(kDefaultFg), m_bg(0x00000000), m_esc(0), m_npar(0), m_bold(false),
+	  m_curx(0), m_cury(0), m_curShown(false) {}
+
+// The cursor is a 2px underline at the bottom of the current cell (no blink — there is no
+// console timer). Erase-on-move keeps exactly one drawn; a glyph blit redraws the whole cell
+// (bg included), so it also clears any underline that was there.
+void FbConsole::drawCursor() {
+	fbFillRect(m_surf, m_cx * FONT_W, m_cy * FONT_H + (FONT_H - 2), FONT_W, 2, m_fg);
+	m_curx = m_cx; m_cury = m_cy; m_curShown = true;
+}
+void FbConsole::eraseCursor() {
+	if (!m_curShown)
+		return;
+	fbFillRect(m_surf, m_curx * FONT_W, m_cury * FONT_H + (FONT_H - 2), FONT_W, 2, m_bg);
+	m_curShown = false;
+}
 
 void FbConsole::init(const FbSurface& s) {
 	m_surf = s;
@@ -77,6 +92,8 @@ void FbConsole::clear() {
 	fbFillRect(m_surf, 0, 0, m_surf.width, m_surf.height, m_bg);
 	m_cx = 0;
 	m_cy = 0;
+	m_curShown = false;              // whole surface wiped; nothing drawn
+	drawCursor();
 }
 
 void FbConsole::putChar(char c) {
@@ -88,10 +105,10 @@ void FbConsole::putChar(char c) {
 		m_esc = 1;
 		return;
 	}
+	eraseCursor();                   // lift the cursor before changing the cell/position
 	if (c == 0x08) {                 // backspace: move left (no erase; the caller redraws)
 		if (m_cx > 0)
 			m_cx--;
-		return;
 	} else if (c == 0x09) {          // tab: advance to the next 8-column boundary
 		m_cx = (m_cx + 8) & ~7u;
 	} else if (c == '\r') {
@@ -104,7 +121,8 @@ void FbConsole::putChar(char c) {
 				m_cx * FONT_W, m_cy * FONT_H, m_fg, m_bg);
 		m_cx++;
 	} else {
-		return;                      // other control chars: ignore
+		drawCursor();                // other control chars: ignore (restore cursor)
+		return;
 	}
 
 	if (m_cx >= m_cols) {            // wrap
@@ -115,11 +133,14 @@ void FbConsole::putChar(char c) {
 		fbScrollUp(m_surf, FONT_H, m_bg);
 		m_cy = m_rows - 1;
 	}
+	drawCursor();
 }
 
 void FbConsole::setCursor(unsigned x, unsigned y) {
+	eraseCursor();
 	m_cx = (m_cols && x >= m_cols) ? m_cols - 1 : x;
 	m_cy = (m_rows && y >= m_rows) ? m_rows - 1 : y;
+	drawCursor();
 }
 
 }  // namespace kernel
