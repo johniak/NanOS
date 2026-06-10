@@ -235,6 +235,52 @@ int nw_panel_hit(const struct nw_server *s, int x, int y)
 	return NW_PANEL_NONE;
 }
 
+/* ---- Run dialog (Super+R launcher) ------------------------------------------------ */
+void nw_run_rect(const struct nw_server *s, int *x, int *y, int *w, int *h)
+{
+	*w = NW_RUN_W; *h = NW_RUN_H;
+	*x = (s->screen_w - NW_RUN_W) / 2;
+	*y = 140;
+}
+static void damage_run(struct nw_server *s)
+{
+	int x, y, w, h;
+	nw_run_rect(s, &x, &y, &w, &h);
+	damage(s, x - 2, y - 2, w + 4, h + 4);
+}
+static void run_dialog_key(struct nw_server *s, unsigned char code)
+{
+	if (code == NW_SC_ESC) { s->run_open = 0; damage_run(s); return; }
+	if (code == NW_SC_ENTER) {
+		if (s->run_len > 0) {
+			memcpy(s->run_cmd, s->run_text, s->run_len);
+			s->run_cmd[s->run_len] = 0;
+			s->want_spawn = 1;
+		}
+		s->run_open = 0;
+		damage_run(s);
+		return;
+	}
+	if (code == NW_SC_BACKSP) { if (s->run_len > 0) s->run_len--; damage_run(s); return; }
+	char ch = nw_scancode_ascii(code, s->shift_down);
+	if (ch >= 32 && ch < 127 && s->run_len < NW_RUN_MAX - 1) {
+		s->run_text[s->run_len++] = ch;
+		damage_run(s);
+	}
+}
+
+int nw_run_take_spawn(struct nw_server *s, char *out, int cap)
+{
+	if (!s->want_spawn)
+		return 0;
+	int i = 0;
+	for (; s->run_cmd[i] && i < cap - 1; i++)
+		out[i] = s->run_cmd[i];
+	out[i] = 0;
+	s->want_spawn = 0;
+	return 1;
+}
+
 /* ---- pointer ---------------------------------------------------------------------- */
 void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 {
@@ -299,6 +345,19 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 {
 	if (code == NW_SC_LSUPER || code == NW_SC_RSUPER) { s->super_down = down; return; }
 	if (code == NW_SC_LSHIFT || code == NW_SC_RSHIFT) { s->shift_down = down; return; }
+
+	/* Super+R toggles the Run launcher (like Win+R). */
+	if (down && s->super_down && code == NW_SC_R) {
+		s->run_open = !s->run_open;
+		if (s->run_open) s->run_len = 0;
+		damage_run(s);
+		return;
+	}
+	/* While the Run dialog is open it captures the keyboard. */
+	if (s->run_open) {
+		if (down) run_dialog_key(s, code);
+		return;
+	}
 
 	if (down && s->super_down) {            /* macOS-style Super (Cmd) shortcuts */
 		switch (code) {

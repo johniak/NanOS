@@ -112,6 +112,26 @@ static int spawn_client(int slot, const char *path)
 	return 0;
 }
 
+/* Resolve a Run command to a launchable path, the way the shell looks up apps. */
+static int file_exists(const char *p) { int fd = open(p, 0); if (fd >= 0) { close(fd); return 1; } return 0; }
+static int resolve_cmd(const char *cmd, char *out, int cap)
+{
+	if (cmd[0] == '/') {
+		if (!file_exists(cmd)) return 0;
+		int i = 0; for (; cmd[i] && i < cap - 1; i++) out[i] = cmd[i]; out[i] = 0; return 1;
+	}
+	snprintf(out, cap, "/disks/main/apps/%s/%s.nxe", cmd, cmd); if (file_exists(out)) return 1;
+	snprintf(out, cap, "/disks/main/bin/%s.nxe", cmd);          if (file_exists(out)) return 1;
+	snprintf(out, cap, "/disks/main/nanos/bin/%s.nxe", cmd);    if (file_exists(out)) return 1;
+	return 0;
+}
+static int free_slot(void)
+{
+	for (int i = 0; i < NW_MAX_CLIENTS; i++)
+		if (cl_req[i] < 0) return i;
+	return -1;
+}
+
 static void disconnect(int slot)
 {
 	nw_client_disconnect(&S, slot);
@@ -279,21 +299,18 @@ int main(void)
 
 	for (;;) {
 		struct pollfd pfd[2 + NW_MAX_CLIENTS * 2];
-		int n = 0, live = 0;
+		int n = 0;
 		pfd[n].fd = in0; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
 		pfd[n].fd = in1; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
 		for (int i = 0; i < NW_MAX_CLIENTS; i++) {
 			if (cl_req[i] < 0)
 				continue;
-			live++;
 			pfd[n].fd = cl_req[i]; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
 			if (nw_outq_pending(&S, i) > 0) {
 				pfd[n].fd = cl_evt[i]; pfd[n].events = POLLOUT; pfd[n].revents = 0; n++;
 			}
 		}
-		if (live == 0)
-			break;                            /* every client gone: leave the desktop */
-
+		/* The desktop persists with zero windows — leave only via Quit/Shutdown. */
 		poll(pfd, n, -1);
 
 		/* COALESCE: drain every input + request before drawing */
@@ -312,6 +329,14 @@ int main(void)
 		}
 		if (S.want_quit)                       /* Quit button: leave the desktop */
 			break;
+
+		char cmd[NW_RUN_MAX];                  /* Run dialog (Super+R): launch the typed app */
+		if (nw_run_take_spawn(&S, cmd, sizeof cmd)) {
+			char path[256];
+			int slot = free_slot();
+			if (slot >= 0 && resolve_cmd(cmd, path, sizeof path))
+				spawn_client(slot, path);
+		}
 
 		present();   /* recomposes only on scene damage; always cheap cursor overlay */
 

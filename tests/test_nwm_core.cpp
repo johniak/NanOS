@@ -329,6 +329,31 @@ TEST_CASE("panel buttons hit-test and clicks set the quit/shutdown flags") {
 	CHECK(s2.want_shutdown == 1);
 }
 
+TEST_CASE("Super+R run dialog: type then Enter launches; Escape cancels") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	nw_key(&s, NW_SC_LSUPER, 1);
+	nw_key(&s, NW_SC_R, 1);                  // Super+R opens
+	CHECK(s.run_open == 1);
+	nw_key(&s, NW_SC_LSUPER, 0);
+	nw_key(&s, 0x26, 1);                     // 'l'
+	nw_key(&s, 0x1F, 1);                     // 's'
+	CHECK(s.run_len == 2);
+	nw_key(&s, NW_SC_BACKSP, 1);
+	CHECK(s.run_len == 1);
+	nw_key(&s, NW_SC_ENTER, 1);              // commit
+	CHECK(s.run_open == 0);
+	char out[64];
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
+	CHECK(strcmp(out, "l") == 0);
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);   // cleared after taking
+	// Escape cancels without launching
+	nw_key(&s, NW_SC_LSUPER, 1); nw_key(&s, NW_SC_R, 1); nw_key(&s, NW_SC_LSUPER, 0);
+	CHECK(s.run_open == 1);
+	nw_key(&s, NW_SC_ESC, 1);
+	CHECK(s.run_open == 0);
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);
+}
+
 TEST_CASE("disconnect drops the client's windows") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());

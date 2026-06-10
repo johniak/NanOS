@@ -23,7 +23,10 @@ enum {
 	NW_CLOSE       = 12,    /* close box side, inside the title bar */
 	NW_TITLE_MAX   = 64,
 	NW_CLIP_MAX    = 256,
-	NW_PANEL_H     = 20     /* top menu bar height (always on top, holds Quit/Shutdown) */
+	NW_PANEL_H     = 20,    /* top menu bar height (always on top, holds Quit/Shutdown) */
+	NW_RUN_W       = 420,   /* the Super+R "Run" dialog box */
+	NW_RUN_H       = 54,
+	NW_RUN_MAX     = 120    /* max command length typed into it */
 };
 
 /* Panel button ids (nw_panel_hit). */
@@ -33,7 +36,8 @@ enum { NW_PANEL_NONE = 0, NW_PANEL_QUIT = 1, NW_PANEL_SHUTDOWN = 2 };
 enum {
 	NW_SC_LSUPER = 0xDB, NW_SC_RSUPER = 0xDC,   /* 0xE0 0x5B / 0x5C: the GUI (Super/Cmd) keys */
 	NW_SC_LSHIFT = 0x2A, NW_SC_RSHIFT = 0x36,
-	NW_SC_C = 0x2E, NW_SC_X = 0x2D, NW_SC_V = 0x2F, NW_SC_Q = 0x10, NW_SC_TAB = 0x0F
+	NW_SC_C = 0x2E, NW_SC_X = 0x2D, NW_SC_V = 0x2F, NW_SC_Q = 0x10, NW_SC_TAB = 0x0F,
+	NW_SC_R = 0x13, NW_SC_ESC = 0x01, NW_SC_ENTER = 0x1C, NW_SC_BACKSP = 0x0E
 };
 
 /* Hit-test regions. */
@@ -82,6 +86,13 @@ struct nw_server {
 
 	int   want_quit, want_shutdown; /* a panel button was clicked -> the shell acts       */
 
+	/* Super+R "Run" launcher dialog (WM chrome). While open it captures the keyboard. */
+	int   run_open;
+	char  run_text[NW_RUN_MAX];
+	int   run_len;
+	char  run_cmd[NW_RUN_MAX];      /* the committed command (on Enter)                  */
+	int   want_spawn;               /* shell: launch run_cmd, then clear                 */
+
 	int   dirty;                    /* the SCENE changed -> shell recomposes it          */
 	/* Accumulated scene-damage bounding box (screen px) since the last present; the shell
 	 * blits only this region of the recomposed scene to the framebuffer. */
@@ -118,6 +129,11 @@ int  nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h);
  * hit-testing agree on geometry. */
 int  nw_panel_hit(const struct nw_server *s, int x, int y);
 void nw_panel_button_rect(const struct nw_server *s, int id, int *x, int *y, int *w, int *h);
+/* Run dialog: its on-screen rect (for drawing/damage), and taking the committed command.
+ * nw_run_take_spawn returns 1 and copies the command into out[cap] when a launch is pending
+ * (Enter was pressed), clearing the request; else 0. */
+void nw_run_rect(const struct nw_server *s, int *x, int *y, int *w, int *h);
+int  nw_run_take_spawn(struct nw_server *s, char *out, int cap);
 
 /* ---- exposed pure helpers (also for tests) ---- */
 int  nw_hit(const struct nw_server *s, int sx, int sy, int *region);  /* topmost window or -1 */

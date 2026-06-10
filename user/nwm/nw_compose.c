@@ -97,6 +97,30 @@ static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
 	draw_button(s, NW_PANEL_QUIT, "Quit", COL_BTN, back);
 }
 
+#define COL_RUN_BORDER 0x000000
+#define COL_RUN_BG     0x283038
+#define COL_RUN_LABEL  0x9fb0c0
+#define COL_RUN_TEXT   0xffffff
+#define COL_RUN_CURSOR 0xc0c0c0
+
+static void draw_run(const struct nw_server *s, const struct nw_surface *back)
+{
+	if (!s->run_open)
+		return;
+	int x, y, w, h;
+	nw_run_rect(s, &x, &y, &w, &h);
+	nw_fill_rect(back, x - 2, y - 2, w + 4, h + 4, COL_RUN_BORDER);
+	nw_fill_rect(back, x, y, w, h, COL_RUN_BG);
+	int tx = x + 10, ty = y + (h - NW_FONT_H) / 2;
+	tx = nw_draw_text(back, tx, ty, "Run: ", COL_RUN_LABEL, COL_RUN_BG);
+	char buf[NW_RUN_MAX];
+	int n = s->run_len; if (n > NW_RUN_MAX - 1) n = NW_RUN_MAX - 1;
+	for (int i = 0; i < n; i++) buf[i] = s->run_text[i];
+	buf[n] = 0;
+	tx = nw_draw_text(back, tx, ty, buf, COL_RUN_TEXT, COL_RUN_BG);
+	nw_fill_rect(back, tx, ty, 2, NW_FONT_H, COL_RUN_CURSOR);
+}
+
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back)
 {
 	nw_fill_rect(back, 0, 0, back->w, back->h, COL_DESKTOP);
@@ -106,6 +130,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back)
 			draw_window(&s->win[idx], idx == s->focus, back);
 	}
 	draw_panel(s, back);                         /* menu bar always on top */
+	draw_run(s, back);                           /* Run launcher above everything */
 }
 
 void nw_compose(const struct nw_server *s, const struct nw_surface *back)
