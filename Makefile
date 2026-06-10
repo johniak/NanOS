@@ -227,9 +227,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp
 SYS_PROGS=nsh cat ls free nwm
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -276,6 +276,9 @@ $(BINFOLDER)%.o: user/nwnote/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/nwform/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/nwexp/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 # libnw (user/libnw): the client API + protocol codec + gfx, STATICALLY linked into the
@@ -341,6 +344,10 @@ $(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a
 $(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwform.elf $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)nwform.elf $@ --need libnwui.ndl
+# nwexp: the file explorer — same toolkit-only chain as nwform (--need libnwui.ndl).
+$(BINFOLDER)nwexp.nxe: $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwexp.elf $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX) $(BINFOLDER)nwexp.elf $@ --need libnwui.ndl
 # rustform: the SAME demo written in RUST, proving the C-ABI libnwui is language-agnostic. A
 # cargo staticlib (no_std, -Z build-std for the bare i686-nanos target) is linked with crt0 +
 # the import libraries, then mknx'd like any app; --need libnwui.ndl pulls the whole chain.

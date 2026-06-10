@@ -10,7 +10,9 @@
 #include "nwui.h"
 #include "libnw.h"     /* struct nw_event + NW_EV_* / NW_BTN_* — the core only READS events */
 
-enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD };
+enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST };
+
+enum { NWUI_ROW_H = 18 };   /* list item row height */
 
 enum {
 	NWUI_MAX_NODES = 128,
@@ -40,6 +42,9 @@ struct nwui_node {
 	char      *tbuf;                  /* textfield: app-owned buffer */
 	int        tcap, tlen, caret;
 	int        anchor;               /* selection anchor; selection = [min,max) when != caret */
+
+	const char *const *items;        /* list: app-owned array of item strings */
+	int        count, sel, scroll;   /* list: item count, selected/visible-from index */
 
 	nwui_cb    on_click, on_change;
 	void      *user;
@@ -77,6 +82,7 @@ enum { NWUI_MENU_W = 110, NWUI_MENU_ITEM_H = 20 };
 /* Normalised scancodes for caret/selection (bit7=extended on the wire). */
 enum {
 	NWUI_SC_LEFT  = 0xCB, NWUI_SC_RIGHT = 0xCD,
+	NWUI_SC_UP    = 0xC8, NWUI_SC_DOWN  = 0xD0,
 	NWUI_SC_HOME  = 0xC7, NWUI_SC_END   = 0xCF, NWUI_SC_ESC = 0x01
 };
 

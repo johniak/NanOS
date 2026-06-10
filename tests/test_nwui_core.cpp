@@ -275,3 +275,92 @@ TEST_CASE("CONFIGURE sets the window size + requests relayout; CLOSE stops the l
 	CHECK(u->closed == 1);
 	delete u;
 }
+
+static int g_activations;
+static void on_activate(nwui_node *, void *u) { (*(int *) u)++; }
+
+TEST_CASE("list: clicking a row selects + activates it; out-of-range clicks are ignored") {
+	nwui *u = new nwui; nwui_init(u);
+	const char *items[] = { "alpha", "beta", "gamma", "delta" };
+	g_activations = 0;
+	nwui_node *L = nwui_list(u, on_activate, &g_activations);
+	CHECK(L->kind == NWUI_LIST);
+	CHECK(nwui_list_selected(L) == -1);              // nothing selected yet
+	nwui_list_set(L, items, 4);
+	nwui_set_root(u, nwui_flex(L, 1));
+	u->win_w = 200; u->win_h = 100; nwui_layout(u);
+
+	// click row 2 (gamma): rows are NWUI_ROW_H tall, starting 1px inside the border
+	int ry = L->y + 1 + 2 * NWUI_ROW_H + NWUI_ROW_H / 2;
+	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);
+	CHECK(nwui_list_selected(L) == 2);
+	CHECK(g_activations == 1);
+	CHECK(u->focus == L);
+
+	// a click far below the last row selects nothing new
+	pointer(u, L->x + 5, L->y + 1 + 99 * NWUI_ROW_H, 1);
+	CHECK(nwui_list_selected(L) == 2);               // unchanged
+	delete u;
+}
+
+TEST_CASE("list: Up/Down move the selection (clamped); Enter activates the selection") {
+	nwui *u = new nwui; nwui_init(u);
+	const char *items[] = { "one", "two", "three" };
+	g_activations = 0;
+	nwui_node *L = nwui_list(u, on_activate, &g_activations);
+	nwui_list_set(L, items, 3);
+	nwui_set_root(u, nwui_flex(L, 1));
+	u->win_w = 200; u->win_h = 100; nwui_layout(u);
+	int ry = L->y + 1 + NWUI_ROW_H / 2;
+	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);   // select row 0, focus the list
+	CHECK(nwui_list_selected(L) == 0);
+
+	keycode(u, NWUI_SC_UP, 0, 0);                    // already at top -> clamp
+	CHECK(nwui_list_selected(L) == 0);
+	keycode(u, NWUI_SC_DOWN, 0, 0);
+	CHECK(nwui_list_selected(L) == 1);
+	keycode(u, NWUI_SC_DOWN, 0, 0);
+	keycode(u, NWUI_SC_DOWN, 0, 0);                  // past the end -> clamp at 2
+	CHECK(nwui_list_selected(L) == 2);
+
+	int before = g_activations;
+	key(u, '\n');                                    // Enter activates current selection
+	CHECK(g_activations == before + 1);
+	delete u;
+}
+
+TEST_CASE("list: selection scrolls into view when it leaves the visible window") {
+	nwui *u = new nwui; nwui_init(u);
+	const char *items[] = { "a", "b", "c", "d", "e", "f", "g", "h" };
+	nwui_node *L = nwui_list(u, 0, 0);
+	nwui_list_set(L, items, 8);
+	nwui_set_root(u, nwui_flex(L, 1));
+	// window tall enough for ~3 rows of list (after pad) -> scrolling required for 8 items
+	u->win_w = 200; u->win_h = 3 * NWUI_ROW_H + 4; nwui_layout(u);
+	int ry = L->y + 1 + NWUI_ROW_H / 2;
+	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);   // select row 0
+	CHECK(L->scroll == 0);
+	int vis = L->h / NWUI_ROW_H;
+	for (int i = 0; i < 7; i++) keycode(u, NWUI_SC_DOWN, 0, 0); // walk to the last row
+	CHECK(nwui_list_selected(L) == 7);
+	CHECK(L->scroll == 8 - vis);                     // bottom row scrolled into view
+	delete u;
+}
+
+TEST_CASE("list: nwui_list_set installs a fresh model — clears selection + scroll") {
+	nwui *u = new nwui; nwui_init(u);
+	const char *big[] = { "0", "1", "2", "3", "4" };
+	nwui_node *L = nwui_list(u, 0, 0);
+	nwui_list_set(L, big, 5);
+	L->sel = 4; L->scroll = 3;
+	const char *small[] = { "x", "y" };
+	nwui_list_set(L, small, 2);                      // replace the model
+	CHECK(L->count == 2);
+	CHECK(nwui_list_selected(L) == -1);              // selection cleared (old rows are gone)
+	CHECK(L->scroll == 0);                           // reset
+	// the non-list guards return safe defaults
+	nwui_node *lbl = nwui_label(u, "hi");
+	CHECK(nwui_list_selected(lbl) == -1);
+	nwui_list_set(lbl, small, 2);                    // no-op on a non-list (must not crash)
+	delete u;
+}

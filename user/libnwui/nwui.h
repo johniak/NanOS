@@ -42,6 +42,13 @@ nwui_node *nwui_button(nwui *u, const char *text, nwui_cb on_click, void *user);
 /* An editable field over an APP-OWNED buffer (the app reads the typed value straight from it). */
 nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *user);
 
+/* A scrollable list of rows. Items are an APP-OWNED array of strings (set with nwui_list_set);
+ * clicking a row (or Enter) selects + fires on_activate; arrows move the selection. The app
+ * reads which row fired with nwui_list_selected. */
+nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user);
+void       nwui_list_set(nwui_node *list, const char *const *items, int count);
+int        nwui_list_selected(nwui_node *list);
+
 /* ---- containers: variadic, NULL-terminated children (this is the nesting) ---- */
 nwui_node *nwui_column(nwui *u, ...);   /* nwui_column(u, a, b, c, (nwui_node*)0)  */
 nwui_node *nwui_row(nwui *u, ...);

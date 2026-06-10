@@ -66,6 +66,32 @@ nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *
 	return n;
 }
 
+nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_LIST);
+	n->on_click  = on_activate;
+	n->user      = user;
+	n->focusable = 1;
+	n->sel       = -1;
+	return n;
+}
+
+void nwui_list_set(nwui_node *list, const char *const *items, int count)
+{
+	if (!list || list->kind != NWUI_LIST) return;
+	list->items  = items;
+	list->count  = count;
+	list->scroll = 0;
+	list->sel    = -1;           /* a fresh model -> no carried-over selection */
+	list->dirty  = 1;
+	if (list->owner) list->owner->layout_dirty = 1;
+}
+
+int nwui_list_selected(nwui_node *list)
+{
+	return (list && list->kind == NWUI_LIST) ? list->sel : -1;
+}
+
 static nwui_node *collect(nwui_node *n, va_list ap)
 {
 	nwui_node *c;
@@ -156,6 +182,10 @@ void nwui_measure(nwui_node *n)
 	case NWUI_TEXTFIELD:
 		n->mw = NWUI_TF_DEFW;
 		n->mh = NW_FONT_H + 2 * NWUI_TF_PAD;
+		break;
+	case NWUI_LIST:
+		n->mw = 220;
+		n->mh = 4 * NWUI_ROW_H;        /* default 4 visible rows; flex stretches it */
 		break;
 	case NWUI_ROW: {
 		int sumw = 0, maxh = 0;
@@ -329,6 +359,23 @@ static void tf_copy(nwui *u, nwui_node *tf)       /* selection (or all) -> the c
 }
 static void tf_changed(nwui_node *tf) { tf->dirty = 1; if (tf->on_change) tf->on_change(tf, tf->user); }
 
+/* ---- list ---- */
+static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
+
+static void list_scroll_to(nwui_node *L)     /* keep the selection within the visible window */
+{
+	if (L->sel < 0) return;
+	int vis = list_visible(L);
+	if (L->sel < L->scroll)            L->scroll = L->sel;
+	else if (L->sel >= L->scroll + vis) L->scroll = L->sel - vis + 1;
+	if (L->scroll < 0) L->scroll = 0;
+}
+
+static void list_activate(nwui_node *L)      /* fire on_click for the current selection */
+{
+	if (L->sel >= 0 && L->on_click) L->on_click(L, L->user);
+}
+
 /* ---- context menu ---- */
 static const char *const MENU_LABELS[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
 
@@ -406,6 +453,14 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				int c = char_at_x(over, ev->x);
 				over->caret = c; over->anchor = c; over->dirty = 1;   /* place caret, clear sel */
 			}
+			else if (over && over->kind == NWUI_LIST) {
+				set_focus(u, over);
+				int row = over->scroll + (ev->y - over->y) / NWUI_ROW_H;
+				if (row >= 0 && row < over->count) {
+					over->sel = row; over->dirty = 1;
+					list_activate(over);                 /* single-click selects + activates */
+				}
+			}
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTFIELD) {
 			u->armed->caret = char_at_x(u->armed, ev->x);            /* drag-select */
 			u->armed->dirty = 1;
@@ -423,6 +478,17 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 	case NW_EV_KEY: {
 		if (!ev->down) break;
 		if (u->menu_open) { if (ev->code == NWUI_SC_ESC) menu_close(u); break; }
+		if (u->focus && u->focus->kind == NWUI_LIST) {
+			nwui_node *L = u->focus;
+			if (ev->code == NWUI_SC_UP && L->sel > 0) {
+				L->sel--; list_scroll_to(L); L->dirty = 1;
+			} else if (ev->code == NWUI_SC_DOWN && L->sel < L->count - 1) {
+				L->sel++; list_scroll_to(L); L->dirty = 1;
+			} else if (ev->ch == '\n' || ev->ch == '\r') {
+				list_activate(L);
+			}
+			break;
+		}
 		if (!u->focus || u->focus->kind != NWUI_TEXTFIELD) break;
 		nwui_node *tf = u->focus;
 		int shift = ev->mods & 1;

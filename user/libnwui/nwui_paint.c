@@ -43,6 +43,24 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			nw_fill_rect(s, tx + n->caret * NW_FONT_W, ty, 1, NW_FONT_H, COL_INK);
 		break;
 	}
+	case NWUI_LIST: {
+		nw_fill_rect(s, n->x, n->y, n->w, n->h, n->focused ? COL_TF_FOC : COL_TF_BRD);
+		nw_fill_rect(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, COL_TF_BG);   /* inner paper */
+		int vis = n->h / NWUI_ROW_H;
+		for (int r = 0; r < vis; r++) {
+			int idx = n->scroll + r;
+			if (idx >= n->count) break;
+			int ry = n->y + 1 + r * NWUI_ROW_H;
+			int seld = (idx == n->sel);
+			uint32_t bg = seld ? COL_TF_FOC : COL_TF_BG;
+			uint32_t fg = seld ? 0x00ffffff : COL_INK;
+			if (seld) nw_fill_rect(s, n->x + 1, ry, n->w - 2, NWUI_ROW_H, bg);
+			if (n->items && n->items[idx])
+				nw_draw_text(s, n->x + NWUI_TF_PAD, ry + (NWUI_ROW_H - NW_FONT_H) / 2,
+				             n->items[idx], fg, bg);
+		}
+		break;
+	}
 	default:   /* row/column/box: paint own background if set (else transparent) */
 		if (n->has_bg)
 			nw_fill_rect(s, n->x, n->y, n->w, n->h, n->bg);
