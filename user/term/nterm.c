@@ -15,6 +15,8 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <poll.h>
+#include <pwd.h>
+#include <string.h>
 #include <sys/termios.h>
 
 extern const unsigned char nx_font8x16[256][16];
@@ -304,11 +306,31 @@ int main(void) {
 		dup2(s, 0); dup2(s, 1); dup2(s, 2);
 		if (s > 2) close(s);
 		close(master); close(inp); close(fbfd);
-		char* argv[] = { (char*) "nsh", 0 };
+		/* Launch the login shell from the account database (the passwd file's pw_shell, under
+		 * /nanos/config), the same default-shell setting init uses; export it as $SHELL. Fall
+		 * back to nsh if absent. */
+		struct passwd* pw = getpwuid(getuid());
+		const char* shell = (pw && pw->pw_shell && pw->pw_shell[0])
+		                  ? pw->pw_shell : "/disks/main/nanos/bin/nsh.nxe";
+		const char* base = strrchr(shell, '/');
+		base = base ? base + 1 : shell;
+		static char name0[64];          /* basename, ".nxe" stripped -> argv[0] == "bash" */
+		{
+			int i = 0;
+			while (base[i] && i < (int) sizeof name0 - 1) { name0[i] = base[i]; i++; }
+			name0[i] = 0;
+			if (i >= 4 && strcmp(name0 + i - 4, ".nxe") == 0) name0[i - 4] = 0;
+		}
+		static char shellvar[160];
+		strcpy(shellvar, "SHELL=");
+		strncat(shellvar, shell, sizeof shellvar - 7);
+		char* argv[] = { name0, 0 };
 		char* envp[] = { (char*) "TERM=xterm-256color",
 		                 (char*) "TERMINFO=/disks/main/nanos/share/terminfo",
-		                 (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin", 0 };
-		execve("/disks/main/nanos/bin/nsh.nxe", argv, envp);
+		                 (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin", shellvar, 0 };
+		execve(shell, argv, envp);
+		char* fbargv[] = { (char*) "nsh", 0 };
+		execve("/disks/main/nanos/bin/nsh.nxe", fbargv, envp);
 		_exit(127);
 	}
 

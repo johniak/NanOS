@@ -1,17 +1,65 @@
 /*
  * init — the first NanOS user program (PID 1), lives at /nanos/core/init.nxe.
  *
- * The kernel hands control here; init brings up userland. For now that means
- * becoming the shell via execve() (PID 1 morphs into nsh in place). This is the
- * seam where mounting extra volumes, loading .nkext drivers, and starting services
- * will go before the exec.
+ * The kernel hands control here; init brings up userland. For now that means becoming the
+ * login shell via execve() (PID 1 morphs into the shell in place). The shell is NOT
+ * hardcoded: like a Unix login, init reads the login shell from the account database
+ * (getpwuid -> pw_shell, the 7th field of the passwd file — NanOS keeps it under
+ * /nanos/config, not /etc) and exports it as $SHELL. Change that file to change the default
+ * shell. Falls back to nsh if that shell is absent. This is also the seam where mounting
+ * extra volumes / starting services will go.
  */
-int execve(const char* path, char* const argv[], char* const envp[]);  /* libc glue */
+#include <unistd.h>
+#include <pwd.h>
+#include <string.h>
+
+int execve(const char* path, char* const argv[], char* const envp[]);
 /* `environ` (the kernel-provided environment, TERM=…) comes from nx-dllimport.h, which is
  * force-included for program objects; it maps to libc.ndl's environ via the import slot. */
 
+#define FALLBACK_SHELL "/disks/main/nanos/bin/nsh.nxe"
+
+/* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell
+ * presents itself as "bash"/"nsh", not "bash.nxe". Written into `out`. */
+static const char* shell_argv0(const char* path, char* out, int cap) {
+	const char* base = strrchr(path, '/');
+	base = base ? base + 1 : path;
+	int i = 0;
+	while (base[i] && i < cap - 1) { out[i] = base[i]; i++; }
+	out[i] = 0;
+	if (i >= 4 && strcmp(out + i - 4, ".nxe") == 0)
+		out[i - 4] = 0;
+	return out;
+}
+
 int main(void) {
-	char* argv[] = { "nsh", 0 };
-	execve("/disks/main/nanos/bin/nsh.nxe", argv, environ);   /* forward our environment */
-	return 127;   /* only reached if exec failed */
+	struct passwd* pw = getpwuid(getuid());
+	const char* shell = (pw && pw->pw_shell && pw->pw_shell[0]) ? pw->pw_shell : FALLBACK_SHELL;
+
+	static char name0[64];
+	shell_argv0(shell, name0, sizeof name0);
+
+	/* Hand the login shell a Unix-like environment: $SHELL (the login shell, as login(1)
+	 * sets it) and a default $PATH so it can run the system utilities by name. TERM/TERMINFO
+	 * already come from the kernel via `environ`. */
+	static char shellvar[160];
+	strcpy(shellvar, "SHELL=");
+	strncat(shellvar, shell, sizeof shellvar - 7);
+
+	char* newenv[64];
+	int n = 0;
+	for (char** e = environ; *e && n < 60; e++)
+		newenv[n++] = *e;
+	newenv[n++] = shellvar;
+	newenv[n++] = (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin";
+	newenv[n] = 0;
+
+	char* argv[] = { name0, 0 };
+	execve(shell, argv, newenv);
+
+	/* The configured shell failed to load (e.g. an image without the optional bash) — fall
+	 * back to nsh so the system is never left without a shell. */
+	char* fbargv[] = { (char*) "nsh", 0 };
+	execve(FALLBACK_SHELL, fbargv, newenv);
+	return 127;   /* only reached if even nsh failed */
 }

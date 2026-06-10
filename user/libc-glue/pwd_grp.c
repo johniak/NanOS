@@ -1,31 +1,85 @@
 /*
- * pwd_grp.c — getpwuid/getgrgid (picolibc declares <pwd.h>/<grp.h> but provides no
- * implementation). NanOS is single-user: the only account/group is root (id 0), and the
- * kernel stamps every file uid/gid 0. So we resolve id 0 to "root" and report any other
- * id as "not found" (NULL) — the POSIX contract — instead of falsely naming every id
- * "root"/"wheel". ls -l then prints the numeric id for an unknown owner, as on Linux.
+ * pwd_grp.c — getpwuid/getpwnam/getgrgid (picolibc declares <pwd.h>/<grp.h> but provides no
+ * implementation). Like glibc reads /etc/passwd, we read the account database — but NanOS
+ * keeps system config under /nanos/config (not /etc), so it lives at
+ * /disks/main/nanos/config/passwd. The 7th field is the login shell, so editing that file
+ * (NanOS's read-only-disk `chsh`) sets the default shell init and the terminal launch.
  *
- * EVERY string field is non-NULL: a hosted shell (bash) reads pw_dir/pw_shell at startup and
- * `savestring()`s them unconditionally (strlen on a NULL pw_dir = crash). Home is "/" (the
- * always-present read-only root) and the login shell is the bash bundle in the link farm.
+ * If the file cannot be read we fall back to a built-in root entry so the system still comes
+ * up.
  */
 #include <pwd.h>
 #include <grp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-struct passwd* getpwuid(uid_t uid) {
-	if (uid != 0)
-		return 0;                 // no such user (only root exists)
-	static struct passwd pw;
-	pw.pw_name = (char*) "root";
-	pw.pw_passwd = (char*) "x";
-	pw.pw_uid = 0;
-	pw.pw_gid = 0;
-	pw.pw_comment = (char*) "";
-	pw.pw_gecos = (char*) "root";
-	pw.pw_dir = (char*) "/";
-	pw.pw_shell = (char*) "/disks/main/bin/bash.nxe";
-	return &pw;
+#define PASSWD_PATH "/disks/main/nanos/config/passwd"
+
+/* Storage for the most recent lookup: the parsed line (fields point into it) + the struct.
+ * Matches the classic getpwnam contract — the returned pointer is valid until the next call. */
+static char g_line[256];
+static struct passwd g_pw;
+
+/* Built-in root, used when /etc/passwd is unreadable. nsh is the always-present shell. */
+static struct passwd* fallback_root(void) {
+	g_pw.pw_name = (char*) "root";
+	g_pw.pw_passwd = (char*) "x";
+	g_pw.pw_uid = 0;
+	g_pw.pw_gid = 0;
+	g_pw.pw_comment = (char*) "";
+	g_pw.pw_gecos = (char*) "root";
+	g_pw.pw_dir = (char*) "/";
+	g_pw.pw_shell = (char*) "/disks/main/nanos/bin/nsh.nxe";
+	return &g_pw;
 }
+
+/* Split g_line in place on ':' into the 7 passwd fields; returns 1 on success. A trailing
+ * newline on the shell field is trimmed. Empty string fields stay non-NULL (""). */
+static int parse_line(void) {
+	char* f[7];
+	int i = 0;
+	char* p = g_line;
+	f[i++] = p;
+	for (; *p && i < 7; p++) {
+		if (*p == ':') { *p = 0; f[i++] = p + 1; }
+	}
+	if (i < 7)
+		return 0;
+	for (char* q = f[6]; *q; q++)
+		if (*q == '\n' || *q == '\r') { *q = 0; break; }
+	g_pw.pw_name = f[0];
+	g_pw.pw_passwd = f[1];
+	g_pw.pw_uid = (uid_t) atoi(f[2]);
+	g_pw.pw_gid = (gid_t) atoi(f[3]);
+	g_pw.pw_comment = (char*) "";
+	g_pw.pw_gecos = f[4];
+	g_pw.pw_dir = f[5];
+	g_pw.pw_shell = (f[6][0] ? f[6] : (char*) "/disks/main/nanos/bin/nsh.nxe");
+	return 1;
+}
+
+/* Scan /etc/passwd for the entry matching either uid (by_uid) or name. */
+static struct passwd* lookup(int by_uid, uid_t uid, const char* name) {
+	FILE* fp = fopen(PASSWD_PATH, "r");
+	if (!fp)
+		return (by_uid ? (uid == 0 ? fallback_root() : 0)
+		               : (name && strcmp(name, "root") == 0 ? fallback_root() : 0));
+	while (fgets(g_line, sizeof g_line, fp)) {
+		if (!parse_line())
+			continue;
+		if (by_uid ? (g_pw.pw_uid == uid)
+		           : (name && strcmp(g_pw.pw_name, name) == 0)) {
+			fclose(fp);
+			return &g_pw;
+		}
+	}
+	fclose(fp);
+	return 0;
+}
+
+struct passwd* getpwuid(uid_t uid) { return lookup(1, uid, 0); }
+struct passwd* getpwnam(const char* name) { return lookup(0, 0, name); }
 
 struct group* getgrgid(gid_t gid) {
 	if (gid != 0)
@@ -35,6 +89,6 @@ struct group* getgrgid(gid_t gid) {
 	gr.gr_name = (char*) "root";  // gid 0 is "root" on Linux (BSD names it "wheel")
 	gr.gr_passwd = (char*) "x";
 	gr.gr_gid = 0;
-	gr.gr_mem = members;          // empty, NULL-terminated (bash iterates this)
+	gr.gr_mem = members;          // empty, NULL-terminated (callers iterate this)
 	return &gr;
 }

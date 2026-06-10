@@ -153,6 +153,10 @@ _image: _all _userland _grub2-image
 	# Kernel + init (PID 1) in core.
 	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# Account database -> /nanos/config (NanOS keeps system config here, not in /etc). The
+	# 7th field is the login shell: init/nterm launch getpwuid()->pw_shell, so editing this
+	# file sets the default shell (the read-only-disk equivalent of chsh).
+	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# System utilities -> /nanos/bin.
 	for p in $(SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \

@@ -67,7 +67,10 @@ and the run-by-name PATH are cleanly separated**:
 │   │                          loader (kernel/DynLoader.cpp) resolves "needed" libraries
 │   │                          here, by name, at exec time.
 │   ├── kext/                  reserved: loadable kernel modules (future).
-│   ├── config/ cache/ logs/   reserved: system config / caches / logs (future).
+│   ├── config/                system config (NanOS's /etc). Holds `passwd` — the account
+│   │                          database; its 7th field is the login shell, so editing it sets
+│   │                          the default shell (init/nterm launch getpwuid()->pw_shell).
+│   ├── cache/ logs/           reserved: caches / logs (future).
 │
 ├── apps/                      NON-SYSTEM apps, each a self-contained BUNDLE directory:
 │   └── <name>/

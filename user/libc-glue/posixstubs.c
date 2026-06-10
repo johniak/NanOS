@@ -72,14 +72,10 @@ int ttyname_r(int fd, char* buf, size_t len) {
 	return 0;
 }
 
-/* user/group database: only root (uid/gid 0) exists; enumeration is empty. The name lookups
- * delegate to getpwuid/getgrgid (pwd_grp.c) so the fully-populated root entry has a single
- * source of truth (every string field non-NULL — a shell strlen()s pw_dir/pw_shell). */
+/* user/group database: getpwuid/getpwnam/getgrgid live in pwd_grp.c (they read /etc/passwd);
+ * here are the thin remainders. getgrnam delegates to getgrgid so the root entry has one
+ * source of truth; enumeration is empty (only root exists). */
 struct group* getgrgid(gid_t);
-struct passwd* getpwnam(const char* name) {
-	if (!name || strcmp(name, "root") != 0) return 0;
-	return getpwuid(0);
-}
 struct passwd* getpwent(void) { return 0; }
 void setpwent(void) {}
 void endpwent(void) {}
