@@ -32,7 +32,13 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		nw_fill_rect(s, n->x, n->y, n->w, n->h, n->focused ? COL_TF_FOC : COL_TF_BRD);
 		nw_fill_rect(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, COL_TF_BG);
 		int tx = n->x + NWUI_TF_PAD, ty = n->y + (n->h - NW_FONT_H) / 2;
-		nw_draw_text(s, tx, ty, n->tbuf ? n->tbuf : "", COL_INK, COL_TF_BG);
+		int lo = n->anchor < n->caret ? n->anchor : n->caret;
+		int hi = n->anchor > n->caret ? n->anchor : n->caret;
+		for (int i = 0; i < n->tlen; i++) {                 /* per-char so selection inverts */
+			int sel = (n->anchor != n->caret && i >= lo && i < hi);
+			nw_draw_char(s, tx + i * NW_FONT_W, ty, (unsigned char) n->tbuf[i],
+			             sel ? 0x00ffffff : COL_INK, sel ? COL_TF_FOC : COL_TF_BG);
+		}
 		if (n->focused)
 			nw_fill_rect(s, tx + n->caret * NW_FONT_W, ty, 1, NW_FONT_H, COL_INK);
 		break;
@@ -76,6 +82,23 @@ static void repaint_dirty(nwui_node *n, const struct nw_surface *s, struct dmg *
 		repaint_dirty(n->child[i], s, d);
 }
 
+/* the context-menu overlay, drawn last (on top of everything) */
+static void draw_menu(const nwui *u, const struct nw_surface *s)
+{
+	if (!u->menu_open)
+		return;
+	static const char *const L[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
+	int mh = NWUI_MI_COUNT * NWUI_MENU_ITEM_H;
+	nw_fill_rect(s, u->menu_x - 1, u->menu_y - 1, NWUI_MENU_W + 2, mh + 2, 0x00101418);
+	for (int i = 0; i < NWUI_MI_COUNT; i++) {
+		int iy = u->menu_y + i * NWUI_MENU_ITEM_H;
+		uint32_t bg = (i == u->menu_hover) ? COL_TF_FOC : 0x00f4f4ec;
+		uint32_t fg = (i == u->menu_hover) ? 0x00ffffff : COL_INK;
+		nw_fill_rect(s, u->menu_x, iy, NWUI_MENU_W, NWUI_MENU_ITEM_H, bg);
+		nw_draw_text(s, u->menu_x + 8, iy + (NWUI_MENU_ITEM_H - NW_FONT_H) / 2, L[i], fg, bg);
+	}
+}
+
 int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int *h)
 {
 	if (!u->root)
@@ -84,6 +107,7 @@ int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int
 		nwui_layout(u);
 		nw_fill_rect(s, 0, 0, u->win_w, u->win_h, COL_WIN);
 		paint_all(u->root, s);
+		draw_menu(u, s);
 		clear_dirty(u->root);
 		*x = 0; *y = 0; *w = u->win_w; *h = u->win_h;
 		return 1;

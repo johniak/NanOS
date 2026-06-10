@@ -354,6 +354,37 @@ TEST_CASE("Super+R run dialog: type then Enter launches; Escape cancels") {
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);
 }
 
+TEST_CASE("GET_CLIPBOARD replies with the stored clipboard as a PASTE to the focused window") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	uint32_t id = create_win(s, 0, 100, 100, "w");
+	nw_msg sc{}; sc.type = NW_REQ_SET_CLIPBOARD; sc.length = 4;
+	nw_client_msg(&s, 0, &sc, (const unsigned char*) "CLIP");
+	drain(s, 0);
+	nw_msg gc{}; gc.type = NW_REQ_GET_CLIPBOARD;
+	nw_client_msg(&s, 0, &gc, nullptr);
+	auto ev = drain(s, 0);
+	const Ev* p = last(ev, NW_EVT_PASTE);
+	REQUIRE(p);
+	REQUIRE(p->pay.size() == 4);
+	CHECK(memcmp(p->pay.data(), "CLIP", 4) == 0);
+	CHECK(p->m.window == id);
+}
+
+TEST_CASE("KEY events carry the shift modifier in field d") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 100, 100, "w");
+	drain(s, 0);
+	nw_key(&s, NW_SC_LSHIFT, 1);                    // shift down (consumed)
+	nw_key(&s, 0x1E, 1);                            // 'a' + shift -> 'A', d=1
+	auto ev = drain(s, 0);
+	const Ev* k = last(ev, NW_EVT_KEY);
+	REQUIRE(k);
+	CHECK(k->m.a == 'A');
+	CHECK(k->m.d == 1);
+}
+
 TEST_CASE("disconnect drops the client's windows") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());

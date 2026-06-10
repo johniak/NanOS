@@ -107,7 +107,7 @@ TEST_CASE("textfield: click focuses, keys edit the app buffer, backspace + paste
 	nwui_set_root(u, nwui_column(u, tf, (nwui_node *) 0));
 	u->win_w = 200; u->win_h = 60;
 	nwui_layout(u);
-	click(u, tf->x + 4, tf->y + 4);
+	click(u, tf->x + NWUI_TF_PAD + 2 * 8, tf->y + 4);   // click past the end -> caret at 2
 	CHECK(u->focus == tf);
 	CHECK(tf->focused == 1);
 	key(u, 'a');                             // caret at end (2) -> "hia"
@@ -163,6 +163,87 @@ TEST_CASE("box centers its single child with padding; size/colors setters; get_t
 	nwui_measure(empty);
 	CHECK(empty->mw == 10);
 	CHECK(empty->mh == 10);
+	delete u;
+}
+
+static void keycode(nwui* u, int code, char ch, int mods) {
+	nw_event e; memset(&e, 0, sizeof e);
+	e.type = NW_EV_KEY; e.down = 1; e.code = code; e.ch = ch; e.mods = mods;
+	nwui_dispatch(u, &e);
+}
+
+TEST_CASE("textfield: mouse drag selects a range; typing replaces the selection") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[16] = "hello";
+	nwui_node *tf = nwui_textfield(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, nwui_column(u, tf, (nwui_node*) 0));
+	u->win_w = 200; u->win_h = 60; nwui_layout(u);
+	int base = tf->x + NWUI_TF_PAD;
+	pointer(u, base + 1 * 8, tf->y + 4, 1);        // press -> caret at char 1
+	CHECK(tf->caret == 1); CHECK(tf->anchor == 1);
+	pointer(u, base + 3 * 8, tf->y + 4, 1);        // drag (left held) -> select [1,3) = "el"
+	CHECK(tf->caret == 3); CHECK(tf->anchor == 1);
+	pointer(u, base + 3 * 8, tf->y + 4, 0);        // release
+	key(u, 'X');                                    // replaces "el"
+	CHECK(strcmp(tb, "hXlo") == 0);
+	delete u;
+}
+
+TEST_CASE("textfield: shift+arrow extends selection, plain arrow collapses; backspace deletes selection") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[16] = "abc";
+	nwui_node *tf = nwui_textfield(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, nwui_column(u, tf, (nwui_node*) 0));
+	u->win_w = 200; u->win_h = 60; nwui_layout(u);
+	pointer(u, tf->x + NWUI_TF_PAD, tf->y + 4, 1); pointer(u, tf->x + NWUI_TF_PAD, tf->y + 4, 0);
+	CHECK(tf->caret == 0);
+	keycode(u, NWUI_SC_RIGHT, 0, 1);               // shift+right -> sel [0,1)
+	CHECK(tf->caret == 1); CHECK(tf->anchor == 0);
+	keycode(u, NWUI_SC_RIGHT, 0, 1);               // -> sel [0,2)
+	CHECK(tf->caret == 2);
+	key(u, 8);                                      // backspace deletes the selection "ab"
+	CHECK(strcmp(tb, "c") == 0);
+	delete u;
+}
+
+TEST_CASE("Super+C copies the selection; Super+X cuts it") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[16] = "hello";
+	nwui_node *tf = nwui_textfield(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, nwui_column(u, tf, (nwui_node*) 0));
+	u->win_w = 200; u->win_h = 60; nwui_layout(u);
+	int base = tf->x + NWUI_TF_PAD;
+	pointer(u, base, tf->y + 4, 1); pointer(u, base + 2 * 8, tf->y + 4, 1); pointer(u, base + 2 * 8, tf->y + 4, 0);  // select "he"
+	nw_event c; memset(&c, 0, sizeof c); c.type = NW_EV_COPY; c.cut = 0;
+	nwui_dispatch(u, &c);
+	CHECK(u->clip_set == 1);
+	CHECK(u->clip_len == 2);
+	CHECK(strncmp(u->clip_buf, "he", 2) == 0);
+	// cut: copies + deletes
+	c.cut = 1; nwui_dispatch(u, &c);
+	CHECK(strcmp(tb, "llo") == 0);
+	delete u;
+}
+
+TEST_CASE("right-click context menu: open, Select All, Paste sets clip_get, click closes") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[16] = "abcd";
+	nwui_node *tf = nwui_textfield(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, nwui_column(u, tf, (nwui_node*) 0));
+	u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	pointer(u, tf->x + 10, tf->y + 4, 2);          // right press -> menu opens
+	CHECK(u->menu_open == 1);
+	CHECK(u->menu_target == tf);
+	pointer(u, tf->x + 10, tf->y + 4, 0);          // right release -> menu stays
+	CHECK(u->menu_open == 1);
+	int mx = u->menu_x + 5, my = u->menu_y + NWUI_MI_SELALL * NWUI_MENU_ITEM_H + 5;
+	pointer(u, mx, my, 1); pointer(u, mx, my, 0);  // click "Select All"
+	CHECK(u->menu_open == 0);
+	CHECK(tf->anchor == 0); CHECK(tf->caret == 4);
+	pointer(u, tf->x + 10, tf->y + 4, 2); pointer(u, tf->x + 10, tf->y + 4, 0);   // reopen
+	int px = u->menu_x + 5, py = u->menu_y + NWUI_MI_PASTE * NWUI_MENU_ITEM_H + 5;
+	pointer(u, px, py, 1); pointer(u, px, py, 0);  // click "Paste"
+	CHECK(u->clip_get == 1);
 	delete u;
 }
 

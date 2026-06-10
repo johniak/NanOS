@@ -5,8 +5,9 @@
 #include <string.h>
 #include <stdarg.h>
 
-/* left mouse button = bit 0 (NW_BTN_LEFT in the wire protocol). */
-#define MOUSE_LEFT 1
+/* mouse buttons (NW_BTN_* in the wire protocol). */
+#define MOUSE_LEFT  1
+#define MOUSE_RIGHT 2
 
 /* ---- arena + builders ------------------------------------------------------------- */
 void nwui_init(nwui *u)
@@ -58,6 +59,7 @@ nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *
 	n->tcap      = cap;
 	n->tlen      = buf ? (int) strlen(buf) : 0;
 	n->caret     = n->tlen;
+	n->anchor    = n->tlen;
 	n->on_change = on_change;
 	n->user      = user;
 	n->focusable = 1;
@@ -123,6 +125,7 @@ void nwui_set_text(nwui_node *n, const char *text)
 		if (n->tbuf) n->tbuf[i] = 0;
 		n->tlen = i;
 		n->caret = i;
+		n->anchor = i;
 	} else {
 		set_caption(n, text);
 	}
@@ -269,25 +272,97 @@ static void set_focus(nwui *u, nwui_node *n)
 	if (n) { n->focused = 1; n->dirty = 1; }
 }
 
-/* Edit the focused textfield with one ASCII char (0 if none). Returns 1 if changed. */
-static int tf_edit(nwui_node *tf, char ch)
+/* ---- textfield selection + editing (caret + anchor; selection = [lo,hi)) ---- */
+static int sel_lo(const nwui_node *tf) { return tf->anchor < tf->caret ? tf->anchor : tf->caret; }
+static int sel_hi(const nwui_node *tf) { return tf->anchor > tf->caret ? tf->anchor : tf->caret; }
+static int has_sel(const nwui_node *tf) { return tf->anchor != tf->caret; }
+
+static void tf_move(nwui_node *tf, int pos, int extend)
 {
-	if (ch == 8) {                       /* backspace */
-		if (tf->caret <= 0) return 0;
-		for (int i = tf->caret - 1; i < tf->tlen - 1; i++) tf->tbuf[i] = tf->tbuf[i + 1];
-		tf->caret--; tf->tlen--;
-		tf->tbuf[tf->tlen] = 0;
-		return 1;
+	if (pos < 0) pos = 0;
+	if (pos > tf->tlen) pos = tf->tlen;
+	tf->caret = pos;
+	if (!extend) tf->anchor = pos;
+	tf->dirty = 1;
+}
+static void tf_del_range(nwui_node *tf, int lo, int hi)
+{
+	if (lo < 0) lo = 0;
+	if (hi > tf->tlen) hi = tf->tlen;
+	if (lo >= hi) return;
+	int n = hi - lo;
+	for (int i = lo; i + n <= tf->tlen; i++) tf->tbuf[i] = tf->tbuf[i + n];
+	tf->tlen -= n;
+	tf->tbuf[tf->tlen] = 0;
+	tf->caret = lo; tf->anchor = lo;
+}
+static void tf_del_sel(nwui_node *tf) { if (has_sel(tf)) tf_del_range(tf, sel_lo(tf), sel_hi(tf)); }
+
+static int tf_insert(nwui_node *tf, char ch)
+{
+	if (ch < 32 || ch >= 127) return 0;
+	if (has_sel(tf)) tf_del_sel(tf);
+	if (tf->tlen >= tf->tcap - 1) return 0;
+	for (int i = tf->tlen; i > tf->caret; i--) tf->tbuf[i] = tf->tbuf[i - 1];
+	tf->tbuf[tf->caret] = ch;
+	tf->caret++; tf->tlen++; tf->anchor = tf->caret;
+	tf->tbuf[tf->tlen] = 0;
+	return 1;
+}
+static int char_at_x(const nwui_node *tf, int px)
+{
+	int rel = px - (tf->x + NWUI_TF_PAD);
+	int i = (rel + NW_FONT_W / 2) / NW_FONT_W;   /* nearest gap */
+	if (i < 0) i = 0;
+	if (i > tf->tlen) i = tf->tlen;
+	return i;
+}
+static void tf_copy(nwui *u, nwui_node *tf)       /* selection (or all) -> the clipboard buffer */
+{
+	int lo = has_sel(tf) ? sel_lo(tf) : 0;
+	int hi = has_sel(tf) ? sel_hi(tf) : tf->tlen;
+	int n = hi - lo;
+	if (n > (int) sizeof u->clip_buf) n = (int) sizeof u->clip_buf;
+	for (int i = 0; i < n; i++) u->clip_buf[i] = tf->tbuf[lo + i];
+	u->clip_len = n;
+	u->clip_set = 1;
+}
+static void tf_changed(nwui_node *tf) { tf->dirty = 1; if (tf->on_change) tf->on_change(tf, tf->user); }
+
+/* ---- context menu ---- */
+static const char *const MENU_LABELS[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
+
+static void menu_open(nwui *u, nwui_node *tf, int x, int y)
+{
+	u->menu_open = 1; u->menu_target = tf; u->menu_hover = -1;
+	int mh = NWUI_MI_COUNT * NWUI_MENU_ITEM_H;
+	if (x + NWUI_MENU_W > u->win_w) x = u->win_w - NWUI_MENU_W;
+	if (y + mh > u->win_h) y = u->win_h - mh;
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+	u->menu_x = x; u->menu_y = y;
+	u->layout_dirty = 1;          /* simplest: repaint the frame so the popup shows/clears */
+}
+static void menu_close(nwui *u) { u->menu_open = 0; u->menu_target = 0; u->layout_dirty = 1; }
+static int menu_item_at(const nwui *u, int x, int y)
+{
+	if (x < u->menu_x || x >= u->menu_x + NWUI_MENU_W) return -1;
+	int rel = y - u->menu_y;
+	if (rel < 0) return -1;
+	int i = rel / NWUI_MENU_ITEM_H;
+	return i < NWUI_MI_COUNT ? i : -1;
+}
+static void menu_action(nwui *u, int item)
+{
+	nwui_node *tf = u->menu_target;
+	if (!tf) return;
+	switch (item) {
+	case NWUI_MI_CUT:    tf_copy(u, tf); tf_del_sel(tf); tf_changed(tf); break;
+	case NWUI_MI_COPY:   tf_copy(u, tf); break;
+	case NWUI_MI_PASTE:  u->clip_get = 1; break;   /* nwui.c -> nw_get_clipboard -> NW_EV_PASTE */
+	case NWUI_MI_SELALL: tf->anchor = 0; tf->caret = tf->tlen; tf->dirty = 1; break;
+	default: break;
 	}
-	if (ch >= 32 && ch < 127) {          /* printable insert at caret */
-		if (tf->tlen >= tf->tcap - 1) return 0;
-		for (int i = tf->tlen; i > tf->caret; i--) tf->tbuf[i] = tf->tbuf[i - 1];
-		tf->tbuf[tf->caret] = ch;
-		tf->caret++; tf->tlen++;
-		tf->tbuf[tf->tlen] = 0;
-		return 1;
-	}
-	return 0;
 }
 
 int nwui_dispatch(nwui *u, const struct nw_event *ev)
@@ -299,20 +374,45 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		break;
 
 	case NW_EV_POINTER: {
-		int left = ev->buttons & MOUSE_LEFT;
-		int prev = u->prev_buttons & MOUSE_LEFT;
+		int left  = ev->buttons & MOUSE_LEFT;
+		int right = ev->buttons & MOUSE_RIGHT;
+		int pleft = u->prev_buttons & MOUSE_LEFT;
+		int pright = u->prev_buttons & MOUSE_RIGHT;
+
+		if (u->menu_open) {                          /* the popup eats input while open */
+			int oldh = u->menu_hover;
+			u->menu_hover = menu_item_at(u, ev->x, ev->y);
+			if (oldh != u->menu_hover) u->layout_dirty = 1;   /* repaint hover */
+			if (left && !pleft) {
+				int it = menu_item_at(u, ev->x, ev->y);
+				if (it >= 0) menu_action(u, it);    /* act BEFORE close (it clears the target) */
+				menu_close(u);
+			} else if (right && !pright) {
+				menu_close(u);
+			}
+			u->prev_buttons = ev->buttons;
+			break;
+		}
+
 		nwui_node *over = nwui_hit(u->root, ev->x, ev->y);
-		if (left && !prev) {                         /* press edge */
+		if (right && !pright && over && over->kind == NWUI_TEXTFIELD) {
+			set_focus(u, over);
+			menu_open(u, over, ev->x, ev->y);        /* right-click -> context menu */
+		} else if (left && !pleft) {                 /* left press edge */
 			u->armed = over;
 			if (over && over->kind == NWUI_BUTTON) { over->pressed = 1; over->dirty = 1; }
-		} else if (!left && prev) {                  /* release edge */
-			if (u->armed && u->armed->kind == NWUI_BUTTON) { u->armed->pressed = 0; u->armed->dirty = 1; }
-			if (u->armed && over == u->armed) {
-				if (over->kind == NWUI_BUTTON) {
-					if (over->on_click) over->on_click(over, over->user);
-				} else if (over->kind == NWUI_TEXTFIELD) {
-					set_focus(u, over);
-				}
+			else if (over && over->kind == NWUI_TEXTFIELD) {
+				set_focus(u, over);
+				int c = char_at_x(over, ev->x);
+				over->caret = c; over->anchor = c; over->dirty = 1;   /* place caret, clear sel */
+			}
+		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTFIELD) {
+			u->armed->caret = char_at_x(u->armed, ev->x);            /* drag-select */
+			u->armed->dirty = 1;
+		} else if (!left && pleft) {                  /* left release edge */
+			if (u->armed && u->armed->kind == NWUI_BUTTON) {
+				u->armed->pressed = 0; u->armed->dirty = 1;
+				if (over == u->armed && over->on_click) over->on_click(over, over->user);
 			}
 			u->armed = 0;
 		}
@@ -320,14 +420,36 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		break;
 	}
 
-	case NW_EV_KEY:
-		if (ev->down && u->focus && u->focus->kind == NWUI_TEXTFIELD) {
+	case NW_EV_KEY: {
+		if (!ev->down) break;
+		if (u->menu_open) { if (ev->code == NWUI_SC_ESC) menu_close(u); break; }
+		if (!u->focus || u->focus->kind != NWUI_TEXTFIELD) break;
+		nwui_node *tf = u->focus;
+		int shift = ev->mods & 1;
+		switch (ev->code) {
+		case NWUI_SC_LEFT:  tf_move(tf, (shift || !has_sel(tf)) ? tf->caret - 1 : sel_lo(tf), shift); break;
+		case NWUI_SC_RIGHT: tf_move(tf, (shift || !has_sel(tf)) ? tf->caret + 1 : sel_hi(tf), shift); break;
+		case NWUI_SC_HOME:  tf_move(tf, 0, shift); break;
+		case NWUI_SC_END:   tf_move(tf, tf->tlen, shift); break;
+		default:
 			if (ev->ch == '\n' || ev->ch == '\r') {
-				if (u->focus->on_change) u->focus->on_change(u->focus, u->focus->user);
-			} else if (tf_edit(u->focus, ev->ch)) {
-				u->focus->dirty = 1;
-				if (u->focus->on_change) u->focus->on_change(u->focus, u->focus->user);
+				if (tf->on_change) tf->on_change(tf, tf->user);
+			} else if (ev->ch == 8) {                /* backspace */
+				if (has_sel(tf)) tf_del_sel(tf);
+				else if (tf->caret > 0) tf_del_range(tf, tf->caret - 1, tf->caret);
+				tf_changed(tf);
+			} else if (tf_insert(tf, ev->ch)) {
+				tf_changed(tf);
 			}
+			break;
+		}
+		break;
+	}
+
+	case NW_EV_COPY:
+		if (u->focus && u->focus->kind == NWUI_TEXTFIELD) {
+			tf_copy(u, u->focus);                    /* nwui.c forwards clip_buf to the server */
+			if (ev->cut) { tf_del_sel(u->focus); tf_changed(u->focus); }
 		}
 		break;
 
@@ -335,11 +457,8 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		if (u->focus && u->focus->kind == NWUI_TEXTFIELD && ev->text) {
 			int changed = 0;
 			for (int i = 0; i < ev->text_len; i++)
-				changed |= tf_edit(u->focus, ev->text[i]);
-			if (changed) {
-				u->focus->dirty = 1;
-				if (u->focus->on_change) u->focus->on_change(u->focus, u->focus->user);
-			}
+				changed |= tf_insert(u->focus, ev->text[i]);
+			if (changed) tf_changed(u->focus);
 		}
 		break;
 

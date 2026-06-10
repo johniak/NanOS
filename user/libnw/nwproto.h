@@ -27,10 +27,11 @@ enum {
 	NW_REQ_COMMIT         = 3,   /* window; a=x b=y c=w d=h; payload = c*d*4 BGRX pixels     */
 	NW_REQ_DESTROY_WINDOW = 4,   /* window                                                  */
 	NW_REQ_SET_CLIPBOARD  = 5,   /* payload=text (reply to NW_EVT_COPY)                     */
+	NW_REQ_GET_CLIPBOARD  = 6,   /* ask for the clipboard -> server replies NW_EVT_PASTE    */
 
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */
-	NW_EVT_KEY            = 65,  /* window; a=code b=down (1 press / 0 release)             */
+	NW_EVT_KEY            = 65,  /* window; a=ascii b=down c=scancode d=mods (bit0 = shift) */
 	NW_EVT_POINTER        = 66,  /* window; a=x b=y (window-relative) c=buttons bitmask     */
 	NW_EVT_FOCUS          = 67,  /* window; a=1 gained / 0 lost                             */
 	NW_EVT_CLOSE          = 68,  /* window; user asked to close (Super+Q / close box)       */

@@ -123,6 +123,11 @@ void nw_set_clipboard(nw_display *d, const char *text, int len)
 	if (len) write_all(d->reqfd, text, len);
 }
 
+void nw_get_clipboard(nw_display *d)
+{
+	send_hdr(d->reqfd, NW_REQ_GET_CLIPBOARD, 0, 0, 0, 0, 0, 0);   /* -> arrives as NW_EV_PASTE */
+}
+
 /* ---- event pump ---- */
 static int translate(nw_display *d, struct nw_event *ev)
 {
@@ -131,7 +136,7 @@ static int translate(nw_display *d, struct nw_event *ev)
 	ev->window = m->window;
 	switch (m->type) {
 	case NW_EVT_CONFIGURE: ev->type = NW_EV_CONFIGURE; ev->x = m->a; ev->y = m->b; break;
-	case NW_EVT_KEY:       ev->type = NW_EV_KEY; ev->ch = (char) m->a; ev->down = m->b; ev->code = m->c; break;
+	case NW_EVT_KEY:       ev->type = NW_EV_KEY; ev->ch = (char) m->a; ev->down = m->b; ev->code = m->c; ev->mods = m->d; break;
 	case NW_EVT_POINTER:   ev->type = NW_EV_POINTER; ev->x = m->a; ev->y = m->b; ev->buttons = m->c; break;
 	case NW_EVT_FOCUS:     ev->type = NW_EV_FOCUS; ev->focus = m->a; break;
 	case NW_EVT_CLOSE:     ev->type = NW_EV_CLOSE; break;

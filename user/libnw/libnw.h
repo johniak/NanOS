@@ -31,6 +31,7 @@ struct nw_event {
 	int       x, y, buttons;   /* POINTER */
 	int       code, down;      /* KEY: raw scancode + press/release */
 	char      ch;              /* KEY: decoded ASCII (0 if none)    */
+	int       mods;            /* KEY: modifier bitmask (bit0 = shift) */
 	int       focus;           /* FOCUS */
 	int       cut;             /* COPY: 1 = cut, 0 = copy */
 	const char *text;          /* PASTE: clipboard text (valid until next nw_next_event) */
@@ -54,6 +55,9 @@ void nw_commit(nw_win *win, int x, int y, int w, int h);
 
 /* Offer text as the clipboard contents (reply to an NW_EV_COPY). */
 void nw_set_clipboard(nw_display *d, const char *text, int len);
+
+/* Ask the compositor for the clipboard; it replies with an NW_EV_PASTE event. */
+void nw_get_clipboard(nw_display *d);
 
 /* Wait up to timeout_ms (<0 = forever, 0 = poll) for one event.
  *   1  = an event was written to *ev

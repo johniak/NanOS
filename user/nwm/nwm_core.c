@@ -385,7 +385,8 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 
 	if (s->focus >= 0) {
 		char ascii = nw_scancode_ascii(code, s->shift_down);
-		emit_win(s, s->focus, NW_EVT_KEY, (unsigned char) ascii, down, code, 0, 0, 0);
+		emit_win(s, s->focus, NW_EVT_KEY, (unsigned char) ascii, down, code,
+		         s->shift_down ? 1 : 0, 0, 0);     /* d = mods (bit0 = shift) */
 	}
 }
 
@@ -465,6 +466,12 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		s->clip_len = n;
 		break;
 	}
+	case NW_REQ_GET_CLIPBOARD:
+		/* deliver the clipboard to the requester's focused window (a menu "Paste") */
+		if (s->focus >= 0 && s->win[s->focus].client == client)
+			emit_win(s, s->focus, NW_EVT_PASTE, 0, 0, 0, 0,
+			         (const unsigned char *) s->clip, (uint32_t) s->clip_len);
+		break;
 	default:
 		break;
 	}

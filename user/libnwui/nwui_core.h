@@ -39,6 +39,7 @@ struct nwui_node {
 	char       text[NWUI_TEXT_CAP];   /* label / button caption */
 	char      *tbuf;                  /* textfield: app-owned buffer */
 	int        tcap, tlen, caret;
+	int        anchor;               /* selection anchor; selection = [min,max) when != caret */
 
 	nwui_cb    on_click, on_change;
 	void      *user;
@@ -57,6 +58,26 @@ struct nwui {
 	int        layout_dirty;      /* tree/sizes changed -> full relayout + repaint */
 	void      *io;                /* nwui.c stashes its nw_display + nw_win here; core ignores it */
 	int        closed;
+
+	/* clipboard hand-off to the I/O shell (nwui.c performs the actual nw_* call) */
+	int        clip_set;          /* set -> nwui.c does nw_set_clipboard(clip_buf, clip_len)  */
+	int        clip_get;          /* set -> nwui.c does nw_get_clipboard() (reply = a PASTE)   */
+	char       clip_buf[256];
+	int        clip_len;
+
+	/* context-menu overlay (a popup over the window; v1: the textfield's Cut/Copy/Paste/All) */
+	int        menu_open, menu_x, menu_y, menu_hover;
+	nwui_node *menu_target;
+};
+
+/* Built-in context-menu items (indices). */
+enum { NWUI_MI_CUT, NWUI_MI_COPY, NWUI_MI_PASTE, NWUI_MI_SELALL, NWUI_MI_COUNT };
+enum { NWUI_MENU_W = 110, NWUI_MENU_ITEM_H = 20 };
+
+/* Normalised scancodes for caret/selection (bit7=extended on the wire). */
+enum {
+	NWUI_SC_LEFT  = 0xCB, NWUI_SC_RIGHT = 0xCD,
+	NWUI_SC_HOME  = 0xC7, NWUI_SC_END   = 0xCF, NWUI_SC_ESC = 0x01
 };
 
 /* ---- core (pure) ---- */
