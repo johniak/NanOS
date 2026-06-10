@@ -88,7 +88,9 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	unsigned userDir = arch::mmuCurrentDirPhys();
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 
-	String pp = String((char*) path);
+	// Resolve the program path against the process cwd (so `./prog` and relative paths work),
+	// the same way every other path syscall does.
+	String pp = p->sys->resolvePath(String((char*) path));
 	FileStat st;
 	if (vfs->stat(pp, st) < 0) {
 		arch::mmuLoadDirPhys(userDir);

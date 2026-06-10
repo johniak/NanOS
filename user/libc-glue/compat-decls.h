@@ -9,9 +9,6 @@
 struct stat;
 int lstat(const char* path, struct stat* buf);
 
-/* Userland cwd resolver (user/libc-glue/cwd.c): expand a path to absolute. */
-void nx_resolve(const char* path, char* out);
-
 /* picolibc gates the POSIX timer API behind a feature macro that our freestanding
  * build doesn't set, so it declares neither clock_gettime/nanosleep nor the CLOCK_*
  * ids — but it DOES define struct timespec/clockid_t. Expose them here (impl in

@@ -435,3 +435,41 @@ TEST_CASE("ttyPgrp returns -1 for non-tty fds (console, regular file)") {
 	}
 	CHECK(sc.ttyPgrp(99) == -1);            // bad fd
 }
+
+TEST_CASE("resolvePath normalises relative and dotted paths against the cwd") {
+	Syscalls sc(mountFixture(), sink);     // default cwd "/"
+	CHECK(strcmp((char*) sc.resolvePath(String("/a/b")), "/a/b") == 0);
+	CHECK(strcmp((char*) sc.resolvePath(String("foo")), "/foo") == 0);
+	CHECK(strcmp((char*) sc.resolvePath(String("./foo")), "/foo") == 0);
+	CHECK(strcmp((char*) sc.resolvePath(String("a/../b")), "/b") == 0);
+	CHECK(strcmp((char*) sc.resolvePath(String("/a/./b/../c")), "/a/c") == 0);
+	CHECK(strcmp((char*) sc.resolvePath(String("/..")), "/") == 0);   // can't escape root
+}
+
+TEST_CASE("chdir/getcwd track the cwd; relative paths then resolve under it") {
+	Syscalls sc(mountFixture(), sink);
+	char cwd[64];
+	CHECK(sc.getcwd(cwd, sizeof cwd) > 0);
+	CHECK(strcmp(cwd, "/") == 0);
+	CHECK(sc.chdir(String("/boot")) == 0);
+	CHECK(sc.getcwd(cwd, sizeof cwd) > 0);
+	CHECK(strcmp(cwd, "/boot") == 0);
+	CHECK(strcmp((char*) sc.resolvePath(String("grub")), "/boot/grub") == 0);
+	LinuxStat st;
+	CHECK(sc.stat(String("grub"), &st) == 0);    // a relative stat resolves under /boot
+}
+
+TEST_CASE("chdir rejects non-directories and missing paths") {
+	Syscalls sc(mountFixture(), sink);
+	CHECK(sc.chdir(String("/hello.txt")) == -ENOTDIR);
+	CHECK(sc.chdir(String("/nope")) == -ENOENT);
+}
+
+TEST_CASE("fork (copy) inherits the working directory") {
+	Syscalls parent(mountFixture(), sink);
+	CHECK(parent.chdir(String("/boot")) == 0);
+	Syscalls child(parent);                // the copy ctor is fork(2)
+	char cwd[64];
+	CHECK(child.getcwd(cwd, sizeof cwd) > 0);
+	CHECK(strcmp(cwd, "/boot") == 0);      // child starts in the parent's directory
+}

@@ -30,6 +30,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	this->consoleWrite = cw;
 	this->exited = false;
 	this->exitCode = 0;
+	this->m_cwd = String("/");
 	initCookedTermios(consoleTermios);
 	for (int i = 0; i < MAXFD; i++) {
 		fds[i].used = false;
@@ -55,6 +56,7 @@ Syscalls::Syscalls(const Syscalls& o) {
 	vfs = o.vfs;
 	consoleWrite = o.consoleWrite;
 	consoleTermios = o.consoleTermios;   // inherit the parent's terminal settings
+	m_cwd = o.m_cwd;                     // child inherits the parent's working directory
 	exited = o.exited;
 	exitCode = o.exitCode;
 	for (int i = 0; i < MAXFD; i++) {
@@ -75,6 +77,7 @@ Syscalls::~Syscalls() {
 }
 
 int Syscalls::open(String path, int flags) {
+	path = resolvePath(path);   // relative -> against the process cwd (stored absolute on the fd)
 	FileStat st;
 	bool exists = vfs->stat(path, st) >= 0;
 	// O_CREAT (and O_TRUNC) ask the filesystem to make-or-truncate the file. On a
@@ -335,6 +338,7 @@ static void fillStat(LinuxStat* out, const FileStat& st) {
 }
 
 int Syscalls::stat(String path, LinuxStat* out) {
+	path = resolvePath(path);
 	FileStat st;
 	if (vfs->stat(path, st) < 0)
 		return -ENOENT;
@@ -343,6 +347,7 @@ int Syscalls::stat(String path, LinuxStat* out) {
 }
 
 int Syscalls::lstat(String path, LinuxStat* out) {
+	path = resolvePath(path);
 	FileStat st;
 	if (vfs->lstat(path, st) < 0)
 		return -ENOENT;
@@ -351,7 +356,7 @@ int Syscalls::lstat(String path, LinuxStat* out) {
 }
 
 int Syscalls::readlink(String path, char* buf, unsigned size) {
-	return vfs->readlink(path, buf, size);
+	return vfs->readlink(resolvePath(path), buf, size);
 }
 
 int Syscalls::fstat(int fd, LinuxStat* out) {
@@ -450,11 +455,82 @@ int Syscalls::ttyPgrp(int fd) {
 }
 
 int Syscalls::unlink(String path) {
-	return vfs->unlink(path);
+	return vfs->unlink(resolvePath(path));
 }
 
 int Syscalls::mkdir(String path, int mode) {
-	return vfs->mkdir(path, (unsigned) mode);
+	return vfs->mkdir(resolvePath(path), (unsigned) mode);
+}
+
+// Normalise any path to a clean absolute one: relative paths join onto the cwd, then "."
+// and empty components drop and ".." pops the previous component ("foo/../bar" -> "/bar").
+// Pure string work over char buffers (host-testable). This is what makes a child process
+// inherit its parent's directory — the cwd lives in the kernel, not faked per-process.
+String Syscalls::resolvePath(String path) {
+	const char* in = (char*) path;
+	char joined[512];
+	if (in && in[0] == '/') {
+		unsigned i = 0;
+		while (in[i] && i < 511) { joined[i] = in[i]; i++; }
+		joined[i] = 0;
+	} else {
+		const char* base = (char*) m_cwd;
+		unsigned l = 0;
+		while (base && base[l] && l < 511) { joined[l] = base[l]; l++; }
+		if (l == 0) { joined[l++] = '/'; }
+		if (joined[l - 1] != '/' && l < 511) joined[l++] = '/';
+		for (unsigned k = 0; in && in[k] && l < 511; k++) joined[l++] = in[k];
+		joined[l] = 0;
+	}
+
+	// Split on '/', dropping ""/"." and popping the previous segment on "..".
+	const char* seg[64];
+	int seglen[64], n = 0;
+	const char* p = joined;
+	while (*p) {
+		while (*p == '/') p++;
+		if (!*p) break;
+		const char* s = p;
+		while (*p && *p != '/') p++;
+		int len = (int) (p - s);
+		if (len == 1 && s[0] == '.') continue;
+		if (len == 2 && s[0] == '.' && s[1] == '.') { if (n > 0) n--; continue; }
+		if (n < 64) { seg[n] = s; seglen[n] = len; n++; }
+	}
+
+	char out[512];
+	char* o = out;
+	char* end = out + 510;
+	if (n == 0) return String("/");
+	for (int i = 0; i < n && o < end; i++) {
+		*o++ = '/';
+		for (int k = 0; k < seglen[i] && o < end; k++)
+			*o++ = seg[i][k];
+	}
+	*o = 0;
+	return String(out);
+}
+
+int Syscalls::chdir(String path) {
+	String abs = resolvePath(path);
+	FileStat st;
+	if (vfs->stat(abs, st) < 0)
+		return -ENOENT;
+	if (st.type != NODE_DIR)
+		return -ENOTDIR;
+	m_cwd = abs;
+	return 0;
+}
+
+int Syscalls::getcwd(char* buf, unsigned size) {
+	const char* c = (char*) m_cwd;
+	unsigned len = 0;
+	while (c && c[len]) len++;
+	if (size == 0 || len + 1 > size)
+		return -ERANGE;
+	for (unsigned i = 0; i <= len; i++)   // includes the NUL
+		buf[i] = c[i];
+	return (int) (len + 1);               // Linux getcwd returns the length incl. NUL
 }
 
 int Syscalls::fcntl(int fd, int cmd, int arg) {

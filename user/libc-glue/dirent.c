@@ -30,9 +30,7 @@ struct __dirstream {
 };
 
 DIR* opendir(const char* path) {
-	char abs[256];
-	nx_resolve(path, abs);
-	int fd = sys3(SYS_open, (int) abs, 0, 0);
+	int fd = sys3(SYS_open, (int) path, 0, 0);   // kernel resolves relative paths vs the cwd
 	if (fd < 0)
 		return 0;
 	DIR* d = (DIR*) malloc(sizeof(DIR));

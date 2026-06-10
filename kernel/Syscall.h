@@ -25,6 +25,8 @@ namespace kernel {
 #define EROFS 30
 #define EMFILE 24
 #define EPIPE 32
+#define ENOTDIR 20
+#define ERANGE 34
 
 // poll(2) event/revent bits live in CharDevice.h (included above) — single source.
 struct PollFd { int fd; short events; short revents; };
@@ -88,6 +90,7 @@ class Syscalls {
 	Vfs* vfs;
 	ConsoleWriteFn consoleWrite;
 	Termios consoleTermios;   // real terminal settings for the console fds (0/1/2)
+	String m_cwd;             // current working directory (absolute); inherited on fork, kept on execve
 	bool exited;
 	int exitCode;
 
@@ -111,6 +114,13 @@ public:
 	int fstat(int fd, LinuxStat* out);
 	int unlink(String path);              // remove a file (writable fs only)
 	int mkdir(String path, int mode);     // create a directory (writable fs only)
+	// Working directory (Linux model: kernel-tracked per process, inherited by fork, kept
+	// across execve). chdir validates the target is a directory; getcwd copies it out.
+	// resolvePath turns any path (relative -> against the cwd) into a clean absolute path,
+	// normalising '.'/'..'; every path-taking syscall runs it, so programs need not resolve.
+	int chdir(String path);
+	int getcwd(char* buf, unsigned size);
+	String resolvePath(String path);
 	int getdents64(int fd, void* buf, unsigned n);
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL, F_GETFD/F_SETFD, F_DUPFD[_CLOEXEC]

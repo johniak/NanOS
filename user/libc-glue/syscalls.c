@@ -46,9 +46,7 @@ static int reterr(int r) {
 int write(int fd, const void* b, int n) { return reterr(sys3(SYS_write, fd, (int) b, n)); }
 int read(int fd, void* b, int n)        { return reterr(sys3(SYS_read, fd, (int) b, n)); }
 int open(const char* p, int fl, ...) {
-	char abs[256];
-	nx_resolve(p, abs);
-	return reterr(sys3(SYS_open, (int) abs, fl, 0));
+	return reterr(sys3(SYS_open, (int) p, fl, 0));   // kernel resolves relative paths vs the cwd
 }
 int close(int fd)                       { return reterr(sys3(SYS_close, fd, 0, 0)); }
 /* pipe/dup/dup2: descriptor plumbing for shells (pipelines, redirection) and the terminal
@@ -101,14 +99,10 @@ int fcntl(int fd, int cmd, ...) {
 }
 int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off, wh)); }
 int unlink(const char* p) {
-	char abs[256];
-	nx_resolve(p, abs);
-	return reterr(sys3(SYS_unlink, (int) abs, 0, 0));
+	return reterr(sys3(SYS_unlink, (int) p, 0, 0));
 }
 int mkdir(const char* p, mode_t mode) {
-	char abs[256];
-	nx_resolve(p, abs);
-	return reterr(sys3(SYS_mkdir, (int) abs, (int) mode, 0));
+	return reterr(sys3(SYS_mkdir, (int) p, (int) mode, 0));
 }
 /* rename(2): NanOS has no rename syscall, so do it in userland — copy the old file to the
  * new name, then unlink the old. Both ends are ordinary files (Doom uses it to finalize a
@@ -345,10 +339,8 @@ int putenv(char* str) {
  * kernel rewrites the trap frame so the iret lands in the new program); on failure it
  * returns -1 with errno set. A NULL envp inherits the caller's current environment. */
 int execve(const char* path, char* const argv[], char* const envp[]) {
-	char abs[256];
-	nx_resolve(path, abs);
 	if (!envp) envp = environ;
-	return reterr(sys3(SYS_execve, (int) abs, (int) argv, (int) envp));
+	return reterr(sys3(SYS_execve, (int) path, (int) argv, (int) envp));
 }
 
 /* Console input mode: 0 = cooked (line-edited), 1 = raw (per-key). The shell uses
@@ -420,20 +412,16 @@ static void fillstat(struct stat* o, const struct knl_stat* k) {
 	o->st_blksize = 512;
 }
 int stat(const char* p, struct stat* o) {
-	char abs[256];
-	nx_resolve(p, abs);
 	struct knl_stat k;
-	int r = sys3(SYS_stat, (int) abs, (int) &k, 0);
+	int r = sys3(SYS_stat, (int) p, (int) &k, 0);
 	if (r < 0) { errno = -r; return -1; }
 	fillstat(o, &k);
 	return 0;
 }
 /* lstat: stat the link itself (the kernel resolves all but the final component). */
 int lstat(const char* p, struct stat* o) {
-	char abs[256];
-	nx_resolve(p, abs);
 	struct knl_stat k;
-	int r = sys3(SYS_lstat, (int) abs, (int) &k, 0);
+	int r = sys3(SYS_lstat, (int) p, (int) &k, 0);
 	if (r < 0) { errno = -r; return -1; }
 	fillstat(o, &k);
 	return 0;

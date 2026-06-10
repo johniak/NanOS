@@ -226,6 +226,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_mkdir:
 		ret = g_sys->mkdir(String((char*) a0), (int) a1);
 		break;
+	case SYS_chdir:
+		ret = g_sys->chdir(String((char*) a0));
+		break;
+	case SYS_getcwd:
+		ret = g_sys->getcwd((char*) a0, a1);
+		break;
 	case SYS_lseek:
 		ret = g_sys->lseek(a0, a1, a2);
 		break;
