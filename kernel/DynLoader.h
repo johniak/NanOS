@@ -61,8 +61,13 @@ public:
 	int count() const { return m_count; }
 
 private:
-	static const int MAX = 512;
-	static const int POOL = 16384;
+	// Sized to hold a whole C library's export set with headroom. libc.ndl exports the full
+	// picolibc surface (~1300 symbols, ~14 KB of names) so a hosted port like bash resolves
+	// every libc reference; the previous 512/16 KB caps silently dropped exports past the
+	// limit (add() returns false), which left late-registered symbols like execve/exit
+	// unresolvable and PID 1 failing to load. ~50 KB per table, heap-allocated per needed lib.
+	static const int MAX = 2048;
+	static const int POOL = 32768;
 	char m_pool[POOL];
 	int m_poolUsed;
 	const char* m_names[MAX];
