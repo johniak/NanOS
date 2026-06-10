@@ -92,6 +92,14 @@ TEST_CASE("KeyDecoder: a held Ctrl emits nothing on its own; digits pass through
 	CHECK(r.ev[0] == '1');
 }
 
+TEST_CASE("KeyDecoder: Tab is delivered as '\\t' (readline completion needs it)") {
+	KeyDecoder d;
+	Rec r;
+	d.feed(0x0F, r);          // Tab
+	REQUIRE(r.n == 1);
+	CHECK(r.ev[0] == '\t');
+}
+
 TEST_CASE("KeyDecoder: Shift produces uppercase letters and upper-glyph symbols") {
 	KeyDecoder d;
 	Rec r;
