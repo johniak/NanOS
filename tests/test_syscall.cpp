@@ -155,6 +155,19 @@ TEST_CASE("sys errors: bad fd, missing path, write to read-only file") {
 	CHECK(sc.read(fd, buf, 8) == -9);          // closed -> -EBADF
 }
 
+TEST_CASE("closeAll releases every descriptor at exit so pipe peers see EOF") {
+	Syscalls sc(mountFixture(), sink);
+	int fd = sc.open("/hello.txt", 0);
+	CHECK(fd >= 3);
+	int p[2];
+	CHECK(sc.pipe(p) == 0);
+	sc.closeAll();
+	char b[8];
+	CHECK(sc.read(fd, b, 8) == -9);            // file fd closed -> -EBADF
+	CHECK(sc.read(p[0], b, 8) == -9);          // pipe read end closed -> -EBADF
+	sc.closeAll();                              // idempotent: safe to run again at reap
+}
+
 TEST_CASE("sys_fstat reports size and file type") {
 	Syscalls sc(mountFixture(), sink);
 	int fd = sc.open("/hello.txt", 0);

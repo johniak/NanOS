@@ -76,6 +76,15 @@ Syscalls::~Syscalls() {
 			close(i);
 }
 
+// Close every open descriptor at process exit (procExit/procKill), so a pipe's last writer
+// going away surfaces EOF to the reader immediately — not only when the parent reaps the
+// zombie. Idempotent: close() skips already-closed fds, so the destructor at reap is a no-op.
+void Syscalls::closeAll() {
+	for (int i = 0; i < MAXFD; i++)
+		if (fds[i].used)
+			close(i);
+}
+
 int Syscalls::open(String path, int flags) {
 	path = resolvePath(path);   // relative -> against the process cwd (stored absolute on the fd)
 	FileStat st;

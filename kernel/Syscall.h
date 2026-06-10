@@ -125,6 +125,8 @@ public:
 	int ioctl(int fd, unsigned cmd, void* arg);
 	int fcntl(int fd, int cmd, int arg);   // F_GETFL/F_SETFL, F_GETFD/F_SETFD, F_DUPFD[_CLOEXEC]
 	void closeCloexec();                   // close every FD_CLOEXEC descriptor (called at execve)
+	void closeAll();                       // close every open descriptor (called at process exit,
+	                                       // so pipe peers see EOF without waiting for the reap)
 	// True when the console termios has canonical mode (ICANON) cleared, i.e. the line
 	// discipline should be raw. The dispatch reads this after a console TCSETS to drive
 	// arch::inputSetRaw, so tcsetattr(raw) actually switches the input mode.

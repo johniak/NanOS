@@ -213,6 +213,8 @@ void procExit() {
 	Process* p = ProcTable::current();
 	p->exitCode = p->sys->code();
 	p->exited = true;
+	p->sys->closeAll();      // drop fd/pipe refcounts NOW so peers (e.g. a window server) see
+	                         // EOF at exit, not only when the parent reaps this zombie
 	orphanCheckOnExit(p);    // re-parent fallout: SIGHUP+SIGCONT any newly-orphaned stopped group
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
@@ -295,6 +297,7 @@ static void procKill(int sig) {
 	p->termSignal = sig;
 	p->exitCode = sig;
 	p->exited = true;
+	p->sys->closeAll();      // release fds/pipes at death so peers see EOF before the reap
 	orphanCheckOnExit(p);    // same orphan-group handling as a normal exit
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
