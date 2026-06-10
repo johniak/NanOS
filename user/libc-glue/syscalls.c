@@ -18,6 +18,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <poll.h>
 
 /* Force the stdin stream object to be linked. picolibc's tinystdio pulls stdin/stdout/
@@ -135,6 +136,24 @@ void (*signal(int sig, void (*handler)(int)))(int) {
 	int r = sys3(SYS_signal, sig, (int) handler, (int) &__nx_sigtramp);
 	if (r < 0) { errno = -r; return (void (*)(int)) -1; }   /* SIG_ERR */
 	return (void (*)(int)) r;
+}
+
+/* sigaction(2): implemented over SYS_signal. The struct layout lives in picolibc's headers
+ * (compiled here), so sa_handler/sa_mask read at the right offsets. Our kernel signals
+ * always carry SA_RESTART (BSD semantics) and auto-handle the trampoline, so sa_flags/
+ * sa_mask beyond the handler are not separately honored. act == NULL queries without
+ * changing (handler sentinel -1). Returns the previous handler in `old`. */
+int sigaction(int sig, const struct sigaction* act, struct sigaction* old) {
+	int prev = act
+		? sys3(SYS_signal, sig, (int) (size_t) act->sa_handler, (int) &__nx_sigtramp)
+		: sys3(SYS_signal, sig, -1 /* query, do not change */, 0);
+	if (prev < 0 && prev > -256) { errno = -prev; return -1; }
+	if (old) {
+		old->sa_handler = (void (*)(int)) (size_t) prev;
+		old->sa_flags = 0;
+		memset(&old->sa_mask, 0, sizeof old->sa_mask);
+	}
+	return 0;
 }
 /* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the
  * monotonic tick count. Real per-process CPU accounting, not a 0 stub. */

@@ -368,6 +368,8 @@ int signalAction(int sig, unsigned handler, unsigned restorer) {
 		return -22;   // -EINVAL
 	Process* p = ProcTable::current();
 	unsigned prev = p->sig.handlers[sig];
+	if (handler == 0xFFFFFFFFu)
+		return (int) prev;   // query only (sigaction with act == NULL): don't change anything
 	p->sig.handlers[sig] = handler;
 	if (restorer)
 		p->sig.restorer = restorer;
