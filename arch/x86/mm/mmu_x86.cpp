@@ -68,7 +68,7 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 	// Re-reserve the windows the frame pool must never hand out.
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint32_t) (unsigned) &end - 0x100000); // kernel image
-	fa.markRangeUsed(0x400000, 0x100000);                           // user window
+	fa.markRangeUsed(0x400000, 0x400000);                           // exec staging window (4 MiB)
 	uint32_t heapBase = 0x75BCD15 & kernel::PAGE_MASK;              // kernel byte heap
 	fa.markRangeUsed(heapBase, topOfRam - heapBase);
 	// Lay out the kernel heap over its reserved region before the first malloc below.

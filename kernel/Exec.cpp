@@ -37,12 +37,13 @@ static void initBrk(Process* p) {
 	p->brkMax = arch::mmuUserHeapMax();
 }
 
-// The staging window: the reserved 1 MiB at 0x400000 (see mmu_x86.cpp markRangeUsed).
-// The image is read here, bss is zeroed in place, then archLoadUser copies it into the
-// process's private frames. loadImage bounds every access to this capacity, so an image
-// whose bss/tables would overrun the window is rejected cleanly instead of corrupting RAM.
+// The staging window: the reserved 4 MiB at 0x400000 (see mmu_x86.cpp markRangeUsed) — the
+// same size as the per-process user window, so any image that fits a process (plus its load-
+// time tables) fits here. The image is read here, bss is zeroed in place, then archLoadUser
+// copies it into the process's private frames. loadImage bounds every access to this capacity,
+// and callers reject an oversize file BEFORE the read, so a large .nxe can never corrupt RAM.
 static const unsigned STAGE_BASE = 0x400000;
-static const unsigned STAGE_CAP  = 0x100000;
+static const unsigned STAGE_CAP  = 0x400000;
 
 // Load a .nxe image (already staged at the load base in the kernel identity window),
 // applying relocations + zeroing bss. EXEs load at their preferred base, so the delta is
@@ -59,6 +60,8 @@ int execProgram(Vfs* vfs, const char* path) {
 	String p = String((char*) path);
 	FileStat st;
 	if (vfs->stat(p, st) < 0)
+		return -1;
+	if (st.size > STAGE_CAP)             // too big to stage -> reject before overrunning the window
 		return -1;
 	char* image = (char*) STAGE_BASE;
 	if (vfs->read(p, st.size, 0, image) < 0)
@@ -111,6 +114,10 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	if (vfs->stat(pp, st) < 0) {
 		arch::mmuLoadDirPhys(userDir);
 		return -2;   // -ENOENT
+	}
+	if (st.size > STAGE_CAP) {            // too big to stage -> reject before overrunning the window
+		arch::mmuLoadDirPhys(userDir);
+		return -1;
 	}
 	char* image = (char*) STAGE_BASE;
 	if (vfs->read(pp, st.size, 0, image) < 0) {
