@@ -193,26 +193,56 @@ static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 	}
 }
 
-static void draw_panel(const struct nw_server *s, const struct nw_surface *back, const char *app)
+/* macOS-style global menu bar: NanoOS logo (system menu) + the focused app's menu titles, and
+ * a clock at the right. The open dropdown is drawn by draw_menu_dropdown (above everything). */
+static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
 {
 	int W = s->screen_w;
 	nw_blend_rect(back, 0, 0, W, NW_PANEL_H, COL_PANEL, 205);          /* translucent tint */
 	nw_blend_rect(back, 0, NW_PANEL_H - 1, W, 1, 0x9fb2cc, 140);        /* hairline */
 	int y = (NW_PANEL_H - NW_FONT_H) / 2;
-	draw_nanomark(back, 9, (NW_PANEL_H - 16) / 2, 16);
-	int x = 34;
-	x = nw_text(back, x, y, app && app[0] ? app : "NanoOS", COL_PANEL_FG) + 14;
-	static const char *const M[] = { "File", "Edit", "View", "Window", "Help" };
-	for (int i = 0; i < 5; i++) x = nw_text(back, x, y, M[i], COL_PANEL_MUT) + 14;
+	if (s->menu_open && s->menu_which == NW_MENU_LOGO)               /* highlight the logo slot */
+		nw_fill_round(back, 2, 2, 26, NW_PANEL_H - 4, 5, COL_TB_TOP, 90);
+	draw_nanomark(back, 7, (NW_PANEL_H - 16) / 2, 16);
 
-	/* right side: Quit / Shutdown pills + a clock placeholder */
-	int rx, ry, rw, rh;
-	nw_panel_button_rect(s, NW_PANEL_SHUTDOWN, &rx, &ry, &rw, &rh);
-	nw_fill_round(back, rx, ry, rw, rh, 6, 0xff6b6b, 235);
-	nw_text(back, rx + 8, ry + (rh - NW_FONT_H) / 2, "Shutdown", 0xffffff);
-	nw_panel_button_rect(s, NW_PANEL_QUIT, &rx, &ry, &rw, &rh);
-	nw_fill_round(back, rx, ry, rw, rh, 6, 0xffffff, 150);
-	nw_text(back, rx + 8, ry + (rh - NW_FONT_H) / 2, "Quit", COL_PANEL_FG);
+	const char *spec = (s->focus >= 0 && s->win[s->focus].used) ? s->win[s->focus].menu : "";
+	int n = nw_menu_top_count(spec);
+	if (n == 0) {                                                    /* no app menu: just a name */
+		const char *app = (s->focus >= 0 && s->win[s->focus].used)
+		                ? (s->win[s->focus].title[0] == '\x01' ? s->win[s->focus].title + 1
+		                                                       : s->win[s->focus].title) : "NanoOS";
+		nw_text(back, NW_MENU_X0, y, app && app[0] ? app : "NanoOS", COL_PANEL_FG);
+	}
+	for (int i = 0; i < n; i++) {
+		int x, w; nw_menubar_top_x(s, i, &x, &w);
+		int active = (s->menu_open && s->menu_which == i);
+		if (active) nw_fill_round(back, x, 2, w, NW_PANEL_H - 4, 5, COL_TB_TOP, 110);
+		char t[40]; nw_menu_top_title(spec, i, t, sizeof t);
+		nw_text(back, x + 7, y, t, i == 0 ? COL_PANEL_FG : COL_PANEL_MUT);   /* app name bold-ish */
+	}
+
+	if (s->clock[0]) {                                               /* clock at the right */
+		int cw = 0; while (s->clock[cw]) cw++;
+		nw_text(back, W - cw * 8 - 12, y, s->clock, COL_PANEL_FG);
+	}
+}
+
+/* The open menu dropdown, drawn last so it sits above the windows. */
+static void draw_menu_dropdown(const struct nw_server *s, const struct nw_surface *back)
+{
+	if (!s->menu_open) return;
+	int x, y, w, h; nw_menu_dropdown_rect(s, &x, &y, &w, &h);
+	int n = nw_menu_open_item_count(s);
+	nw_fill_round(back, x, y, w, h + 6, 9, 0x00f4f8fd, 246);
+	nw_stroke_round(back, x, y, w, h + 6, 9, 0x00b8c6d8, 220);
+	for (int i = 0; i < n; i++) {
+		int iy = y + 4 + i * NW_MENU_ITEM_H;
+		char lbl[64]; nw_menu_open_label(s, i, lbl, sizeof lbl);
+		if (lbl[0] == '-' && lbl[1] == 0) { nw_blend_rect(back, x + 8, iy + NW_MENU_ITEM_H / 2, w - 16, 1, 0x00b8c6d8, 200); continue; }
+		int hov = (i == s->menu_hover);
+		if (hov) nw_fill_round(back, x + 3, iy, w - 6, NW_MENU_ITEM_H, 5, 0x0012a8f4, 255);
+		nw_text(back, x + 12, iy + (NW_MENU_ITEM_H - NW_FONT_H) / 2, lbl, hov ? 0x00ffffff : 0x00172130);
+	}
 }
 
 static void draw_dock(const struct nw_server *s, const struct nw_surface *back)
@@ -237,7 +267,6 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 	if (wall) nw_blit(back, 0, 0, wall, 0, 0, back->w, back->h);
 	else      nw_fill_rect(back, 0, 0, back->w, back->h, 0x1e2a3a);
 
-	const char *app = "NanoOS";
 	for (int z = 0; z < s->zn; z++) {
 		int idx = s->zorder[z];
 		const struct nw_window *w = &s->win[idx];
@@ -251,10 +280,10 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		} else {
 			draw_window_to(back, w, focused);     /* simple/host path: opaque, square */
 		}
-		if (focused) app = (w->title[0] == '\x01') ? w->title + 1 : w->title;
 	}
-	draw_panel(s, back, app);
+	draw_panel(s, back);
 	draw_dock(s, back);
+	draw_menu_dropdown(s, back);                  /* the open menu, above the windows */
 
 	if (s->run_open) {                            /* Super+R launcher, above everything */
 		int x, y, w, h;

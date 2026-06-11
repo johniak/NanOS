@@ -138,6 +138,15 @@ void nw_spawn(nw_display *d, const char *cmd)
 	if (len) write_all(d->reqfd, cmd, len);
 }
 
+void nw_set_menu(nw_display *d, const char *spec)
+{
+	int len = 0;
+	while (spec && spec[len]) len++;
+	if (send_hdr(d->reqfd, NW_REQ_SET_MENU, 0, 0, 0, 0, 0, (uint32_t) len) < 0)
+		return;
+	if (len) write_all(d->reqfd, spec, len);
+}
+
 /* ---- event pump ---- */
 static int translate(nw_display *d, struct nw_event *ev)
 {
@@ -152,6 +161,7 @@ static int translate(nw_display *d, struct nw_event *ev)
 	case NW_EVT_CLOSE:     ev->type = NW_EV_CLOSE; break;
 	case NW_EVT_COPY:      ev->type = NW_EV_COPY; ev->cut = m->a; break;
 	case NW_EVT_PASTE:     ev->type = NW_EV_PASTE; ev->text = (const char *) d->decpay; ev->text_len = (int) m->length; break;
+	case NW_EVT_MENU:      ev->type = NW_EV_MENU; ev->menu = m->a; ev->item = m->b; break;
 	default:               ev->type = NW_EV_NONE; break;
 	}
 	return 1;

@@ -76,6 +76,13 @@ const char *nwui_get_text(nwui_node *n);
  * Run dialog does — used e.g. by a file manager to open/run an app. Fire-and-forget. */
 void        nwui_spawn(nwui *u, const char *cmd);
 
+/* ---- application menu (shown in the global macOS-style menu bar) ----
+ * Declare top menus + items before nwui_run; the toolkit sends them to the compositor and
+ * invokes the item's callback when the user picks it. The first menu's title is the app name. */
+int         nwui_menu(nwui *u, const char *title);        /* add a top menu -> its index */
+void        nwui_menu_item(nwui *u, int menu, const char *label, nwui_cb on_select, void *user);
+void        nwui_menu_separator(nwui *u, int menu);
+
 #ifdef __cplusplus
 }
 #endif

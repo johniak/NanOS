@@ -59,6 +59,11 @@ static void paint(nwui *u)
 void nwui_run(nwui *u)
 {
 	struct nwui_io *io = (struct nwui_io *) u->io;
+	if (u->nappmenu > 0) {                      /* publish the app menu to the global bar */
+		char spec[512];
+		nwui_menu_encode(u, spec, sizeof spec);
+		nw_set_menu(io->d, spec);
+	}
 	u->layout_dirty = 1;
 	paint(u);                                  /* first frame */
 	struct nw_event ev;
@@ -68,6 +73,11 @@ void nwui_run(nwui *u)
 			break;                             /* compositor gone */
 		if (r == 0)
 			continue;
+		if (ev.type == NW_EV_MENU) {           /* a global-menu item was chosen */
+			nwui_menu_dispatch(u, ev.menu, ev.item);
+			paint(u);
+			continue;
+		}
 		u->now_ms = now_ms();                  /* stamp time so the core can detect double-clicks */
 		if (!nwui_dispatch(u, &ev))            /* CLOSE */
 			break;

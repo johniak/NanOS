@@ -214,33 +214,6 @@ int nw_hit(const struct nw_server *s, int sx, int sy, int *region)
 	return -1;
 }
 
-/* ---- top panel (menu bar) --------------------------------------------------------- */
-void nw_panel_button_rect(const struct nw_server *s, int id, int *x, int *y, int *w, int *h)
-{
-	const int GW = 8;                            /* glyph width */
-	int qw = 4 * GW + 12;                        /* "Quit"     */
-	int sw = 8 * GW + 12;                        /* "Shutdown" */
-	int qx = s->screen_w - qw - 6;
-	int sxb = qx - sw - 6;
-	*y = 2; *h = NW_PANEL_H - 4;
-	if (id == NW_PANEL_SHUTDOWN) { *x = sxb; *w = sw; }
-	else                         { *x = qx;  *w = qw; }   /* default: quit */
-}
-
-int nw_panel_hit(const struct nw_server *s, int x, int y)
-{
-	if (y < 0 || y >= NW_PANEL_H)
-		return NW_PANEL_NONE;
-	int bx, by, bw, bh;
-	nw_panel_button_rect(s, NW_PANEL_QUIT, &bx, &by, &bw, &bh);
-	if (x >= bx && x < bx + bw && y >= by && y < by + bh)
-		return NW_PANEL_QUIT;
-	nw_panel_button_rect(s, NW_PANEL_SHUTDOWN, &bx, &by, &bw, &bh);
-	if (x >= bx && x < bx + bw && y >= by && y < by + bh)
-		return NW_PANEL_SHUTDOWN;
-	return NW_PANEL_NONE;
-}
-
 /* ---- Run dialog (Super+R launcher) ------------------------------------------------ */
 void nw_run_rect(const struct nw_server *s, int *x, int *y, int *w, int *h)
 {
@@ -287,6 +260,149 @@ int nw_run_take_spawn(struct nw_server *s, char *out, int cap)
 	return 1;
 }
 
+/* ---- global menu bar -------------------------------------------------------------- */
+#define MENU_SEP_REC ((char) 0x1e)   /* between top menus */
+#define MENU_SEP_FLD ((char) 0x1f)   /* between a menu's title + item labels */
+
+/* The logo (system) menu is compositor-owned. */
+static const char *const LOGO_ITEMS[3] = { "About This Computer", "Shut Down", "Quit" };
+enum { LOGO_NITEMS = 3 };
+
+static const char *focus_spec(const struct nw_server *s)
+{
+	return (s->focus >= 0 && s->win[s->focus].used) ? s->win[s->focus].menu : "";
+}
+static const char *menu_seg(const char *spec, int idx)   /* start of top menu `idx`, or 0 */
+{
+	const char *p = spec; int cur = 0;
+	if (!spec || !spec[0]) return 0;
+	while (*p && cur < idx) { if (*p == MENU_SEP_REC) cur++; p++; }
+	return cur == idx ? p : 0;
+}
+
+int nw_menu_top_count(const char *spec)
+{
+	if (!spec || !spec[0]) return 0;
+	int n = 1;
+	for (const char *p = spec; *p; p++) if (*p == MENU_SEP_REC) n++;
+	return n;
+}
+int nw_menu_top_title(const char *spec, int i, char *out, int cap)
+{
+	out[0] = 0;
+	const char *p = menu_seg(spec, i); if (!p) return 0;
+	int n = 0;
+	while (*p && *p != MENU_SEP_FLD && *p != MENU_SEP_REC && n < cap - 1) out[n++] = *p++;
+	out[n] = 0; return n;
+}
+int nw_menu_item_count(const char *spec, int menu)
+{
+	const char *p = menu_seg(spec, menu); if (!p) return 0;
+	int n = 0;
+	while (*p && *p != MENU_SEP_REC) { if (*p == MENU_SEP_FLD) n++; p++; }
+	return n;                                  /* fields after the title = item count */
+}
+int nw_menu_item_label(const char *spec, int menu, int item, char *out, int cap)
+{
+	out[0] = 0;
+	const char *p = menu_seg(spec, menu); if (!p) return 0;
+	int field = 0;
+	while (*p && *p != MENU_SEP_REC) {          /* advance to field (item+1): 0=title */
+		if (*p == MENU_SEP_FLD) { field++; p++; if (field == item + 1) break; continue; }
+		p++;
+	}
+	if (field != item + 1) return 0;
+	int n = 0;
+	while (*p && *p != MENU_SEP_FLD && *p != MENU_SEP_REC && n < cap - 1) out[n++] = *p++;
+	out[n] = 0; return 1;
+}
+
+void nw_menubar_top_x(const struct nw_server *s, int i, int *x, int *w)
+{
+	const char *spec = focus_spec(s);
+	int cx = NW_MENU_X0;
+	for (int k = 0; k <= i; k++) {
+		char t[40]; int tl = nw_menu_top_title(spec, k, t, sizeof t);
+		int ww = tl * 8 + 14;
+		if (k == i) { *x = cx; *w = ww; return; }
+		cx += ww;
+	}
+	*x = cx; *w = 0;
+}
+int nw_menubar_hit(const struct nw_server *s, int px, int py)
+{
+	if (py < 0 || py >= NW_PANEL_H) return NW_MENU_NONE;
+	if (px >= 4 && px < 28) return NW_MENU_LOGO;       /* the NanoOS mark */
+	int n = nw_menu_top_count(focus_spec(s));
+	for (int i = 0; i < n; i++) { int x, w; nw_menubar_top_x(s, i, &x, &w); if (px >= x && px < x + w) return i; }
+	return NW_MENU_NONE;
+}
+
+int nw_menu_open_item_count(const struct nw_server *s)
+{
+	if (!s->menu_open) return 0;
+	if (s->menu_which == NW_MENU_LOGO) return LOGO_NITEMS;
+	return nw_menu_item_count(focus_spec(s), s->menu_which);
+}
+int nw_menu_open_label(const struct nw_server *s, int i, char *out, int cap)
+{
+	if (s->menu_which == NW_MENU_LOGO) {
+		if (i < 0 || i >= LOGO_NITEMS) { out[0] = 0; return 0; }
+		int n = 0; const char *l = LOGO_ITEMS[i];
+		while (l[n] && n < cap - 1) { out[n] = l[n]; n++; } out[n] = 0; return 1;
+	}
+	return nw_menu_item_label(focus_spec(s), s->menu_which, i, out, cap);
+}
+void nw_menu_dropdown_rect(const struct nw_server *s, int *x, int *y, int *w, int *h)
+{
+	int dx;
+	if (s->menu_which == NW_MENU_LOGO) dx = 4;
+	else { int ww; nw_menubar_top_x(s, s->menu_which, &dx, &ww); }
+	*x = dx; *y = NW_PANEL_H;
+	*w = NW_MENU_DROP_W;
+	*h = nw_menu_open_item_count(s) * NW_MENU_ITEM_H;
+}
+int nw_menu_item_at(const struct nw_server *s, int px, int py)
+{
+	int x, y, w, h; nw_menu_dropdown_rect(s, &x, &y, &w, &h);
+	if (px < x || px >= x + w || py < y || py >= y + h) return -1;
+	int it = (py - y) / NW_MENU_ITEM_H;
+	return it < nw_menu_open_item_count(s) ? it : -1;
+}
+
+static void damage_menu(struct nw_server *s)        /* repaint the whole bar + a dropdown column */
+{
+	damage(s, 0, 0, s->screen_w, NW_PANEL_H + (s->menu_open ? NW_MENU_DROP_W : 0));
+	if (s->menu_open) { int x, y, w, h; nw_menu_dropdown_rect(s, &x, &y, &w, &h); damage(s, x, y, w + 2, h + 2); }
+}
+static void menu_open(struct nw_server *s, int which)
+{
+	s->menu_open = 1; s->menu_which = which; s->menu_hover = -1; damage_menu(s);
+}
+static void menu_close(struct nw_server *s)
+{
+	if (!s->menu_open) return;
+	int x, y, w, h; nw_menu_dropdown_rect(s, &x, &y, &w, &h);   /* damage the open dropdown... */
+	s->menu_open = 0;
+	damage(s, x, y, w + 2, h + 8);                             /* ...before clearing the flag */
+	damage(s, 0, 0, s->screen_w, NW_PANEL_H);
+}
+
+static void menu_activate(struct nw_server *s, int item)   /* an item was chosen */
+{
+	if (s->menu_which == NW_MENU_LOGO) {
+		if (item == 0) {                            /* About This Computer */
+			const char *cmd = "nwabout"; int i = 0;
+			for (; cmd[i] && i < NW_RUN_MAX - 1; i++) s->run_cmd[i] = cmd[i];
+			s->run_cmd[i] = 0; s->want_spawn = 1;
+		} else if (item == 1) s->want_shutdown = 1;  /* Shut Down */
+		else if (item == 2) s->want_quit = 1;        /* Quit (leave the desktop) */
+	} else if (s->focus >= 0) {
+		emit_win(s, s->focus, NW_EVT_MENU, s->menu_which, item, 0, 0, 0, 0);
+	}
+	menu_close(s);
+}
+
 /* ---- pointer ---------------------------------------------------------------------- */
 void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 {
@@ -300,6 +416,20 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 	int left_now = buttons & NW_BTN_LEFT;
 	int left_was = s->buttons & NW_BTN_LEFT;
 
+	if (s->menu_open) {                              /* an open dropdown eats input */
+		int oldh = s->menu_hover;
+		s->menu_hover = nw_menu_item_at(s, sx, sy);
+		if (s->menu_hover != oldh) damage_menu(s);
+		int onbar = nw_menubar_hit(s, sx, sy);
+		if (onbar != NW_MENU_NONE && onbar != s->menu_which) menu_open(s, onbar);  /* hover-switch */
+		if (left_now && !left_was) {
+			if (s->menu_hover >= 0)        menu_activate(s, s->menu_hover);
+			else if (onbar == NW_MENU_NONE) menu_close(s);
+		}
+		s->cursor_x = sx; s->cursor_y = sy; s->buttons = buttons;
+		return;
+	}
+
 	if (s->drag_win >= 0) {
 		if (left_now) {
 			damage_frame(s, s->drag_win);            /* erase the old position */
@@ -309,11 +439,10 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 		} else {
 			s->drag_win = -1;          /* drop on release */
 		}
-	} else if (left_now && !left_was && sy < NW_PANEL_H) {   /* press on the top panel */
-		int b = nw_panel_hit(s, sx, sy);
-		if (b == NW_PANEL_QUIT)          s->want_quit = 1;
-		else if (b == NW_PANEL_SHUTDOWN) s->want_shutdown = 1;
-		/* panel area: consume, never reaches the windows below */
+	} else if (left_now && !left_was && sy < NW_PANEL_H) {   /* press on the menu bar */
+		int which = nw_menubar_hit(s, sx, sy);
+		if (which != NW_MENU_NONE) menu_open(s, which);     /* logo or an app menu -> dropdown */
+		/* bar area: consume, never reaches the windows below */
 	} else if (left_now && !left_was) {    /* press edge on the desktop */
 		int region;
 		int widx = nw_hit(s, sx, sy, &region);
@@ -459,6 +588,18 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		/* damage just the committed rect, in screen coordinates */
 		damage(s, s->win[idx].x + NW_BORDER + m->a, s->win[idx].y + NW_TITLEBAR_H + m->b,
 		       m->c, m->d);
+		break;
+	}
+	case NW_REQ_SET_MENU: {
+		int idx = -1;                              /* the client's window (clients have one) */
+		for (int i = 0; i < NW_MAX_WINDOWS; i++)
+			if (s->win[i].used && s->win[i].client == client) { idx = i; break; }
+		if (idx < 0) break;
+		int n = (int) m->length; if (n > NW_MENU_MAX - 1) n = NW_MENU_MAX - 1;
+		if (payload && n > 0) memcpy(s->win[idx].menu, payload, n);
+		s->win[idx].menu[n > 0 ? n : 0] = 0;
+		s->win[idx].menu_len = n > 0 ? n : 0;
+		if (idx == s->focus) { damage(s, 0, 0, s->screen_w, NW_PANEL_H); s->dirty = 1; }
 		break;
 	}
 	case NW_REQ_DESTROY_WINDOW: {

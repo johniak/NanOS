@@ -9,6 +9,7 @@
  * just the tree + a little state.
  */
 #include "nwui.h"
+#include <unistd.h>
 #include <dirent.h>
 #include <string.h>
 #include <stdio.h>
@@ -120,12 +121,24 @@ static void on_activate(nwui_node *self, void *user)
 	}
 }
 
+static void m_close(nwui_node *self, void *u) { (void) self; (void) u; _exit(0); }
+static void m_home(nwui_node *self, void *u)   { (void) self; (void) u; load_dir("/disks/main"); }
+static void m_up(nwui_node *self, void *u)
+{
+	(void) self; (void) u;
+	go_parent(); char t[256]; strcpy(t, g_cwd); load_dir(t);
+}
+
 int main(void)
 {
 	nwui *u = nwui_open("Files", 360, 280);
 	if (!u)
 		return 1;
 	g_ui = u;
+
+	int mf = nwui_menu(u, "Files");  nwui_menu_item(u, mf, "Close", m_close, 0);
+	int mg = nwui_menu(u, "Go");     nwui_menu_item(u, mg, "Home", m_home, 0);
+	                                 nwui_menu_item(u, mg, "Up",   m_up, 0);
 
 	g_path = nwui_label(u, g_cwd);
 	g_list = nwui_list(u, on_activate, 0);

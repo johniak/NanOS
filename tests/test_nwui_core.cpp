@@ -425,3 +425,33 @@ TEST_CASE("list: nwui_list_set installs a fresh model — clears selection + scr
 	nwui_list_set(lbl, small, 2);                    // no-op on a non-list (must not crash)
 	delete u;
 }
+
+static int g_menu_fired;
+static void on_menu_pick(nwui_node*, void* u) { *(int*) u = 1; }
+
+TEST_CASE("nwui menu: encode builds the wire spec; dispatch invokes the right callback") {
+	nwui *u = new nwui; nwui_init(u);
+	int f = nwui_menu(u, "Files");
+	nwui_menu_item(u, f, "New", 0, 0);
+	nwui_menu_item(u, f, "Close", 0, 0);
+	int g = nwui_menu(u, "Go");
+	g_menu_fired = 0;
+	nwui_menu_item(u, g, "Home", on_menu_pick, &g_menu_fired);
+	CHECK(f == 0); CHECK(g == 1);
+
+	char spec[128];
+	int n = nwui_menu_encode(u, spec, sizeof spec);
+	CHECK(n > 0);
+	CHECK(strstr(spec, "Files") != 0);
+	CHECK(strstr(spec, "Go") != 0);
+	CHECK(strstr(spec, "Home") != 0);
+	CHECK(spec[5] == 0x1f);          // "Files" then a field separator
+
+	nwui_menu_dispatch(u, 1, 0);     // Go > Home -> fires the callback
+	CHECK(g_menu_fired == 1);
+	g_menu_fired = 0;
+	nwui_menu_dispatch(u, 0, 0);     // Files > New (null cb) -> no crash
+	nwui_menu_dispatch(u, 9, 9);     // out of range -> no-op
+	CHECK(g_menu_fired == 0);
+	delete u;
+}

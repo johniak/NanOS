@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <signal.h>
+#include <time.h>
 
 #include "nwm_core.h"
 #include "nw_compose.h"
@@ -252,6 +253,22 @@ static void blit_scene(int x, int y, int w, int h)
 /* Present a frame: erase the old cursor, blit only the damaged scene region (if the scene
  * changed), then draw the cursor as an overlay on the framebuffer. Plain mouse motion costs
  * a few tiny blits — never a full-screen repaint. */
+/* Refresh the menu-bar clock ("HH:MM", UTC from the realtime clock). Damages the bar only when
+ * the string changes (once a minute), so it costs nothing between ticks. */
+static void update_clock(void)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return;
+	long sec = ts.tv_sec; int h = (int) ((sec / 3600) % 24), m = (int) ((sec / 60) % 60);
+	char c[8] = { (char) ('0' + h / 10), (char) ('0' + h % 10), ':',
+	              (char) ('0' + m / 10), (char) ('0' + m % 10), 0 };
+	for (int i = 0; i < 6; i++) if (S.clock[i] != c[i]) {
+		for (int j = 0; j < 6; j++) S.clock[j] = c[j];
+		S.dirty = 1;            /* minute changed -> recompose so the bar clock updates */
+		break;
+	}
+}
+
 static void present(void)
 {
 	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
@@ -375,6 +392,7 @@ int main(void)
 				spawn_client(slot, path);
 		}
 
+		update_clock();   /* refresh the menu-bar clock; damages the bar when the minute ticks */
 		present();   /* recomposes only on scene damage; always cheap cursor overlay */
 
 		/* flush queued events; drop clients whose ring overflowed */

@@ -56,6 +56,13 @@ struct nwui_node {
 	int        focusable, focused, hover, pressed, dirty;
 };
 
+/* A top menu in the application menu bar (file-scope so C++ host tests see the tag). */
+struct nwui_topmenu {
+	char title[24];
+	struct { char label[24]; nwui_cb cb; void *user; } item[12];
+	int  nitems;
+};
+
 struct nwui {
 	struct nwui_node nodes[NWUI_MAX_NODES];
 	int        nnodes;
@@ -78,6 +85,10 @@ struct nwui {
 	/* context-menu overlay (a popup over the window; v1: the textfield's Cut/Copy/Paste/All) */
 	int        menu_open, menu_x, menu_y, menu_hover;
 	nwui_node *menu_target;
+
+	/* global (menu-bar) menus the app declares; sent to the compositor via nw_set_menu */
+	struct nwui_topmenu appmenu[6];
+	int nappmenu;
 };
 
 /* Built-in context-menu items (indices). */
@@ -101,6 +112,13 @@ void       nwui_layout(nwui *u);                     /* measure(root)+arrange to
 
 nwui_node *nwui_hit(nwui_node *n, int px, int py);   /* deepest node under the point, or NULL */
 int        nwui_dispatch(nwui *u, const struct nw_event *ev);  /* route one event; 0 = closed */
+
+/* ---- application menu (the global menu bar) ---- */
+int        nwui_menu(nwui *u, const char *title);                       /* add top menu -> index */
+void       nwui_menu_item(nwui *u, int menu, const char *label, nwui_cb cb, void *user);
+void       nwui_menu_separator(nwui *u, int menu);
+int        nwui_menu_encode(const nwui *u, char *out, int cap);         /* -> wire spec; len */
+void       nwui_menu_dispatch(nwui *u, int menu, int item);             /* invoke the callback */
 
 /* ---- paint (nwui_paint.c, uses nw_gfx) ---- */
 /* Render the tree into surface `s`: full repaint on layout change, else only dirty nodes.

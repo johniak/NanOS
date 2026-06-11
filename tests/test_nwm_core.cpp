@@ -339,26 +339,69 @@ TEST_CASE("NW_REQ_SPAWN queues the command for the shell to launch (like the Run
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);
 }
 
-TEST_CASE("panel buttons hit-test and clicks set the quit/shutdown flags") {
+TEST_CASE("menu spec parses into top menus + items") {
+	const char* spec = "Files\x1f" "New\x1f" "Close\x1e" "Go\x1f" "Home\x1f" "Up";
+	CHECK(nw_menu_top_count(spec) == 2);
+	char t[40];
+	nw_menu_top_title(spec, 0, t, sizeof t); CHECK(strcmp(t, "Files") == 0);
+	nw_menu_top_title(spec, 1, t, sizeof t); CHECK(strcmp(t, "Go") == 0);
+	CHECK(nw_menu_item_count(spec, 0) == 2);
+	CHECK(nw_menu_item_count(spec, 1) == 2);
+	char it[40];
+	CHECK(nw_menu_item_label(spec, 0, 1, it, sizeof it) == 1); CHECK(strcmp(it, "Close") == 0);
+	CHECK(nw_menu_item_label(spec, 1, 0, it, sizeof it) == 1); CHECK(strcmp(it, "Home") == 0);
+	CHECK(nw_menu_item_label(spec, 1, 9, it, sizeof it) == 0);   // out of range
+	CHECK(nw_menu_top_count("") == 0);
+}
+
+TEST_CASE("logo menu: About queues a spawn, Shut Down / Quit set the flags") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
-	int x, y, w, h;
-	nw_panel_button_rect(&s, NW_PANEL_QUIT, &x, &y, &w, &h);
-	CHECK(nw_panel_hit(&s, x + 1, y + 1) == NW_PANEL_QUIT);
-	nw_panel_button_rect(&s, NW_PANEL_SHUTDOWN, &x, &y, &w, &h);
-	CHECK(nw_panel_hit(&s, x + 1, y + 1) == NW_PANEL_SHUTDOWN);
-	CHECK(nw_panel_hit(&s, 5, 5) == NW_PANEL_NONE);        // empty part of the bar
-	CHECK(nw_panel_hit(&s, 400, 400) == NW_PANEL_NONE);    // below the bar
+	// click the logo mark -> logo menu opens
+	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
+	CHECK(s.menu_open == 1);
+	CHECK(s.menu_which == NW_MENU_LOGO);
+	CHECK(nw_menu_open_item_count(&s) == 3);
+	// hover + click "About This Computer" (item 0) -> spawn nwabout queued
+	int ix, iy, iw, ih; nw_menu_dropdown_rect(&s, &ix, &iy, &iw, &ih);
+	int cy = iy + NW_MENU_ITEM_H / 2;
+	nw_pointer(&s, ix + 5, cy, 0);                  // hover item 0
+	nw_pointer(&s, ix + 5, cy, NW_BTN_LEFT);        // click item 0
+	nw_pointer(&s, ix + 5, cy, 0);                  // release
+	CHECK(s.menu_open == 0);
+	char out[64];
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
+	CHECK(strcmp(out, "nwabout") == 0);
+	// reopen, click "Shut Down" (item 1)
+	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
+	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, 0);
+	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
+	CHECK(s.want_shutdown == 1);
+}
 
-	nw_panel_button_rect(&s, NW_PANEL_QUIT, &x, &y, &w, &h);
-	nw_pointer(&s, x + 2, y + 2, NW_BTN_LEFT);
-	CHECK(s.want_quit == 1);
-
-	nw_server s2; nw_server_init(&s2, 800, 600);
-	std::vector<unsigned char> ob2(8192); nw_client_connect(&s2, 0, ob2.data(), ob2.size());
-	nw_panel_button_rect(&s2, NW_PANEL_SHUTDOWN, &x, &y, &w, &h);
-	nw_pointer(&s2, x + 2, y + 2, NW_BTN_LEFT);
-	CHECK(s2.want_shutdown == 1);
+TEST_CASE("app menu: choosing an item emits NW_EVT_MENU to the focused client") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 200, 120, "App");
+	int wi = s.focus;
+	(void) wi;
+	drain(s, 0);                                    // flush CONFIGURE/FOCUS
+	// the app declares a menu
+	const char* spec = "App\x1f" "About\x1e" "Edit\x1f" "Copy\x1f" "Paste";
+	nw_msg mm{}; mm.type = NW_REQ_SET_MENU; mm.length = (uint32_t) strlen(spec);
+	nw_client_msg(&s, 0, &mm, (const unsigned char*) spec);
+	// open the "Edit" top menu (index 1) and pick "Paste" (item 1)
+	int x, w; nw_menubar_top_x(&s, 1, &x, &w);
+	nw_pointer(&s, x + 2, 6, NW_BTN_LEFT); nw_pointer(&s, x + 2, 6, 0);
+	CHECK(s.menu_open == 1); CHECK(s.menu_which == 1);
+	int ix, iy, iw, ih; nw_menu_dropdown_rect(&s, &ix, &iy, &iw, &ih);
+	int cy = iy + NW_MENU_ITEM_H + NW_MENU_ITEM_H / 2;   // item 1
+	nw_pointer(&s, ix + 5, cy, 0);
+	nw_pointer(&s, ix + 5, cy, NW_BTN_LEFT);
+	auto ev = drain(s, 0);
+	bool got = false;
+	for (auto& e : ev) if (e.m.type == NW_EVT_MENU && e.m.a == 1 && e.m.b == 1) got = true;
+	CHECK(got);
 }
 
 TEST_CASE("Super+R run dialog: type then Enter launches; Escape cancels") {

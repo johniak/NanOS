@@ -29,6 +29,8 @@ enum {
 	NW_REQ_SET_CLIPBOARD  = 5,   /* payload=text (reply to NW_EVT_COPY)                     */
 	NW_REQ_GET_CLIPBOARD  = 6,   /* ask for the clipboard -> server replies NW_EVT_PASTE    */
 	NW_REQ_SPAWN          = 7,   /* payload=command/path; server launches it (like Run)     */
+	NW_REQ_SET_MENU       = 8,   /* payload=menu spec: menus split 0x1e, fields split 0x1f  */
+	                             /*   field[0]=title, field[1..]=item labels ("-"=separator) */
 
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */
@@ -37,7 +39,8 @@ enum {
 	NW_EVT_FOCUS          = 67,  /* window; a=1 gained / 0 lost                             */
 	NW_EVT_CLOSE          = 68,  /* window; user asked to close (Super+Q / close box)       */
 	NW_EVT_COPY           = 69,  /* window; Super+C/X — client should reply SET_CLIPBOARD   */
-	NW_EVT_PASTE          = 70   /* window; Super+V — payload=clipboard text to insert      */
+	NW_EVT_PASTE          = 70,  /* window; Super+V — payload=clipboard text to insert      */
+	NW_EVT_MENU           = 71   /* window; a=top-menu index b=item index (app menu chosen) */
 };
 
 /* Pointer button bitmask (matches evdev BTN ordering we care about). */

@@ -29,11 +29,16 @@ enum {
 	NW_DOCK_H      = 62,    /* bottom dock height (the rounded translucent pill)            */
 	NW_RUN_W       = 460,   /* the Super+R "Run" dialog box */
 	NW_RUN_H       = 60,
-	NW_RUN_MAX     = 120    /* max command length typed into it */
+	NW_RUN_MAX     = 120,   /* max command length typed into it */
+	NW_MENU_MAX    = 512,   /* per-window menu spec bytes (NW_REQ_SET_MENU payload)        */
+	NW_MENU_X0     = 30,    /* where the app menu titles start (after the logo mark)       */
+	NW_MENU_ITEM_H = 24,    /* dropdown item row height                                   */
+	NW_MENU_DROP_W = 200    /* dropdown width                                             */
 };
 
-/* Panel button ids (nw_panel_hit). */
-enum { NW_PANEL_NONE = 0, NW_PANEL_QUIT = 1, NW_PANEL_SHUTDOWN = 2 };
+/* nw_menubar_hit return: a top menu index >=0, or one of these. */
+enum { NW_MENU_NONE = -2, NW_MENU_LOGO = -1 };
+
 
 /* Normalised /dev/input0 scancodes we special-case (bit7=extended, bits0-6=set-1). */
 enum {
@@ -54,6 +59,8 @@ struct nw_window {
 	int       cw, ch;      /* content size                                           */
 	uint32_t *buf;         /* content pixels (cw*ch), bound by the shell after create */
 	char      title[NW_TITLE_MAX];
+	char      menu[NW_MENU_MAX];   /* app menu spec (NW_REQ_SET_MENU); empty = no app menu */
+	int       menu_len;
 };
 
 /* A byte ring holding serialized server->client events, drained to the pipe on POLLOUT.
@@ -96,6 +103,10 @@ struct nw_server {
 	char  run_cmd[NW_RUN_MAX];      /* the committed command (on Enter)                  */
 	int   want_spawn;               /* shell: launch run_cmd, then clear                 */
 
+	/* global menu bar: an open dropdown (logo or the focused app's), + hovered item */
+	int   menu_open, menu_which, menu_hover;
+	char  clock[8];                 /* "HH:MM" shown at the right of the bar (shell sets) */
+
 	int   dirty;                    /* the SCENE changed -> shell recomposes it          */
 	/* Accumulated scene-damage bounding box (screen px) since the last present; the shell
 	 * blits only this region of the recomposed scene to the framebuffer. */
@@ -130,16 +141,28 @@ int  nw_peek_damage(const struct nw_server *s, int *x, int *y, int *w, int *h);
 /* Take the accumulated scene-damage rect (and clear it). Returns 1 with the box in
  * *x,*y,*w,*h when there is damage, else 0 (nothing changed since the last present). */
 int  nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h);
-/* Top-panel buttons. nw_panel_hit returns NW_PANEL_* for a point (0 if not on a button);
- * nw_panel_button_rect gives a button's screen rect (for drawing). Shared so compose and
- * hit-testing agree on geometry. */
-int  nw_panel_hit(const struct nw_server *s, int x, int y);
-void nw_panel_button_rect(const struct nw_server *s, int id, int *x, int *y, int *w, int *h);
 /* Run dialog: its on-screen rect (for drawing/damage), and taking the committed command.
  * nw_run_take_spawn returns 1 and copies the command into out[cap] when a launch is pending
  * (Enter was pressed), clearing the request; else 0. */
 void nw_run_rect(const struct nw_server *s, int *x, int *y, int *w, int *h);
 int  nw_run_take_spawn(struct nw_server *s, char *out, int cap);
+
+/* ---- global menu (pure helpers, shared by compositing + hit-testing + tests) ---- */
+/* Parse a menu spec (0x1e between menus, 0x1f between a menu's title + item labels). */
+int  nw_menu_top_count(const char *spec);                       /* number of top menus */
+int  nw_menu_top_title(const char *spec, int i, char *out, int cap);  /* -> title length */
+int  nw_menu_item_count(const char *spec, int menu);
+int  nw_menu_item_label(const char *spec, int menu, int item, char *out, int cap);  /* 1/0 */
+/* Screen x-range of the focused app's top menu `i` in the bar (after the logo). */
+void nw_menubar_top_x(const struct nw_server *s, int i, int *x, int *w);
+/* Which menu a bar click hits: a top index >=0, NW_MENU_LOGO, or NW_MENU_NONE. */
+int  nw_menubar_hit(const struct nw_server *s, int px, int py);
+/* The open dropdown's on-screen rect + item count; nw_menu_item_at maps a point to an item. */
+void nw_menu_dropdown_rect(const struct nw_server *s, int *x, int *y, int *w, int *h);
+int  nw_menu_open_item_count(const struct nw_server *s);
+int  nw_menu_item_at(const struct nw_server *s, int px, int py);   /* item index or -1 */
+/* Label of item `i` in the currently open dropdown (handles the logo menu vs an app menu). */
+int  nw_menu_open_label(const struct nw_server *s, int i, char *out, int cap);
 
 /* ---- exposed pure helpers (also for tests) ---- */
 int  nw_hit(const struct nw_server *s, int sx, int sy, int *region);  /* topmost window or -1 */

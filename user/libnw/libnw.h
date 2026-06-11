@@ -22,7 +22,8 @@ enum {
 	NW_EV_FOCUS,       /* focus (1/0)    */
 	NW_EV_CLOSE,
 	NW_EV_COPY,        /* cut: a==1      */
-	NW_EV_PASTE        /* text,text_len  */
+	NW_EV_PASTE,       /* text,text_len  */
+	NW_EV_MENU         /* menu,item      */
 };
 
 struct nw_event {
@@ -36,6 +37,7 @@ struct nw_event {
 	int       cut;             /* COPY: 1 = cut, 0 = copy */
 	const char *text;          /* PASTE: clipboard text (valid until next nw_next_event) */
 	int       text_len;
+	int       menu, item;      /* MENU: chosen top-menu index + item index */
 };
 
 /* Connect to the compositor (fds 3/4 set up by the server before exec). NULL on failure. */
@@ -62,6 +64,11 @@ void nw_get_clipboard(nw_display *d);
 /* Ask the compositor to launch a program (by name or absolute path), the same path the Run
  * dialog uses. Fire-and-forget; the new program connects as its own client. */
 void nw_spawn(nw_display *d, const char *cmd);
+
+/* Declare this window's application menu for the global menu bar. `spec` lists top menus split
+ * by 0x1e; within a menu, fields split by 0x1f are title then item labels ("-" = separator).
+ * When the user picks an item, the server sends NW_EV_MENU with menu+item indices. */
+void nw_set_menu(nw_display *d, const char *spec);
 
 /* The fd the compositor's events arrive on — so a client can poll() it alongside its own fds
  * (e.g. a terminal also polling its pty master), then drain with nw_next_event(d, ev, 0). */

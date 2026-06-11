@@ -126,6 +126,7 @@ int main(void)
 	if (!d) return 1;
 	g_win = nw_create_window(d, 560, 360, "\x01" "Terminal");   /* 0x01 -> dark window material */
 	if (!g_win) return 1;
+	nw_set_menu(d, "Terminal\x1f" "Close\x1e" "Edit\x1f" "Paste");  /* global menu */
 	vt_init(&T, nw_win_width(g_win) / CW, nw_win_height(g_win) / CH);
 
 	g_master = spawn_shell();
@@ -148,6 +149,12 @@ int main(void)
 				if (ev.type == NW_EV_KEY)            key(&ev);
 				else if (ev.type == NW_EV_CONFIGURE) resize_to(ev.x, ev.y);
 				else if (ev.type == NW_EV_CLOSE)     return 0;
+				else if (ev.type == NW_EV_MENU) {    /* Terminal>Close / Edit>Paste */
+					if (ev.menu == 0) return 0;
+					else nw_get_clipboard(d);        /* reply arrives as NW_EV_PASTE */
+				} else if (ev.type == NW_EV_PASTE && ev.text) {
+					write(g_master, ev.text, ev.text_len);   /* paste into the shell */
+				}
 			}
 			if (r < 0) return 0;                        /* compositor gone */
 		}

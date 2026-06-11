@@ -601,3 +601,51 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 	}
 	return 1;
 }
+
+/* ---- application menu (the global menu bar) -------------------------------------- */
+static void menu_copystr(char *dst, const char *s, int cap)
+{
+	int i = 0; if (s) for (; s[i] && i < cap - 1; i++) dst[i] = s[i]; dst[i] = 0;
+}
+
+int nwui_menu(nwui *u, const char *title)
+{
+	if (u->nappmenu >= 6) return -1;
+	int idx = u->nappmenu++;
+	menu_copystr(u->appmenu[idx].title, title, 24);
+	u->appmenu[idx].nitems = 0;
+	return idx;
+}
+void nwui_menu_item(nwui *u, int menu, const char *label, nwui_cb cb, void *user)
+{
+	if (menu < 0 || menu >= u->nappmenu) return;
+	struct nwui_topmenu *m = &u->appmenu[menu];
+	if (m->nitems >= 12) return;
+	int i = m->nitems++;
+	menu_copystr(m->item[i].label, label, 24);
+	m->item[i].cb = cb; m->item[i].user = user;
+}
+void nwui_menu_separator(nwui *u, int menu) { nwui_menu_item(u, menu, "-", 0, 0); }
+
+int nwui_menu_encode(const nwui *u, char *out, int cap)
+{
+	int n = 0;
+	for (int mi = 0; mi < u->nappmenu; mi++) {
+		if (mi && n < cap - 1) out[n++] = 0x1e;
+		const struct nwui_topmenu *m = &u->appmenu[mi];
+		for (const char *t = m->title; *t && n < cap - 1;) out[n++] = *t++;
+		for (int ii = 0; ii < m->nitems; ii++) {
+			if (n < cap - 1) out[n++] = 0x1f;
+			for (const char *l = m->item[ii].label; *l && n < cap - 1;) out[n++] = *l++;
+		}
+	}
+	out[n < cap ? n : cap - 1] = 0;
+	return n;
+}
+void nwui_menu_dispatch(nwui *u, int menu, int item)
+{
+	if (menu < 0 || menu >= u->nappmenu) return;
+	struct nwui_topmenu *m = &u->appmenu[menu];
+	if (item < 0 || item >= m->nitems) return;
+	if (m->item[item].cb) m->item[item].cb(0, m->item[item].user);   /* self=0: a menu, no node */
+}

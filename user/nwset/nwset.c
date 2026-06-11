@@ -6,6 +6,9 @@
  */
 #include "nwui.h"
 #include "sysinfo.h"
+#include <unistd.h>
+
+static void m_close(nwui_node *self, void *u) { (void) self; (void) u; _exit(0); }
 
 /* One "Key . . . . Value" row: the key label grows (flex) so the value sits at the right. */
 static nwui_node *info_row(nwui *u, const char *key, const char *val)
@@ -27,6 +30,7 @@ int main(void)
 	nwui *u = nwui_open("Settings", 470, 340);
 	if (!u)
 		return 1;
+	int ms = nwui_menu(u, "Settings"); nwui_menu_item(u, ms, "Close", m_close, 0);
 
 	nwui_node *side = nwui_gap(nwui_pad(nwui_vbox(u), 12), 6);
 	nwui_add(side, nav(u, "System", 1));
