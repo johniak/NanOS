@@ -43,6 +43,7 @@ typedef struct { uint32_t r_offset, r_info; } Elf32_Rel;
 #define SHF_ALLOC    2
 #define SHF_EXECINSTR 4
 #define R_386_32     1
+#define R_386_PC32   2
 #define EM_386       3
 #define STB_GLOBAL   1
 #define STB_WEAK     2
@@ -281,6 +282,45 @@ int main(int argc, char** argv) {
 			importCount++;
 		}
 	}
+	/* 4b) Auto-import (Windows/MinGW style): an R_386_32 site against an UNDEFINED named symbol
+	 *     is a direct reference to imported DATA (stdout/errno/_ctype_b/...). Emit it as an
+	 *     NxImport whose slot IS the reference site, so the loader patches the site with the
+	 *     symbol's address at load — no dllimport shim needed in the source. (Function calls are
+	 *     R_386_PC32 and resolved via the import-library thunks, so they never reach here.) */
+	for (int i = 0; i < g_nsh; i++) {
+		Elf32_Shdr* s = sh(i);
+		if (s->sh_type != SHT_REL) continue;
+		Elf32_Shdr* tgt = sh(s->sh_info);
+		if (!(tgt->sh_flags & SHF_ALLOC)) continue;
+		Elf32_Sym* rsym = (Elf32_Sym*) (g_elf + sh(s->sh_link)->sh_offset);
+		const char* rstr = (const char*) (g_elf + sh(sh(s->sh_link)->sh_link)->sh_offset);
+		Elf32_Rel* r = (Elf32_Rel*) (g_elf + s->sh_offset);
+		int n = s->sh_size / sizeof(Elf32_Rel);
+		for (int j = 0; j < n; j++) {
+			if (ELF32_R_TYPE(r[j].r_info) != R_386_32) continue;
+			if (r[j].r_offset < loadBase || r[j].r_offset >= bssStart) continue;
+			Elf32_Sym* y = &rsym[ELF32_R_SYM(r[j].r_info)];
+			if (y->st_shndx != SHN_UNDEF) continue;          /* only unresolved (imported) symbols */
+			const char* nm = rstr + y->st_name;
+			if (!nm[0] || !strncmp(nm, "__imp_", 6)) continue;
+			unsigned nameOff = strs.len;
+			bput(&strs, nm, strlen(nm) + 1);
+			NxImport im2 = { nameOff, r[j].r_offset, 0 };    /* slot = the reloc site; flat resolve */
+			bput(&imports, &im2, sizeof im2);
+			importCount++;
+		}
+		/* Safety: an undefined symbol called via R_386_PC32 is a genuinely MISSING function (not a
+		 * data import). With --unresolved-symbols=ignore-all the link won't have flagged it, so warn
+		 * here — it would crash at runtime calling address 0. */
+		for (int j = 0; j < n; j++) {
+			if (ELF32_R_TYPE(r[j].r_info) != R_386_PC32) continue;
+			Elf32_Sym* y = &rsym[ELF32_R_SYM(r[j].r_info)];
+			if (y->st_shndx != SHN_UNDEF) continue;
+			const char* nm = rstr + y->st_name;
+			if (nm[0]) fprintf(stderr, "mknx: warning: undefined function '%s' (call -> address 0)\n", nm);
+		}
+	}
+
 	Buf needed = {0};
 	for (int i = 0; i < nNeeds; i++) {
 		unsigned nameOff = strs.len;
