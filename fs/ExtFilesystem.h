@@ -15,6 +15,7 @@
 #include "ext/BlockCache.h"
 #include "ext/ExtAllocator.h"
 #include "ext/ExtCsum.h"
+#include "ext/Journal.h"
 #ifndef EXTFILESYSTEM_H_
 #define EXTFILESYSTEM_H_
 
@@ -180,8 +181,40 @@ public:
 		// The allocator derives its geometry from the live superblock buffer and writes back
 		// through the same cache (so free counts / checksums stay coherent with our reads).
 		alloc = new ExtAllocator(cache, (unsigned char*) superblockBuff);
+		recoverJournal();
 		// printInfo();   // (debug dump) silenced so the boot splash stays one line per step
 		return 0;
+	}
+
+	// JBD2 recovery: if this is a journaled filesystem with a non-clean log, replay the committed
+	// transactions before anything reads or writes, then clear the needs-recovery flag. A clean
+	// journal (the usual case) makes this a no-op.
+	void recoverJournal() {
+		unsigned compat = *(unsigned*) (superblockBuff + 0x5C);   // s_feature_compat
+		unsigned journalInum = *(unsigned*) (superblockBuff + 0xE0);
+		if (!(compat & 0x4) || journalInum == 0)                  // COMPAT_HAS_JOURNAL
+			return;
+		Ext2Inode ji = getInode((int) journalInum);
+		unsigned jcount = ((unsigned) ji.lowerSize + blockSize - 1) / blockSize;
+		if (jcount == 0)
+			return;
+		unsigned* jb = (unsigned*) malloc(jcount * sizeof(unsigned));
+		for (unsigned i = 0; i < jcount; i++)
+			jb[i] = resolveBlock(ji, i);
+		int applied = Journal::replay(cache, jb, jcount);
+		free(jb);
+		if (applied <= 0)
+			return;
+		// Recovered something -> clear INCOMPAT_RECOVER and persist the superblock.
+		unsigned incompat = *(unsigned*) (superblockBuff + 0x60);
+		if (incompat & 0x4) {
+			*(unsigned*) (superblockBuff + 0x60) = incompat & ~0x4u;
+			if (extHasMetadataCsum(superblockBuff))
+				*(unsigned*) (superblockBuff + 0x3FC) = extSuperblockCsum(superblockBuff);
+			if (blockSize == 1024) cache->write(1, (unsigned char*) superblockBuff);
+			else cache->writePartial(0, 1024, superblockBuff, 1024);
+			cache->flush();
+		}
 	}
 
 	void initBgdt() {
