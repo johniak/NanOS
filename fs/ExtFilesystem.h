@@ -1006,6 +1006,47 @@ public:
 			off += rec;
 		}
 	}
+
+	// ---- metadata mutations + stats (Phase 4) ---------------------------------------------
+	int chmod(String path, unsigned mode) {
+		Ext2Inode inode; int no;
+		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;
+		inode.typeAndPermisions = (short) ((inode.typeAndPermisions & 0xF000) | (mode & 0xFFF));
+		writeInodeStruct((unsigned) no, inode);
+		cache->flush();
+		return 0;
+	}
+
+	int chown(String path, unsigned uid, unsigned gid) {
+		Ext2Inode inode; int no;
+		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;
+		if (uid != 0xFFFFFFFFu) inode.userId = (short) uid;     // -1 leaves the field unchanged
+		if (gid != 0xFFFFFFFFu) inode.groupId = (short) gid;
+		writeInodeStruct((unsigned) no, inode);
+		cache->flush();
+		return 0;
+	}
+
+	int utimes(String path, unsigned atime, unsigned mtime) {
+		Ext2Inode inode; int no;
+		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;
+		inode.lastAccess = (int) atime;
+		inode.lastmodification = (int) mtime;
+		writeInodeStruct((unsigned) no, inode);
+		cache->flush();
+		return 0;
+	}
+
+	int statfs(String path, StatFs& out) {
+		(void) path;
+		out.blockSize = (unsigned) blockSize;
+		out.totalBlocks = (unsigned) baseSuperBlock.totalBlocks;
+		out.freeBlocks = *(unsigned*) (superblockBuff + 0x0C);   // live free counts (allocator-kept)
+		out.totalInodes = (unsigned) baseSuperBlock.totalInodes;
+		out.freeInodes = *(unsigned*) (superblockBuff + 0x10);
+		out.nameMax = 255;
+		return 0;
+	}
 };
 
 } /* namespace kernel */

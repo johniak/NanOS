@@ -31,6 +31,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	this->exited = false;
 	this->exitCode = 0;
 	this->m_cwd = String("/");
+	this->m_umask = 0022;
 	initCookedTermios(consoleTermios);
 	for (int i = 0; i < MAXFD; i++) {
 		fds[i].used = false;
@@ -57,6 +58,7 @@ Syscalls::Syscalls(const Syscalls& o) {
 	consoleWrite = o.consoleWrite;
 	consoleTermios = o.consoleTermios;   // inherit the parent's terminal settings
 	m_cwd = o.m_cwd;                     // child inherits the parent's working directory
+	m_umask = o.m_umask;                 // and the file-creation mask
 	exited = o.exited;
 	exitCode = o.exitCode;
 	for (int i = 0; i < MAXFD; i++) {
@@ -493,6 +495,170 @@ int Syscalls::link(String oldpath, String newpath) {
 int Syscalls::symlink(String target, String path) {
 	// The target is the link's literal content (may be relative); only the new path is resolved.
 	return vfs->symlink(target, resolvePath(path));
+}
+
+// ---- Phase 4: metadata, statfs, *at family ------------------------------------------------
+#define AT_FDCWD            (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_REMOVEDIR        0x200
+
+// Fill a Linux i386 struct statfs (64 bytes) from our StatFs.
+static void fillStatfs(void* buf, const StatFs& s) {
+	unsigned* f = (unsigned*) buf;
+	for (int i = 0; i < 16; i++) f[i] = 0;
+	f[0] = 0xEF53;            // f_type = EXT2_SUPER_MAGIC
+	f[1] = s.blockSize;       // f_bsize
+	f[2] = s.totalBlocks;     // f_blocks
+	f[3] = s.freeBlocks;      // f_bfree
+	f[4] = s.freeBlocks;      // f_bavail
+	f[5] = s.totalInodes;     // f_files
+	f[6] = s.freeInodes;      // f_ffree
+	f[9] = s.nameMax;         // f_namelen (offset 36)
+	f[10] = s.blockSize;      // f_frsize
+}
+
+int Syscalls::chmod(String path, int mode) {
+	return vfs->chmod(resolvePath(path), (unsigned) mode & 0xFFFu);
+}
+int Syscalls::fchmod(int fd, int mode) {
+	if (!valid(fd) || fds[fd].isConsole) return -9;          // -EBADF
+	return vfs->chmod(fds[fd].path, (unsigned) mode & 0xFFFu);
+}
+int Syscalls::chown(String path, int uid, int gid) {
+	return vfs->chown(resolvePath(path), (unsigned) uid, (unsigned) gid);
+}
+int Syscalls::lchown(String path, int uid, int gid) {
+	// (Follows symlinks like chown; a true no-follow lchown is a later refinement.)
+	return vfs->chown(resolvePath(path), (unsigned) uid, (unsigned) gid);
+}
+int Syscalls::fchown(int fd, int uid, int gid) {
+	if (!valid(fd) || fds[fd].isConsole) return -9;
+	return vfs->chown(fds[fd].path, (unsigned) uid, (unsigned) gid);
+}
+int Syscalls::truncate(String path, unsigned length) {
+	return vfs->truncate(resolvePath(path), length);
+}
+int Syscalls::ftruncate(int fd, unsigned length) {
+	if (!valid(fd) || fds[fd].isConsole) return -9;
+	int r = vfs->truncate(fds[fd].path, length);
+	if (r == 0) fds[fd].size = length;
+	return r;
+}
+int Syscalls::utimes(String path, unsigned atime, unsigned mtime) {
+	return vfs->utimes(resolvePath(path), atime, mtime);
+}
+int Syscalls::access(String path, int mode) {
+	(void) mode;                                             // F_OK existence check (no perm model)
+	FileStat st;
+	if (vfs->stat(resolvePath(path), st) < 0) return -2;     // -ENOENT
+	return 0;
+}
+int Syscalls::statfs(String path, void* buf) {
+	StatFs s;
+	int r = vfs->statfs(resolvePath(path), s);
+	if (r < 0) return r;
+	fillStatfs(buf, s);
+	return 0;
+}
+int Syscalls::fstatfs(int fd, void* buf) {
+	if (!valid(fd)) return -9;
+	if (fds[fd].isConsole) return -22;                       // -EINVAL
+	StatFs s;
+	int r = vfs->statfs(fds[fd].path, s);
+	if (r < 0) return r;
+	fillStatfs(buf, s);
+	return 0;
+}
+int Syscalls::fsync(int fd) {
+	if (!valid(fd)) return -9;
+	return 0;                                                // our writes flush synchronously
+}
+int Syscalls::fchdir(int fd) {
+	if (!valid(fd) || fds[fd].isConsole) return -9;
+	return chdir(fds[fd].path);
+}
+int Syscalls::umask(int mask) {
+	int old = (int) m_umask;
+	m_umask = (unsigned) mask & 0777u;
+	return old;
+}
+int Syscalls::creat(String path, int mode) {
+	(void) mode;
+	return open(resolvePath(path), O_CREAT | O_TRUNC | 1 /*O_WRONLY*/);
+}
+
+String Syscalls::resolveAt(int dirfd, String path, bool* badfd) {
+	if (badfd) *badfd = false;
+	const char* p = (char*) path;
+	if ((p && p[0] == '/') || dirfd == AT_FDCWD)
+		return resolvePath(path);
+	if (!valid(dirfd) || fds[dirfd].isConsole) {
+		if (badfd) *badfd = true;
+		return resolvePath(path);
+	}
+	char buf[512];
+	int k = 0;
+	const char* d = (char*) fds[dirfd].path;
+	while (d[k] && k < 400) { buf[k] = d[k]; k++; }
+	if (k == 0 || buf[k - 1] != '/') buf[k++] = '/';
+	int j = 0;
+	while (p[j] && k < 510) buf[k++] = p[j++];
+	buf[k] = 0;
+	return resolvePath(String(buf));
+}
+
+int Syscalls::openat(int dirfd, String path, int flags) {
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return open(p, flags);
+}
+int Syscalls::mkdirat(int dirfd, String path, int mode) {
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return vfs->mkdir(p, (unsigned) mode & ~m_umask);
+}
+int Syscalls::unlinkat(int dirfd, String path, int flags) {
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return (flags & AT_REMOVEDIR) ? vfs->rmdir(p) : vfs->unlink(p);
+}
+int Syscalls::renameat(int oldfd, String oldpath, int newfd, String newpath) {
+	bool b1, b2; String a = resolveAt(oldfd, oldpath, &b1); String b = resolveAt(newfd, newpath, &b2);
+	if (b1 || b2) return -9;
+	return vfs->rename(a, b);
+}
+int Syscalls::linkat(int oldfd, String oldpath, int newfd, String newpath, int flags) {
+	(void) flags;
+	bool b1, b2; String a = resolveAt(oldfd, oldpath, &b1); String b = resolveAt(newfd, newpath, &b2);
+	if (b1 || b2) return -9;
+	return vfs->link(a, b);
+}
+int Syscalls::symlinkat(String target, int newfd, String path) {
+	bool bad; String p = resolveAt(newfd, path, &bad);
+	if (bad) return -9;
+	return vfs->symlink(target, p);
+}
+int Syscalls::readlinkat(int dirfd, String path, char* buf, unsigned size) {
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return readlink(p, buf, size);
+}
+int Syscalls::fchmodat(int dirfd, String path, int mode, int flags) {
+	(void) flags;
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return vfs->chmod(p, (unsigned) mode & 0xFFFu);
+}
+int Syscalls::fchownat(int dirfd, String path, int uid, int gid, int flags) {
+	(void) flags;
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return vfs->chown(p, (unsigned) uid, (unsigned) gid);
+}
+int Syscalls::fstatat(int dirfd, String path, LinuxStat* out, int flags) {
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	return (flags & AT_SYMLINK_NOFOLLOW) ? lstat(p, out) : stat(p, out);
 }
 
 // Normalise any path to a clean absolute one: relative paths join onto the cwd, then "."

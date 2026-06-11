@@ -255,4 +255,36 @@ int Vfs::symlink(String target, String path) {
 	return fs->symlink(target, rel);   // target is the link's content, stored verbatim
 }
 
+int Vfs::chmod(String path, unsigned mode) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->chmod(rel, mode);
+}
+
+int Vfs::chown(String path, unsigned uid, unsigned gid) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->chown(rel, uid, gid);
+}
+
+int Vfs::utimes(String path, unsigned atime, unsigned mtime) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->utimes(rel, atime, mtime);
+}
+
+int Vfs::statfs(String path, StatFs& out) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->statfs(rel, out);
+}
+
 }

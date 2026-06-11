@@ -91,6 +91,7 @@ class Syscalls {
 	ConsoleWriteFn consoleWrite;
 	Termios consoleTermios;   // real terminal settings for the console fds (0/1/2)
 	String m_cwd;             // current working directory (absolute); inherited on fork, kept on execve
+	unsigned m_umask;         // file-creation mask (default 022); applied by mkdir/creat
 	bool exited;
 	int exitCode;
 
@@ -118,6 +119,37 @@ public:
 	int rename(String oldpath, String newpath);   // rename/move within one filesystem
 	int link(String oldpath, String newpath);     // create a hard link
 	int symlink(String target, String path);      // create a symbolic link (target stored as-is)
+
+	// Metadata + size (Phase 4). The f* variants act on an open fd's path; truncate/ftruncate
+	// also fix the cached size. chown's uid/gid of -1 (0xFFFFFFFF) leave that field unchanged.
+	int chmod(String path, int mode);
+	int fchmod(int fd, int mode);
+	int chown(String path, int uid, int gid);
+	int lchown(String path, int uid, int gid);
+	int fchown(int fd, int uid, int gid);
+	int truncate(String path, unsigned length);
+	int ftruncate(int fd, unsigned length);
+	int utimes(String path, unsigned atime, unsigned mtime);
+	int access(String path, int mode);
+	int statfs(String path, void* buf);            // fills LinuxStatfs
+	int fstatfs(int fd, void* buf);
+	int fsync(int fd);
+	int fchdir(int fd);
+	int umask(int mask);                            // returns the previous mask
+	int creat(String path, int mode);
+
+	// dirfd-relative (*at) family. dirfd == AT_FDCWD uses the cwd; an absolute path ignores it.
+	int openat(int dirfd, String path, int flags);
+	int mkdirat(int dirfd, String path, int mode);
+	int unlinkat(int dirfd, String path, int flags);   // AT_REMOVEDIR -> rmdir
+	int renameat(int oldfd, String oldpath, int newfd, String newpath);
+	int linkat(int oldfd, String oldpath, int newfd, String newpath, int flags);
+	int symlinkat(String target, int newfd, String path);
+	int readlinkat(int dirfd, String path, char* buf, unsigned size);
+	int fchmodat(int dirfd, String path, int mode, int flags);
+	int fchownat(int dirfd, String path, int uid, int gid, int flags);
+	int fstatat(int dirfd, String path, LinuxStat* out, int flags);   // AT_SYMLINK_NOFOLLOW
+	String resolveAt(int dirfd, String path, bool* badfd);             // join dirfd + path
 	// Working directory (Linux model: kernel-tracked per process, inherited by fork, kept
 	// across execve). chdir validates the target is a directory; getcwd copies it out.
 	// resolvePath turns any path (relative -> against the cwd) into a clean absolute path,

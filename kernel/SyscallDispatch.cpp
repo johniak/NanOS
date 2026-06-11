@@ -251,6 +251,89 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_symlink:
 		ret = g_sys->symlink(String((char*) a0), String((char*) a1));
 		break;
+	case SYS_chmod:
+		ret = g_sys->chmod(String((char*) a0), (int) a1);
+		break;
+	case SYS_fchmod:
+		ret = g_sys->fchmod((int) a0, (int) a1);
+		break;
+	case SYS_chown:
+		ret = g_sys->chown(String((char*) a0), (int) a1, (int) a2);
+		break;
+	case SYS_lchown:
+		ret = g_sys->lchown(String((char*) a0), (int) a1, (int) a2);
+		break;
+	case SYS_fchown:
+		ret = g_sys->fchown((int) a0, (int) a1, (int) a2);
+		break;
+	case SYS_truncate:
+		ret = g_sys->truncate(String((char*) a0), a1);
+		break;
+	case SYS_ftruncate:
+		ret = g_sys->ftruncate((int) a0, a1);
+		break;
+	case SYS_utimes:
+		ret = g_sys->utimes(String((char*) a0), a1, a2);
+		break;
+	case SYS_access:
+		ret = g_sys->access(String((char*) a0), (int) a1);
+		break;
+	case SYS_faccessat:
+		ret = g_sys->access(String((char*) a1), (int) a2);   // dirfd a0 ignored for absolute paths
+		break;
+	case SYS_statfs:
+		ret = g_sys->statfs(String((char*) a0), (void*) a1);
+		break;
+	case SYS_fstatfs:
+		ret = g_sys->fstatfs((int) a0, (void*) a1);
+		break;
+	case SYS_fsync:
+	case SYS_fdatasync:
+		ret = g_sys->fsync((int) a0);
+		break;
+	case SYS_sync:
+		ret = 0;
+		break;
+	case SYS_umask:
+		ret = g_sys->umask((int) a0);
+		break;
+	case SYS_fchdir:
+		ret = g_sys->fchdir((int) a0);
+		break;
+	case SYS_creat:
+		ret = g_sys->creat(String((char*) a0), (int) a1);
+		break;
+	case SYS_openat:
+		ret = g_sys->openat((int) a0, String((char*) a1), (int) a2);
+		break;
+	case SYS_mkdirat:
+		ret = g_sys->mkdirat((int) a0, String((char*) a1), (int) a2);
+		break;
+	case SYS_unlinkat:
+		ret = g_sys->unlinkat((int) a0, String((char*) a1), (int) a2);
+		break;
+	case SYS_renameat:
+	case SYS_renameat2:
+		ret = g_sys->renameat((int) a0, String((char*) a1), (int) a2, String((char*) a3));
+		break;
+	case SYS_linkat:
+		ret = g_sys->linkat((int) a0, String((char*) a1), (int) a2, String((char*) a3), (int) a4);
+		break;
+	case SYS_symlinkat:
+		ret = g_sys->symlinkat(String((char*) a0), (int) a1, String((char*) a2));
+		break;
+	case SYS_readlinkat:
+		ret = g_sys->readlinkat((int) a0, String((char*) a1), (char*) a2, a3);
+		break;
+	case SYS_fchmodat:
+		ret = g_sys->fchmodat((int) a0, String((char*) a1), (int) a2, (int) a3);
+		break;
+	case SYS_fchownat:
+		ret = g_sys->fchownat((int) a0, String((char*) a1), (int) a2, (int) a3, (int) a4);
+		break;
+	case SYS_fstatat64:
+		ret = g_sys->fstatat((int) a0, String((char*) a1), (LinuxStat*) a2, (int) a3);
+		break;
 	case SYS_chdir:
 		ret = g_sys->chdir(String((char*) a0));
 		break;

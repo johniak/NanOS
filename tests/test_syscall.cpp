@@ -166,6 +166,87 @@ TEST_CASE("sys namespace ops: mkdir/create/link/symlink/rename/unlink/rmdir") {
 	CHECK(sc.rmdir("/nd") == 0);
 }
 
+TEST_CASE("sys metadata + *at family") {
+	Syscalls sc(mountFixture(), sink);                  // ext2-backed, writable
+	CHECK(sc.mkdir("/at", 0755) == 0);
+
+	// openat(AT_FDCWD) creates the file; chmod/stat round-trip the mode.
+	int fd = sc.openat(-100, "/at/x", O_CREAT);
+	REQUIRE(fd >= 3);
+	CHECK(sc.close(fd) == 0);
+	CHECK(sc.chmod("/at/x", 0640) == 0);
+	LinuxStat lst;
+	REQUIRE(sc.stat("/at/x", &lst) == 0);
+	CHECK((lst.st_mode & 0xFFF) == 0640);
+	CHECK(sc.chown("/at/x", 7, 9) == 0);
+	REQUIRE(sc.stat("/at/x", &lst) == 0);
+	CHECK(lst.st_uid == 7);
+	CHECK(lst.st_gid == 9);
+
+	// statfs reports the 1 KiB block size.
+	unsigned sbuf[16];
+	CHECK(sc.statfs("/at/x", sbuf) == 0);
+	CHECK(sbuf[1] == 1024);                             // f_bsize
+
+	// fd-based metadata: fchmod/fchown/ftruncate/fstat/fstatfs/fsync.
+	int wf = sc.open("/at/x", 0);
+	REQUIRE(wf >= 3);
+	CHECK(sc.write(wf, "abcdef", 6) == 6);
+	CHECK(sc.fchmod(wf, 0600) == 0);
+	CHECK(sc.fchown(wf, 1, 2) == 0);
+	CHECK(sc.ftruncate(wf, 3) == 0);
+	REQUIRE(sc.fstat(wf, &lst) == 0);
+	CHECK(lst.st_size == 3);
+	unsigned fsb[16];
+	CHECK(sc.fstatfs(wf, fsb) == 0);
+	CHECK(fsb[1] == 1024);
+	CHECK(sc.fsync(wf) == 0);
+	CHECK(sc.close(wf) == 0);
+
+	// access / creat / lchown / utimes.
+	CHECK(sc.access("/at/x", 0) == 0);
+	CHECK(sc.access("/at/none", 0) == -2);
+	int cf = sc.creat("/at/c", 0644);
+	REQUIRE(cf >= 3);
+	CHECK(sc.close(cf) == 0);
+	CHECK(sc.lchown("/at/c", 5, 6) == 0);
+	CHECK(sc.utimes("/at/c", 11, 22) == 0);
+
+	// A directory fd drives the dirfd-relative *at calls.
+	int dfd = sc.open("/at", 0);
+	REQUIRE(dfd >= 3);
+	int rel = sc.openat(dfd, "rel1", O_CREAT);
+	REQUIRE(rel >= 3);
+	CHECK(sc.close(rel) == 0);
+	CHECK(sc.mkdirat(dfd, "sub2", 0755) == 0);
+	CHECK(sc.fchmodat(dfd, "rel1", 0600, 0) == 0);
+	CHECK(sc.fchownat(dfd, "rel1", 3, 4, 0) == 0);
+	LinuxStat as;
+	CHECK(sc.fstatat(dfd, "rel1", &as, 0) == 0);
+	CHECK(sc.symlinkat("rel1", dfd, "sl") == 0);
+	char rb[32] = {0};
+	CHECK(sc.readlinkat(dfd, "sl", rb, sizeof(rb) - 1) == 4);   // strlen("rel1")
+	CHECK(sc.linkat(dfd, "rel1", dfd, "rel1h", 0) == 0);
+	CHECK(sc.fchdir(dfd) == 0);                                 // cwd now /at
+	CHECK(sc.unlinkat(dfd, "sl", 0) == 0);
+	CHECK(sc.unlinkat(dfd, "rel1h", 0) == 0);
+	CHECK(sc.unlinkat(dfd, "rel1", 0) == 0);
+	CHECK(sc.unlinkat(dfd, "sub2", 0x200) == 0);                // AT_REMOVEDIR
+	CHECK(sc.close(dfd) == 0);
+	CHECK(sc.openat(99, "rel", O_CREAT) == -9);                 // bad dirfd -> -EBADF
+
+	// mkdirat / renameat / unlinkat (AT_REMOVEDIR) via AT_FDCWD.
+	CHECK(sc.mkdirat(-100, "/at/sub", 0755) == 0);
+	CHECK(sc.renameat(-100, "/at/x", -100, "/at/y") == 0);
+	CHECK(sc.unlinkat(-100, "/at/y", 0) == 0);
+	CHECK(sc.unlinkat(-100, "/at/c", 0) == 0);
+	CHECK(sc.unlinkat(-100, "/at/sub", 0x200) == 0);
+
+	// umask returns the previous value (default 022 == 18 decimal).
+	CHECK(sc.umask(0) == 18);
+	CHECK(sc.rmdir("/at") == 0);
+}
+
 TEST_CASE("sys errors: bad fd, missing path, closed fd") {
 	Syscalls sc(mountFixture(), sink);
 	char buf[8];

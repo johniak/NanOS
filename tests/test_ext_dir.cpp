@@ -111,6 +111,24 @@ static void exercise(ExtFilesystem& fs, const char* dumpPath) {
 	REQUIRE(fs.stat("/d1", st) == 0);
 	CHECK(st.size > 1024);                              // spilled into a second block
 	CHECK(hasEntry(fs, "/d1", "file79"));
+
+	// metadata mutations must stay e2fsck-clean.
+	CHECK(fs.chmod("/d1/f1", 0600) == 0);
+	REQUIRE(fs.stat("/d1/f1", st) == 0);
+	CHECK((st.mode & 0xFFF) == 0600);
+	CHECK(fs.chown("/d1/f1", 123, 456) == 0);
+	REQUIRE(fs.stat("/d1/f1", st) == 0);
+	CHECK(st.uid == 123);
+	CHECK(st.gid == 456);
+	CHECK(fs.utimes("/d1/f1", 1000, 2000) == 0);
+	REQUIRE(fs.stat("/d1/f1", st) == 0);
+	CHECK(st.mtime == 2000);
+
+	StatFs sfs;
+	CHECK(fs.statfs("/", sfs) == 0);
+	CHECK(sfs.blockSize == 1024);
+	CHECK(sfs.totalBlocks > 0);
+	CHECK(sfs.nameMax == 255);
 	(void) dumpPath;
 }
 

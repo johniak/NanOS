@@ -19,6 +19,16 @@ struct FileStat {
 	unsigned mtime;    // last-modification time (epoch seconds)
 };
 
+// Filesystem-wide statistics (statfs/fstatfs).
+struct StatFs {
+	unsigned blockSize;     // f_bsize
+	unsigned totalBlocks;   // f_blocks
+	unsigned freeBlocks;    // f_bfree
+	unsigned totalInodes;   // f_files
+	unsigned freeInodes;    // f_ffree
+	unsigned nameMax;       // f_namelen
+};
+
 // Names are bounded (ext2 caps at 255) and stored inline so DirEntry/Mount stay
 // trivially copyable — safe to hold in List<T> without String copy semantics.
 struct DirEntry {
@@ -64,6 +74,11 @@ public:
 	virtual int link(String, String) { return -30; }                           // -EROFS
 	virtual int symlink(String, String) { return -30; }                        // -EROFS (target, path)
 	virtual int truncate(String, unsigned) { return -30; }                     // -EROFS
+	// Metadata mutations + filesystem stats (Phase 4). Defaults read-only / unsupported.
+	virtual int chmod(String, unsigned) { return -30; }                        // -EROFS
+	virtual int chown(String, unsigned, unsigned) { return -30; }              // -EROFS (uid, gid)
+	virtual int utimes(String, unsigned, unsigned) { return -30; }             // -EROFS (atime, mtime)
+	virtual int statfs(String, StatFs&) { return -22; }                        // -EINVAL
 };
 
 // Factory registered by type name; creates a FileSystem for a device.
@@ -118,6 +133,10 @@ public:
 	int link(String oldpath, String newpath);      // hard link, same mount only
 	int symlink(String target, String path);       // `target` is stored verbatim as link content
 	int truncate(String path, unsigned length);
+	int chmod(String path, unsigned mode);
+	int chown(String path, unsigned uid, unsigned gid);
+	int utimes(String path, unsigned atime, unsigned mtime);
+	int statfs(String path, StatFs& out);
 };
 
 }
