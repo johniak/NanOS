@@ -13,7 +13,11 @@ namespace kernel {
 // stack — is allocated from the heap on create and freed on reap, so the live task count is
 // bounded by RAM, not by a static array (which at this ceiling would be tens of MB).
 static const int MAXTASKS = ProcTable::MAX + 8;
-static const int KSTACK_SIZE = 8192;
+// 16 KiB per-task kernel stack. The stacks are heap-allocated, so an overflow would scribble
+// over the adjacent heap block's metadata (surfacing later as a wild fault in the allocator or
+// a WaitQueue walk). 8 KiB was too tight once a syscall's call chain got deep — e.g. a console
+// write running the full VT engine + glyph rasterizer with a keyboard IRQ nested on top.
+static const int KSTACK_SIZE = 16384;
 
 static Task g_tasks[MAXTASKS];
 static int g_ntasks = 0;
@@ -307,12 +311,27 @@ void Scheduler::sleepOnUntil(WaitQueue* q, bool (*ready)(void*), void* ctx) {
 
 // Make every task parked on `q` runnable (the object became readable/writable, or closed).
 // Tasks unlink themselves in sleepOn on return, so we only flip states here.
+// True iff `t` points at a real, aligned slot of the static task array — a defensive guard so a
+// corrupted/dangling WaitQueue head or waitNext can't send the walk into wild memory and fault.
+static bool isTaskSlot(const Task* t) {
+	if (t < &g_tasks[0] || t >= &g_tasks[MAXTASKS])
+		return false;
+	return (((const char*) t - (const char*) &g_tasks[0]) % sizeof(Task)) == 0;
+}
+
 void Scheduler::wakeAll(WaitQueue* q) {
 	if (!q) return;
 	unsigned long f = arch::cpuIrqSave();
-	for (Task* t = q->head; t; t = t->waitNext)
+	// Bound the walk by the slot count and validate every link: a wakeAll on a corrupt queue
+	// then degrades to a no-op instead of dereferencing garbage (the parked task array is fixed,
+	// so any pointer outside it is corruption — stop rather than fault).
+	Task* t = q->head;
+	for (int guard = 0; t && guard <= MAXTASKS; guard++, t = t->waitNext) {
+		if (!isTaskSlot(t))
+			break;
 		if (t->state == TASK_BLOCKED)
 			t->state = TASK_READY;
+	}
 	g_needResched = true;
 	arch::cpuIrqRestore(f);
 }
