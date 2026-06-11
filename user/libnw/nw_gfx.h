@@ -29,6 +29,8 @@ struct nw_surface {
  * by the primitives). nw_surface_noclip removes the scissor (full-surface drawing). */
 void nw_surface_clip(struct nw_surface *s, int x, int y, int w, int h);
 void nw_surface_noclip(struct nw_surface *s);
+/* The current drawable bounds (surface ∩ scissor) as [x0,x1) × [y0,y1) — for fast loops. */
+void nw_surface_bounds(const struct nw_surface *s, int *x0, int *y0, int *x1, int *y1);
 
 /* All coordinates may be partially or fully off-surface; everything clips. */
 void nw_put_pixel(const struct nw_surface *s, int x, int y, uint32_t rgb);

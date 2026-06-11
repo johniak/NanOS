@@ -25,6 +25,7 @@ enum {
 	NW_CLIP_MAX    = 256,
 	NW_PANEL_H     = 28,    /* top menu bar: logo + app name + menus, clock + status pills */
 	NW_RADIUS      = 11,    /* window corner radius (rounded, translucent "glass" frames) */
+	NW_SHADOW      = 10,    /* drop-shadow extent (px) added to a window's damage rect */
 	NW_DOCK_H      = 62,    /* bottom dock height (the rounded translucent pill)            */
 	NW_RUN_W       = 460,   /* the Super+R "Run" dialog box */
 	NW_RUN_H       = 60,

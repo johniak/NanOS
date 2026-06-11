@@ -39,7 +39,10 @@ static void damage(struct nw_server *s, int x, int y, int w, int h)
 static void damage_frame(struct nw_server *s, int idx)
 {
 	struct nw_window *w = &s->win[idx];
-	damage(s, w->x, w->y, w->cw + 2 * NW_BORDER, NW_TITLEBAR_H + w->ch + NW_BORDER);
+	/* Expand by the drop-shadow extent so moving a window erases its old shadow (no trails). */
+	int m = NW_SHADOW;
+	damage(s, w->x - m, w->y - m,
+	       w->cw + 2 * NW_BORDER + 2 * m, NW_TITLEBAR_H + w->ch + NW_BORDER + 2 * m + NW_SHADOW);
 }
 
 int nw_peek_damage(const struct nw_server *s, int *x, int *y, int *w, int *h)

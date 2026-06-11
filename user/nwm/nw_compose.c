@@ -22,8 +22,8 @@
 #define COL_CTRL       0x44516a   /* window control glyphs           */
 #define COL_CTRL_D     0xc6d2e6
 #define COL_CLOSE_HOV  0xe81123
-#define WIN_ALPHA      236        /* ~0.92 like the reference         */
-#define DARK_ALPHA     242
+#define WIN_ALPHA      255        /* opaque body -> interior composite is a fast copy */
+#define DARK_ALPHA     255
 
 #define COL_PANEL      0xeef7ff   /* top bar tint (translucent)       */
 #define COL_PANEL_FG   0x141d2e
@@ -122,35 +122,49 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	}
 }
 
-/* Composite scratch[winrect] onto `back` with rounded corners (AA) + per-window alpha,
- * blending over the backdrop already in `back`. */
+/* Composite scratch[winrect] onto `back` with rounded corners (AA) + per-window alpha. Fast:
+ * the clip bounds are resolved once, interior rows are a straight copy/blend, and only the two
+ * corner bands (the top r and bottom r rows) pay the per-pixel anti-aliased coverage. */
 static void composite_round(const struct nw_surface *back, const struct nw_surface *sc,
                             int x, int y, int w, int h, int r, int alpha)
 {
-	for (int yy = 0; yy < h; yy++) {
-		for (int xx = 0; xx < w; xx++) {
-			int cov = 255;
-			/* corner coverage: distance to the nearest rounded-corner centre */
-			int lx = xx < r ? r - 1 - xx : (xx >= w - r ? xx - (w - r) : -1);
-			int ly = yy < r ? r - 1 - yy : (yy >= h - r ? yy - (h - r) : -1);
-			if (lx >= 0 && ly >= 0) {
-				float dx = lx + 0.5f, dy = ly + 0.5f;
-				float d = __builtin_sqrtf(dx * dx + dy * dy);
-				float e = (float) r - d;
-				cov = e >= 0.5f ? 255 : (e <= -0.5f ? 0 : (int) ((e + 0.5f) * 255.0f));
+	int bx0, by0, bx1, by1;
+	nw_surface_bounds(back, &bx0, &by0, &bx1, &by1);
+	int x0 = x < bx0 ? bx0 : x, x1 = x + w > bx1 ? bx1 : x + w;
+	for (int py = (y < by0 ? by0 : y); py < (y + h > by1 ? by1 : y + h); py++) {
+		int yy = py - y;
+		int corner_row = (yy < r || yy >= h - r);
+		uint32_t       *drow = back->px + (long) py * back->stride;
+		const uint32_t *srow = sc->px   + (long) py * sc->stride;
+		for (int px = x0; px < x1; px++) {
+			int a = alpha;
+			if (corner_row) {                         /* anti-aliased rounded corner */
+				int xx = px - x;
+				int lx = xx < r ? r - 1 - xx : (xx >= w - r ? xx - (w - r) : -1);
+				int ly = yy < r ? r - 1 - yy : (yy >= h - r ? yy - (h - r) : -1);
+				if (lx >= 0 && ly >= 0) {
+					float dx = lx + 0.5f, dy = ly + 0.5f;
+					float e = (float) r - __builtin_sqrtf(dx * dx + dy * dy);
+					int cov = e >= 0.5f ? 255 : (e <= -0.5f ? 0 : (int) ((e + 0.5f) * 255.0f));
+					if (!cov) continue;
+					a = cov * alpha / 255;
+				}
 			}
-			if (!cov) continue;
-			nw_blend_pixel(back, x + xx, y + yy,
-			               sc->px[(long) (y + yy) * sc->stride + (x + xx)], cov * alpha / 255);
+			drow[px] = (a >= 255) ? srow[px] : nw_mix(drow[px], srow[px], a);
 		}
 	}
 }
 
-/* A soft drop shadow: a few stacked translucent rounded rects below+around the window. */
+/* A soft drop shadow as concentric 1px rounded-rect RINGS (perimeter cost, not area cost), so
+ * it stays cheap and — crucially — never fills the window interior, so a translucent window
+ * isn't darkened by the shadow underneath it. Offset down a few px for a "drop". */
 static void draw_shadow(const struct nw_surface *back, int x, int y, int w, int h, int r)
 {
-	for (int i = 5; i >= 1; i--)
-		nw_fill_round(back, x - i, y - i + 4, w + 2 * i, h + 2 * i, r + i, 0x0a1830, 14);
+	for (int i = 1; i <= 8; i++) {
+		int a = 28 - i * 3;
+		if (a <= 0) break;
+		nw_stroke_round(back, x - i, y - i + 5, w + 2 * i, h + 2 * i, r + i, 0x0a1830, a);
+	}
 }
 
 void nw_draw_cursor(const struct nw_surface *dst, int x, int y)
@@ -180,7 +194,8 @@ static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 static void draw_panel(const struct nw_server *s, const struct nw_surface *back, const char *app)
 {
 	int W = s->screen_w;
-	nw_blur_rect(back, 0, 0, W, NW_PANEL_H, 6, 2);                      /* frosted backdrop */
+	if (s->drag_win < 0)                                               /* skip the blur mid-drag */
+		nw_blur_rect(back, 0, 0, W, NW_PANEL_H, 6, 1);                 /* frosted backdrop */
 	nw_blend_rect(back, 0, 0, W, NW_PANEL_H, COL_PANEL, 205);
 	nw_blend_rect(back, 0, NW_PANEL_H - 1, W, 1, 0x9fb2cc, 140);        /* hairline */
 	int y = (NW_PANEL_H - NW_FONT_H) / 2;
@@ -207,7 +222,8 @@ static void draw_dock(const struct nw_server *s, const struct nw_surface *back)
 	int dw = n * slot + 2 * pad, dh = NW_DOCK_H;
 	int dx = (s->screen_w - dw) / 2, dy = s->screen_h - dh - 10;
 	draw_shadow(back, dx, dy, dw, dh, 20);
-	nw_blur_rect(back, dx, dy, dw, dh, 7, 2);                          /* frosted dock backdrop */
+	if (s->drag_win < 0)
+		nw_blur_rect(back, dx, dy, dw, dh, 7, 1);                      /* frosted dock backdrop */
 	nw_fill_round(back, dx, dy, dw, dh, 20, COL_DOCK, 150);
 	nw_stroke_round(back, dx, dy, dw, dh, 20, 0xffffff, 180);
 	for (int i = 0; i < n; i++) {
@@ -232,8 +248,6 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
 		if (scratch) {
 			draw_shadow(back, w->x, w->y, fw, fh, NW_RADIUS);
-			if (s->drag_win < 0)                  /* backdrop glass; skipped mid-drag for speed */
-				nw_blur_rect(back, w->x, w->y, fw, fh, 5, 2);
 			draw_window_to(scratch, w, focused);
 			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS,
 			                (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA);

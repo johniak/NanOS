@@ -30,6 +30,11 @@ static void nw_bounds(const struct nw_surface *s, int *x0, int *y0, int *x1, int
 	}
 }
 
+void nw_surface_bounds(const struct nw_surface *s, int *x0, int *y0, int *x1, int *y1)
+{
+	nw_bounds(s, x0, y0, x1, y1);
+}
+
 void nw_put_pixel(const struct nw_surface *s, int x, int y, uint32_t rgb)
 {
 	int bx0, by0, bx1, by1;

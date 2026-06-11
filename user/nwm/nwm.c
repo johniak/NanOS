@@ -261,10 +261,16 @@ static void present(void)
 	if (S.dirty) {
 		int dx, dy, dw, dh;
 		int have = nw_peek_damage(&S, &dx, &dy, &dw, &dh);
-		if (have) nw_surface_clip(&g_scene_surf, dx, dy, dw, dh);  /* recompose only the damage */
-		else      nw_surface_noclip(&g_scene_surf);
+		if (have) {                                /* recompose only the damage region */
+			nw_surface_clip(&g_scene_surf, dx, dy, dw, dh);
+			nw_surface_clip(&g_scratch_surf, dx, dy, dw, dh);   /* render windows only there too */
+		} else {
+			nw_surface_noclip(&g_scene_surf);
+			nw_surface_noclip(&g_scratch_surf);
+		}
 		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf);
 		nw_surface_noclip(&g_scene_surf);
+		nw_surface_noclip(&g_scratch_surf);
 		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it */
 		if (have)
 			blit_scene(dx, dy, dw, dh);          /* only the changed region */
