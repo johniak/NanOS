@@ -27,6 +27,16 @@ public:
 	// clean journal (s_start already 0) returns 0 and changes nothing. Returns the number of data
 	// blocks replayed (>= 0), or < 0 if the journal has no magic / unsupported features.
 	static int replay(BlockCache* cache, const unsigned* journalBlocks, unsigned count);
+
+	// Write one transaction journaling `targets[0..n)` (their CURRENT cache contents) at the head
+	// of the log, leaving s_start pointing at it (the transaction is committed in the log but the
+	// final locations are not yet updated — the caller checkpoints by flushing the dirty targets,
+	// then calls resetLog). Returns 0, or <0 if it doesn't fit or the journal is unsupported.
+	static int writeTxn(BlockCache* cache, const unsigned* journalBlocks, unsigned count,
+	                    const unsigned* targets, unsigned n);
+
+	// Mark the log empty again (s_start = 0, sequence advanced) after a checkpoint.
+	static void resetLog(BlockCache* cache, const unsigned* journalBlocks);
 };
 
 }  // namespace kernel

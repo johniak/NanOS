@@ -37,6 +37,9 @@ public:
 
 	void flush();          // write every dirty cached block to the device
 	void invalidate();     // drop all cached blocks (discard clean; flush() dirty first if needed)
+	// Block numbers of the currently dirty (not-yet-written) cached blocks; up to `max`, returns
+	// the count. Used by the journal to capture an operation's pending changes before flushing.
+	int  dirtyList(unsigned* out, int max);
 
 private:
 	struct Slot {

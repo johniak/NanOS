@@ -1,9 +1,12 @@
 #include "doctest.h"
 #include "RamBlockDevice.h"
+#include "Ext4Filesystem.h"
 #include "ext/BlockCache.h"
 #include "ext/Journal.h"
 #include <cstring>
-#include <cstdlib>
+#include <cstdio>
+// malloc/free come from memory_manager.h (C++ linkage, via Ext4Filesystem.h); do NOT include
+// <cstdlib> — its C-linkage decls clash with that (the macOS case-insensitivity/linkage trap).
 
 using namespace kernel;
 
@@ -177,4 +180,46 @@ TEST_CASE("Journal::replay un-escapes a tagged block, walks a revoke, declines c
 	for (unsigned i = 4; i < BS; i++) REQUIRE(got[i] == (unsigned char) (i & 0xFF));
 
 	free(disk);
+}
+
+static unsigned rd32le(const unsigned char* p, unsigned o) {
+	return (unsigned) p[o] | ((unsigned) p[o + 1] << 8) | ((unsigned) p[o + 2] << 16) | ((unsigned) p[o + 3] << 24);
+}
+static unsigned short rd16le(const unsigned char* p, unsigned o) { return p[o] | (p[o + 1] << 8); }
+
+// A write to the journaled ext4 fixture must go through a JBD2 transaction: the journal's
+// sequence advances and the log is checkpointed back to empty (s_start == 0). Locates the journal
+// superblock from inode 8's extent and reads it before and after a create().
+TEST_CASE("ext4 writes commit through the journal and leave it checkpointed") {
+	using namespace kernel;
+	FILE* f = fopen("tests/fixtures/ext4.img", "rb");
+	REQUIRE(f != nullptr);
+	fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+	unsigned char* img = (unsigned char*) malloc((size_t) sz);
+	REQUIRE(fread(img, 1, (size_t) sz, f) == (size_t) sz);
+	fclose(f);
+
+	const unsigned char* sb = img + 1024;
+	unsigned blockSize = 1024u << rd32le(sb, 0x18);
+	unsigned inodeSize = rd16le(sb, 0x58);
+	const unsigned char* desc0 = img + 2 * blockSize;
+	unsigned itable = rd32le(desc0, 0x08);
+	const unsigned char* ji = img + itable * blockSize + 7u * inodeSize;   // inode 8
+	const unsigned char* iblock = ji + 0x28;                               // i_block (extent header)
+	REQUIRE(rd16le(iblock, 0) == 0xF30A);
+	unsigned journalSbBlock = rd32le(iblock + 12, 8);                      // first extent ee_start_lo
+	unsigned seqBefore = be32(img + journalSbBlock * blockSize, 24);
+
+	{
+		RamBlockDevice dev("fixture", img, (unsigned) sz);
+		Ext4Filesystem fs(&dev, 0);
+		REQUIRE(fs.mount() == 0);
+		REQUIRE(fs.create("/jtest", 0644) == 0);
+	}
+
+	unsigned char* jsb = img + journalSbBlock * blockSize;
+	CHECK(be32(jsb, 24) > seqBefore);     // s_sequence advanced -> a transaction was committed
+	CHECK(be32(jsb, 28) == 0);            // s_start == 0 -> log checkpointed back to empty
+
+	free(img);
 }

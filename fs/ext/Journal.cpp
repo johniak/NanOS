@@ -1,4 +1,5 @@
 #include "ext/Journal.h"
+#include "string.h"
 
 namespace kernel {
 
@@ -123,6 +124,84 @@ int Journal::replay(BlockCache* cache, const unsigned* jb, unsigned count) {
 	cache->write(jb[0], sb);
 	cache->flush();
 	return applied;
+}
+
+int Journal::writeTxn(BlockCache* cache, const unsigned* jb, unsigned count,
+                      const unsigned* targets, unsigned n) {
+	unsigned char sb[BlockCache::MAX_BLOCK];
+	cache->read(jb[0], sb);
+	if (be32(sb, 0) != JBD2_MAGIC)
+		return -1;
+	unsigned incompat = be32(sb, 40);
+	if (incompat & (JBD2_INCOMPAT_CSUM_V3 | JBD2_INCOMPAT_ASYNC_COMMIT | JBD2_INCOMPAT_CSUM_V2))
+		return -2;                                  // only the plain v1 layout is written here
+	bool feat64 = (incompat & JBD2_INCOMPAT_64BIT) != 0;
+	unsigned tagSize = 8u + (feat64 ? 4u : 0u);
+	unsigned jbs = be32(sb, 12);
+	unsigned maxlen = be32(sb, 16);
+	unsigned first = be32(sb, 20);
+	unsigned seq = be32(sb, 24);
+	if (maxlen == 0 || maxlen > count) maxlen = count;
+	if (n == 0)
+		return -3;
+	// Need 1 descriptor + n data + 1 commit blocks, and the descriptor's tags must fit one block.
+	if (first + n + 2 > maxlen)
+		return -3;
+	if (12u + n * (tagSize + 16u) > jbs)             // worst case: a UUID after every tag
+		return -3;
+
+	unsigned char desc[BlockCache::MAX_BLOCK];
+	unsigned char data[BlockCache::MAX_BLOCK];
+	memset(desc, 0, jbs);
+	wbe32(desc, 0, JBD2_MAGIC);
+	wbe32(desc, 4, JBD2_DESCRIPTOR);
+	wbe32(desc, 8, seq);
+	unsigned off = 12;
+	unsigned log = first;                            // descriptor sits at journal block `first`
+	for (unsigned i = 0; i < n; i++) {
+		cache->read(targets[i], data);
+		unsigned flags = 0;
+		if (be32(data, 0) == JBD2_MAGIC) {           // escape: the block starts with our magic
+			flags |= JBD2_FLAG_ESCAPE;
+			wbe32(data, 0, 0);
+		}
+		if (i > 0) flags |= JBD2_FLAG_SAME_UUID;     // only the first tag carries a UUID
+		if (i == n - 1) flags |= JBD2_FLAG_LAST_TAG;
+		wbe32(desc, off, targets[i]);
+		desc[off + 4] = 0; desc[off + 5] = 0;        // (no per-tag checksum without csum_v2)
+		desc[off + 6] = (unsigned char) (flags >> 8); desc[off + 7] = (unsigned char) flags;
+		off += tagSize;
+		if (!(flags & JBD2_FLAG_SAME_UUID)) {        // copy the journal UUID after the first tag
+			for (unsigned u = 0; u < 16; u++) desc[off + u] = sb[48 + u];
+			off += 16;
+		}
+		log = (log + 1 >= maxlen) ? first : log + 1; // the data block for this tag
+		cache->write(jb[log], data);
+	}
+	cache->write(jb[first], desc);
+	log = (log + 1 >= maxlen) ? first : log + 1;     // commit block follows the last data block
+	unsigned char commit[BlockCache::MAX_BLOCK];
+	memset(commit, 0, jbs);
+	wbe32(commit, 0, JBD2_MAGIC);
+	wbe32(commit, 4, JBD2_COMMIT);
+	wbe32(commit, 8, seq);
+	cache->write(jb[log], commit);
+
+	wbe32(sb, 28, first);                            // s_start -> our transaction
+	wbe32(sb, 24, seq);                              // s_sequence -> our transaction's id
+	cache->write(jb[0], sb);
+	return 0;
+}
+
+void Journal::resetLog(BlockCache* cache, const unsigned* jb) {
+	unsigned char sb[BlockCache::MAX_BLOCK];
+	cache->read(jb[0], sb);
+	if (be32(sb, 0) != JBD2_MAGIC)
+		return;
+	unsigned seq = be32(sb, 24);
+	wbe32(sb, 28, 0);            // s_start = 0 (empty)
+	wbe32(sb, 24, seq + 1);      // next sequence
+	cache->write(jb[0], sb);
 }
 
 }  // namespace kernel

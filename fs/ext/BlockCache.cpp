@@ -88,4 +88,12 @@ void BlockCache::invalidate() {
 		m_slot[i].valid = false;
 }
 
+int BlockCache::dirtyList(unsigned* out, int max) {
+	int n = 0;
+	for (int i = 0; i < SLOTS && n < max; i++)
+		if (m_slot[i].valid && m_slot[i].dirty)
+			out[n++] = m_slot[i].blockNo;
+	return n;
+}
+
 }  // namespace kernel

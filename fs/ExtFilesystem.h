@@ -116,6 +116,8 @@ protected:
 	BlockDevice* device;
 	BlockCache* cache;        // all block reads/writes go through here (created in mount())
 	ExtAllocator* alloc;      // block/inode allocation + inode read/write (created in mount())
+	unsigned* journalBlocks;  // log block list (journal inode's data blocks); 0 if not journaled
+	unsigned journalCount;    // journal length in blocks
 	char superblockBuff[1024];
 	char commonBuff[4096];
 	char dataBuff[4096];      // data-block read-modify-write scratch (kept off commonBuff)
@@ -134,6 +136,8 @@ public:
 		this->blockGroupDescriptors = 0;
 		this->cache = 0;
 		this->alloc = 0;
+		this->journalBlocks = 0;
+		this->journalCount = 0;
 	}
 
 	// Map a file-relative block index to an absolute filesystem block number.
@@ -198,11 +202,12 @@ public:
 		unsigned jcount = ((unsigned) ji.lowerSize + blockSize - 1) / blockSize;
 		if (jcount == 0)
 			return;
-		unsigned* jb = (unsigned*) malloc(jcount * sizeof(unsigned));
+		// Keep the log block list for the filesystem's lifetime: writes journal through it.
+		journalBlocks = (unsigned*) malloc(jcount * sizeof(unsigned));
+		journalCount = jcount;
 		for (unsigned i = 0; i < jcount; i++)
-			jb[i] = resolveBlock(ji, i);
-		int applied = Journal::replay(cache, jb, jcount);
-		free(jb);
+			journalBlocks[i] = resolveBlock(ji, i);
+		int applied = Journal::replay(cache, journalBlocks, journalCount);
 		if (applied <= 0)
 			return;
 		// Recovered something -> clear INCOMPAT_RECOVER and persist the superblock.
@@ -215,6 +220,24 @@ public:
 			else cache->writePartial(0, 1024, superblockBuff, 1024);
 			cache->flush();
 		}
+	}
+
+	// Commit the cache's pending changes. On a journaled filesystem the dirty blocks of the just-
+	// finished operation are written to the log as one transaction, then checkpointed to their
+	// final homes and the log reset — so a crash mid-checkpoint replays a consistent set. On a
+	// non-journaled filesystem (ext2) it is a plain flush. Called at the end of every mutation.
+	void txFlush() {
+		if (journalBlocks && journalCount) {
+			unsigned targets[BlockCache::SLOTS];
+			int n = cache->dirtyList(targets, BlockCache::SLOTS);
+			if (n > 0 && Journal::writeTxn(cache, journalBlocks, journalCount, targets, (unsigned) n) == 0) {
+				cache->flush();                       // log transaction + targets reach the device
+				Journal::resetLog(cache, journalBlocks);
+				cache->flush();                       // log marked empty again
+				return;
+			}
+		}
+		cache->flush();
 	}
 
 	void initBgdt() {
@@ -633,7 +656,7 @@ public:
 		if (newEnd > (unsigned) inode.lowerSize)
 			inode.lowerSize = (int) newEnd;
 		writeInodeStruct((unsigned) inodeNo, inode);
-		cache->flush();
+		txFlush();
 		return (int) written;
 	}
 
@@ -653,7 +676,7 @@ public:
 		}
 		inode.lowerSize = (int) length;
 		writeInodeStruct((unsigned) inodeNo, inode);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -851,7 +874,7 @@ public:
 			alloc->freeInode(ino, false); return -28;
 		}
 		writeInodeStruct((unsigned) parentNo, parent);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -880,7 +903,7 @@ public:
 		}
 		parent.hardlinksCount = (short) (parent.hardlinksCount + 1);   // child's ".." backlink
 		writeInodeStruct((unsigned) parentNo, parent);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -898,7 +921,7 @@ public:
 		} else {
 			writeInodeStruct((unsigned) childNo, child);
 		}
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -914,7 +937,7 @@ public:
 		alloc->freeInode((unsigned) childNo, true);
 		parent.hardlinksCount = (short) (parent.hardlinksCount - 1);
 		writeInodeStruct((unsigned) parentNo, parent);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -931,7 +954,7 @@ public:
 		writeInodeStruct((unsigned) parentNo, parent);
 		target.hardlinksCount = (short) (target.hardlinksCount + 1);
 		writeInodeStruct((unsigned) targetNo, target);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -967,7 +990,7 @@ public:
 			alloc->freeInode(ino, false); return -28;
 		}
 		writeInodeStruct((unsigned) parentNo, parent);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -1015,7 +1038,7 @@ public:
 			writeInodeStruct((unsigned) oldParentNo, oldParent);
 			writeInodeStruct((unsigned) newParentNo, newParent);
 		}
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -1046,7 +1069,7 @@ public:
 		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;
 		inode.typeAndPermisions = (short) ((inode.typeAndPermisions & 0xF000) | (mode & 0xFFF));
 		writeInodeStruct((unsigned) no, inode);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -1056,7 +1079,7 @@ public:
 		if (uid != 0xFFFFFFFFu) inode.userId = (short) uid;     // -1 leaves the field unchanged
 		if (gid != 0xFFFFFFFFu) inode.groupId = (short) gid;
 		writeInodeStruct((unsigned) no, inode);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
@@ -1066,7 +1089,7 @@ public:
 		inode.lastAccess = (int) atime;
 		inode.lastmodification = (int) mtime;
 		writeInodeStruct((unsigned) no, inode);
-		cache->flush();
+		txFlush();
 		return 0;
 	}
 
