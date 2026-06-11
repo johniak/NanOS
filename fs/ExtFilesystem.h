@@ -851,6 +851,12 @@ public:
 	// slack, else append a fresh directory block. Grows dir.lowerSize; caller persists the inode.
 	bool dirAddEntry(Ext2Inode& dir, unsigned dirNo, const char* name, int nameLen,
 	                 unsigned ino, unsigned char ft) {
+		// If this directory is htree-indexed (dir_index), drop the index and maintain it as a
+		// plain linear (multi-block) directory: the dx_root's "." / ".." cover block 0 and the
+		// leaf blocks are already linear dirent blocks, so clearing EXT4_INDEX_FL leaves a valid,
+		// e2fsck-clean directory. (We read htree dirs linearly and don't grow new htrees; this
+		// keeps an insert into a pre-indexed directory correct without htree-split machinery.)
+		dir.flags &= ~0x1000u;                          // EXT4_INDEX_FL
 		unsigned need = 8u + round4((unsigned) nameLen);
 		unsigned usable = dirUsable();
 		unsigned nblocks = ((unsigned) dir.lowerSize + blockSize - 1) / blockSize;
