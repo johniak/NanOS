@@ -23,4 +23,12 @@ int lstat(const char* path, struct stat* buf);
 int clock_gettime(clockid_t clk, struct timespec* tp);
 int nanosleep(const struct timespec* req, struct timespec* rem);
 
+/* picolibc's <sys/resource.h> ships only getrusage/struct rusage, not the rlimit surface.
+ * Mirror the minimal struct the getrlimit/setrlimit glue (posixstubs.c) implements; the SDK
+ * sysroot adds the same declarations (+ RLIMIT_*) for external ports. */
+struct rlimit { unsigned long rlim_cur; unsigned long rlim_max; };
+#ifndef RLIM_INFINITY
+#define RLIM_INFINITY (~0UL)
+#endif
+
 #endif /* NX_COMPAT_DECLS_H */

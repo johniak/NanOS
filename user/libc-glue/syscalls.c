@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <poll.h>
+#include <utime.h>
 
 /* Force the stdin stream object to be linked. picolibc's tinystdio pulls stdin/stdout/
  * stderr from libc.a only on reference; programs here use stdout/stderr (printf) but
@@ -103,6 +104,17 @@ int unlink(const char* p) {
 }
 int mkdir(const char* p, mode_t mode) {
 	return reterr(sys3(SYS_mkdir, (int) p, (int) mode, 0));
+}
+int rmdir(const char* p)                { return reterr(sys3(SYS_rmdir, (int) p, 0, 0)); }
+int fsync(int fd)                       { return reterr(sys3(SYS_fsync, fd, 0, 0)); }
+int fdatasync(int fd)                   { return reterr(sys3(SYS_fdatasync, fd, 0, 0)); }
+void sync(void)                         { sys3(SYS_sync, 0, 0, 0); }
+int fchdir(int fd)                      { return reterr(sys3(SYS_fchdir, fd, 0, 0)); }
+int ftruncate(int fd, off_t length)     { return reterr(sys3(SYS_ftruncate, fd, (int) length, 0)); }
+int truncate(const char* p, off_t length) { return reterr(sys3(SYS_truncate, (int) p, (int) length, 0)); }
+/* utime(2): the kernel reads struct utimbuf {time_t actime, modtime} directly (NULL -> now). */
+int utime(const char* path, const struct utimbuf* times) {
+	return reterr(sys3(SYS_utime, (int) path, (int) times, 0));
 }
 /* rename(2): NanOS has no rename syscall, so do it in userland — copy the old file to the
  * new name, then unlink the old. Both ends are ordinary files (Doom uses it to finalize a

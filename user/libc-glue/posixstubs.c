@@ -7,10 +7,15 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <signal.h>
 #include <pwd.h>
 #include <grp.h>
+
+extern char** environ;
 
 /* ---- identity: single-user root ---- */
 uid_t getuid(void)   { return 0; }
@@ -42,6 +47,66 @@ int access(const char* path, int mode) {
 	(void) mode;
 	struct stat st;
 	return stat(path, &st) == 0 ? 0 : -1;
+}
+
+/* getrlimit/setrlimit: NanOS has a single flat address space and no per-process limits, so
+ * every resource is reported as unlimited and setting one is accepted-and-ignored. Ports probe
+ * these (vim sizes its memory off RLIMIT_DATA); "no limit" is the honest answer. */
+int getrlimit(int resource, struct rlimit* rl) {
+	(void) resource;
+	if (rl) { rl->rlim_cur = RLIM_INFINITY; rl->rlim_max = RLIM_INFINITY; }
+	return 0;
+}
+int setrlimit(int resource, const struct rlimit* rl) { (void) resource; (void) rl; return 0; }
+
+/* sigaltstack: no alternate signal stack (handlers run on the normal stack). Report "disabled"
+ * and accept any request, so crash-handler setup (vim, bash) succeeds as a no-op. */
+int sigaltstack(const stack_t* ss, stack_t* old) {
+	(void) ss;
+	if (old) { old->ss_sp = 0; old->ss_size = 0; old->ss_flags = SS_DISABLE; }
+	return 0;
+}
+
+/* execvp(3): picolibc provides only execve. Search PATH for a bare name (no '/'); a name with a
+ * slash is exec'd as-is. execve only returns on failure, so we keep trying entries. */
+int execvp(const char* file, char* const argv[]) {
+	if (!file || !*file) { errno = ENOENT; return -1; }
+	if (strchr(file, '/')) return execve(file, argv, environ);
+	const char* path = getenv("PATH");
+	if (!path || !*path) path = "/disks/main/nanos/bin:/disks/main/bin";
+	char buf[512];
+	for (const char* p = path; ; ) {
+		const char* colon = strchr(p, ':');
+		size_t len = colon ? (size_t) (colon - p) : strlen(p);
+		if (len && len + 1 + strlen(file) + 1 <= sizeof buf) {
+			memcpy(buf, p, len);
+			buf[len] = '/';
+			strcpy(buf + len + 1, file);
+			execve(buf, argv, environ);   /* returns only on failure */
+		}
+		if (!colon) break;
+		p = colon + 1;
+	}
+	errno = ENOENT;
+	return -1;
+}
+
+/* mkdtemp(3): create a uniquely-named directory from a "...XXXXXX" template. picolibc declares
+ * it but does not implement it. Derive the suffix from pid + an attempt counter and mkdir until
+ * one sticks (no atomic O_EXCL dir create, but EEXIST retry is sufficient on a single user). */
+char* mkdtemp(char* tmpl) {
+	size_t len = tmpl ? strlen(tmpl) : 0;
+	if (len < 6 || strcmp(tmpl + len - 6, "XXXXXX") != 0) { errno = EINVAL; return 0; }
+	static const char cs[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+	unsigned seed = (unsigned) getpid() * 2654435761u;
+	for (int attempt = 0; attempt < 256; attempt++) {
+		unsigned v = seed + (unsigned) attempt * 40503u;
+		for (int i = 0; i < 6; i++) { tmpl[len - 6 + i] = cs[v % 36]; v /= 36; v += attempt; }
+		if (mkdir(tmpl, 0700) == 0) return tmpl;
+		if (errno != EEXIST) return 0;
+	}
+	errno = EEXIST;
+	return 0;
 }
 
 /* alarm/sleep: no SIGALRM timer, so alarm is a no-op (returns 0 = none pending). sleep and
