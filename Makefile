@@ -188,6 +188,15 @@ _image: _all _userland _kext _grub2-image
 	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
+	# vim (optional, external): built by the nanos-sdk port and staged into bin/vim.nxe, same
+	# pattern as bash. Its runtime (syntax/help/etc.) is a `data` entry the port driver installs
+	# into the bundle; vim itself runs without it (`-u NONE`). Skipped if bin/vim.nxe is absent.
+	if [ -f $(BINFOLDER)vim.nxe ]; then \
+	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# terminfo database: the compiled xterm-256color entry (matches TERM), shipped under
