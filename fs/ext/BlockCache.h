@@ -40,6 +40,9 @@ public:
 	// Block numbers of the currently dirty (not-yet-written) cached blocks; up to `max`, returns
 	// the count. Used by the journal to capture an operation's pending changes before flushing.
 	int  dirtyList(unsigned* out, int max);
+	// Flush every dirty block EXCEPT those listed in keep[0..n). The journal uses this to push
+	// the committed log to disk before the data blocks it protects (write-ordering / data=ordered).
+	void flushExcept(const unsigned* keep, int n);
 
 private:
 	struct Slot {

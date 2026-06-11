@@ -232,7 +232,8 @@ public:
 			unsigned targets[BlockCache::SLOTS];
 			int n = cache->dirtyList(targets, BlockCache::SLOTS);
 			if (n > 0 && Journal::writeTxn(cache, journalBlocks, journalCount, targets, (unsigned) n) == 0) {
-				cache->flush();                       // log transaction + targets reach the device
+				cache->flushExcept(targets, n);       // commit the log to disk FIRST (write barrier)
+				cache->flush();                       // then the data/metadata it protects (ordered)
 				Journal::resetLog(cache, journalBlocks);
 				cache->flush();                       // log marked empty again
 				return;

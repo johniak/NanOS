@@ -96,4 +96,18 @@ int BlockCache::dirtyList(unsigned* out, int max) {
 	return n;
 }
 
+void BlockCache::flushExcept(const unsigned* keep, int n) {
+	for (int i = 0; i < SLOTS; i++) {
+		if (!m_slot[i].valid || !m_slot[i].dirty)
+			continue;
+		bool kept = false;
+		for (int j = 0; j < n; j++)
+			if (m_slot[i].blockNo == keep[j]) { kept = true; break; }
+		if (kept)
+			continue;
+		m_dev->writeSectors(lbaOf(m_slot[i].blockNo), sectorsPerBlock(), m_slot[i].data);
+		m_slot[i].dirty = false;
+	}
+}
+
 }  // namespace kernel
