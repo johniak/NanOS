@@ -436,8 +436,12 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		w->cw     = m->a > 0 ? m->a : 1;
 		w->ch     = m->b > 0 ? m->b : 1;
 		w->buf    = 0;
-		w->x      = 40 + (s->zn * 24) % 240;     /* cascade new windows */
-		w->y      = 40 + (s->zn * 24) % 160;
+		/* The first few windows get a designed spread (the demo desktop layout); beyond that,
+		 * new windows cascade from the top-left. */
+		static const int LX[4] = { 90, 520, 150, 70 };
+		static const int LY[4] = { 400, 110, 70, 150 };
+		if (s->zn < 4) { w->x = LX[s->zn]; w->y = LY[s->zn]; }
+		else { w->x = 60 + (s->zn * 28) % 300; w->y = 60 + (s->zn * 28) % 220; }
 		uint32_t tl = m->length < NW_TITLE_MAX - 1 ? m->length : NW_TITLE_MAX - 1;
 		if (payload && tl) memcpy(w->title, payload, tl);
 		w->title[tl] = 0;

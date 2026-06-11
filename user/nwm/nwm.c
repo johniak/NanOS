@@ -52,6 +52,8 @@ enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 #define CLIENT_COMMITCAP (512 * 1024)   /* max COMMIT payload reassembled per client */
 #define NWNOTE_PATH "/disks/main/apps/nwnote/nwnote.nxe"
 #define NWEXP_PATH  "/disks/main/apps/nwexp/nwexp.nxe"
+#define NWSET_PATH  "/disks/main/apps/nwset/nwset.nxe"
+#define NWTERM_PATH "/disks/main/apps/nwterm/nwterm.nxe"
 
 /* framebuffer + the cached scene (desktop+windows, NO cursor) */
 static uint8_t  *g_fb;
@@ -311,8 +313,9 @@ int main(void)
 
 	termmode(1);                              /* silence the kernel console echo-draw */
 
-	spawn_client(0, NWNOTE_PATH);
-	spawn_client(1, NWEXP_PATH);              /* explorer spawned last -> on top + focused */
+	spawn_client(0, NWTERM_PATH);             /* the NanoOS demo desktop: Terminal + Settings */
+	spawn_client(1, NWSET_PATH);
+	spawn_client(2, NWEXP_PATH);              /* Files spawned last -> on top + focused */
 
 	S.dirty = 1;
 	present();                                /* first frame: desktop + cursor */
