@@ -118,3 +118,49 @@ TEST_CASE("scissor confines put_pixel and blit to the clip rect") {
 	CHECK(b.at(2, 2) == 0u);                           // dst(2,2) is outside the scissor
 	CHECK(b.at(5, 5) == 0u);                           // dst(5,5) is outside the scissor
 }
+
+TEST_CASE("blend_rect mixes src over dst by alpha; 0 keeps dst, 255 replaces it") {
+	Buf b(4, 4);
+	nw_fill_rect(&b.s, 0, 0, 4, 4, 0x000000);
+	nw_blend_rect(&b.s, 0, 0, 4, 4, 0xffffff, 128);     // ~50% white over black
+	uint32_t c = b.at(1, 1);
+	int r = (c >> 16) & 0xff;
+	CHECK(r > 120); CHECK(r < 135);                      // ~128
+	nw_blend_rect(&b.s, 0, 0, 4, 4, 0xff0000, 0);        // alpha 0 -> unchanged
+	CHECK(b.at(1, 1) == c);
+	nw_blend_rect(&b.s, 0, 0, 4, 4, 0x00ff00, 255);      // alpha 255 -> opaque green
+	CHECK(b.at(1, 1) == 0x00ff00u);
+}
+
+TEST_CASE("vgrad_rect interpolates top->bottom colour down the rect") {
+	Buf b(2, 11);
+	nw_vgrad_rect(&b.s, 0, 0, 2, 11, 0x000000, 0x00ff00);   // black -> green over 11 rows
+	CHECK(((b.at(0, 0) >> 8) & 0xff) == 0);                  // top = black
+	CHECK(((b.at(0, 10) >> 8) & 0xff) == 0xff);              // bottom = full green
+	int mid = (b.at(0, 5) >> 8) & 0xff;
+	CHECK(mid > 110); CHECK(mid < 145);                      // middle ~ halfway
+}
+
+TEST_CASE("fill_round fills the interior opaquely and anti-aliases the corners") {
+	Buf b(20, 20);
+	nw_fill_rect(&b.s, 0, 0, 20, 20, 0x000000);
+	nw_fill_round(&b.s, 0, 0, 20, 20, 6, 0xffffff, 255);
+	CHECK(b.at(10, 10) == 0xffffffu);                        // centre fully filled
+	CHECK(b.at(0, 0) == 0x000000u);                          // extreme corner stays background
+	int edge = (b.at(1, 1) >> 16) & 0xff;                    // near corner: partial coverage
+	CHECK(edge >= 0); CHECK(edge < 255);
+}
+
+TEST_CASE("blur_rect leaves a uniform region unchanged and averages an edge") {
+	Buf b(16, 16);
+	nw_fill_rect(&b.s, 0, 0, 16, 16, 0x404040);
+	nw_blur_rect(&b.s, 0, 0, 16, 16, 2, 1);
+	CHECK(b.at(8, 8) == 0x404040u);                          // flat region: unchanged
+	Buf e(16, 16);
+	nw_fill_rect(&e.s, 0, 0, 8, 16, 0x000000);
+	nw_fill_rect(&e.s, 8, 0, 8, 16, 0x646464);               // hard vertical edge at x=8
+	nw_blur_rect(&e.s, 0, 0, 16, 16, 3, 1);
+	int l = e.at(7, 8) & 0xff, r = e.at(8, 8) & 0xff;
+	CHECK(l > 0);                                            // dark side lifted by the blur
+	CHECK(r < 0x64);                                         // light side pulled down
+}

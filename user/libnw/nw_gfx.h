@@ -38,9 +38,36 @@ void nw_draw_char(const struct nw_surface *s, int x, int y, unsigned char ch,
 /* Draws str left-to-right at 8px advance; no wrapping. Returns the x past the last glyph. */
 int  nw_draw_text(const struct nw_surface *s, int x, int y, const char *str,
                   uint32_t fg, uint32_t bg);
+/* Transparent-background text: only the glyph's lit pixels are painted (fg), backdrop kept. */
+int  nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t fg);
 /* Copy a w*h block from src(sx,sy) to dst(dx,dy). Clips against BOTH surfaces (negative
  * offsets included) — the compositor's window-into-backbuffer blit. */
 void nw_blit(const struct nw_surface *dst, int dx, int dy,
              const struct nw_surface *src, int sx, int sy, int w, int h);
+
+/* ---- modern compositing: alpha, gradients, rounded rects, blur (all clipped + scissored) ---- */
+
+/* Colour math (0x00RRGGBB): src over dst at coverage a (0..255); linear a..b as t/n. */
+uint32_t nw_mix(uint32_t dst, uint32_t src, int a);
+uint32_t nw_lerp(uint32_t a, uint32_t b, int t, int n);
+
+/* Alpha-blend rgb over the surface at coverage a (0..255). Per-pixel and filled-rect forms. */
+void nw_blend_pixel(const struct nw_surface *s, int x, int y, uint32_t rgb, int a);
+void nw_blend_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32_t rgb, int a);
+
+/* Vertical linear gradient fill (opaque) from `top` colour to `bot` colour down the rect. */
+void nw_vgrad_rect(const struct nw_surface *s, int x, int y, int w, int h,
+                   uint32_t top, uint32_t bot);
+
+/* Rounded-rectangle fill, radius r, blended at alpha a (255 = opaque); corners anti-aliased.
+ * nw_stroke_round draws a 1px AA border instead of filling. */
+void nw_fill_round(const struct nw_surface *s, int x, int y, int w, int h, int r,
+                   uint32_t rgb, int a);
+void nw_stroke_round(const struct nw_surface *s, int x, int y, int w, int h, int r,
+                     uint32_t rgb, int a);
+
+/* Separable box blur of a rectangular region, in place — `radius` px, `passes` iterations
+ * (3 passes ≈ Gaussian). Used for backdrop "glass" and soft shadows. */
+void nw_blur_rect(const struct nw_surface *s, int x, int y, int w, int h, int radius, int passes);
 
 #endif /* NW_GFX_H */

@@ -19,13 +19,15 @@ enum {
 	NW_MAX_WINDOWS = 32,
 	NW_MAX_CLIENTS = 16,
 	NW_BORDER      = 2,
-	NW_TITLEBAR_H  = 18,
-	NW_CLOSE       = 12,    /* close box side, inside the title bar */
+	NW_TITLEBAR_H  = 28,    /* taller bar: icon + title on the left, — □ × controls on the right */
+	NW_CLOSE       = 22,    /* the × control (rightmost), the click target */
 	NW_TITLE_MAX   = 64,
 	NW_CLIP_MAX    = 256,
-	NW_PANEL_H     = 20,    /* top menu bar height (always on top, holds Quit/Shutdown) */
-	NW_RUN_W       = 420,   /* the Super+R "Run" dialog box */
-	NW_RUN_H       = 54,
+	NW_PANEL_H     = 28,    /* top menu bar: logo + app name + menus, clock + status pills */
+	NW_RADIUS      = 11,    /* window corner radius (rounded, translucent "glass" frames) */
+	NW_DOCK_H      = 62,    /* bottom dock height (the rounded translucent pill)            */
+	NW_RUN_W       = 460,   /* the Super+R "Run" dialog box */
+	NW_RUN_H       = 60,
 	NW_RUN_MAX     = 120    /* max command length typed into it */
 };
 

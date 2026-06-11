@@ -57,7 +57,11 @@ enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 static uint8_t  *g_fb;
 static uint32_t  g_pitch, g_xres, g_yres;
 static uint32_t *g_scene;                 /* composed scene, blitted to fb by damage rect */
+static uint32_t *g_scratch;               /* per-window opaque render buffer (then composited) */
+static uint32_t *g_wall;                  /* pre-rendered gradient wallpaper                  */
 static struct nw_surface g_scene_surf;    /* wraps g_scene (stride = xres)                */
+static struct nw_surface g_scratch_surf;
+static struct nw_surface g_wall_surf;
 static struct nw_surface g_fb_surf;       /* wraps the LFB (stride = pitch/4)             */
 static int g_prev_cx = -1, g_prev_cy = -1;/* last drawn cursor position                   */
 
@@ -257,7 +261,7 @@ static void present(void)
 		int have = nw_peek_damage(&S, &dx, &dy, &dw, &dh);
 		if (have) nw_surface_clip(&g_scene_surf, dx, dy, dw, dh);  /* recompose only the damage */
 		else      nw_surface_noclip(&g_scene_surf);
-		nw_compose_scene(&S, &g_scene_surf);     /* clipped: cost ∝ damage, not whole screen */
+		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf);
 		nw_surface_noclip(&g_scene_surf);
 		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it */
 		if (have)
@@ -281,12 +285,20 @@ int main(void)
 	g_xres = var.xres; g_yres = var.yres; g_pitch = fix.line_length;
 	g_fb = (uint8_t *) mmap(0, fix.smem_len, 3, 1, fbfd, 0);
 	if (g_fb == (uint8_t *) -1 || !g_fb) { printf("nwm: fb mmap failed\n"); return 1; }
-	g_scene = (uint32_t *) malloc((size_t) g_xres * g_yres * 4);
-	if (!g_scene) { printf("nwm: no memory for scene buffer\n"); return 1; }
+	size_t fbpx = (size_t) g_xres * g_yres * 4;
+	g_scene   = (uint32_t *) malloc(fbpx);
+	g_scratch = (uint32_t *) malloc(fbpx);
+	g_wall    = (uint32_t *) malloc(fbpx);
+	if (!g_scene || !g_scratch || !g_wall) { printf("nwm: no memory for compositor buffers\n"); return 1; }
 	g_scene_surf.px = g_scene; g_scene_surf.w = (int) g_xres; g_scene_surf.h = (int) g_yres;
-	g_scene_surf.stride = (int) g_xres;
+	g_scene_surf.stride = (int) g_xres; nw_surface_noclip(&g_scene_surf);
+	g_scratch_surf.px = g_scratch; g_scratch_surf.w = (int) g_xres; g_scratch_surf.h = (int) g_yres;
+	g_scratch_surf.stride = (int) g_xres; nw_surface_noclip(&g_scratch_surf);
+	g_wall_surf.px = g_wall; g_wall_surf.w = (int) g_xres; g_wall_surf.h = (int) g_yres;
+	g_wall_surf.stride = (int) g_xres; nw_surface_noclip(&g_wall_surf);
+	nw_render_wallpaper(&g_wall_surf);            /* the gradient desktop, computed once */
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
-	g_fb_surf.stride = (int) (g_pitch / 4);
+	g_fb_surf.stride = (int) (g_pitch / 4); nw_surface_noclip(&g_fb_surf);
 
 	int in0 = open("/dev/input0", O_RDONLY | O_NONBLOCK);
 	int in1 = open("/dev/input1", O_RDONLY | O_NONBLOCK);
