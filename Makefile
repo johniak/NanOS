@@ -202,6 +202,12 @@ _image: _all _userland _kext _grub2-image
 	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
+	# bzip2 (optional, external): built by the nanos-sdk port and staged into bin/bzip2.nxe. A
+	# system utility (flat in /nanos/bin) since it is a single self-contained binary. Skipped if
+	# absent. bzip2 -d decompresses (same binary), so no separate bunzip2 is shipped.
+	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
+	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# terminfo database: the compiled xterm-256color entry (matches TERM), shipped under
