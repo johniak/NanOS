@@ -90,6 +90,33 @@ static void mountVolume(Vfs* vfs, SynthFs* root, const char* name, BlockDevice* 
 	root->addVolume(name);
 }
 
+// One-shot read-write self-test of the persistent disk: prove the full stack — VFS -> ext
+// write + JBD2 transaction -> AtaBlockDevice -> ATA PIO write -> the physical disk — by
+// (re)writing a marker file and reading it back, and report whether last boot's marker survived
+// (persistence across reboot). Mutates only /disks/main/nanos/rwtest; e2fsck-clean afterwards.
+static void extRwSelftest(Vfs* vfs) {
+	const char* path = "/disks/main/nanos/rwtest";
+	const char* marker = "NANOS-RW-OK";
+	unsigned mlen = (unsigned) strlen(marker);
+	char prev[32];
+	int pn = vfs->read(String(path), 31, 0, prev);
+	bool persisted = pn == (int) mlen;
+	for (unsigned i = 0; persisted && i < mlen; i++)
+		if (prev[i] != marker[i]) persisted = false;
+
+	int cr = vfs->create(String(path), 0644);
+	int wr = (cr == 0) ? vfs->write(String(path), mlen, 0, marker) : cr;
+	char back[32];
+	int rn = vfs->read(String(path), 31, 0, back);
+	bool ok = wr == (int) mlen && rn == (int) mlen;
+	for (unsigned i = 0; ok && i < mlen; i++)
+		if (back[i] != marker[i]) ok = false;
+
+	Console::write("EXT-RW selftest: ");
+	Console::write(ok ? "write+read OK" : "FAIL");
+	Console::writeLine(persisted ? " (marker persisted from last boot)" : " (first write to this image)");
+}
+
 // Scheduler task bodies. Task 1 (init/nsh) enters ring 3 via execProgram; task 2 is
 // a background kernel thread (demonstrates that several tasks coexist) — it sleeps and
 // counts, so cat /proc/uptime advancing while the shell is idle proves the scheduler
@@ -201,6 +228,9 @@ void Kernel::start() {
 	okBegin("Mounting ext filesystem at /disks/main");
 	mountVolume(vfs, root, "main", hd0, firstPartitionLba(hd0));   // discovered from the MBR
 	okEnd();
+
+	// Phase 6: exercise the read-write path on the real disk and report persistence.
+	extRwSelftest(vfs);
 
 	// Writable in-memory filesystem (tmpfs) at /tmp, the Unix way to give programs a
 	// place to write transient files (e.g. Doom's config + savegames). Cleared on reboot.

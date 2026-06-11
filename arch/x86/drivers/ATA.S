@@ -141,7 +141,28 @@ ata_lba_write:
                mov ecx, eax         ; ECX is counter for OUTSW
                mov edx, 0x1F0       ; Data port
                rep outsw            ; out from [ESI]
-               xor eax, eax         ; success -> 0
+               ; The drive is BSY committing the sector. Wait for it to clear before the next
+               ; command, or back-to-back single-sector writes race the busy drive and corrupt.
+               mov edx, 0x1F7
+               mov edi, 0x100000
+.wr_drain:     in al, dx
+               test al, 0x21        ; ERR or DF -> failed
+               jnz .wr_err
+               test al, 0x80        ; BSY still set?
+               jz .wr_flush
+               dec edi
+               jnz .wr_drain
+               jmp .wr_err
+               ; FLUSH CACHE: force the write out to the medium so it survives a reboot/power loss.
+.wr_flush:     mov al, 0xE7
+               out dx, al
+               mov edi, 0x100000
+.wr_fwait:     in al, dx
+               test al, 0x80        ; BSY clear after the flush?
+               jz .wr_ok
+               dec edi
+               jnz .wr_fwait
+.wr_ok:        xor eax, eax         ; success -> 0
                jmp .wr_done
 .wr_err:       mov eax, 1           ; error -> 1
 .wr_done:
