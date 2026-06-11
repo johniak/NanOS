@@ -114,6 +114,10 @@ static void set_focus(struct nw_server *s, int idx)
 		emit_win(s, idx, NW_EVT_FOCUS, 1, 0, 0, 0, 0, 0);
 		damage_frame(s, idx);
 	}
+	/* The global menu bar shows the focused window's menu (draw_panel reads s->focus), so it
+	 * must be repainted whenever focus changes — otherwise it keeps the old app's menu until
+	 * something else damages the bar. */
+	damage(s, 0, 0, s->screen_w, NW_PANEL_H);
 }
 
 /* ---- window table ----------------------------------------------------------------- */
