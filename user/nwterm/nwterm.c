@@ -104,10 +104,10 @@ static int spawn_shell(void)
 {
 	int master = open("/dev/ptmx", O_RDWR);
 	if (master < 0) return -1;
-	struct termios t;
-	tcgetattr(master, &t);
-	t.c_lflag &= ~(ICANON | ECHO); t.c_lflag |= ISIG; t.c_oflag = 0; t.c_iflag = ICRNL;
-	tcsetattr(master, TCSANOW, &t);
+	/* Leave the pty in the kernel's default COOKED mode (ICANON|ECHO|ISIG, ICRNL, OPOST|ONLCR):
+	 * a terminal emulator must NOT force raw — that is the shell's job. With cooked+echo the kernel
+	 * line discipline echoes each typed character immediately (so input shows as you type) and the
+	 * shell still reads whole lines; an interactive shell that wants raw editing flips it itself. */
 	int pid = fork();
 	if (pid == 0) {
 		/* Own session with pts0 as its job-control terminal, isolated from the console — else a
