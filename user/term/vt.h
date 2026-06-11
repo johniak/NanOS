@@ -1,0 +1,35 @@
+/*
+ * vt.h — a pure VT/ANSI terminal engine: the screen grid + an xterm-subset escape parser, with
+ * NO I/O and NO rendering. Shared by the framebuffer terminal (nterm) and the windowed terminal
+ * (nwterm); each renders the grid its own way. Pure logic, host-testable.
+ *
+ * Handles the xterm subset shells/TUIs need: printable text, CR/LF/BS/TAB, CSI cursor moves +
+ * absolute position, erase line/display, SGR colours (16 + 256 + truecolor→256), scroll region,
+ * cursor save/restore. A per-row dirty flag lets the renderer repaint only changed rows.
+ */
+#ifndef NX_VT_H
+#define NX_VT_H
+
+#include <stdint.h>
+
+enum { VT_MAXC = 256, VT_MAXR = 128, VT_NPAR = 16 };
+
+typedef struct { unsigned char ch, fg, bg; } vt_cell;
+
+typedef struct {
+	vt_cell grid[VT_MAXR][VT_MAXC];
+	int cols, rows;
+	int cx, cy;                 /* cursor */
+	int fg, bg, bold, rev;      /* current SGR attributes */
+	int top, bot;               /* scroll region [top,bot] */
+	int savecx, savecy;
+	int state, par[VT_NPAR], npar, priv;   /* parser */
+	unsigned char dirty[VT_MAXR];          /* row changed since last render */
+} vt;
+
+void     vt_init(vt *t, int cols, int rows);          /* clear grid, cursor home */
+void     vt_resize(vt *t, int cols, int rows);        /* change geometry, clamp cursor */
+void     vt_feed(vt *t, const unsigned char *b, int n); /* process `n` shell-output bytes */
+uint32_t vt_pal(int idx);                             /* palette index (0..255) -> 0x00RRGGBB */
+
+#endif /* NX_VT_H */

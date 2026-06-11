@@ -313,6 +313,14 @@ int main(void)
 	set_cloexec(fbfd); set_cloexec(in0); set_cloexec(in1);
 
 	signal(SIGPIPE, SIG_IGN);                 /* a client exiting must not kill the server */
+	/* The compositor must never be job-control-stopped: a windowed terminal's shell may grab
+	 * the controlling tty (tcsetpgrp), which would otherwise SIGTTOU/SIGTTIN/SIGTSTP us. */
+#ifndef SIGTSTP
+#define SIGTSTP 20
+#define SIGTTIN 21
+#define SIGTTOU 22
+#endif
+	signal(SIGTTOU, SIG_IGN); signal(SIGTTIN, SIG_IGN); signal(SIGTSTP, SIG_IGN);
 
 	for (int i = 0; i < NW_MAX_CLIENTS; i++) { cl_req[i] = cl_evt[i] = -1; }
 	nw_server_init(&S, (int) g_xres, (int) g_yres);

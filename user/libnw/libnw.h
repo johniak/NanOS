@@ -63,6 +63,10 @@ void nw_get_clipboard(nw_display *d);
  * dialog uses. Fire-and-forget; the new program connects as its own client. */
 void nw_spawn(nw_display *d, const char *cmd);
 
+/* The fd the compositor's events arrive on — so a client can poll() it alongside its own fds
+ * (e.g. a terminal also polling its pty master), then drain with nw_next_event(d, ev, 0). */
+int nw_event_fd(nw_display *d);
+
 /* Wait up to timeout_ms (<0 = forever, 0 = poll) for one event.
  *   1  = an event was written to *ev
  *   0  = timed out, no event

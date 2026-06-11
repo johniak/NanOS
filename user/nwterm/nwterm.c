@@ -1,72 +1,162 @@
 /*
- * nwterm.c — NanoOS "Terminal" demo: a dark NanWM client showing a neofetch-style splash with
- * the NanoOS mark, in the spirit of the design mockup. A raw libnw client (it draws its own
- * dark buffer); the leading 0x01 in the title asks the compositor for the dark window material.
+ * nwterm — the real NanoOS Terminal: a NanWM window running `nsh` on a pty.
+ *
+ * Unlike the framebuffer terminal (nterm), this is a libnw client: it draws the VT grid into its
+ * window buffer and gets keystrokes as NanWM KEY events. The shared VT engine (vt.c) parses the
+ * shell's output (xterm subset, ANSI colours). The event loop polls TWO fds — the compositor's
+ * event pipe (via nw_event_fd) and the pty master — so window input and shell output interleave.
+ * Resizing the window reflows the grid (vt_resize).
  */
+#include <unistd.h>
+#include <fcntl.h>
 #include <stdint.h>
+#include <poll.h>
+#include <pwd.h>
+#include <string.h>
+#include <sys/termios.h>
 #include "libnw.h"
 #include "nw_gfx.h"
+#include "vt.h"
 
-#define WIN_W 470
-#define WIN_H 270
-#define BG    0x000f121f   /* terminal ink-dark (matches the compositor's dark material) */
-#define FG    0x00dffbff
-#define DIM   0x008c9aaf
-#define PROMPT 0x0063e6be
+#define CW NW_FONT_W
+#define CH NW_FONT_H
 
-/* A small NanoOS "N" mark: two gradient bars + a diagonal. */
-static void mark(const struct nw_surface *s, int x, int y, int sz)
+static vt        T;
+static nw_win   *g_win;
+static int       g_master;
+static int       g_ctrl;
+static int       g_pcx, g_pcy;        /* last drawn cursor cell */
+
+/* ---- rendering: VT grid -> window surface ---- */
+static void draw_row(const struct nw_surface *s, int r)
 {
-	int bw = sz / 3;
-	nw_vgrad_rect(s, x, y, bw, sz, 0x12a8f4, 0x7d3ff2);
-	nw_vgrad_rect(s, x + sz - bw, y, bw, sz, 0xff9d00, 0x6fd033);
-	for (int i = 0; i < sz; i++)
-		nw_blend_rect(s, x + i * (sz - bw) / sz, y + i - bw / 2, bw, bw, 0x12a8f4, 255);
+	for (int c = 0; c < T.cols; c++) {
+		vt_cell *cell = &T.grid[r][c];
+		nw_draw_char(s, c * CW, r * CH, cell->ch, vt_pal(cell->fg), vt_pal(cell->bg));
+	}
 }
 
-static void render(nw_win *win)
+static void render(void)
 {
 	struct nw_surface s;
-	nw_win_surface(win, &s);
-	nw_fill_rect(&s, 0, 0, s.w, s.h, BG);
+	nw_win_surface(g_win, &s);
+	int y0 = -1, y1 = -1;
+	for (int r = 0; r < T.rows; r++) {
+		if (!T.dirty[r] && r != T.cy && r != g_pcy)
+			continue;
+		draw_row(&s, r);
+		T.dirty[r] = 0;
+		if (y0 < 0) y0 = r;
+		y1 = r;
+	}
+	/* block cursor: invert the cell under it */
+	if (T.cx < T.cols && T.cy < T.rows) {
+		vt_cell *cell = &T.grid[T.cy][T.cx];
+		nw_fill_rect(&s, T.cx * CW, T.cy * CH, CW, CH, vt_pal(cell->fg));
+		nw_draw_char(&s, T.cx * CW, T.cy * CH, cell->ch, vt_pal(cell->bg), vt_pal(cell->fg));
+	}
+	g_pcx = T.cx; g_pcy = T.cy;
+	if (y0 >= 0) nw_commit(g_win, 0, y0 * CH, s.w, (y1 - y0 + 1) * CH);
+}
 
-	mark(&s, 24, 30, 64);
+/* ---- NanWM KEY event -> bytes to the pty ---- */
+static void key(const struct nw_event *ev)
+{
+	int sc = ev->code & 0x7f, ext = ev->code & 0x80;
+	if (sc == 0x1d) { g_ctrl = ev->down; return; }      /* Ctrl tracked from the scancode */
+	if (!ev->down) return;
+	if (ext) {                                          /* extended nav keys -> VT sequences */
+		const char *seq = 0;
+		if (sc == 0x48) seq = "\x1b[A"; else if (sc == 0x50) seq = "\x1b[B";
+		else if (sc == 0x4d) seq = "\x1b[C"; else if (sc == 0x4b) seq = "\x1b[D";
+		else if (sc == 0x47) seq = "\x1b[H"; else if (sc == 0x4f) seq = "\x1b[F";
+		else if (sc == 0x49) seq = "\x1b[5~"; else if (sc == 0x51) seq = "\x1b[6~";
+		else if (sc == 0x52) seq = "\x1b[2~"; else if (sc == 0x53) seq = "\x1b[3~";
+		if (seq) { int l = 0; while (seq[l]) l++; write(g_master, seq, l); }
+		return;
+	}
+	char ch = ev->ch;                                   /* compositor already applied Shift */
+	if (!ch) return;
+	if (g_ctrl) {                                       /* Ctrl+A..Z -> 1..26 (e.g. Ctrl+C) */
+		if (ch >= 'a' && ch <= 'z') ch = ch - 'a' + 1;
+		else if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 1;
+	}
+	write(g_master, &ch, 1);
+}
 
-	int x = 150, y = 24, lh = NW_FONT_H + 4;
-	nw_text(&s, x, y, "Welcome to NanoOS Terminal", DIM); y += lh + 4;
-	x = nw_text(&s, x, y, "nano@nanobook", PROMPT);
-	nw_text(&s, x, y, ":~$ neofetch", FG); y += lh;
-	const char *info[] = {
-		"OS:     NanoOS 1.0.0 x86_64", "Kernel: 1.0.0-nano", "Shell:  nano-shell 1.0",
-		"DE:     Nano Desktop", "WM:     Nano Window Manager", "Theme:  Nano Light",
-		"Icons:  Nano Colorful", 0
-	};
-	for (int i = 0; info[i]; i++) { nw_text(&s, x, y, info[i], FG); y += lh; }
-	y += 4;
-	x = nw_text(&s, 150, y, "nano@nanobook", PROMPT);
-	nw_text(&s, x, y, ":~$ ", FG);
-	nw_fill_rect(&s, x + 4 * NW_FONT_W, y, NW_FONT_W, NW_FONT_H, DIM);   /* block cursor */
+static void resize_to(int win_w, int win_h)
+{
+	int cols = win_w / CW, rows = win_h / CH;
+	if (cols < 1) cols = 1; if (rows < 1) rows = 1;
+	vt_resize(&T, cols, rows);
+	struct nw_surface s; nw_win_surface(g_win, &s);
+	nw_fill_rect(&s, 0, 0, s.w, s.h, vt_pal(0));        /* repaint background, then all rows */
+	render();
+	nw_commit(g_win, 0, 0, s.w, s.h);
+}
 
-	nw_commit(win, 0, 0, s.w, s.h);
+static int spawn_shell(void)
+{
+	int master = open("/dev/ptmx", O_RDWR);
+	if (master < 0) return -1;
+	struct termios t;
+	tcgetattr(master, &t);
+	t.c_lflag &= ~(ICANON | ECHO); t.c_lflag |= ISIG; t.c_oflag = 0; t.c_iflag = ICRNL;
+	tcsetattr(master, TCSANOW, &t);
+	int pid = fork();
+	if (pid == 0) {
+		int s = open("/dev/pts0", O_RDWR);
+		dup2(s, 0); dup2(s, 1); dup2(s, 2);
+		if (s > 2) close(s);
+		close(master); close(3); close(4);             /* drop the compositor pipes in the shell */
+		char *envp[] = { (char *) "TERM=xterm-256color",
+		                 (char *) "TERMINFO=/disks/main/nanos/share/terminfo",
+		                 (char *) "PATH=/disks/main/nanos/bin:/disks/main/bin",
+		                 (char *) "HOME=/disks/main", 0 };
+		/* the native NanOS shell — simple, prompts on a raw pty without bash's job-control setup */
+		execve("/disks/main/nanos/bin/nsh.nxe", (char *[]){ (char *) "nsh", 0 }, envp);
+		_exit(127);
+	}
+	return master;
 }
 
 int main(void)
 {
 	nw_display *d = nw_connect();
-	if (!d)
-		return 1;
-	nw_win *win = nw_create_window(d, WIN_W, WIN_H, "\x01" "Terminal");  /* 0x01 -> dark frame */
-	if (!win)
-		return 1;
-	render(win);
+	if (!d) return 1;
+	g_win = nw_create_window(d, 560, 360, "\x01" "Terminal");   /* 0x01 -> dark window material */
+	if (!g_win) return 1;
+	vt_init(&T, nw_win_width(g_win) / CW, nw_win_height(g_win) / CH);
 
-	struct nw_event ev;
+	g_master = spawn_shell();
+	if (g_master < 0) return 1;
+
+	{ struct nw_surface s; nw_win_surface(g_win, &s);
+	  nw_fill_rect(&s, 0, 0, s.w, s.h, vt_pal(0)); render(); nw_commit(g_win, 0, 0, s.w, s.h); }
+
+	int efd = nw_event_fd(d);
 	for (;;) {
-		int r = nw_next_event(d, &ev, -1);
-		if (r < 0) break;
-		if (r == 0) continue;
-		if (ev.type == NW_EV_CONFIGURE) render(win);
-		else if (ev.type == NW_EV_CLOSE) return 0;
+		struct pollfd pf[2];
+		pf[0].fd = efd;      pf[0].events = POLLIN; pf[0].revents = 0;
+		pf[1].fd = g_master; pf[1].events = POLLIN; pf[1].revents = 0;
+		poll(pf, 2, -1);
+
+		if (pf[0].revents & POLLIN) {                   /* window events (keys, resize, close) */
+			struct nw_event ev;
+			int r;
+			while ((r = nw_next_event(d, &ev, 0)) > 0) {
+				if (ev.type == NW_EV_KEY)            key(&ev);
+				else if (ev.type == NW_EV_CONFIGURE) resize_to(ev.x, ev.y);
+				else if (ev.type == NW_EV_CLOSE)     return 0;
+			}
+			if (r < 0) return 0;                        /* compositor gone */
+		}
+		if (pf[1].revents & POLLIN) {                   /* shell output -> VT -> render */
+			unsigned char ob[1024];
+			int n = read(g_master, ob, sizeof ob);
+			if (n <= 0) return 0;                        /* shell exited */
+			vt_feed(&T, ob, n);
+			render();
+		}
 	}
-	return 0;
 }

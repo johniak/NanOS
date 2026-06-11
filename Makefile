@@ -215,7 +215,7 @@ SBASE=user/third_party/sbase
 # kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
 # new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
 # bind mount (kernel/Signal.h == <signal.h> under -I, which broke the userland build).
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
 # the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
@@ -338,7 +338,7 @@ $(BINFOLDER)mousetest.nxe: $(DYN_DEPS) $(BINFOLDER)mousetest.o
 $(BINFOLDER)fstest.nxe:    $(DYN_DEPS) $(BINFOLDER)fstest.o
 $(BINFOLDER)pipetest.nxe:  $(DYN_DEPS) $(BINFOLDER)pipetest.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
-$(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vtfont.o
+$(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
 $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
@@ -365,9 +365,10 @@ $(BINFOLDER)nwset.nxe: $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)libnwui.ndl.a
 $(BINFOLDER)nwabout.nxe: $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwabout.elf $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)nwabout.elf $@ --need libnwui.ndl
-# nwterm: the Terminal splash — a raw libnw client like nwnote (--need libnw.ndl).
-$(BINFOLDER)nwterm.nxe: $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwterm.elf $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+# nwterm: the real windowed Terminal — a raw libnw client running nsh on a pty, with the shared
+# VT engine (vt.o). --need libnw.ndl.
+$(BINFOLDER)nwterm.nxe: $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
+	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwterm.elf $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)nwterm.elf $@ --need libnw.ndl
 # rustform: the SAME demo written in RUST, proving the C-ABI libnwui is language-agnostic. A
 # cargo staticlib (no_std, -Z build-std for the bare i686-nanos target) is linked with crt0 +
@@ -559,7 +560,7 @@ $(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $
 HOST_CXX=g++
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Iarch/x86/boot -Iarch/x86/mm -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Iarch/x86/boot -Iarch/x86/mm -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term
 HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage
 TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
@@ -574,8 +575,9 @@ TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 de
 TEST_MODULES+= user/libnw/nwproto.c user/libnw/nw_gfx.c user/term/vtfont.c
 TEST_MODULES+= user/nwm/nwm_core.c user/nwm/nw_compose.c
 TEST_MODULES+= user/libnwui/nwui_core.c   # the pure UI-toolkit core (tree/layout/events)
+TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (shared by nterm/nwterm)
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes

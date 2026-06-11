@@ -157,6 +157,8 @@ static int translate(nw_display *d, struct nw_event *ev)
 	return 1;
 }
 
+int nw_event_fd(nw_display *d) { return d->evtfd; }
+
 int nw_next_event(nw_display *d, struct nw_event *ev, int timeout_ms)
 {
 	for (;;) {
