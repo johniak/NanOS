@@ -194,3 +194,16 @@ TEST_CASE("ext4 write returns a short count when the disk fills (ENOSPC)") {
 	dump("/src/disk/ext4_full.img", img, sz);
 	free(src); free(back);
 }
+
+TEST_CASE("ext write stamps mtime from the wall clock") {
+	setBootEpoch(1700000000u);                 // a fixed epoch for the test
+	char* img; long sz;
+	Ext4Filesystem fs(load("tests/fixtures/ext4.img", &img, &sz), 0);
+	REQUIRE(fs.mount() == 0);
+	CHECK(fs.write("/hello.txt", 3, 0, "abc") == 3);
+	FileStat st;
+	REQUIRE(fs.stat("/hello.txt", st) == 0);
+	CHECK(st.mtime == 1700000000u);            // wall clock (bootEpoch + 0 ticks in host tests)
+	free(img);
+	setBootEpoch(0);                           // reset so other tests see currentTime() == 0
+}

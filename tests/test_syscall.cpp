@@ -313,6 +313,31 @@ TEST_CASE("sys utime/utimensat/faccessat/renameat2/lchown") {
 	CHECK(sc.rmdir("/x2") == 0);
 }
 
+TEST_CASE("sys credentials + open() permission enforcement") {
+	Syscalls sc(mountFixture(), sink);
+	CHECK(sc.getuid() == 0);
+	CHECK(sc.geteuid() == 0);
+	CHECK(sc.getgid() == 0);
+	CHECK(sc.getegid() == 0);
+
+	// As root, hello.txt (owned by uid 0) opens for read and write.
+	int fd = sc.open("/hello.txt", 0);
+	REQUIRE(fd >= 3);
+	CHECK(sc.close(fd) == 0);
+
+	// Drop privilege; a non-root process cannot regain uid 0.
+	CHECK(sc.setuid(1000) == 0);
+	CHECK(sc.getuid() == 1000);
+	CHECK(sc.geteuid() == 1000);
+	CHECK(sc.setuid(0) == -1);                 // -EPERM
+
+	// hello.txt is mode 0644 owned by uid 0: "other" grants read but not write.
+	int rf = sc.open("/hello.txt", 0);         // O_RDONLY -> needs r (other has it)
+	REQUIRE(rf >= 3);
+	CHECK(sc.close(rf) == 0);
+	CHECK(sc.open("/hello.txt", 1) == -13);    // O_WRONLY -> needs w (other lacks it) -> -EACCES
+}
+
 TEST_CASE("sys errors: bad fd, missing path, closed fd") {
 	Syscalls sc(mountFixture(), sink);
 	char buf[8];

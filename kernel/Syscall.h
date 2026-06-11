@@ -92,6 +92,8 @@ class Syscalls {
 	Termios consoleTermios;   // real terminal settings for the console fds (0/1/2)
 	String m_cwd;             // current working directory (absolute); inherited on fork, kept on execve
 	unsigned m_umask;         // file-creation mask (default 022); applied by mkdir/creat
+	unsigned m_uid, m_gid;    // real user/group id (process credentials; 0 = root)
+	unsigned m_euid, m_egid;  // effective ids — used for permission checks; inherited on fork
 	bool exited;
 	int exitCode;
 
@@ -136,6 +138,17 @@ public:
 	int faccessat(int dirfd, String path, int mode, int flags);
 	int renameat2(int oldfd, String oldpath, int newfd, String newpath, int flags);  // NOREPLACE/EXCHANGE
 	unsigned currentTime();                                 // wall-clock seconds (0 until a clock is set)
+
+	// Process credentials. uid 0 (root) bypasses read/write permission checks. Inherited on fork.
+	int getuid();
+	int geteuid();
+	int getgid();
+	int getegid();
+	int setuid(int uid);
+	int setgid(int gid);
+	// Permission test against the calling process's effective ids: `want` is r/w/x bits
+	// (4/2/1). Returns 0 if allowed, -EACCES otherwise. Used by open().
+	int permCheck(const FileStat& st, int want);
 	int statfs(String path, void* buf);            // fills LinuxStatfs
 	int fstatfs(int fd, void* buf);
 	int fsync(int fd);

@@ -2,15 +2,17 @@
 #include "List.h"
 #include "string.h"
 #include "Termios.h"
+#include "Clock.h"
+#include "Scheduler.h"
 #include <arch/input.h>
 
 namespace kernel {
 
-// Wall-clock time in seconds since the epoch, kept current by the kernel clock (set via
-// setWallClock from the timer/RTC). 0 until the clock is initialised. currentTime() reads it for
-// file timestamps (write mtime, utime/utimensat "now"). A single global: time is machine-wide.
-unsigned g_wallClockSeconds = 0;
-void setWallClock(unsigned sec) { g_wallClockSeconds = sec; }
+// Wall clock: a boot epoch (seeded once from the RTC) plus seconds since boot (the 1000 Hz
+// scheduler tick). MI, so filesystem code can timestamp inodes without touching the arch.
+static unsigned g_bootEpoch = 0;
+void setBootEpoch(unsigned epochSeconds) { g_bootEpoch = epochSeconds; }
+unsigned wallClockSeconds() { return g_bootEpoch + Scheduler::ticks() / 1000u; }
 
 // Canonical "cooked" terminal defaults, matching what a Linux tty starts with: line-based
 // input (ICANON), echo on, signal keys on, CR->NL on input, NL->CRLF on output, and the
@@ -38,6 +40,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	this->exitCode = 0;
 	this->m_cwd = String("/");
 	this->m_umask = 0022;
+	this->m_uid = this->m_gid = this->m_euid = this->m_egid = 0;   // start as root
 	initCookedTermios(consoleTermios);
 	for (int i = 0; i < MAXFD; i++) {
 		fds[i].used = false;
@@ -65,6 +68,8 @@ Syscalls::Syscalls(const Syscalls& o) {
 	consoleTermios = o.consoleTermios;   // inherit the parent's terminal settings
 	m_cwd = o.m_cwd;                     // child inherits the parent's working directory
 	m_umask = o.m_umask;                 // and the file-creation mask
+	m_uid = o.m_uid; m_gid = o.m_gid;    // and the credentials
+	m_euid = o.m_euid; m_egid = o.m_egid;
 	exited = o.exited;
 	exitCode = o.exitCode;
 	for (int i = 0; i < MAXFD; i++) {
@@ -97,6 +102,7 @@ int Syscalls::open(String path, int flags) {
 	path = resolvePath(path);   // relative -> against the process cwd (stored absolute on the fd)
 	FileStat st;
 	bool exists = vfs->stat(path, st) >= 0;
+	bool preExisted = exists;
 	// O_CREAT (and O_TRUNC) ask the filesystem to make-or-truncate the file. On a
 	// read-only fs create() returns -EROFS; if the file already exists we ignore that
 	// and open it read-only, otherwise the open fails.
@@ -111,6 +117,13 @@ int Syscalls::open(String path, int flags) {
 	}
 	if (!exists)
 		return -ENOENT;
+	// Permission check against the open mode (read/write intent) for a pre-existing file.
+	if (preExisted) {
+		int want = (flags & 3) == 1 ? 2 : (flags & 3) == 2 ? 6 : 4;   // WRONLY=w, RDWR=rw, else r
+		int pc = permCheck(st, want);
+		if (pc < 0)
+			return pc;
+	}
 	for (int fd = 3; fd < MAXFD; fd++) {
 		if (!fds[fd].used) {
 			fds[fd].used = true;
@@ -674,7 +687,40 @@ static unsigned rd32le(const void* p, unsigned off) {
 }
 
 unsigned Syscalls::currentTime() {
-	return g_wallClockSeconds;   // updated by the kernel clock; 0 until then (see SyscallDispatch)
+	return wallClockSeconds();
+}
+
+int Syscalls::getuid()  { return (int) m_uid; }
+int Syscalls::geteuid() { return (int) m_euid; }
+int Syscalls::getgid()  { return (int) m_gid; }
+int Syscalls::getegid() { return (int) m_egid; }
+// Root may set any id; a non-root process may only switch among ids it already holds (here just
+// its own), so a real uid change is root-only — enough to model privilege drop.
+int Syscalls::setuid(int uid) {
+	if (m_euid != 0 && (unsigned) uid != m_uid && (unsigned) uid != m_euid) return -1;   // -EPERM
+	m_uid = m_euid = (unsigned) uid;
+	return 0;
+}
+int Syscalls::setgid(int gid) {
+	if (m_euid != 0 && (unsigned) gid != m_gid && (unsigned) gid != m_egid) return -1;
+	m_gid = m_egid = (unsigned) gid;
+	return 0;
+}
+
+// POSIX permission check for `want` (r=4/w=2/x=1) against the file's mode + owner, using the
+// process's effective ids. Root (euid 0) gets r/w unconditionally and x if any execute bit is set.
+int Syscalls::permCheck(const FileStat& st, int want) {
+	if (want == 0) return 0;
+	unsigned mode = st.mode;
+	if (m_euid == 0) {
+		if ((want & 1) && (mode & 0111) == 0) return -13;     // -EACCES (root still needs an x bit)
+		return 0;
+	}
+	unsigned bits;
+	if (st.uid == m_euid)        bits = (mode >> 6) & 7;       // owner
+	else if (st.gid == m_egid)   bits = (mode >> 3) & 7;       // group
+	else                         bits = mode & 7;             // other
+	return ((bits & (unsigned) want) == (unsigned) want) ? 0 : -13;
 }
 
 int Syscalls::utime(String path, const void* times) {

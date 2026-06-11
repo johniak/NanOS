@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "Kernel.h"
 #include "Console.h"
+#include "Clock.h"
 #include "BlockDevice.h"
 #include "DeviceManager.h"
 #include "Vfs.h"
@@ -205,6 +206,7 @@ void Kernel::start() {
 
 	// Bring up the CPU descriptor tables, interrupt vectors and legacy input (arch).
 	arch::cpuInit();
+	setBootEpoch(arch::rtcEpoch());   // seed the wall clock from the RTC (file timestamps)
 	Console::writeLine("");
 
 	// Enable paging (identity-mapped) before the storage stack / userspace.

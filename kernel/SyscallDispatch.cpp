@@ -342,6 +342,24 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_fstatat64:
 		ret = g_sys->fstatat((int) a0, String((char*) a1), (LinuxStat*) a2, (int) a3);
 		break;
+	case SYS_getuid: case SYS_getuid32:
+		ret = g_sys->getuid();
+		break;
+	case SYS_geteuid: case SYS_geteuid32:
+		ret = g_sys->geteuid();
+		break;
+	case SYS_getgid: case SYS_getgid32:
+		ret = g_sys->getgid();
+		break;
+	case SYS_getegid: case SYS_getegid32:
+		ret = g_sys->getegid();
+		break;
+	case SYS_setuid: case SYS_setuid32:
+		ret = g_sys->setuid((int) a0);
+		break;
+	case SYS_setgid: case SYS_setgid32:
+		ret = g_sys->setgid((int) a0);
+		break;
 	case SYS_chdir:
 		ret = g_sys->chdir(String((char*) a0));
 		break;

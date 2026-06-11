@@ -16,6 +16,7 @@
 #include "ext/ExtAllocator.h"
 #include "ext/ExtCsum.h"
 #include "ext/Journal.h"
+#include "Clock.h"
 #ifndef EXTFILESYSTEM_H_
 #define EXTFILESYSTEM_H_
 
@@ -432,8 +433,8 @@ public:
 		out.size = inode.lowerSize;
 		out.mode = (unsigned) (unsigned short) inode.typeAndPermisions;
 		out.nlink = (unsigned) (unsigned short) inode.hardlinksCount;
-		out.uid = (unsigned) (unsigned short) inode.userId;
-		out.gid = (unsigned) (unsigned short) inode.groupId;
+		out.uid = inodeUid(inode);
+		out.gid = inodeGid(inode);
 		out.mtime = (unsigned) inode.lastmodification;
 	}
 
@@ -655,6 +656,7 @@ public:
 		unsigned newEnd = offset + written;
 		if (newEnd > (unsigned) inode.lowerSize)
 			inode.lowerSize = (int) newEnd;
+		inode.lastmodification = inode.created = (int) wallClockSeconds();   // mtime + ctime = now
 		writeInodeStruct((unsigned) inodeNo, inode);
 		txFlush();
 		return (int) written;
@@ -675,6 +677,7 @@ public:
 			truncateBlocks(inode, (unsigned) inodeNo, firstFreeBlock);
 		}
 		inode.lowerSize = (int) length;
+		inode.lastmodification = inode.created = (int) wallClockSeconds();
 		writeInodeStruct((unsigned) inodeNo, inode);
 		txFlush();
 		return 0;
@@ -866,6 +869,7 @@ public:
 		unsigned ino = alloc->allocInode(false, inodeGoal((unsigned) parentNo));
 		if (!ino) return -28;
 		Ext2Inode ni; memset(&ni, 0, sizeof(ni));
+		ni.created = ni.lastmodification = ni.lastAccess = (int) wallClockSeconds();
 		ni.typeAndPermisions = (short) (0x8000 | (mode & 0xFFF));
 		ni.hardlinksCount = 1;
 		initInodeBlockmap(ni, false);
@@ -886,6 +890,7 @@ public:
 		unsigned ino = alloc->allocInode(true, inodeGoal((unsigned) parentNo));
 		if (!ino) return -28;
 		Ext2Inode ni; memset(&ni, 0, sizeof(ni));
+		ni.created = ni.lastmodification = ni.lastAccess = (int) wallClockSeconds();
 		ni.typeAndPermisions = (short) (0x4000 | (mode & 0xFFF));
 		ni.hardlinksCount = 2;
 		initInodeBlockmap(ni, true);
@@ -969,6 +974,7 @@ public:
 		unsigned ino = alloc->allocInode(false, inodeGoal((unsigned) parentNo));
 		if (!ino) return -28;
 		Ext2Inode ni; memset(&ni, 0, sizeof(ni));
+		ni.created = ni.lastmodification = ni.lastAccess = (int) wallClockSeconds();
 		ni.typeAndPermisions = (short) (0xA000 | 0x1FF);
 		ni.hardlinksCount = 1;
 		ni.lowerSize = tlen;
@@ -1063,11 +1069,31 @@ public:
 		}
 	}
 
+	// 32-bit uid/gid: low 16 bits in i_uid/i_gid, high 16 in the linux osd2 area (i_uid_high
+	// @0x78, i_gid_high @0x7a -> osSpecific2[4..5]/[6..7], since osSpecific2 starts at 0x74).
+	unsigned inodeUid(const Ext2Inode& i) const {
+		return (unsigned) (unsigned short) i.userId
+		     | (((unsigned) (unsigned char) i.osSpecific2[4] | ((unsigned) (unsigned char) i.osSpecific2[5] << 8)) << 16);
+	}
+	unsigned inodeGid(const Ext2Inode& i) const {
+		return (unsigned) (unsigned short) i.groupId
+		     | (((unsigned) (unsigned char) i.osSpecific2[6] | ((unsigned) (unsigned char) i.osSpecific2[7] << 8)) << 16);
+	}
+	void setInodeUid(Ext2Inode& i, unsigned uid) {
+		i.userId = (short) (uid & 0xFFFF);
+		i.osSpecific2[4] = (char) (uid >> 16); i.osSpecific2[5] = (char) (uid >> 24);
+	}
+	void setInodeGid(Ext2Inode& i, unsigned gid) {
+		i.groupId = (short) (gid & 0xFFFF);
+		i.osSpecific2[6] = (char) (gid >> 16); i.osSpecific2[7] = (char) (gid >> 24);
+	}
+
 	// ---- metadata mutations + stats (Phase 4) ---------------------------------------------
 	int chmod(String path, unsigned mode) {
 		Ext2Inode inode; int no;
 		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;
 		inode.typeAndPermisions = (short) ((inode.typeAndPermisions & 0xF000) | (mode & 0xFFF));
+		inode.created = (int) wallClockSeconds();              // ctime
 		writeInodeStruct((unsigned) no, inode);
 		txFlush();
 		return 0;
@@ -1076,8 +1102,9 @@ public:
 	int chown(String path, unsigned uid, unsigned gid) {
 		Ext2Inode inode; int no;
 		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;
-		if (uid != 0xFFFFFFFFu) inode.userId = (short) uid;     // -1 leaves the field unchanged
-		if (gid != 0xFFFFFFFFu) inode.groupId = (short) gid;
+		if (uid != 0xFFFFFFFFu) setInodeUid(inode, uid);       // -1 leaves the field unchanged
+		if (gid != 0xFFFFFFFFu) setInodeGid(inode, gid);
+		inode.created = (int) wallClockSeconds();
 		writeInodeStruct((unsigned) no, inode);
 		txFlush();
 		return 0;
@@ -1091,8 +1118,9 @@ public:
 			return chown(path, uid, gid);
 		Ext2Inode child; int cno;
 		if (!getChildrenInodeNum(parent, name, nl, child, cno)) return -2;
-		if (uid != 0xFFFFFFFFu) child.userId = (short) uid;
-		if (gid != 0xFFFFFFFFu) child.groupId = (short) gid;
+		if (uid != 0xFFFFFFFFu) setInodeUid(child, uid);
+		if (gid != 0xFFFFFFFFu) setInodeGid(child, gid);
+		child.created = (int) wallClockSeconds();
 		writeInodeStruct((unsigned) cno, child);
 		txFlush();
 		return 0;
