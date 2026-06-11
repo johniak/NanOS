@@ -5,6 +5,7 @@
 bin/
 disk/image.img
 disk/image-grub2.img
+disk/*_alloc.img
 iso/
 *.iso
 

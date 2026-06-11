@@ -41,8 +41,8 @@ unsigned extSuperblockCsum(const void* sb) {
 	return crc32c(0xFFFFFFFFu, sb, EXT_SB_CHECKSUM);    // everything up to s_checksum
 }
 
-unsigned extBitmapCsum(unsigned seed, const void* bitmap, unsigned blockSize) {
-	return crc32c(seed, bitmap, blockSize);
+unsigned extBitmapCsum(unsigned seed, const void* bitmap, unsigned numBytes) {
+	return crc32c(seed, bitmap, numBytes);
 }
 
 void extInodeCsum(unsigned seed, unsigned inodeNo, void* inode, unsigned inodeSize) {

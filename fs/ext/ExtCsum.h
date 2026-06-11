@@ -35,10 +35,12 @@ unsigned short extGroupDescCsum(unsigned seed, unsigned groupNo, const void* des
 // The superblock's own checksum = crc32c(~0, sb, 0x3FC) (NOT the UUID seed).
 unsigned extSuperblockCsum(const void* sb);
 
-// Bitmap checksum (block or inode bitmap): crc32c(seed, bitmap, blockSize). Returns the full
-// 32-bit value; callers store the low 16 in bg_*_bitmap_csum_lo and (if desc_size>=64) the
-// high 16 in *_csum_hi.
-unsigned extBitmapCsum(unsigned seed, const void* bitmap, unsigned blockSize);
+// Bitmap checksum (block or inode bitmap): crc32c(seed, bitmap, numBytes). The byte count is NOT
+// the block size: e2fsprogs checksums the block bitmap over (blocks_per_group+7)/8 bytes and the
+// inode bitmap over (inodes_per_group+7)/8 bytes (the inode bitmap is usually shorter than a full
+// block). Returns the full 32-bit value; callers store the low 16 in bg_*_bitmap_csum_lo and (if
+// desc_size>=64) the high 16 in *_csum_hi.
+unsigned extBitmapCsum(unsigned seed, const void* bitmap, unsigned numBytes);
 
 // Inode checksum: compute and WRITE i_checksum_lo (off 0x7C) and, if the inode is large enough
 // (i_extra_isize covers it), i_checksum_hi (off 0x82). `inode` points at the full on-disk inode
