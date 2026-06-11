@@ -30,7 +30,7 @@ struct Task {
 	void (*body)();
 	int id;                 // 0 = idle
 	unsigned char* kstack;
-	bool wantTick;          // BLOCKED in an I/O retry loop -> the timer tick re-wakes it
+	unsigned wakeAt;        // BLOCKED with a timed wakeup: tick at which onTick re-wakes it (0 = none)
 	Process* proc;          // owning process (0 for none) — set when the process binds the task
 };
 
@@ -48,6 +48,13 @@ public:
 	static void preempt();                         // resched if flagged (called on ret-to-ring3)
 	static void yield() { schedule(); }
 	static void ioWait();                          // BLOCKED until the next tick (I/O retry loop)
+	static void sleepUntil(unsigned tick);         // BLOCKED until g_ticks reaches `tick` (or woken)
+
+	// Pure helpers (host-tested). timedWakeReady: has a task's timed deadline arrived (wrap-safe;
+	// wakeAt 0 = no timer). shouldResched: keep the running task until its quantum expires, but
+	// preempt promptly when a sleeper just woke — so two CPU-bound tasks don't trade every tick.
+	static bool timedWakeReady(unsigned now, unsigned wakeAt);
+	static bool shouldResched(unsigned sliceTicks, unsigned quantum, bool wokeSleeper);
 	static void block();                           // current -> BLOCKED, then schedule
 	static void wake(Task* t);                     // BLOCKED -> READY (IRQ-safe: just a flag)
 	static void resume(Task* t);                   // STOPPED -> READY (job-control SIGCONT/KILL)

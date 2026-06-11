@@ -29,7 +29,24 @@ void loadDecay(unsigned load[3], int runnable) {
 }
 static volatile bool g_needResched = false;   // a tick asked for a reschedule (deferred)
 
+// Time-slice: a RUNNING task keeps the CPU for this many timer ticks (ms) before the tick
+// forces a reschedule, instead of round-robining every single millisecond.
+static const unsigned QUANTUM = 10;
+static unsigned g_slice = 0;                   // ticks the current task has run on its slice
+
 static bool runnable(TaskState s) { return s == TASK_READY || s == TASK_RUNNING; }
+
+// Wrap-safe "has this timed wakeup come due?" (wakeAt 0 means the task has no timer armed).
+bool Scheduler::timedWakeReady(unsigned now, unsigned wakeAt) {
+	return wakeAt != 0 && (int) (now - wakeAt) >= 0;
+}
+
+// A reschedule is due when the running task has used up its quantum, or a sleeper just woke
+// (so an I/O completion / expired timer preempts a CPU-bound task promptly rather than waiting
+// out its whole slice).
+bool Scheduler::shouldResched(unsigned sliceTicks, unsigned quantum, bool wokeSleeper) {
+	return wokeSleeper || sliceTicks >= quantum;
+}
 
 // The idle task: sleep until an interrupt, then reschedule. The timer tick wakes I/O
 // waiters (marking them READY) but, since idle runs in ring 0, never preempts here -- so
@@ -77,7 +94,7 @@ static Task* allocSlot(int id) {
 	t->id = id;
 	t->body = 0;
 	t->state = TASK_BLOCKED;   // not runnable until the caller has fabricated a valid kesp
-	t->wantTick = false;
+	t->wakeAt = 0;
 	t->kstack = stk;
 	t->proc = 0;               // set when a Process binds this task (Kernel/forkProcess)
 	t->esp0 = ((unsigned) (unsigned long) (stk + KSTACK_SIZE)) & ~15u;   // 16-aligned TSS.esp0
@@ -130,6 +147,7 @@ void Scheduler::schedule() {
 		return;                                   // nothing else to run
 	}
 	g_ctxt++;                                     // an actual context switch (for /proc/stat)
+	g_slice = 0;                                  // the newly-scheduled task gets a fresh quantum
 	int prev = g_cur;
 	g_cur = next;
 	if (g_tasks[prev].state == TASK_RUNNING)
@@ -162,17 +180,24 @@ void Scheduler::onTick(bool fromUser) {
 				run++;
 		loadDecay(g_load, run);
 	}
+	bool woke = false;
 	for (int i = 0; i < g_ntasks; i++) {
-		if (g_tasks[i].state == TASK_BLOCKED && g_tasks[i].wantTick) {
-			g_tasks[i].wantTick = false;
+		if (g_tasks[i].state == TASK_BLOCKED && timedWakeReady(g_ticks, g_tasks[i].wakeAt)) {
+			g_tasks[i].wakeAt = 0;            // timed wakeup due (I/O retry tick or sleep deadline)
 			g_tasks[i].state = TASK_READY;
+			woke = true;
 		}
 		// A kernel thread whose body() returned is left TASK_DONE and never waited on; reclaim
 		// its slot + 8 KB stack lazily here (only when it is not the running task).
 		else if (g_tasks[i].state == TASK_DONE && i != g_cur)
 			reap(&g_tasks[i]);
 	}
-	g_needResched = true;
+	// Only force a reschedule on a quantum boundary or when a sleeper woke — NOT every tick, so
+	// two CPU-bound tasks no longer trade the CPU (and flush the TLB) 1000 times a second.
+	if (shouldResched(++g_slice, QUANTUM, woke)) {
+		g_slice = 0;
+		g_needResched = true;
+	}
 }
 
 unsigned Scheduler::contextSwitches() { return g_ctxt; }
@@ -194,7 +219,14 @@ void Scheduler::preempt() {
 // Block in an I/O retry loop (empty pipe/pty, poll, nanosleep): deschedule and ask the
 // timer tick to re-wake us, so we re-test our condition ~every ms instead of busy-spinning.
 void Scheduler::ioWait() {
-	g_tasks[g_cur].wantTick = true;
+	sleepUntil(g_ticks + 1);   // legacy I/O retry: re-test the condition on the next tick
+}
+
+// Block until the timer reaches `tick` (a deadline), or until something wake()s us earlier
+// (a signal). Used by nanosleep so a long sleep costs ONE wakeup at the deadline, not one per
+// tick. The caller re-checks its condition on return (the wakeup may be a signal, not the timer).
+void Scheduler::sleepUntil(unsigned tick) {
+	g_tasks[g_cur].wakeAt = tick ? tick : 1;   // 0 is the "no timer armed" sentinel
 	g_tasks[g_cur].state = TASK_BLOCKED;
 	schedule();
 }

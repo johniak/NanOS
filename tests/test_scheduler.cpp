@@ -30,7 +30,7 @@ TEST_CASE("nextRunnable: DONE tasks are skipped like blocked") {
 
 TEST_CASE("wake only revives a BLOCKED task; never resurrects a zombie/done/stopped") {
 	Task t;
-	t.kesp = t.esp0 = 0; t.body = 0; t.id = 1; t.kstack = 0; t.wantTick = false;
+	t.kesp = t.esp0 = 0; t.body = 0; t.id = 1; t.kstack = 0; t.wakeAt = 0;
 
 	// BLOCKED -> READY (the legitimate wakeup).
 	t.state = TASK_BLOCKED;
@@ -52,7 +52,7 @@ TEST_CASE("wake only revives a BLOCKED task; never resurrects a zombie/done/stop
 
 TEST_CASE("resume un-stops only a STOPPED task (SIGCONT), distinct from wake") {
 	Task t;
-	t.kesp = t.esp0 = 0; t.body = 0; t.id = 1; t.kstack = 0; t.wantTick = false;
+	t.kesp = t.esp0 = 0; t.body = 0; t.id = 1; t.kstack = 0; t.wakeAt = 0;
 
 	// STOPPED -> READY (the job-control continue path).
 	t.state = TASK_STOPPED;
@@ -73,6 +73,24 @@ TEST_CASE("resume un-stops only a STOPPED task (SIGCONT), distinct from wake") {
 	t.state = TASK_STOPPED;
 	Scheduler::wake(&t);
 	CHECK(t.state == TASK_STOPPED);
+}
+
+TEST_CASE("timedWakeReady: fires at/after the deadline, never before; 0 = no timer (wrap-safe)") {
+	CHECK(!Scheduler::timedWakeReady(100, 0));      // 0 = no timer armed -> never ready
+	CHECK(!Scheduler::timedWakeReady(99, 100));     // before the deadline
+	CHECK(Scheduler::timedWakeReady(100, 100));     // at the deadline
+	CHECK(Scheduler::timedWakeReady(105, 100));     // past the deadline
+	// Tick counter wrapped past 2^32: now just after wrap, deadline just before -> still due.
+	CHECK(Scheduler::timedWakeReady(5, 0xFFFFFFF0u));
+	CHECK(!Scheduler::timedWakeReady(0xFFFFFFF0u, 5));   // deadline is "ahead" across the wrap
+}
+
+TEST_CASE("shouldResched: keep the CPU until the quantum expires, but yield to a woken sleeper") {
+	CHECK(!Scheduler::shouldResched(1, 10, false));    // mid-quantum, nobody woke -> keep running
+	CHECK(!Scheduler::shouldResched(9, 10, false));
+	CHECK(Scheduler::shouldResched(10, 10, false));    // quantum elapsed -> reschedule
+	CHECK(Scheduler::shouldResched(11, 10, false));
+	CHECK(Scheduler::shouldResched(1, 10, true));      // a sleeper woke -> preempt immediately
 }
 
 TEST_CASE("loadDecay: blends toward the runnable count over successive 5s steps") {

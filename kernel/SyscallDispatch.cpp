@@ -371,6 +371,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// decided at delivery, exactly like a blocking read).
 		unsigned ms = g_sys->nanosleepMs((const KTimespec*) a0);
 		unsigned start = Scheduler::ticks();
+		unsigned deadline = start + ms;
 		ret = 0;
 		while (Scheduler::ticks() - start < ms) {
 			if (hasPendingSignalCurrent()) {
@@ -383,7 +384,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 				ret = -ERESTARTSYS;
 				break;
 			}
-			Scheduler::ioWait();
+			// Sleep straight to the deadline: ONE wakeup for the whole sleep, not one per tick
+			// (a signal wake returns early and the loop re-checks above).
+			Scheduler::sleepUntil(deadline);
 		}
 		break;
 	}
