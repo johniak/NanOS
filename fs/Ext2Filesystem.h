@@ -18,8 +18,7 @@ class Ext2Filesystem: public ExtFilesystem {
 	unsigned blockPtr(unsigned blk, unsigned idx) {
 		if (blk == 0)
 			return 0;
-		device->readSectors(this->partitionLba + blk * (blockSize / 512),
-				blockSize / 512, commonBuff);
+		cache->read(blk, commonBuff);
 		return (unsigned) ((unsigned*) commonBuff)[idx];
 	}
 public:

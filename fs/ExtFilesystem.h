@@ -12,6 +12,7 @@
 #include "string.h"
 #include "List.h"
 #include "String.h"
+#include "ext/BlockCache.h"
 #ifndef EXTFILESYSTEM_H_
 #define EXTFILESYSTEM_H_
 
@@ -110,6 +111,7 @@ struct Ext2DirectoryEntry {
 class ExtFilesystem: public FileSystem {
 protected:
 	BlockDevice* device;
+	BlockCache* cache;        // all block reads/writes go through here (created in mount())
 	char superblockBuff[1024];
 	char commonBuff[4096];
 	Ext2BaseSuperblockFields baseSuperBlock;
@@ -125,6 +127,7 @@ public:
 		this->device = device;
 		this->partitionLba = partitionLba;
 		this->blockGroupDescriptors = 0;
+		this->cache = 0;
 	}
 
 	// Map a file-relative block index to an absolute filesystem block number.
@@ -153,6 +156,8 @@ public:
 				descSize = ds;
 		}
 		initBgdt();
+		// All block I/O now flows through the cache (block size is known after initBgdt).
+		cache = new BlockCache(device, (unsigned) partitionLba, (unsigned) blockSize);
 		// printInfo();   // (debug dump) silenced so the boot splash stays one line per step
 		return 0;
 	}
@@ -202,8 +207,10 @@ public:
 				blockGroupDescriptors[blockGroupNumber].StartingBlockAddressOfInodeTable
 						+ ((inodeIndex * inodeSize) / blockSize);
 		int blockOffset = (inodeIndex * inodeSize) % blockSize;
-		device->readSectors(this->partitionLba + blockAddress * (blockSize / 512),
-				2, commonBuff);
+		// Read the whole inode-table block via the cache (the inode never crosses a block
+		// boundary, and the full block — not just the first 1 KiB — covers inodes past offset
+		// 1024 on 2/4 KiB-block filesystems).
+		cache->read((unsigned) blockAddress, commonBuff);
 		memcpy(&inode, commonBuff + blockOffset, 128);
 		return inode;
 	}
@@ -219,8 +226,7 @@ public:
 			unsigned block = resolveBlock(inode, fb);
 			if (block == 0)
 				continue;
-			device->readSectors(this->partitionLba + block * (blockSize / 512),
-					(blockSize / 512), commonBuff);
+			cache->read(block, commonBuff);
 			int off = 0;
 			while (off + HDR <= blockSize) {
 				Ext2DirectoryEntry de;
@@ -458,9 +464,7 @@ public:
 				// the superblock into the file silently).
 				memset(out + written, 0, chunk);
 			} else {
-				device->readSectors(
-						this->partitionLba + blockAddress * (blockSize / 512),
-						(blockSize / 512), commonBuff);
+				cache->read(blockAddress, commonBuff);
 				memcpy(out + written, commonBuff + within, chunk);
 			}
 			written += chunk;

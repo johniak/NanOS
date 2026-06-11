@@ -71,8 +71,7 @@ public:
 				if (ix[i].fileBlock <= fileBlockIndex)
 					pick = i;
 			unsigned child = ix[pick].leafLo;
-			device->readSectors(this->partitionLba + child * (blockSize / 512),
-					(blockSize / 512), extentBuf);
+			cache->read(child, extentBuf);
 			cur = extentBuf;
 		}
 	}
