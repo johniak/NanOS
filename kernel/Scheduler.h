@@ -61,6 +61,9 @@ public:
 	static void wake(Task* t);                     // BLOCKED -> READY (IRQ-safe: just a flag)
 	static void resume(Task* t);                   // STOPPED -> READY (job-control SIGCONT/KILL)
 	static void sleepOn(WaitQueue* q);             // park current on q until wakeAll/signal
+	// Park on q, re-testing ready(ctx) under interrupts-off (so an IRQ-driven waker can't be
+	// lost), until it holds or a signal is pending. For waiters woken from an IRQ (the console).
+	static void sleepOnUntil(WaitQueue* q, bool (*ready)(void*), void* ctx);
 	static void wakeAll(WaitQueue* q);             // ready every task parked on q (event fired)
 	static void reap(Task* t);                     // -> FREE: release the slot for reuse
 	static Task* current();

@@ -42,6 +42,12 @@ void setKernelStack(unsigned) {}
 void halt_or_hlt() {}
 unsigned long cpuIrqSave() { return 0; }   // no interrupts on the host harness
 void cpuIrqRestore(unsigned long) {}
+}   // namespace arch
+
+// The Scheduler's sleep primitives consult this (don't block through a pending signal); the
+// host harness never has one, so the sleep paths behave exactly as before under test.
+namespace kernel { bool hasPendingSignalCurrent() { return false; } }
+namespace arch {
 
 // CPUID is x86-only; under the host harness fill a representative CpuInfo so the
 // /proc/cpuinfo generator links and renders. (The pure cpuinfoString renderer is tested

@@ -91,16 +91,21 @@ void inputFeedScancode(unsigned char sc) {
 		kernel::Scheduler::wakeAll(&g_inputWq);
 }
 
+namespace {
+bool rawReady(void*)  { return !rawEmpty(); }        // sleepOnUntil predicates (re-tested under
+bool lineReady(void*) { return g_line.lineReady(); } // cli, so a keyboard IRQ can't be lost)
+}
+
 int inputRead(char* buf, unsigned n, int nonblock) {
 	if (g_raw) {
 		if (nonblock && rawEmpty()) {              // O_NONBLOCK: never block, no data now
 			return -EAGAIN;
 		}
-		while (rawEmpty()) {                       // block until a byte arrives
-			kernel::Scheduler::sleepOn(&g_inputWq);    // deschedule; keyboard IRQ wakes us
-			if (kernel::hasPendingSignalCurrent())     // woken by a signal, not input
-				return -kernel::ERESTARTSYS;       // restart or -> EINTR, decided at delivery
-		}
+		// Block until a byte arrives. sleepOnUntil re-tests rawEmpty() with interrupts off and
+		// the task enqueued, so the keyboard IRQ that fills the buffer can't wake us before we park.
+		kernel::Scheduler::sleepOnUntil(&g_inputWq, rawReady, 0);
+		if (kernel::hasPendingSignalCurrent())     // woken by a signal, not input
+			return -kernel::ERESTARTSYS;           // restart or -> EINTR, decided at delivery
 		unsigned i = 0;
 		while (i < n && !rawEmpty())
 			buf[i++] = (char) rawPop();
@@ -109,11 +114,10 @@ int inputRead(char* buf, unsigned n, int nonblock) {
 	if (nonblock && !g_line.lineReady()) {         // O_NONBLOCK cooked: no full line yet
 		return -EAGAIN;
 	}
-	while (!g_line.lineReady()) {                  // block until a full line is ready
-		kernel::Scheduler::sleepOn(&g_inputWq);
-		if (kernel::hasPendingSignalCurrent())     // woken by a signal, not a full line
-			return -kernel::ERESTARTSYS;           // restart or -> EINTR, decided at delivery
-	}
+	// Block until a full line is ready (same prepare-to-wait as raw mode).
+	kernel::Scheduler::sleepOnUntil(&g_inputWq, lineReady, 0);
+	if (kernel::hasPendingSignalCurrent())         // woken by a signal, not a full line
+		return -kernel::ERESTARTSYS;               // restart or -> EINTR, decided at delivery
 	return g_line.takeLine(buf, (int) n);
 }
 

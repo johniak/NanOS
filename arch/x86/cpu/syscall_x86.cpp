@@ -7,6 +7,7 @@
  */
 #include <arch/syscall.h>
 #include <arch/usermode.h>
+#include <arch/cpu.h>            // cpuEnableInterrupts: run syscalls with IF=1
 #include "Interrupt.h"
 #include "Syscall.h"
 #include "SyscallDispatch.h"   // kernel::kernelSyscalls()
@@ -16,6 +17,13 @@
 namespace {
 
 void syscallTrap(kernel::Registers* r) {
+	// The int 0x80 gate is an interrupt gate (enters with IF=0). Re-enable interrupts for the
+	// syscall body so a long call (e.g. a multi-sector ATA read) doesn't stall the timer tick
+	// or input. Safe under deferred preemption: a timer IRQ in ring 0 sets needResched but the
+	// IRQ return path skips the switch, so the kernel is still never preempted mid-syscall; the
+	// final iret restores the caller's IF. Blocking primitives prepare-to-wait under cli, so an
+	// IRQ wakeup (keyboard, a signal) can't be lost into an indefinite sleep.
+	arch::cpuEnableInterrupts();
 	unsigned origEax = r->eax;   // syscall number, saved before dispatch (for restart)
 	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx, r->esi, r->edi,
 			(arch::TrapFrame*) r);

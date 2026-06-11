@@ -4,6 +4,7 @@
 #include <arch/sched.h>
 #include <arch/cpu.h>         // cpuIrqSave/Restore: protect the schedule() state mutation
 #include "WaitQueue.h"        // sleepOn/wakeAll operate on these event lists
+#include "SignalDispatch.h"   // hasPendingSignalCurrent: don't sleep through a pending signal
 
 namespace kernel {
 
@@ -228,13 +229,19 @@ void Scheduler::ioWait() {
 // (a signal). Used by nanosleep so a long sleep costs ONE wakeup at the deadline, not one per
 // tick. The caller re-checks its condition on return (the wakeup may be a signal, not the timer).
 void Scheduler::sleepUntil(unsigned tick) {
+	unsigned long f = arch::cpuIrqSave();
+	if (hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }   // don't sleep past a signal
 	g_tasks[g_cur].wakeAt = tick ? tick : 1;   // 0 is the "no timer armed" sentinel
 	g_tasks[g_cur].state = TASK_BLOCKED;
+	arch::cpuIrqRestore(f);
 	schedule();
 }
 
 void Scheduler::block() {
+	unsigned long f = arch::cpuIrqSave();
+	if (hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }   // signal pending: don't block
 	g_tasks[g_cur].state = TASK_BLOCKED;
+	arch::cpuIrqRestore(f);
 	schedule();
 }
 
@@ -266,6 +273,10 @@ void Scheduler::resume(Task* t) {
 void Scheduler::sleepOn(WaitQueue* q) {
 	if (!q) { ioWait(); return; }            // no queue (shouldn't happen): degrade to tick poll
 	unsigned long f = arch::cpuIrqSave();
+	// Re-check under interrupts-off: with IF=1 syscalls a signal IRQ may have fired between the
+	// caller's condition test and here. If one is pending, don't sleep — the caller re-checks
+	// and returns -ERESTARTSYS, so a Ctrl+C can't be lost into an indefinite block.
+	if (hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }
 	q->add(&g_tasks[g_cur]);
 	g_tasks[g_cur].state = TASK_BLOCKED;
 	arch::cpuIrqRestore(f);
@@ -273,6 +284,25 @@ void Scheduler::sleepOn(WaitQueue* q) {
 	f = arch::cpuIrqSave();
 	q->remove(&g_tasks[g_cur]);              // resumed: we no longer wait on q (woken or signalled)
 	arch::cpuIrqRestore(f);
+}
+
+// As sleepOn, but loops until `ready(ctx)` holds (or a signal is pending), re-testing the
+// condition under interrupts-off with the task already enqueued. This closes the lost-wakeup
+// window for an IRQ-driven waker (the keyboard filling the console buffer): a wake that fires
+// after the test but before we park finds us on the queue.
+void Scheduler::sleepOnUntil(WaitQueue* q, bool (*ready)(void*), void* ctx) {
+	if (!q) return;
+	for (;;) {
+		unsigned long f = arch::cpuIrqSave();
+		if (ready(ctx) || hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }
+		q->add(&g_tasks[g_cur]);
+		g_tasks[g_cur].state = TASK_BLOCKED;
+		arch::cpuIrqRestore(f);
+		schedule();
+		f = arch::cpuIrqSave();
+		q->remove(&g_tasks[g_cur]);
+		arch::cpuIrqRestore(f);
+	}
 }
 
 // Make every task parked on `q` runnable (the object became readable/writable, or closed).
