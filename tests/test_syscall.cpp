@@ -147,6 +147,25 @@ TEST_CASE("sys_lseek repositions and read continues from there") {
 	CHECK(strncmp(buf, "NanOS", 5) == 0);
 }
 
+TEST_CASE("sys namespace ops: mkdir/create/link/symlink/rename/unlink/rmdir") {
+	Syscalls sc(mountFixture(), sink);                  // ext2-backed, writable
+	CHECK(sc.mkdir("/nd", 0755) == 0);
+	int fd = sc.open("/nd/a", O_CREAT);                 // open(O_CREAT) -> vfs->create
+	REQUIRE(fd >= 3);
+	CHECK(sc.write(fd, "hi", 2) == 2);
+	CHECK(sc.close(fd) == 0);
+	CHECK(sc.link("/nd/a", "/nd/b") == 0);              // hard link
+	CHECK(sc.symlink("/nd/a", "/nd/s") == 0);           // symlink (target stored verbatim)
+	CHECK(sc.rename("/nd/a", "/nd/c") == 0);            // rename within the dir
+	char tgt[16] = {0};
+	CHECK(sc.readlink("/nd/s", tgt, sizeof(tgt) - 1) == 5);   // strlen("/nd/a")
+	CHECK(strcmp(tgt, "/nd/a") == 0);
+	CHECK(sc.unlink("/nd/b") == 0);
+	CHECK(sc.unlink("/nd/c") == 0);
+	CHECK(sc.unlink("/nd/s") == 0);
+	CHECK(sc.rmdir("/nd") == 0);
+}
+
 TEST_CASE("sys errors: bad fd, missing path, closed fd") {
 	Syscalls sc(mountFixture(), sink);
 	char buf[8];

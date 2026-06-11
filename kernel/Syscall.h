@@ -114,6 +114,10 @@ public:
 	int fstat(int fd, LinuxStat* out);
 	int unlink(String path);              // remove a file (writable fs only)
 	int mkdir(String path, int mode);     // create a directory (writable fs only)
+	int rmdir(String path);               // remove an empty directory
+	int rename(String oldpath, String newpath);   // rename/move within one filesystem
+	int link(String oldpath, String newpath);     // create a hard link
+	int symlink(String target, String path);      // create a symbolic link (target stored as-is)
 	// Working directory (Linux model: kernel-tracked per process, inherited by fork, kept
 	// across execve). chdir validates the target is a directory; getcwd copies it out.
 	// resolvePath turns any path (relative -> against the cwd) into a clean absolute path,

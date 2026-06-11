@@ -19,6 +19,12 @@
 #define SYS_waitpid 7
 #define SYS_unlink 10
 #define SYS_mkdir 39
+#define SYS_rmdir 40
+#define SYS_rename 38
+#define SYS_link 9
+#define SYS_symlink 83
+#define SYS_truncate 92
+#define SYS_ftruncate 93
 #define SYS_chdir 12
 #define SYS_getcwd 183
 #define SYS_execve 11

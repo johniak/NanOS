@@ -113,6 +113,11 @@ public:
 	int create(String path, unsigned mode);
 	int unlink(String path);
 	int mkdir(String path, unsigned mode);
+	int rmdir(String path);
+	int rename(String oldpath, String newpath);   // -EXDEV if the paths cross mountpoints
+	int link(String oldpath, String newpath);      // hard link, same mount only
+	int symlink(String target, String path);       // `target` is stored verbatim as link content
+	int truncate(String path, unsigned length);
 };
 
 }

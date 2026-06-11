@@ -478,6 +478,23 @@ int Syscalls::mkdir(String path, int mode) {
 	return vfs->mkdir(resolvePath(path), (unsigned) mode);
 }
 
+int Syscalls::rmdir(String path) {
+	return vfs->rmdir(resolvePath(path));
+}
+
+int Syscalls::rename(String oldpath, String newpath) {
+	return vfs->rename(resolvePath(oldpath), resolvePath(newpath));
+}
+
+int Syscalls::link(String oldpath, String newpath) {
+	return vfs->link(resolvePath(oldpath), resolvePath(newpath));
+}
+
+int Syscalls::symlink(String target, String path) {
+	// The target is the link's literal content (may be relative); only the new path is resolved.
+	return vfs->symlink(target, resolvePath(path));
+}
+
 // Normalise any path to a clean absolute one: relative paths join onto the cwd, then "."
 // and empty components drop and ".." pops the previous component ("foo/../bar" -> "/bar").
 // Pure string work over char buffers (host-testable). This is what makes a child process

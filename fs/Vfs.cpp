@@ -209,4 +209,50 @@ int Vfs::mkdir(String path, unsigned mode) {
 	return fs->mkdir(rel, mode);
 }
 
+int Vfs::rmdir(String path) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->rmdir(rel);
+}
+
+int Vfs::truncate(String path, unsigned length) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->truncate(rel, length);
+}
+
+int Vfs::rename(String oldpath, String newpath) {
+	String relOld, relNew;
+	FileSystem* fo = resolve(oldpath, relOld);
+	FileSystem* fn = resolve(newpath, relNew);
+	if (fo == 0 || fn == 0)
+		return -1;
+	if (fo != fn)
+		return -18;                 // -EXDEV: rename cannot cross filesystems
+	return fo->rename(relOld, relNew);
+}
+
+int Vfs::link(String oldpath, String newpath) {
+	String relOld, relNew;
+	FileSystem* fo = resolve(oldpath, relOld);
+	FileSystem* fn = resolve(newpath, relNew);
+	if (fo == 0 || fn == 0)
+		return -1;
+	if (fo != fn)
+		return -18;                 // -EXDEV: hard links cannot cross filesystems
+	return fo->link(relOld, relNew);
+}
+
+int Vfs::symlink(String target, String path) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->symlink(target, rel);   // target is the link's content, stored verbatim
+}
+
 }

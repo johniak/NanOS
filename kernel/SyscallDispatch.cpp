@@ -239,6 +239,18 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_mkdir:
 		ret = g_sys->mkdir(String((char*) a0), (int) a1);
 		break;
+	case SYS_rmdir:
+		ret = g_sys->rmdir(String((char*) a0));
+		break;
+	case SYS_rename:
+		ret = g_sys->rename(String((char*) a0), String((char*) a1));
+		break;
+	case SYS_link:
+		ret = g_sys->link(String((char*) a0), String((char*) a1));
+		break;
+	case SYS_symlink:
+		ret = g_sys->symlink(String((char*) a0), String((char*) a1));
+		break;
 	case SYS_chdir:
 		ret = g_sys->chdir(String((char*) a0));
 		break;
