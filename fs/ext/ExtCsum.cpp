@@ -45,6 +45,21 @@ unsigned extBitmapCsum(unsigned seed, const void* bitmap, unsigned numBytes) {
 	return crc32c(seed, bitmap, numBytes);
 }
 
+unsigned extInodeSeed(unsigned fsSeed, unsigned inodeNo, unsigned generation) {
+	unsigned char ino_le[4] = {
+		(unsigned char) inodeNo, (unsigned char) (inodeNo >> 8),
+		(unsigned char) (inodeNo >> 16), (unsigned char) (inodeNo >> 24) };
+	unsigned char gen_le[4] = {
+		(unsigned char) generation, (unsigned char) (generation >> 8),
+		(unsigned char) (generation >> 16), (unsigned char) (generation >> 24) };
+	unsigned s = crc32c(fsSeed, ino_le, 4);
+	return crc32c(s, gen_le, 4);
+}
+
+unsigned extExtentBlockCsum(unsigned inodeSeed, const void* extentBlock, unsigned tailOffset) {
+	return crc32c(inodeSeed, extentBlock, tailOffset);
+}
+
 void extInodeCsum(unsigned seed, unsigned inodeNo, void* inode, unsigned inodeSize) {
 	unsigned char* p = (unsigned char*) inode;
 	// i_extra_isize (off 0x80, u16) tells how far the large-inode area extends; i_checksum_hi

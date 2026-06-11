@@ -48,6 +48,15 @@ unsigned extBitmapCsum(unsigned seed, const void* bitmap, unsigned numBytes);
 // then the inode with both checksum fields zeroed.
 void extInodeCsum(unsigned seed, unsigned inodeNo, void* inode, unsigned inodeSize);
 
+// Per-inode checksum seed = crc32c(crc32c(fsSeed, inode#_le, 4), i_generation_le, 4). This is the
+// seed extInodeCsum folds internally, and the seed used for an inode's extent-tree block tails.
+unsigned extInodeSeed(unsigned fsSeed, unsigned inodeNo, unsigned generation);
+
+// Extent-block tail checksum: crc32c(inodeSeed, extentBlock, tailOffset). The 4-byte et_checksum
+// tail sits at `tailOffset` (= 12 + eh_max*12); eh_max is reduced to leave room for it. Inline
+// extent trees (in the inode i_block) have no tail — they ride the inode checksum instead.
+unsigned extExtentBlockCsum(unsigned inodeSeed, const void* extentBlock, unsigned tailOffset);
+
 }  // namespace kernel
 
 #endif /* EXT_EXTCSUM_H_ */

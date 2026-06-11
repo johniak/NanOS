@@ -13,6 +13,7 @@
 #include "List.h"
 #include "String.h"
 #include "ext/BlockCache.h"
+#include "ext/ExtAllocator.h"
 #ifndef EXTFILESYSTEM_H_
 #define EXTFILESYSTEM_H_
 
@@ -112,8 +113,10 @@ class ExtFilesystem: public FileSystem {
 protected:
 	BlockDevice* device;
 	BlockCache* cache;        // all block reads/writes go through here (created in mount())
+	ExtAllocator* alloc;      // block/inode allocation + inode read/write (created in mount())
 	char superblockBuff[1024];
 	char commonBuff[4096];
+	char dataBuff[4096];      // data-block read-modify-write scratch (kept off commonBuff)
 	Ext2BaseSuperblockFields baseSuperBlock;
 	Ext2ExtendedSuperblockFields extendedSuperblock;
 	Ext2BlockGroupDescriptor* blockGroupDescriptors;   // allocated to the real group count
@@ -128,11 +131,21 @@ public:
 		this->partitionLba = partitionLba;
 		this->blockGroupDescriptors = 0;
 		this->cache = 0;
+		this->alloc = 0;
 	}
 
 	// Map a file-relative block index to an absolute filesystem block number.
 	// ext2 uses direct pointers; ext4 walks an extent tree.
 	virtual unsigned resolveBlock(Ext2Inode& inode, unsigned fileBlockIndex) = 0;
+
+	// Write seam (format-specific). bmapAlloc returns the block already mapped at
+	// fileBlockIndex, or allocates one (plus any indirect/index blocks the mapping needs),
+	// records the mapping in `inode`, bumps i_blocks, and returns it (0 = disk full). A freshly
+	// allocated DATA block is zero-filled so partial writes never expose stale bytes.
+	// truncateBlocks frees every block at fileBlockIndex >= firstFreeBlock (and any now-empty
+	// indirect/index blocks), updating i_blocks and clearing the freed pointers in `inode`.
+	virtual unsigned bmapAlloc(Ext2Inode& inode, unsigned inodeNo, unsigned fileBlockIndex) = 0;
+	virtual void truncateBlocks(Ext2Inode& inode, unsigned inodeNo, unsigned firstFreeBlock) = 0;
 
 	int mount() {
 		device->readSectors(this->partitionLba + 2, 2, superblockBuff);
@@ -158,6 +171,9 @@ public:
 		initBgdt();
 		// All block I/O now flows through the cache (block size is known after initBgdt).
 		cache = new BlockCache(device, (unsigned) partitionLba, (unsigned) blockSize);
+		// The allocator derives its geometry from the live superblock buffer and writes back
+		// through the same cache (so free counts / checksums stay coherent with our reads).
+		alloc = new ExtAllocator(cache, (unsigned char*) superblockBuff);
 		// printInfo();   // (debug dump) silenced so the boot splash stays one line per step
 		return 0;
 	}
@@ -470,6 +486,136 @@ public:
 			written += chunk;
 		}
 		return size;
+	}
+
+	// ---- write path (Phase 2) -------------------------------------------------------------
+	// i_blocks is in 512-byte sectors; adjust it by `deltaBlocks` filesystem blocks.
+	void addBlocksToInode(Ext2Inode& inode, int deltaBlocks) {
+		inode.sectorsCount += deltaBlocks * (blockSize / 512);
+	}
+
+	// Zero a freshly allocated block in the cache (so a partial write leaves no stale bytes,
+	// and new pointer/index blocks read back as all-holes).
+	void zeroBlock(unsigned block) {
+		memset(dataBuff, 0, (unsigned) blockSize);
+		cache->write(block, dataBuff);
+	}
+
+	// Persist a modified inode: read its full on-disk bytes, overlay the 128-byte struct (so the
+	// large-inode tail — extra_isize / checksum / xattrs — is preserved), recompute i_checksum
+	// and write it back.
+	void writeInodeStruct(unsigned inodeNo, Ext2Inode& inode) {
+		unsigned char buf[256];
+		alloc->readInode(inodeNo, buf);
+		memcpy(buf, &inode, sizeof(Ext2Inode));
+		alloc->writeInode(inodeNo, buf);
+	}
+
+	// getChildrenInode but also yields the child's inode number (needed to write a file by path).
+	bool getChildrenInodeNum(Ext2Inode inode, const char* name, int len, Ext2Inode& out, int& outNum) {
+		if (!isDirectory(inode))
+			return false;
+		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
+		for (int i = 0; i < entries.getCount(); i++) {
+			const char* en = entries[i].name;
+			int k = 0;
+			while (k < len && en[k] && en[k] == name[k])
+				k++;
+			if (k == len && en[k] == 0) {
+				outNum = entries[i].inode;
+				out = getInode(outNum);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// resolvePath that also returns the final inode number (follows symlinks like open()).
+	bool resolvePathNum(const char* p, Ext2Inode& out, int& outNum, int depth) {
+		if (depth > 8 || !p || p[0] != '/')
+			return false;
+		int curNum = 2;
+		Ext2Inode cur = getInode(2);
+		int i = 1;
+		while (p[i]) {
+			int j = i;
+			while (p[j] && p[j] != '/')
+				j++;
+			int len = j - i;
+			if (len > 0) {
+				Ext2Inode child;
+				int childNum;
+				if (!getChildrenInodeNum(cur, p + i, len, child, childNum))
+					return false;
+				if (isSymlink(child)) {
+					char tgt[256];
+					if (!readSymlinkTarget(child, tgt) || tgt[0] != '/')
+						return false;
+					if (!resolvePathNum(tgt, child, childNum, depth + 1))
+						return false;
+				}
+				cur = child;
+				curNum = childNum;
+			}
+			i = (p[j] == '/') ? j + 1 : j;
+		}
+		out = cur;
+		outNum = curNum;
+		return true;
+	}
+
+	// Write [offset, offset+size) of an existing file, allocating blocks as needed. Returns the
+	// number of bytes written (a short count if the disk fills), or a negative errno.
+	int write(String path, unsigned size, unsigned offset, const void* buff) {
+		Ext2Inode inode;
+		int inodeNo;
+		if (!resolvePathNum((char*) path, inode, inodeNo, 0))
+			return -2;                       // -ENOENT
+		if (isDirectory(inode))
+			return -21;                      // -EISDIR
+		const char* src = (const char*) buff;
+		unsigned written = 0;
+		while (written < size) {
+			unsigned filePos = offset + written;
+			unsigned blockIndex = filePos / blockSize;
+			unsigned within = filePos % blockSize;
+			unsigned chunk = blockSize - within;
+			if (chunk > size - written)
+				chunk = size - written;
+			unsigned blk = bmapAlloc(inode, (unsigned) inodeNo, blockIndex);
+			if (blk == 0)
+				break;                       // out of space -> short write
+			cache->read(blk, dataBuff);
+			memcpy(dataBuff + within, src + written, chunk);
+			cache->write(blk, dataBuff);
+			written += chunk;
+		}
+		unsigned newEnd = offset + written;
+		if (newEnd > (unsigned) inode.lowerSize)
+			inode.lowerSize = (int) newEnd;
+		writeInodeStruct((unsigned) inodeNo, inode);
+		cache->flush();
+		return (int) written;
+	}
+
+	// Shrink or grow a file to `length`. Shrinking frees the blocks past the new end; growing
+	// just sets the size (the tail becomes a sparse hole, materialised on the next write).
+	int truncate(String path, unsigned length) {
+		Ext2Inode inode;
+		int inodeNo;
+		if (!resolvePathNum((char*) path, inode, inodeNo, 0))
+			return -2;
+		if (isDirectory(inode))
+			return -21;
+		unsigned oldSize = (unsigned) inode.lowerSize;
+		if (length < oldSize) {
+			unsigned firstFreeBlock = (length + blockSize - 1) / blockSize;
+			truncateBlocks(inode, (unsigned) inodeNo, firstFreeBlock);
+		}
+		inode.lowerSize = (int) length;
+		writeInodeStruct((unsigned) inodeNo, inode);
+		cache->flush();
+		return 0;
 	}
 };
 

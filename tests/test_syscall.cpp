@@ -117,12 +117,15 @@ TEST_CASE("console termios round-trips and TCSETS drives canonical/raw") {
 	CHECK(!sc.isConsoleFd(99));
 }
 
-TEST_CASE("sys_write to a read-only file is -EROFS") {
+TEST_CASE("sys_write to a regular file persists and reads back") {
 	Syscalls sc(mountFixture(), sink);
 	int fd = sc.open("/hello.txt", 0);
 	REQUIRE(fd >= 3);
+	CHECK(sc.write(fd, "X", 1) == 1);            // ext is writable now (not -EROFS)
+	CHECK(sc.lseek(fd, 0, 0 /*SEEK_SET*/) == 0);
 	char b[2] = { 0 };
-	CHECK(sc.write(fd, b, 1) == -30);            // -EROFS via the FileSystem default
+	CHECK(sc.read(fd, b, 1) == 1);
+	CHECK(b[0] == 'X');
 }
 
 TEST_CASE("sys_open/read returns file bytes and advances the offset") {
@@ -144,13 +147,12 @@ TEST_CASE("sys_lseek repositions and read continues from there") {
 	CHECK(strncmp(buf, "NanOS", 5) == 0);
 }
 
-TEST_CASE("sys errors: bad fd, missing path, write to read-only file") {
+TEST_CASE("sys errors: bad fd, missing path, closed fd") {
 	Syscalls sc(mountFixture(), sink);
 	char buf[8];
 	CHECK(sc.read(99, buf, 8) == -9);          // -EBADF
 	CHECK(sc.open("/does-not-exist", 0) == -2); // -ENOENT
 	int fd = sc.open("/hello.txt", 0);
-	CHECK(sc.write(fd, "x", 1) == -30);        // -EROFS (file, read-only)
 	CHECK(sc.close(fd) == 0);
 	CHECK(sc.read(fd, buf, 8) == -9);          // closed -> -EBADF
 }
