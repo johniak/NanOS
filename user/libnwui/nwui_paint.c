@@ -6,76 +6,88 @@
 #include "nw_gfx.h"
 #include <string.h>
 
-#define COL_WIN     0x00f4f4ec   /* window background (paper) */
-#define COL_BTN     0x003a6ea5
-#define COL_BTN_DN  0x002a4a78   /* pressed */
+#define COL_WIN     0x00f7fafe   /* window content paper (matches the compositor material) */
+#define COL_BTN_TOP 0x0039b4f7   /* button gradient (blue) */
+#define COL_BTN_BOT 0x001f8fe0
+#define COL_BTN_DTOP 0x002a78b0  /* pressed */
+#define COL_BTN_DBOT 0x00165f95
 #define COL_TF_BG   0x00ffffff
-#define COL_TF_BRD  0x00808080
-#define COL_TF_FOC  0x003a6ea5
-#define COL_INK     0x00101014
+#define COL_TF_BRD  0x00cdd7e5
+#define COL_TF_FOC  0x0012a8f4   /* accent: focus ring + selection */
+#define COL_INK     0x00172130
+#define COL_MUTED   0x00657184
+#define COL_SEL     0x0012a8f4
+#define COL_SB_THUMB 0x00b8c6d8
 
 static void paint_self(nwui_node *n, const struct nw_surface *s)
 {
 	switch (n->kind) {
 	case NWUI_LABEL:
-		nw_draw_text(s, n->x, n->y, n->text, n->fg, COL_WIN);
+		nw_text(s, n->x, n->y, n->text, n->fg ? n->fg : COL_INK);
 		break;
 	case NWUI_BUTTON: {
-		uint32_t bg = n->has_bg ? n->bg : (n->pressed ? COL_BTN_DN : COL_BTN);
-		nw_fill_rect(s, n->x, n->y, n->w, n->h, bg);
+		int down = n->pressed;
+		uint32_t base = n->has_bg ? n->bg : (down ? COL_BTN_DBOT : COL_BTN_BOT);
+		nw_fill_round(s, n->x, n->y, n->w, n->h, 7, base, 255);        /* rounded solid fill */
+		if (!n->has_bg)                                                /* glossy top sheen */
+			nw_blend_rect(s, n->x + 3, n->y + 2, n->w - 6, (n->h - 4) / 2,
+			              down ? COL_BTN_DTOP : COL_BTN_TOP, 120);
+		nw_stroke_round(s, n->x, n->y, n->w, n->h, 7, 0x00ffffff, 60);
 		int tx = n->x + (n->w - (int) strlen(n->text) * NW_FONT_W) / 2;
 		int ty = n->y + (n->h - NW_FONT_H) / 2;
-		nw_draw_text(s, tx, ty, n->text, n->fg, bg);
+		nw_text(s, tx, ty, n->text, n->fg ? n->fg : 0x00ffffff);
 		break;
 	}
 	case NWUI_TEXTFIELD: {
-		nw_fill_rect(s, n->x, n->y, n->w, n->h, n->focused ? COL_TF_FOC : COL_TF_BRD);
-		nw_fill_rect(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, COL_TF_BG);
+		nw_fill_round(s, n->x, n->y, n->w, n->h, 6, COL_TF_BG, 255);
+		nw_stroke_round(s, n->x, n->y, n->w, n->h, 6, n->focused ? COL_TF_FOC : COL_TF_BRD,
+		                n->focused ? 255 : 200);
+		if (n->focused)                                     /* a second ring = a soft 2px focus */
+			nw_stroke_round(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, 5, COL_TF_FOC, 120);
 		int tx = n->x + NWUI_TF_PAD, ty = n->y + (n->h - NW_FONT_H) / 2;
 		int lo = n->anchor < n->caret ? n->anchor : n->caret;
 		int hi = n->anchor > n->caret ? n->anchor : n->caret;
-		for (int i = 0; i < n->tlen; i++) {                 /* per-char so selection inverts */
+		for (int i = 0; i < n->tlen; i++) {
 			int sel = (n->anchor != n->caret && i >= lo && i < hi);
-			nw_draw_char(s, tx + i * NW_FONT_W, ty, (unsigned char) n->tbuf[i],
-			             sel ? 0x00ffffff : COL_INK, sel ? COL_TF_FOC : COL_TF_BG);
+			if (sel) nw_fill_rect(s, tx + i * NW_FONT_W, ty, NW_FONT_W, NW_FONT_H, COL_SEL);
+			nw_text(s, tx + i * NW_FONT_W, ty, (char[]){ n->tbuf[i], 0 },
+			        sel ? 0x00ffffff : COL_INK);
 		}
 		if (n->focused)
-			nw_fill_rect(s, tx + n->caret * NW_FONT_W, ty, 1, NW_FONT_H, COL_INK);
+			nw_fill_rect(s, tx + n->caret * NW_FONT_W, ty, 2, NW_FONT_H, COL_TF_FOC);
 		break;
 	}
 	case NWUI_LIST: {
-		nw_fill_rect(s, n->x, n->y, n->w, n->h, n->focused ? COL_TF_FOC : COL_TF_BRD);
-		nw_fill_rect(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, COL_TF_BG);   /* inner paper */
+		nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
 		int maxs = n->count - n->h / NWUI_ROW_H;
 		int has_sb = maxs > 0;
-		int roww = n->w - 2 - (has_sb ? NWUI_SB_W : 0);    /* rows stop before the scrollbar */
+		int roww = n->w - 4 - (has_sb ? NWUI_SB_W : 0);    /* rows stop before the scrollbar */
 		int vis = n->h / NWUI_ROW_H;
 		for (int r = 0; r < vis; r++) {
 			int idx = n->scroll + r;
 			if (idx >= n->count) break;
-			int ry = n->y + 1 + r * NWUI_ROW_H;
+			int ry = n->y + 2 + r * NWUI_ROW_H;
 			int seld = (idx == n->sel);
-			uint32_t bg = seld ? COL_TF_FOC : COL_TF_BG;
-			uint32_t fg = seld ? 0x00ffffff : COL_INK;
-			if (seld) nw_fill_rect(s, n->x + 1, ry, roww, NWUI_ROW_H, bg);
+			if (seld) nw_fill_round(s, n->x + 3, ry, roww, NWUI_ROW_H, 5, COL_SEL, 255);
 			if (n->items && n->items[idx])
-				nw_draw_text(s, n->x + NWUI_TF_PAD, ry + (NWUI_ROW_H - NW_FONT_H) / 2,
-				             n->items[idx], fg, bg);
+				nw_text(s, n->x + NWUI_TF_PAD + 3, ry + (NWUI_ROW_H - NW_FONT_H) / 2,
+				        n->items[idx], seld ? 0x00ffffff : COL_INK);
 		}
-		if (has_sb) {                                      /* vertical scrollbar: track + thumb */
+		nw_stroke_round(s, n->x, n->y, n->w, n->h, 8,
+		                n->focused ? COL_TF_FOC : COL_TF_BRD, n->focused ? 255 : 200);
+		if (has_sb) {                                      /* rounded scrollbar thumb */
 			int sbx = n->x + n->w - NWUI_SB_W;
-			nw_fill_rect(s, sbx, n->y + 1, NWUI_SB_W - 1, n->h - 2, 0x00d8d8d0);  /* track */
-			int track = n->h - 2;
+			int track = n->h - 6;
 			int th = track * vis / n->count; if (th < NWUI_SB_MIN) th = NWUI_SB_MIN;
 			if (th > track) th = track;
-			int ty = n->y + 1 + (maxs > 0 ? (track - th) * n->scroll / maxs : 0);
-			nw_fill_rect(s, sbx + 1, ty, NWUI_SB_W - 3, th, COL_TF_FOC);          /* thumb */
+			int ty = n->y + 3 + (maxs > 0 ? (track - th) * n->scroll / maxs : 0);
+			nw_fill_round(s, sbx + 2, ty, NWUI_SB_W - 5, th, (NWUI_SB_W - 5) / 2, COL_SB_THUMB, 255);
 		}
 		break;
 	}
 	default:   /* row/column/box: paint own background if set (else transparent) */
 		if (n->has_bg)
-			nw_fill_rect(s, n->x, n->y, n->w, n->h, n->bg);
+			nw_fill_round(s, n->x, n->y, n->w, n->h, 8, n->bg, 255);
 		break;
 	}
 }
@@ -119,13 +131,14 @@ static void draw_menu(const nwui *u, const struct nw_surface *s)
 		return;
 	static const char *const L[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
 	int mh = NWUI_MI_COUNT * NWUI_MENU_ITEM_H;
-	nw_fill_rect(s, u->menu_x - 1, u->menu_y - 1, NWUI_MENU_W + 2, mh + 2, 0x00101418);
+	nw_fill_round(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9, 0x00f4f8fd, 255);
+	nw_stroke_round(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9, 0x00b8c6d8, 220);
 	for (int i = 0; i < NWUI_MI_COUNT; i++) {
 		int iy = u->menu_y + i * NWUI_MENU_ITEM_H;
-		uint32_t bg = (i == u->menu_hover) ? COL_TF_FOC : 0x00f4f4ec;
-		uint32_t fg = (i == u->menu_hover) ? 0x00ffffff : COL_INK;
-		nw_fill_rect(s, u->menu_x, iy, NWUI_MENU_W, NWUI_MENU_ITEM_H, bg);
-		nw_draw_text(s, u->menu_x + 8, iy + (NWUI_MENU_ITEM_H - NW_FONT_H) / 2, L[i], fg, bg);
+		int hov = (i == u->menu_hover);
+		if (hov) nw_fill_round(s, u->menu_x - 1, iy, NWUI_MENU_W + 2, NWUI_MENU_ITEM_H, 5, COL_SEL, 255);
+		nw_text(s, u->menu_x + 8, iy + (NWUI_MENU_ITEM_H - NW_FONT_H) / 2, L[i],
+		        hov ? 0x00ffffff : COL_INK);
 	}
 }
 
