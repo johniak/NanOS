@@ -109,11 +109,21 @@ void nw_commit(nw_win *win, int x, int y, int w, int h)
 	if (w <= 0 || h <= 0)
 		return;
 	nw_display *d = win->d;
-	if (send_hdr(d->reqfd, NW_REQ_COMMIT, win->id, x, y, w, h, (uint32_t) (w * h * 4)) < 0)
-		return;
-	for (int r = 0; r < h; r++)
-		if (write_all(d->reqfd, win->px + (long) (y + r) * win->w + x, w * 4) < 0)
+	/* Split into horizontal bands so no single message exceeds NW_COMMIT_MAX_BYTES: a full
+	 * repaint of a large window otherwise overflows the compositor's reassembly buffer and the
+	 * commit is dropped. Each band is its own COMMIT (the server unions their damage rects). */
+	int rowbytes = w * 4;
+	int band = NW_COMMIT_MAX_BYTES / (rowbytes > 0 ? rowbytes : 1);
+	if (band < 1) band = 1;                         /* a single row already exceeds the cap */
+	for (int y0 = 0; y0 < h; y0 += band) {
+		int bh = h - y0 < band ? h - y0 : band;
+		if (send_hdr(d->reqfd, NW_REQ_COMMIT, win->id, x, y + y0, w, bh,
+		             (uint32_t) (w * bh * 4)) < 0)
 			return;
+		for (int r = 0; r < bh; r++)
+			if (write_all(d->reqfd, win->px + (long) (y + y0 + r) * win->w + x, w * 4) < 0)
+				return;
+	}
 }
 
 void nw_set_clipboard(nw_display *d, const char *text, int len)

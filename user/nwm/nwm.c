@@ -199,8 +199,13 @@ static int drain_client(int slot)
 	int n;
 	while ((n = (int) read(cl_req[slot], b, sizeof b)) > 0) {
 		const unsigned char *p = b, *end = b + n;
-		while (nw_decoder_next(&cl_dec[slot], &p, end))
+		while (nw_decoder_next(&cl_dec[slot], &p, end)) {
+			if (cl_dec[slot].overflow)             /* payload exceeded the buffer: drop it, never
+			                                        * feed a partially-read payload to commit_rect
+			                                        * (which would read past the buffer into heap) */
+				continue;
 			nw_client_msg(&S, slot, &cl_dec[slot].msg, cl_dec[slot].payload);
+		}
 	}
 	if (n == 0)
 		return 0;                          /* EOF: client closed its end */
@@ -315,6 +320,7 @@ int main(void)
 	g_scratch = (uint32_t *) malloc(fbpx);
 	g_wall    = (uint32_t *) malloc(fbpx);
 	if (!g_scene || !g_scratch || !g_wall) { printf("nwm: no memory for compositor buffers\n"); return 1; }
+	memset(g_scene, 0, fbpx); memset(g_scratch, 0, fbpx);   /* never composite/blit malloc garbage */
 	g_scene_surf.px = g_scene; g_scene_surf.w = (int) g_xres; g_scene_surf.h = (int) g_yres;
 	g_scene_surf.stride = (int) g_xres; nw_surface_noclip(&g_scene_surf);
 	g_scratch_surf.px = g_scratch; g_scratch_surf.w = (int) g_xres; g_scratch_surf.h = (int) g_yres;

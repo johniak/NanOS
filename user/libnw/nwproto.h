@@ -46,6 +46,13 @@ enum {
 /* Pointer button bitmask (matches evdev BTN ordering we care about). */
 enum { NW_BTN_LEFT = 1, NW_BTN_RIGHT = 2, NW_BTN_MIDDLE = 4 };
 
+/* Largest COMMIT payload a client may send in one message. A full-window repaint of a big
+ * window (e.g. 560x360x4 = 806 KB) exceeds the compositor's per-client reassembly buffer, so
+ * the client splits a commit into horizontal row bands each <= this many bytes, and the
+ * compositor's CLIENT_COMMITCAP is kept comfortably above it. Keeping the cap here makes the
+ * two sides agree. */
+enum { NW_COMMIT_MAX_BYTES = 256 * 1024 };
+
 /* The fixed wire header. All fields are 4 bytes => 28-byte struct with no padding on every
  * target (i686 userland + the LE host running the tests); serialized by raw copy. */
 struct nw_msg {
