@@ -287,6 +287,7 @@ int main(int argc, char** argv) {
 	 *     NxImport whose slot IS the reference site, so the loader patches the site with the
 	 *     symbol's address at load — no dllimport shim needed in the source. (Function calls are
 	 *     R_386_PC32 and resolved via the import-library thunks, so they never reach here.) */
+	int missingFns = 0;
 	for (int i = 0; i < g_nsh; i++) {
 		Elf32_Shdr* s = sh(i);
 		if (s->sh_type != SHT_REL) continue;
@@ -301,6 +302,9 @@ int main(int argc, char** argv) {
 			if (r[j].r_offset < loadBase || r[j].r_offset >= bssStart) continue;
 			Elf32_Sym* y = &rsym[ELF32_R_SYM(r[j].r_info)];
 			if (y->st_shndx != SHN_UNDEF) continue;          /* only unresolved (imported) symbols */
+			/* Only STRONG undefined symbols are imports; a WEAK undefined data ref is an optional
+			 * symbol meant to read 0 (leave it 0 — don't try to resolve it at load). */
+			if (ELF32_ST_BIND(y->st_info) != STB_GLOBAL) continue;
 			const char* nm = rstr + y->st_name;
 			if (!nm[0] || !strncmp(nm, "__imp_", 6)) continue;
 			unsigned nameOff = strs.len;
@@ -309,17 +313,20 @@ int main(int argc, char** argv) {
 			bput(&imports, &im2, sizeof im2);
 			importCount++;
 		}
-		/* Safety: an undefined symbol called via R_386_PC32 is a genuinely MISSING function (not a
-		 * data import). With --unresolved-symbols=ignore-all the link won't have flagged it, so warn
-		 * here — it would crash at runtime calling address 0. */
+		/* Safety: a STRONG undefined symbol called via R_386_PC32 is a genuinely MISSING function
+		 * (not a data import). --unresolved-symbols=ignore-all let the link pass, so we catch it
+		 * HERE and fail the build — otherwise it would crash at runtime calling address 0. (A WEAK
+		 * undefined function is an optional ref meant to test 0, so it is left alone.) */
 		for (int j = 0; j < n; j++) {
 			if (ELF32_R_TYPE(r[j].r_info) != R_386_PC32) continue;
 			Elf32_Sym* y = &rsym[ELF32_R_SYM(r[j].r_info)];
 			if (y->st_shndx != SHN_UNDEF) continue;
+			if (ELF32_ST_BIND(y->st_info) != STB_GLOBAL) continue;
 			const char* nm = rstr + y->st_name;
-			if (nm[0]) fprintf(stderr, "mknx: warning: undefined function '%s' (call -> address 0)\n", nm);
+			if (nm[0]) { fprintf(stderr, "mknx: error: undefined function '%s'\n", nm); missingFns++; }
 		}
 	}
+	if (missingFns) die("undefined function(s) above — missing from libc.ndl or a needed library");
 
 	Buf needed = {0};
 	for (int i = 0; i < nNeeds; i++) {
