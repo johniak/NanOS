@@ -6,6 +6,12 @@
 
 namespace kernel {
 
+// Wall-clock time in seconds since the epoch, kept current by the kernel clock (set via
+// setWallClock from the timer/RTC). 0 until the clock is initialised. currentTime() reads it for
+// file timestamps (write mtime, utime/utimensat "now"). A single global: time is machine-wide.
+unsigned g_wallClockSeconds = 0;
+void setWallClock(unsigned sec) { g_wallClockSeconds = sec; }
+
 // Canonical "cooked" terminal defaults, matching what a Linux tty starts with: line-based
 // input (ICANON), echo on, signal keys on, CR->NL on input, NL->CRLF on output, and the
 // standard control characters. tcgetattr() reads these; tcsetattr() replaces them.
@@ -528,8 +534,7 @@ int Syscalls::chown(String path, int uid, int gid) {
 	return vfs->chown(resolvePath(path), (unsigned) uid, (unsigned) gid);
 }
 int Syscalls::lchown(String path, int uid, int gid) {
-	// (Follows symlinks like chown; a true no-follow lchown is a later refinement.)
-	return vfs->chown(resolvePath(path), (unsigned) uid, (unsigned) gid);
+	return vfs->lchown(resolvePath(path), (unsigned) uid, (unsigned) gid);   // no-follow
 }
 int Syscalls::fchown(int fd, int uid, int gid) {
 	if (!valid(fd) || fds[fd].isConsole) return -9;
@@ -548,9 +553,11 @@ int Syscalls::utimes(String path, unsigned atime, unsigned mtime) {
 	return vfs->utimes(resolvePath(path), atime, mtime);
 }
 int Syscalls::access(String path, int mode) {
-	(void) mode;                                             // F_OK existence check (no perm model)
 	FileStat st;
 	if (vfs->stat(resolvePath(path), st) < 0) return -2;     // -ENOENT
+	// We run as uid 0: read/write are always permitted; execute (X_OK=1) needs at least one
+	// of the file's execute bits set (matches Linux root semantics).
+	if ((mode & 1) && (st.mode & 0111) == 0) return -13;     // -EACCES
 	return 0;
 }
 int Syscalls::statfs(String path, void* buf) {
@@ -659,6 +666,83 @@ int Syscalls::fstatat(int dirfd, String path, LinuxStat* out, int flags) {
 	bool bad; String p = resolveAt(dirfd, path, &bad);
 	if (bad) return -9;
 	return (flags & AT_SYMLINK_NOFOLLOW) ? lstat(p, out) : stat(p, out);
+}
+
+static unsigned rd32le(const void* p, unsigned off) {
+	const unsigned char* b = (const unsigned char*) p + off;
+	return (unsigned) b[0] | ((unsigned) b[1] << 8) | ((unsigned) b[2] << 16) | ((unsigned) b[3] << 24);
+}
+
+unsigned Syscalls::currentTime() {
+	return g_wallClockSeconds;   // updated by the kernel clock; 0 until then (see SyscallDispatch)
+}
+
+int Syscalls::utime(String path, const void* times) {
+	String p = resolvePath(path);
+	unsigned at, mt;
+	if (!times) { at = mt = currentTime(); }       // NULL -> now
+	else { at = rd32le(times, 0); mt = rd32le(times, 8); }   // struct utimbuf {time_t actime, modtime}
+	return vfs->utimes(p, at, mt);
+}
+
+int Syscalls::utimensat(int dirfd, String path, const void* times, int flags) {
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	const unsigned UTIME_NOW = 0x3fffffff, UTIME_OMIT = 0x3ffffffe;
+	unsigned at, mt;
+	bool setA = true, setM = true;
+	if (!times) { at = mt = currentTime(); }
+	else {
+		// struct timespec[2]: each {long long tv_sec @0; long tv_nsec @8} = 12 bytes.
+		unsigned aSec = rd32le(times, 0), aNs = rd32le(times, 8);
+		unsigned mSec = rd32le(times, 12), mNs = rd32le(times, 20);
+		if (aNs == UTIME_NOW) at = currentTime(); else if (aNs == UTIME_OMIT) setA = false; else at = aSec;
+		if (mNs == UTIME_NOW) mt = currentTime(); else if (mNs == UTIME_OMIT) setM = false; else mt = mSec;
+	}
+	if (!setA || !setM) {                          // keep the omitted field's current value
+		FileStat st;
+		unsigned cur = (vfs->stat(p, st) == 0) ? st.mtime : 0;
+		if (!setA) at = cur;
+		if (!setM) mt = cur;
+	}
+	(void) flags;
+	return vfs->utimes(p, at, mt);
+}
+
+int Syscalls::faccessat(int dirfd, String path, int mode, int flags) {
+	(void) flags;
+	bool bad; String p = resolveAt(dirfd, path, &bad);
+	if (bad) return -9;
+	FileStat st;
+	if (vfs->stat(p, st) < 0) return -2;
+	if ((mode & 1) && (st.mode & 0111) == 0) return -13;
+	return 0;
+}
+
+int Syscalls::renameat2(int oldfd, String oldpath, int newfd, String newpath, int flags) {
+	const int NOREPLACE = 1, EXCHANGE = 2;
+	if (flags & ~(NOREPLACE | EXCHANGE)) return -22;     // -EINVAL: unknown flags
+	bool b1, b2; String a = resolveAt(oldfd, oldpath, &b1); String b = resolveAt(newfd, newpath, &b2);
+	if (b1 || b2) return -9;
+	FileStat st;
+	bool destExists = vfs->stat(b, st) == 0;
+	if (flags & NOREPLACE) {
+		if (destExists) return -17;                      // -EEXIST
+		return vfs->rename(a, b);
+	}
+	if (flags & EXCHANGE) {
+		if (!destExists) return -2;                      // both must exist to swap
+		// Non-atomic swap via a temporary name (no fs-level atomic exchange yet).
+		char tmp[520]; const char* bs = (char*) b; int k = 0;
+		while (bs[k] && k < 511) { tmp[k] = bs[k]; k++; }
+		const char* sfx = ".rnxchg"; for (int i = 0; sfx[i] && k < 519; i++) tmp[k++] = sfx[i];
+		tmp[k] = 0;
+		if (vfs->rename(b, String(tmp)) != 0) return -16;
+		if (vfs->rename(a, b) != 0) { vfs->rename(String(tmp), b); return -5; }
+		if (vfs->rename(String(tmp), a) != 0) return -5;
+		return 0;
+	}
+	return vfs->rename(a, b);
 }
 
 // Normalise any path to a clean absolute one: relative paths join onto the cwd, then "."

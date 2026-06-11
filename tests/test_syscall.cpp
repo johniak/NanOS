@@ -247,6 +247,72 @@ TEST_CASE("sys metadata + *at family") {
 	CHECK(sc.rmdir("/at") == 0);
 }
 
+TEST_CASE("sys utime/utimensat/faccessat/renameat2/lchown") {
+	Syscalls sc(mountFixture(), sink);
+	CHECK(sc.mkdir("/x2", 0755) == 0);
+	int fd = sc.openat(-100, "/x2/a", O_CREAT);
+	REQUIRE(fd >= 3);
+	CHECK(sc.close(fd) == 0);
+	LinuxStat st;
+
+	// utime: NULL -> "now" (0 until a clock is set); then an explicit utimbuf {actime, modtime}.
+	CHECK(sc.utime("/x2/a", 0) == 0);
+	REQUIRE(sc.stat("/x2/a", &st) == 0);
+	CHECK(st.st_mtime == 0);
+	unsigned char ut[16] = {0};
+	ut[8] = 50;                                   // modtime tv_sec low byte
+	CHECK(sc.utime("/x2/a", ut) == 0);
+	REQUIRE(sc.stat("/x2/a", &st) == 0);
+	CHECK(st.st_mtime == 50);
+
+	// utimensat: explicit secs; then UTIME_OMIT (keep) and UTIME_NOW (->0) per field.
+	unsigned char ts[24] = {0};
+	ts[0] = 10;                                   // atime.tv_sec
+	ts[12] = 77;                                  // mtime.tv_sec
+	CHECK(sc.utimensat(-100, "/x2/a", ts, 0) == 0);
+	REQUIRE(sc.stat("/x2/a", &st) == 0);
+	CHECK(st.st_mtime == 77);
+	unsigned char ts2[24] = {0};
+	ts2[8] = 0xfe; ts2[9] = 0xff; ts2[10] = 0xff; ts2[11] = 0x3f;   // atime tv_nsec = UTIME_OMIT
+	ts2[12] = 88;                                                   // mtime.tv_sec
+	CHECK(sc.utimensat(-100, "/x2/a", ts2, 0) == 0);
+	REQUIRE(sc.stat("/x2/a", &st) == 0);
+	CHECK(st.st_mtime == 88);
+	CHECK(sc.utimensat(-100, "/x2/a", 0, 0) == 0);                  // NULL -> now (0)
+	REQUIRE(sc.stat("/x2/a", &st) == 0);
+	CHECK(st.st_mtime == 0);
+
+	// faccessat: existence, missing, and X_OK against the mode.
+	CHECK(sc.faccessat(-100, "/x2/a", 0, 0) == 0);
+	CHECK(sc.faccessat(-100, "/x2/none", 0, 0) == -2);
+	CHECK(sc.chmod("/x2/a", 0644) == 0);
+	CHECK(sc.faccessat(-100, "/x2/a", 1, 0) == -13);               // X_OK, no x bit -> -EACCES
+	CHECK(sc.chmod("/x2/a", 0755) == 0);
+	CHECK(sc.faccessat(-100, "/x2/a", 1, 0) == 0);
+
+	// renameat2: NOREPLACE rejects an existing target; EXCHANGE swaps; flags=0 plain.
+	int f2 = sc.openat(-100, "/x2/b", O_CREAT);
+	REQUIRE(f2 >= 3);
+	CHECK(sc.close(f2) == 0);
+	CHECK(sc.renameat2(-100, "/x2/a", -100, "/x2/b", 1) == -17);   // NOREPLACE -> -EEXIST
+	CHECK(sc.renameat2(-100, "/x2/a", -100, "/x2/b", 2) == 0);     // EXCHANGE
+	REQUIRE(sc.stat("/x2/a", &st) == 0);
+	REQUIRE(sc.stat("/x2/b", &st) == 0);
+	CHECK(sc.renameat2(-100, "/x2/b", -100, "/x2/c", 0) == 0);
+	CHECK(sc.stat("/x2/b", &st) == -2);
+	REQUIRE(sc.stat("/x2/c", &st) == 0);
+	CHECK(sc.renameat2(-100, "/x2/a", -100, "/x2/c", 8) == -22);   // unknown flag -> -EINVAL
+
+	// lchown on a symlink touches the link itself (no follow).
+	CHECK(sc.symlink("/x2/a", "/x2/sl") == 0);
+	CHECK(sc.lchown("/x2/sl", 3, 4) == 0);
+
+	CHECK(sc.unlink("/x2/sl") == 0);
+	CHECK(sc.unlink("/x2/a") == 0);
+	CHECK(sc.unlink("/x2/c") == 0);
+	CHECK(sc.rmdir("/x2") == 0);
+}
+
 TEST_CASE("sys errors: bad fd, missing path, closed fd") {
 	Syscalls sc(mountFixture(), sink);
 	char buf[8];

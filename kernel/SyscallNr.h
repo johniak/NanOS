@@ -30,6 +30,7 @@
 #define SYS_chown 182
 #define SYS_lchown 16
 #define SYS_fchown 95
+#define SYS_utime 30
 #define SYS_utimes 271
 #define SYS_utimensat 320
 #define SYS_access 33

@@ -279,7 +279,13 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->access(String((char*) a0), (int) a1);
 		break;
 	case SYS_faccessat:
-		ret = g_sys->access(String((char*) a1), (int) a2);   // dirfd a0 ignored for absolute paths
+		ret = g_sys->faccessat((int) a0, String((char*) a1), (int) a2, (int) a3);
+		break;
+	case SYS_utime:
+		ret = g_sys->utime(String((char*) a0), (const void*) a1);
+		break;
+	case SYS_utimensat:
+		ret = g_sys->utimensat((int) a0, String((char*) a1), (const void*) a2, (int) a3);
 		break;
 	case SYS_statfs:
 		ret = g_sys->statfs(String((char*) a0), (void*) a1);
@@ -313,8 +319,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->unlinkat((int) a0, String((char*) a1), (int) a2);
 		break;
 	case SYS_renameat:
-	case SYS_renameat2:
 		ret = g_sys->renameat((int) a0, String((char*) a1), (int) a2, String((char*) a3));
+		break;
+	case SYS_renameat2:
+		ret = g_sys->renameat2((int) a0, String((char*) a1), (int) a2, String((char*) a3), (int) a4);
 		break;
 	case SYS_linkat:
 		ret = g_sys->linkat((int) a0, String((char*) a1), (int) a2, String((char*) a3), (int) a4);

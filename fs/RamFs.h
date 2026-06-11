@@ -68,6 +68,7 @@ public:
 	int truncate(String path, unsigned length);
 	int chmod(String path, unsigned mode);
 	int chown(String path, unsigned uid, unsigned gid);
+	int lchown(String path, unsigned uid, unsigned gid);
 	int utimes(String path, unsigned atime, unsigned mtime);
 	int statfs(String path, StatFs& out);
 	int lstat(String path, FileStat& out);

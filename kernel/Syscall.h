@@ -130,7 +130,12 @@ public:
 	int truncate(String path, unsigned length);
 	int ftruncate(int fd, unsigned length);
 	int utimes(String path, unsigned atime, unsigned mtime);
+	int utime(String path, const void* times);              // struct utimbuf{actime,modtime} or NULL
+	int utimensat(int dirfd, String path, const void* times, int flags);  // timespec[2]/NULL + UTIME_*
 	int access(String path, int mode);
+	int faccessat(int dirfd, String path, int mode, int flags);
+	int renameat2(int oldfd, String oldpath, int newfd, String newpath, int flags);  // NOREPLACE/EXCHANGE
+	unsigned currentTime();                                 // wall-clock seconds (0 until a clock is set)
 	int statfs(String path, void* buf);            // fills LinuxStatfs
 	int fstatfs(int fd, void* buf);
 	int fsync(int fd);

@@ -1083,6 +1083,21 @@ public:
 		return 0;
 	}
 
+	// lchown: chown WITHOUT following a final symlink (getChildrenInodeNum returns the link
+	// itself). Falls back to follow for "/" or a malformed parent.
+	int lchown(String path, unsigned uid, unsigned gid) {
+		Ext2Inode parent; int pno; char name[256]; int nl;
+		if (!resolveParent((char*) path, parent, pno, name, nl))
+			return chown(path, uid, gid);
+		Ext2Inode child; int cno;
+		if (!getChildrenInodeNum(parent, name, nl, child, cno)) return -2;
+		if (uid != 0xFFFFFFFFu) child.userId = (short) uid;
+		if (gid != 0xFFFFFFFFu) child.groupId = (short) gid;
+		writeInodeStruct((unsigned) cno, child);
+		txFlush();
+		return 0;
+	}
+
 	int utimes(String path, unsigned atime, unsigned mtime) {
 		Ext2Inode inode; int no;
 		if (!resolvePathNum((char*) path, inode, no, 0)) return -2;

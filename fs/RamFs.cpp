@@ -436,6 +436,14 @@ int RamFs::chown(String path, unsigned uid, unsigned gid) {
 	return 0;
 }
 
+int RamFs::lchown(String path, unsigned uid, unsigned gid) {
+	RamNode* n = walk((char*) path);            // no-follow: chown the link itself
+	if (!n) return E_NOENT;
+	if (uid != 0xFFFFFFFFu) n->uid = uid;
+	if (gid != 0xFFFFFFFFu) n->gid = gid;
+	return 0;
+}
+
 int RamFs::utimes(String path, unsigned atime, unsigned mtime) {
 	RamNode* n = walkFollow((char*) path, 0);
 	if (!n) return E_NOENT;

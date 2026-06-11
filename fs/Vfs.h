@@ -77,6 +77,7 @@ public:
 	// Metadata mutations + filesystem stats (Phase 4). Defaults read-only / unsupported.
 	virtual int chmod(String, unsigned) { return -30; }                        // -EROFS
 	virtual int chown(String, unsigned, unsigned) { return -30; }              // -EROFS (uid, gid)
+	virtual int lchown(String p, unsigned uid, unsigned gid) { return chown(p, uid, gid); }  // no-follow; default follows
 	virtual int utimes(String, unsigned, unsigned) { return -30; }             // -EROFS (atime, mtime)
 	virtual int statfs(String, StatFs&) { return -22; }                        // -EINVAL
 };
@@ -135,6 +136,7 @@ public:
 	int truncate(String path, unsigned length);
 	int chmod(String path, unsigned mode);
 	int chown(String path, unsigned uid, unsigned gid);
+	int lchown(String path, unsigned uid, unsigned gid);
 	int utimes(String path, unsigned atime, unsigned mtime);
 	int statfs(String path, StatFs& out);
 };

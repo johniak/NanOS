@@ -271,6 +271,14 @@ int Vfs::chown(String path, unsigned uid, unsigned gid) {
 	return fs->chown(rel, uid, gid);
 }
 
+int Vfs::lchown(String path, unsigned uid, unsigned gid) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->lchown(rel, uid, gid);
+}
+
 int Vfs::utimes(String path, unsigned atime, unsigned mtime) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);
