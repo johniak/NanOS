@@ -189,6 +189,7 @@ int forkProcess(arch::TrapFrame* tf) {
 		return -11;                             // -EAGAIN (Linux: fork hits the memory ceiling)
 	}
 	child->task = t;
+	t->proc = child;            // back-pointer: schedule() routes syscalls without an O(n) scan
 	arch::archForkChild(t, tf, arch::mmuSpaceDirPhys(space));
 	t->state = TASK_READY;                      // scheduler picks it up; resumes with eax=0
 	return child->pid;                          // parent sees the child's pid

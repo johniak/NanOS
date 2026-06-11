@@ -26,8 +26,12 @@ archContextSwitch:
     mov eax, [esp + 24]      ; saveOldKesp
     mov [eax], esp           ; *saveOldKesp = current esp
     mov esp, [esp + 28]      ; esp = newKesp (read from old stack, then switch)
-    pop eax
-    mov cr3, eax             ; restore the task's address space (flushes TLB)
+    pop eax                  ; eax = the next task's saved cr3
+    mov ecx, cr3             ; ecx = the current (outgoing) cr3
+    cmp eax, ecx
+    je .samecr3              ; same address space (e.g. kernel thread <-> kernel thread):
+    mov cr3, eax             ;   only reload — and flush the TLB — when it actually changes
+.samecr3:
     pop ebp
     pop edi
     pop esi

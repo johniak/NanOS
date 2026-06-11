@@ -95,7 +95,6 @@ static void mountVolume(Vfs* vfs, SynthFs* root, const char* name, BlockDevice* 
 // counts, so cat /proc/uptime advancing while the shell is idle proves the scheduler
 // keeps running.
 static Vfs* g_vfs = 0;
-static volatile unsigned g_bgwork = 0;
 
 static void initTaskBody() {
 	// Let the "[ OK ]" boot splash sit for ~2s (the timer is running now), then clear to a
@@ -110,12 +109,6 @@ static void initTaskBody() {
 	Console::write("init failed to load, code ");
 	Console::writeLine(rc);
 }
-static void clockTaskBody() {
-	for (;;) {
-		g_bgwork++;
-		Scheduler::ioWait();   // yield + re-wake each tick (kthreads yield voluntarily now)
-	}
-}
 
 // Register a scheduler kernel thread (idle/clock) as a process so it shows up in
 // /proc, exactly as Linux lists its kthreads (e.g. [kworker], swapper).
@@ -124,6 +117,7 @@ static void registerKthread(Task* t, const char* name) {
 	if (!p)
 		return;
 	p->task = t;
+	t->proc = p;            // back-pointer so schedule() routes syscalls without an O(n) scan
 	p->kthread = true;
 	const char* a[] = { name, 0 };
 	ProcTable::setCommand(p, a, 1);
@@ -266,12 +260,12 @@ void Kernel::start() {
 	okBegin("Scheduler + tasks; starting shell");
 	Scheduler::init();
 	Task* initTask = Scheduler::create(initTaskBody, 1);
-	ProcTable::byPid(1)->task = initTask;   // the boot process (pid 1) runs the init task
+	Process* p1 = ProcTable::byPid(1);
+	p1->task = initTask;                    // the boot process (pid 1) runs the init task
+	initTask->proc = p1;                    // back-pointer (see registerKthread)
 	const char* initArgv[] = { "init", 0 };
-	ProcTable::setCommand(ProcTable::byPid(1), initArgv, 1);   // until it execve's nsh
-	Task* clockTask = Scheduler::create(clockTaskBody, 2);
-	registerKthread(Scheduler::idle(), "idle");   // kernel threads visible in /proc
-	registerKthread(clockTask, "clock");
+	ProcTable::setCommand(p1, initArgv, 1);   // until it execve's nsh
+	registerKthread(Scheduler::idle(), "idle");   // the idle kernel thread, visible in /proc
 	arch::archTimerInit(1000);
 	okEnd();
 	Scheduler::start();

@@ -14,6 +14,8 @@
 
 namespace kernel {
 
+struct Process;   // a task's owning process (Process.h); back-pointer avoids an O(n) byTask scan
+
 enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_STOPPED, TASK_DONE, TASK_ZOMBIE, TASK_FREE };
 
 // One load-average decay step (the Linux algorithm): every 5 s, blend the three
@@ -29,6 +31,7 @@ struct Task {
 	int id;                 // 0 = idle
 	unsigned char* kstack;
 	bool wantTick;          // BLOCKED in an I/O retry loop -> the timer tick re-wakes it
+	Process* proc;          // owning process (0 for none) — set when the process binds the task
 };
 
 class Scheduler {

@@ -78,6 +78,7 @@ static Task* allocSlot(int id) {
 	t->state = TASK_BLOCKED;   // not runnable until the caller has fabricated a valid kesp
 	t->wantTick = false;
 	t->kstack = stk;
+	t->proc = 0;               // set when a Process binds this task (Kernel/forkProcess)
 	t->esp0 = ((unsigned) (unsigned long) (stk + KSTACK_SIZE)) & ~15u;   // 16-aligned TSS.esp0
 	return t;
 }
@@ -127,7 +128,7 @@ void Scheduler::schedule() {
 		g_tasks[prev].state = TASK_READY;
 	g_tasks[next].state = TASK_RUNNING;
 	arch::setKernelStack(g_tasks[next].esp0);   // ring3 traps land on next's kstack
-	ProcTable::setCurrent(ProcTable::byTask(&g_tasks[next]));  // route syscalls to it
+	ProcTable::setCurrent(g_tasks[next].proc);  // route syscalls to it (O(1) back-pointer)
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
 }
 
@@ -227,7 +228,7 @@ void Scheduler::start() {
 	g_cur = first;
 	g_tasks[first].state = TASK_RUNNING;
 	arch::setKernelStack(g_tasks[first].esp0);
-	ProcTable::setCurrent(ProcTable::byTask(&g_tasks[first]));
+	ProcTable::setCurrent(g_tasks[first].proc);
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static unsigned throwaway;
 	arch::archContextSwitch(&throwaway, g_tasks[first].kesp);
