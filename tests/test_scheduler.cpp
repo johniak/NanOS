@@ -28,6 +28,28 @@ TEST_CASE("nextRunnable: DONE tasks are skipped like blocked") {
 	CHECK(Scheduler::nextRunnable(mix, 3, 2) == 1);
 }
 
+TEST_CASE("wake only revives a BLOCKED task; never resurrects a zombie/done/stopped") {
+	Task t;
+	t.kesp = t.esp0 = 0; t.body = 0; t.id = 1; t.kstack = 0; t.wantTick = false;
+
+	// BLOCKED -> READY (the legitimate wakeup).
+	t.state = TASK_BLOCKED;
+	Scheduler::wake(&t);
+	CHECK(t.state == TASK_READY);
+
+	// Every other state is untouched: waking must not make a dead/stopped task runnable again.
+	const TaskState untouched[] = { TASK_ZOMBIE, TASK_DONE, TASK_STOPPED, TASK_FREE,
+	                                TASK_READY, TASK_RUNNING };
+	for (TaskState s : untouched) {
+		t.state = s;
+		Scheduler::wake(&t);
+		CHECK(t.state == s);
+	}
+
+	// A null task is a no-op (procExit may wake a parent that no longer exists).
+	Scheduler::wake(0);   // must not crash
+}
+
 TEST_CASE("loadDecay: blends toward the runnable count over successive 5s steps") {
 	unsigned load[3] = { 0, 0, 0 };
 	// With a steady runnable count, each EWMA rises toward it; the 1-min average rises

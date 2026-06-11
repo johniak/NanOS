@@ -75,7 +75,7 @@ static Task* allocSlot(int id) {
 	Task* t = &g_tasks[i];
 	t->id = id;
 	t->body = 0;
-	t->state = TASK_READY;
+	t->state = TASK_BLOCKED;   // not runnable until the caller has fabricated a valid kesp
 	t->wantTick = false;
 	t->kstack = stk;
 	t->esp0 = ((unsigned) (unsigned long) (stk + KSTACK_SIZE)) & ~15u;   // 16-aligned TSS.esp0
@@ -88,6 +88,7 @@ Task* Scheduler::create(void (*body)(), int id) {
 		return 0;
 	t->body = body ? body : idleBody;
 	t->kesp = arch::archTaskBootstrap((unsigned char*) (unsigned long) t->esp0, arch::archKernelCr3());
+	t->state = TASK_READY;   // kesp is now valid -> the task may be scheduled (see allocSlot)
 	return t;
 }
 
@@ -151,11 +152,16 @@ void Scheduler::onTick(bool fromUser) {
 				run++;
 		loadDecay(g_load, run);
 	}
-	for (int i = 0; i < g_ntasks; i++)
+	for (int i = 0; i < g_ntasks; i++) {
 		if (g_tasks[i].state == TASK_BLOCKED && g_tasks[i].wantTick) {
 			g_tasks[i].wantTick = false;
 			g_tasks[i].state = TASK_READY;
 		}
+		// A kernel thread whose body() returned is left TASK_DONE and never waited on; reclaim
+		// its slot + 8 KB stack lazily here (only when it is not the running task).
+		else if (g_tasks[i].state == TASK_DONE && i != g_cur)
+			reap(&g_tasks[i]);
+	}
 	g_needResched = true;
 }
 
@@ -189,7 +195,11 @@ void Scheduler::block() {
 }
 
 void Scheduler::wake(Task* t) {
-	if (t) {
+	// Only a BLOCKED task may be woken. Waking unconditionally could resurrect a TASK_ZOMBIE
+	// or TASK_DONE (e.g. procExit waking a not-yet-reaped zombie parent), turning it runnable
+	// again — it would re-enter its final for(;;) and burn the CPU forever. READY/RUNNING is a
+	// harmless no-op; ZOMBIE/DONE/STOPPED/FREE must stay untouched.
+	if (t && t->state == TASK_BLOCKED) {
 		t->state = TASK_READY;
 		g_needResched = true;   // consider the freshly-ready task at the next safe point
 	}
