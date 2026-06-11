@@ -78,9 +78,11 @@ struct ProcInfo {
 
 class ProcTable {
 public:
-	// Hard ceiling on live processes (kernel threads included). Snapshot buffers should be
-	// sized to this so a /proc or signal-broadcast scan can never silently miss a process.
-	static const int MAX = 16;
+	// Ceiling on live processes (kernel threads included) — a pid-space bound, like Linux's
+	// pid_max, not a memory limit: the heavy per-process memory (kernel stack, address space)
+	// is allocated dynamically and freed on exit, so the real limit is available RAM. Snapshot
+	// buffers are heap-allocated to this size (never on the kernel stack — it is only 8 KB).
+	static const int MAX = 1024;
 	static void init();
 	static Process* alloc(int parent);   // a free slot with a fresh pid, or 0
 	static Process* current();           // the running process (0 before set)

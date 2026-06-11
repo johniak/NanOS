@@ -7,6 +7,8 @@
 #include "Process.h"
 #include "Scheduler.h"
 #include "String.h"
+#include "memory_manager.h"   // malloc/free: process-table snapshots go on the heap, not the
+                              // 8 KB kernel stack (the table now holds up to ProcTable::MAX)
 #include <arch/usermode.h>
 #include <arch/mmu.h>
 #include <arch/sched.h>
@@ -176,7 +178,16 @@ int forkProcess(arch::TrapFrame* tf) {
 	child->sid = parent->sid;
 	sigForkInherit(child->sig, parent->sig);   // inherit dispositions + mask (no pending)
 
-	Task* t = Scheduler::createBlank(child->pid);
+	Task* t = Scheduler::createBlank(child->pid);   // allocates the child's kernel stack (heap)
+	if (!t) {                                   // out of memory / task table full: fail cleanly,
+		delete child->sys;                      // undoing everything we allocated, so the caller
+		unsigned cur = arch::mmuCurrentDirPhys();   // sees -EAGAIN instead of a corrupt child
+		arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
+		arch::mmuFreeAddressSpace((arch::AddressSpace*) space);
+		arch::mmuLoadDirPhys(cur);
+		child->used = false;
+		return -11;                             // -EAGAIN (Linux: fork hits the memory ceiling)
+	}
 	child->task = t;
 	arch::archForkChild(t, tf, arch::mmuSpaceDirPhys(space));
 	t->state = TASK_READY;                      // scheduler picks it up; resumes with eax=0
@@ -188,9 +199,14 @@ int forkProcess(arch::TrapFrame* tf) {
 // members, they must receive SIGHUP then SIGCONT so they are not left blocked forever.
 // Call AFTER marking the dying process exited, so the orphan test sees it as gone.
 static void orphanCheckOnExit(Process* dying) {
-	ProcInfo arr[ProcTable::MAX];
+	// Snapshot on the heap, not the kernel stack: the table holds up to ProcTable::MAX entries.
+	ProcInfo* arr = (ProcInfo*) malloc(sizeof(ProcInfo) * ProcTable::MAX);
+	if (!arr)
+		return;                       // OOM: skip best-effort orphan handling (non-fatal)
+	int* done = (int*) malloc(sizeof(int) * ProcTable::MAX);
+	if (!done) { free(arr); return; }
 	int n = ProcTable::snapshot(arr, ProcTable::MAX);
-	int done[ProcTable::MAX], nd = 0;
+	int nd = 0;
 	for (int i = 0; i < n; i++) {
 		if (arr[i].ppid != dying->pid || arr[i].pgid == dying->pgid)
 			continue;
@@ -205,6 +221,7 @@ static void orphanCheckOnExit(Process* dying) {
 			signalSendGroup(g, SIGCONT);
 		}
 	}
+	free(arr); free(done);
 }
 
 // SYS_exit tail: free the address space we are standing on (after switching to the
@@ -340,7 +357,9 @@ int signalSend(int pid, int sig) {
 	if (pid == -1) {  // broadcast: every process we may signal, except init (pid 1) and self
 		Process* me = ProcTable::current();
 		int self = me ? me->pid : 0;
-		ProcInfo arr[ProcTable::MAX];
+		ProcInfo* arr = (ProcInfo*) malloc(sizeof(ProcInfo) * ProcTable::MAX);   // heap, not stack
+		if (!arr)
+			return -3;   // -ESRCH-ish: cannot enumerate (OOM)
 		int n = ProcTable::snapshot(arr, ProcTable::MAX);
 		int rc = -3;
 		for (int i = 0; i < n; i++) {
@@ -349,6 +368,7 @@ int signalSend(int pid, int sig) {
 			if (signalSend(arr[i].pid, sig) == 0)
 				rc = 0;
 		}
+		free(arr);
 		return rc;
 	}
 	if (pid <= 0) {
@@ -498,10 +518,18 @@ void consoleSignal(int sig) {
 int signalSendGroup(int pgid, int sig) {
 	if (pgid <= 0)
 		return -3;    // -ESRCH
-	int pids[32];
-	int n = ProcTable::groupMembers(pgid, pids, 32);
-	if (n == 0)
+	// Reach EVERY member of the group: enumerate into a heap buffer sized to the whole table,
+	// falling back to a small stack buffer if the heap is exhausted (typical groups are tiny).
+	int stackpids[64];
+	int* pids = stackpids;
+	int cap = 64;
+	int* heappids = (int*) malloc(sizeof(int) * ProcTable::MAX);
+	if (heappids) { pids = heappids; cap = ProcTable::MAX; }
+	int n = ProcTable::groupMembers(pgid, pids, cap);
+	if (n == 0) {
+		if (heappids) free(heappids);
 		return -3;
+	}
 	int rc = -3;
 	for (int i = 0; i < n; i++) {
 		Process* p = ProcTable::byPid(pids[i]);

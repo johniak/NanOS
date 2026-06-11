@@ -141,13 +141,21 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	// Share the kernel half, private (empty) user window, then copy the user pages and
 	// every populated heap PDE (fork duplicates the heap, as a Unix child expects).
 	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x400000);
-	s->impl.copyUserWindowFrom(src->impl, 0x400000);
-	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
-		s->impl.copyUserWindowFrom(src->impl, va);
-	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
-		s->impl.copyUserWindowFrom(src->impl, va);   // duplicate loaded module windows
-	for (uint32_t va = NX_MMAP_BASE; va < NX_MMAP_MAX; va += 0x400000)
-		s->impl.copyUserWindowFrom(src->impl, va);   // duplicate mmap'd regions across fork
+	// Eager copy of every user window. If any allocation fails (we hit the physical-memory
+	// ceiling — fork duplicates the program, heap and shared-library pages with no COW), tear
+	// the half-built space down and return 0 so fork degrades to -EAGAIN instead of handing
+	// back a corrupt child.
+	bool ok = s->impl.copyUserWindowFrom(src->impl, 0x400000);
+	for (uint32_t va = NX_BRK_BASE; ok && va < NX_BRK_MAX; va += 0x400000)
+		ok = s->impl.copyUserWindowFrom(src->impl, va);
+	for (uint32_t va = NX_MOD_BASE; ok && va < NX_MOD_MAX; va += NX_MOD_STRIDE)
+		ok = s->impl.copyUserWindowFrom(src->impl, va);   // duplicate loaded module windows
+	for (uint32_t va = NX_MMAP_BASE; ok && va < NX_MMAP_MAX; va += 0x400000)
+		ok = s->impl.copyUserWindowFrom(src->impl, va);   // duplicate mmap'd regions across fork
+	if (!ok) {
+		mmuFreeAddressSpace(s);
+		return 0;
+	}
 	return s;
 }
 

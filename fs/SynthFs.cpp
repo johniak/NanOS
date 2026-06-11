@@ -2,6 +2,7 @@
 #include "CharDevice.h"
 #include "Scheduler.h"
 #include "Process.h"
+#include "memory_manager.h"   // malloc/free: /proc snapshots go on the heap, not the kernel stack
 #include <string.h>
 
 namespace kernel {
@@ -285,7 +286,10 @@ static int serveSnap(unsigned off, void* buf, unsigned n, const char* s, int len
 
 // Live process counts for /proc/stat and /proc/loadavg.
 static void procCounts(unsigned* total, unsigned* running, unsigned* blocked) {
-	ProcInfo arr[ProcTable::MAX];
+	*total = *running = *blocked = 0;
+	ProcInfo* arr = (ProcInfo*) malloc(sizeof(ProcInfo) * ProcTable::MAX);
+	if (!arr)
+		return;                       // OOM: report zeros rather than overflow the kernel stack
 	int t = ProcTable::snapshot(arr, ProcTable::MAX);
 	int r = 0, b = 0;
 	for (int i = 0; i < t; i++) {
@@ -297,6 +301,7 @@ static void procCounts(unsigned* total, unsigned* running, unsigned* blocked) {
 	*total = (unsigned) t;
 	*running = (unsigned) r;
 	*blocked = (unsigned) b;
+	free(arr);
 }
 
 static int gen_stat(unsigned off, void* buf, unsigned n) {
@@ -658,14 +663,17 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 		out.add(de);
 	}
 	if (n == m_proc) {                          // append one dir per live process
-		ProcInfo procs[ProcTable::MAX];
-		int np = ProcTable::snapshot(procs, ProcTable::MAX);
-		for (int i = 0; i < np; i++) {
-			DirEntry de;
-			int k = utoa((unsigned) procs[i].pid, de.name);
-			de.name[k] = 0;
-			de.type = NODE_DIR;
-			out.add(de);
+		ProcInfo* procs = (ProcInfo*) malloc(sizeof(ProcInfo) * ProcTable::MAX);
+		if (procs) {                            // heap, not the kernel stack (the table is large)
+			int np = ProcTable::snapshot(procs, ProcTable::MAX);
+			for (int i = 0; i < np; i++) {
+				DirEntry de;
+				int k = utoa((unsigned) procs[i].pid, de.name);
+				de.name[k] = 0;
+				de.type = NODE_DIR;
+				out.add(de);
+			}
+			free(procs);
 		}
 	}
 	return 0;

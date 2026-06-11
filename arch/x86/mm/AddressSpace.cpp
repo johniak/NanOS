@@ -64,11 +64,11 @@ void AddressSpace::freeUserWindow(uint32_t userVa) {
 	pd[i] = 0;
 }
 
-void AddressSpace::copyUserWindowFrom(const AddressSpace& src, uint32_t userVa) {
+bool AddressSpace::copyUserWindowFrom(const AddressSpace& src, uint32_t userVa) {
 	uint32_t* spd = src.dir();
 	uint32_t i = pdIndex(userVa);
 	if (!entryPresent(spd[i]))
-		return;
+		return true;   // nothing mapped in this window -> nothing to copy (success)
 	uint32_t* spt = (uint32_t*) m_env.physToVirt(m_env.ctx, entryAddr(spd[i]));
 	uint32_t base = i << 22;   // first VA covered by this PDE
 	for (int e = 0; e < 1024; e++) {
@@ -78,11 +78,15 @@ void AddressSpace::copyUserWindowFrom(const AddressSpace& src, uint32_t userVa) 
 		uint32_t flags = spt[e] & 0xFFF;
 		uint32_t newPa = m_env.allocFrame(m_env.ctx);
 		if (!newPa)
-			return;   // OOM: leave the partial copy for the caller to tear down
+			return false;   // OOM: caller tears the partial copy down
 		memcpy(m_env.physToVirt(m_env.ctx, newPa),
 				m_env.physToVirt(m_env.ctx, srcPa), FRAME_SIZE);
-		map(base | (uint32_t) (e << 12), newPa, flags);
+		if (!map(base | (uint32_t) (e << 12), newPa, flags)) {
+			m_env.freeFrame(m_env.ctx, newPa);   // page-table alloc failed: undo this frame, fail
+			return false;
+		}
 	}
+	return true;
 }
 
 bool AddressSpace::mapRange(uint32_t va, uint32_t pa, uint32_t len, uint32_t flags) {

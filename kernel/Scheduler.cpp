@@ -1,16 +1,18 @@
 #include "Scheduler.h"
 #include "Process.h"
+#include "memory_manager.h"   // malloc/free: kernel stacks are heap-allocated per task
 #include <arch/sched.h>
 
 namespace kernel {
 
-// At least ProcTable::MAX (16) user tasks + the idle and clock kernel threads, so the
-// scheduler is not the bottleneck below the process-table limit (was an artificial 8).
-static const int MAXTASKS = 18;
+// One scheduler task per process (kernel threads included) plus a little slack. The task
+// SLOTS are cheap (a handful of words each); the expensive part — each task's 8 KB kernel
+// stack — is allocated from the heap on create and freed on reap, so the live task count is
+// bounded by RAM, not by a static array (which at this ceiling would be tens of MB).
+static const int MAXTASKS = ProcTable::MAX + 8;
 static const int KSTACK_SIZE = 8192;
 
 static Task g_tasks[MAXTASKS];
-static unsigned char g_kstacks[MAXTASKS][KSTACK_SIZE] __attribute__((aligned(16)));
 static int g_ntasks = 0;
 static int g_cur = 0;
 static volatile unsigned g_ticks = 0;
@@ -65,16 +67,18 @@ static int findFreeSlot() {
 }
 
 static Task* allocSlot(int id) {
+	unsigned char* stk = (unsigned char*) malloc(KSTACK_SIZE);   // per-task kernel stack (heap)
+	if (!stk)
+		return 0;                                                // out of memory -> fork -EAGAIN
 	int i = findFreeSlot();
-	if (i < 0)
-		return 0;
+	if (i < 0) { free(stk); return 0; }                          // task table full
 	Task* t = &g_tasks[i];
 	t->id = id;
 	t->body = 0;
 	t->state = TASK_READY;
 	t->wantTick = false;
-	t->kstack = g_kstacks[i];
-	t->esp0 = (unsigned) (unsigned long) (t->kstack + KSTACK_SIZE);   // TSS.esp0 for this task
+	t->kstack = stk;
+	t->esp0 = ((unsigned) (unsigned long) (stk + KSTACK_SIZE)) & ~15u;   // 16-aligned TSS.esp0
 	return t;
 }
 
@@ -83,7 +87,7 @@ Task* Scheduler::create(void (*body)(), int id) {
 	if (!t)
 		return 0;
 	t->body = body ? body : idleBody;
-	t->kesp = arch::archTaskBootstrap(t->kstack + KSTACK_SIZE, arch::archKernelCr3());
+	t->kesp = arch::archTaskBootstrap((unsigned char*) (unsigned long) t->esp0, arch::archKernelCr3());
 	return t;
 }
 
@@ -97,11 +101,22 @@ Task* Scheduler::current() { return &g_tasks[g_cur]; }
 Task* Scheduler::idle() { return &g_tasks[0]; }   // idle is always the first task
 unsigned Scheduler::ticks() { return g_ticks; }
 
+// Same round-robin policy as nextRunnable (which stays the host-tested reference), but
+// scanning the live task table in place: at this task ceiling a TaskState[MAXTASKS] copy
+// would overflow the fixed 8 KB kernel stack, so never materialise one.
+static int pickNext(int cur) {
+	if (g_ntasks <= 0)
+		return 0;
+	for (int k = 1; k <= g_ntasks; k++) {
+		int idx = (cur + k) % g_ntasks;
+		if (idx != 0 && runnable(g_tasks[idx].state))
+			return idx;
+	}
+	return 0;                                     // idle (slot 0) only when nothing else runs
+}
+
 void Scheduler::schedule() {
-	TaskState st[MAXTASKS];
-	for (int i = 0; i < g_ntasks; i++)
-		st[i] = g_tasks[i].state;
-	int next = nextRunnable(st, g_ntasks, g_cur);
+	int next = pickNext(g_cur);
 	if (next == g_cur)
 		return;                                   // nothing else to run
 	g_ctxt++;                                     // an actual context switch (for /proc/stat)
@@ -181,15 +196,14 @@ void Scheduler::wake(Task* t) {
 }
 
 void Scheduler::reap(Task* t) {
-	if (t)
-		t->state = TASK_FREE;   // slot becomes reusable by findFreeSlot()
+	if (!t)
+		return;
+	if (t->kstack) { free(t->kstack); t->kstack = 0; }   // return the kernel stack to the heap
+	t->state = TASK_FREE;       // slot becomes reusable by findFreeSlot() (with a fresh stack)
 }
 
 void Scheduler::start() {
-	TaskState st[MAXTASKS];
-	for (int i = 0; i < g_ntasks; i++)
-		st[i] = g_tasks[i].state;
-	int first = nextRunnable(st, g_ntasks, 0);
+	int first = pickNext(0);
 	g_cur = first;
 	g_tasks[first].state = TASK_RUNNING;
 	arch::setKernelStack(g_tasks[first].esp0);
