@@ -6,7 +6,7 @@ include arch/$(ARCH)/arch.mk
 # Machine-independent objects (portable across architectures).
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamFs.o RamBlockDevice.o DeviceManager.o Vfs.o
 MI_SOURCES+= Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o
-MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
+MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
 MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
 MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
@@ -102,7 +102,7 @@ LD=$(CROSS)gcc
 VPATH=init:kernel:drivers:fs:fs/ext:mm:lib:$(ARCH_VPATH)
 # Kernel include path: the MI code dirs + the arch contracts (arch/include) + the
 # selected arch's headers (ARCH_INCLUDES) + the freestanding <string.h> in include/.
-KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude $(ARCH_INCLUDES)
+KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude -Iuser/term $(ARCH_INCLUDES)
 
 CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore
 LDFLAGS=-T$(ARCH_LINKER) -nostdlib -nostartfiles -lgcc
@@ -134,6 +134,11 @@ $(BINFOLDER)kernel.bin: $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 $(BINFOLDER)%.o: %.cpp
+	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
+# The shared VT engine (user/term/vt.c) compiled with KERNEL flags for FbConsole. A distinct
+# object name (vtk.o) keeps it separate from the userland bin/vt.o that nterm/nwterm link.
+$(BINFOLDER)vtk.o: user/term/vt.c
+	@mkdir -p $(BINFOLDER)
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
 $(BINFOLDER)%.o: %.s
 	$(AS) $(ASFLAGS) $< -o $@

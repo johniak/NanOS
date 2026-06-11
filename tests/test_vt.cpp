@@ -14,6 +14,25 @@ TEST_CASE("vt: printable text fills the grid and advances the cursor") {
 	CHECK(t.cy == 0);
 }
 
+TEST_CASE("vt: OSC, xterm private markers, and CSI intermediates are swallowed whole") {
+	vt t; vt_init(&t, 80, 25);
+	// OSC set-title (BEL-terminated) must not leak its payload as text.
+	feed(t, "\x1b]0;my title\x07X");
+	CHECK(t.grid[0][0].ch == 'X');
+	CHECK(t.cx == 1);
+	// A '>' private CSI (modifyOtherKeys) + a DECSCUSR with a space intermediate: fully consumed,
+	// then a normal glyph lands right after — no stray digits/letters from the sequences.
+	vt_init(&t, 80, 25);
+	feed(t, "\x1b[>4;2m\x1b[6 qY");
+	CHECK(t.grid[0][0].ch == 'Y');
+	CHECK(t.cx == 1);
+	// A 256-colour SGR still colours the next glyph (regression guard for the leak fix).
+	vt_init(&t, 80, 25);
+	feed(t, "\x1b[38;5;4mZ");
+	CHECK(t.grid[0][0].ch == 'Z');
+	CHECK(t.grid[0][0].fg == 4);
+}
+
 TEST_CASE("vt: CR/LF move the cursor; absolute CSI H positions it (1-based)") {
 	vt t; vt_init(&t, 80, 25);
 	feed(t, "hi\r\n");

@@ -9,6 +9,7 @@
 [EXTERN main]
 [EXTERN exit]
 [EXTERN __nx_set_environ]
+[EXTERN __nx_set_progname]
 
 _start:
     mov ebp, 0
@@ -21,6 +22,10 @@ _start:
     push ecx                    ; __nx_set_environ(envp)
     call __nx_set_environ       ; publish the environment for getenv()
     add esp, 4                  ; drop its arg; argc/argv/envp remain staged for main
+    mov eax, [edx]              ; argv[0] (edx still points at the argv array)
+    push eax                    ; __nx_set_progname(argv[0]) so getprogname() works
+    call __nx_set_progname      ; (gnulib's error()/coreutils use getprogname for the prefix)
+    add esp, 4
     call main                   ; main(argc, argv, envp)
     add esp, 12
     push eax                    ; main's return value

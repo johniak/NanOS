@@ -35,7 +35,10 @@ TEST_CASE("FbConsole: writing past the last column wraps to the next row") {
 	con.init(FbSurface{ buf, PITCH, W, H, 32 });
 
 	con.putChar('a'); con.putChar('b'); con.putChar('c'); con.putChar('d');
-	CHECK(con.cursorX() == 0);   // 4 cols filled -> wrapped
+	CHECK(con.cursorX() == 4);   // deferred wrap: cursor parks one past the last column...
+	CHECK(con.cursorY() == 0);
+	con.putChar('e');            // ...and the NEXT glyph wraps to the next row
+	CHECK(con.cursorX() == 1);
 	CHECK(con.cursorY() == 1);
 }
 
@@ -88,8 +91,8 @@ TEST_CASE("FbConsole: ANSI SGR sets the foreground color; escapes don't advance 
 	feed("\033[1;31m");               // bold -> bright red
 	CHECK(con.fg() == 0xFF5555u);
 
-	feed("\033[0m");                  // reset to default
-	CHECK(con.fg() == 0x00C0C0C0u);
+	feed("\033[0m");                  // reset to default (vt default fg = index 7, light grey)
+	CHECK(con.fg() == 0x00AAAAAAu);
 }
 
 TEST_CASE("FbConsole: a printed glyph paints pixels into its cell") {

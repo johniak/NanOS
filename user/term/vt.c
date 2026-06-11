@@ -117,7 +117,7 @@ static void csi_final(vt *t, unsigned char f)
 	mark(t, t->cy);
 }
 
-enum { S_NORM, S_ESC, S_CSI };
+enum { S_NORM, S_ESC, S_CSI, S_OSC };
 
 static void feed_one(vt *t, unsigned char c)
 {
@@ -133,17 +133,26 @@ static void feed_one(vt *t, unsigned char c)
 		return;
 	case S_ESC:
 		if (c == '[') { t->state = S_CSI; t->npar = 0; t->par[0] = 0; t->priv = 0; return; }
+		if (c == ']') { t->state = S_OSC; return; }   // OSC (title/clipboard): swallow to ST/BEL
 		if (c == '7') { t->savecx = t->cx; t->savecy = t->cy; }
 		else if (c == '8') { t->cx = t->savecx; t->cy = t->savecy; }
+		/* '(' ')' charset, '=' '>' keypad, etc.: a single trailing byte, already consumed here. */
 		t->state = S_NORM;
 		return;
 	case S_CSI:
-		if (c == '?') { t->priv = 1; return; }
+		/* Private/extension markers ('?' DEC, '<' '=' '>' xterm): note + ignore the sequence's
+		 * effect, but keep consuming so its parameters + final byte never leak as text. */
+		if (c == '?' || c == '<' || c == '=' || c == '>') { t->priv = 1; return; }
 		if (c >= '0' && c <= '9') { if (t->npar == 0) t->npar = 1;
 			t->par[t->npar - 1] = t->par[t->npar - 1] * 10 + (c - '0'); return; }
 		if (c == ';') { if (t->npar < VT_NPAR) t->par[t->npar++] = 0; return; }
-		csi_final(t, c);
+		if (c >= 0x20 && c <= 0x2f) return;   // intermediate bytes (e.g. the space in DECSCUSR)
+		csi_final(t, c);                      // (csi_final keys its private-mode actions off t->priv)
 		t->state = S_NORM;
+		return;
+	case S_OSC:
+		if (c == 0x07) t->state = S_NORM;            // BEL terminates
+		else if (c == 0x1b) t->state = S_ESC;        // ESC '\' (ST): hand the '\' back to S_ESC
 		return;
 	}
 }

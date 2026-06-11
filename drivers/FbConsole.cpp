@@ -5,25 +5,21 @@ namespace kernel {
 
 static const uint32_t kDefaultFg = 0x00C0C0C0;
 
-// Standard 16-colour ANSI/VGA palette (0..7 normal, 0..7 bold/bright).
-static const uint32_t kAnsiNormal[8] = {
-	0x000000, 0xAA0000, 0x00AA00, 0xAA5500, 0x0000AA, 0xAA00AA, 0x00AAAA, 0xAAAAAA,
-};
-static const uint32_t kAnsiBright[8] = {
-	0x555555, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF,
-};
-
 FbConsole::FbConsole()
-	: m_surf{ 0, 0, 0, 0, 0 }, m_cols(0), m_rows(0), m_cx(0), m_cy(0),
-	  m_fg(kDefaultFg), m_bg(0x00000000), m_esc(0), m_npar(0), m_bold(false),
-	  m_curx(0), m_cury(0), m_curShown(false) {}
+	: m_surf{ 0, 0, 0, 0, 0 }, m_fg(kDefaultFg), m_bg(0x00000000),
+	  m_curx(0), m_cury(0), m_curShown(false) {
+	m_vt.cols = m_vt.rows = 0;
+}
 
 // The cursor is a 2px underline at the bottom of the current cell (no blink — there is no
-// console timer). Erase-on-move keeps exactly one drawn; a glyph blit redraws the whole cell
-// (bg included), so it also clears any underline that was there.
+// console timer). vt's logical cursor can sit one past the last column (deferred wrap); clamp
+// it for display so the underline stays on-screen.
 void FbConsole::drawCursor() {
-	fbFillRect(m_surf, m_cx * FONT_W, m_cy * FONT_H + (FONT_H - 2), FONT_W, 2, m_fg);
-	m_curx = m_cx; m_cury = m_cy; m_curShown = true;
+	uint32_t cx = (uint32_t) m_vt.cx, cy = (uint32_t) m_vt.cy;
+	if (m_vt.cols && cx >= (uint32_t) m_vt.cols) cx = m_vt.cols - 1;
+	if (m_vt.rows && cy >= (uint32_t) m_vt.rows) cy = m_vt.rows - 1;
+	fbFillRect(m_surf, cx * FONT_W, cy * FONT_H + (FONT_H - 2), FONT_W, 2, vt_pal(m_vt.fg));
+	m_curx = cx; m_cury = cy; m_curShown = true;
 }
 void FbConsole::eraseCursor() {
 	if (!m_curShown)
@@ -32,114 +28,72 @@ void FbConsole::eraseCursor() {
 	m_curShown = false;
 }
 
+void FbConsole::renderRow(int row) {
+	if (row < 0 || row >= m_vt.rows)
+		return;
+	// Blit only cells that differ from what is already on screen (the shadow). Typing one
+	// character marks the whole row dirty but changes a single cell, so this keeps repaint
+	// cost O(changed cells), not O(row width) — essential for a usable console.
+	for (int x = 0; x < m_vt.cols; x++) {
+		const vt_cell& cell = m_vt.grid[row][x];
+		vt_cell& shad = m_shadow[row][x];
+		if (cell.ch == shad.ch && cell.fg == shad.fg && cell.bg == shad.bg)
+			continue;
+		fbBlitGlyph(m_surf, fontGlyph(cell.ch ? cell.ch : ' '),
+				x * FONT_W, row * FONT_H, vt_pal(cell.fg), vt_pal(cell.bg));
+		shad = cell;
+	}
+}
+
+void FbConsole::renderDirty() {
+	for (int y = 0; y < m_vt.rows; y++) {
+		if (m_vt.dirty[y]) {
+			renderRow(y);
+			m_vt.dirty[y] = 0;
+		}
+	}
+}
+
 void FbConsole::init(const FbSurface& s) {
 	m_surf = s;
-	m_cols = s.width / FONT_W;
-	m_rows = s.height / FONT_H;
-	// Set state here, not just in the constructor: the kernel does not run global
-	// constructors, so a static FbConsole would otherwise have fg == bg == 0 (black).
 	m_fg = kDefaultFg;
 	m_bg = 0x00000000;
-	m_esc = 0;
-	m_npar = 0;
-	m_bold = false;
+	int cols = (int) (s.width / FONT_W);
+	int rows = (int) (s.height / FONT_H);
+	if (cols > VT_MAXC) cols = VT_MAXC;
+	if (rows > VT_MAXR) rows = VT_MAXR;
+	vt_init(&m_vt, cols, rows);
 	clear();
-}
-
-// Apply one CSI 'm' (SGR) sequence from the accumulated parameters: reset, bold, and
-// the 30-37 / 90-97 foreground colors (enough for colored boot status text).
-void FbConsole::applySgr() {
-	for (int i = 0; i <= m_npar; i++) {
-		int n = m_par[i];
-		if (n == 0) {            // reset
-			m_bold = false;
-			m_fg = kDefaultFg;
-		} else if (n == 1) {     // bold/bright
-			m_bold = true;
-		} else if (n >= 30 && n <= 37) {
-			m_fg = (m_bold ? kAnsiBright : kAnsiNormal)[n - 30];
-		} else if (n >= 90 && n <= 97) {
-			m_fg = kAnsiBright[n - 90];
-		}
-	}
-}
-
-void FbConsole::handleEscape(char c) {
-	if (m_esc == 1) {                        // just saw ESC
-		if (c == '[') {
-			m_esc = 2;
-			m_npar = 0;
-			m_par[0] = 0;
-		} else {
-			m_esc = 0;                       // unsupported escape: drop it
-		}
-		return;
-	}
-	// m_esc == 2: inside a CSI sequence.
-	if (c >= '0' && c <= '9') {
-		m_par[m_npar] = m_par[m_npar] * 10 + (c - '0');
-	} else if (c == ';') {
-		if (m_npar < 3)
-			m_par[++m_npar] = 0;
-	} else {
-		if (c == 'm')
-			applySgr();
-		m_esc = 0;                           // any final byte ends the sequence
-	}
 }
 
 void FbConsole::clear() {
 	fbFillRect(m_surf, 0, 0, m_surf.width, m_surf.height, m_bg);
-	m_cx = 0;
-	m_cy = 0;
-	m_curShown = false;              // whole surface wiped; nothing drawn
+	// Home + clear the VT grid so its model matches the wiped surface.
+	const unsigned char seq[] = { 0x1b, '[', '2', 'J', 0x1b, '[', 'H' };
+	vt_feed(&m_vt, seq, sizeof seq);
+	// The surface is now blank; sync the shadow to the cleared grid so the diff renderer treats
+	// already-blank cells as up to date and only paints text written afterwards.
+	for (int y = 0; y < VT_MAXR; y++) {
+		for (int x = 0; x < VT_MAXC; x++)
+			m_shadow[y][x] = m_vt.grid[y][x];
+		m_vt.dirty[y] = 0;
+	}
+	m_curShown = false;
 	drawCursor();
 }
 
 void FbConsole::putChar(char c) {
-	if (m_esc) {                     // consuming an escape sequence (not rendered)
-		handleEscape(c);
-		return;
-	}
-	if (c == 0x1B) {                 // ESC: start of a sequence
-		m_esc = 1;
-		return;
-	}
-	eraseCursor();                   // lift the cursor before changing the cell/position
-	if (c == 0x08) {                 // backspace: move left (no erase; the caller redraws)
-		if (m_cx > 0)
-			m_cx--;
-	} else if (c == 0x09) {          // tab: advance to the next 8-column boundary
-		m_cx = (m_cx + 8) & ~7u;
-	} else if (c == '\r') {
-		m_cx = 0;
-	} else if (c == '\n') {
-		m_cx = 0;
-		m_cy++;
-	} else if ((unsigned char) c >= ' ') {
-		fbBlitGlyph(m_surf, fontGlyph((unsigned char) c),
-				m_cx * FONT_W, m_cy * FONT_H, m_fg, m_bg);
-		m_cx++;
-	} else {
-		drawCursor();                // other control chars: ignore (restore cursor)
-		return;
-	}
-
-	if (m_cx >= m_cols) {            // wrap
-		m_cx = 0;
-		m_cy++;
-	}
-	if (m_cy >= m_rows) {            // scroll one text row
-		fbScrollUp(m_surf, FONT_H, m_bg);
-		m_cy = m_rows - 1;
-	}
+	eraseCursor();
+	// vt handles \r \n (as CRLF) \b \t BEL + the escape grammar itself.
+	vt_feed(&m_vt, (const unsigned char*) &c, 1);
+	renderDirty();
 	drawCursor();
 }
 
 void FbConsole::setCursor(unsigned x, unsigned y) {
 	eraseCursor();
-	m_cx = (m_cols && x >= m_cols) ? m_cols - 1 : x;
-	m_cy = (m_rows && y >= m_rows) ? m_rows - 1 : y;
+	m_vt.cx = (m_vt.cols && (int) x >= m_vt.cols) ? m_vt.cols - 1 : (int) x;
+	m_vt.cy = (m_vt.rows && (int) y >= m_vt.rows) ? m_vt.rows - 1 : (int) y;
 	drawCursor();
 }
 

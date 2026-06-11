@@ -49,6 +49,20 @@ int access(const char* path, int mode) {
 	return stat(path, &st) == 0 ? 0 : -1;
 }
 
+/* getprogname/setprogname (BSD): the running program's short name. crt0 seeds it from argv[0]
+ * via __nx_set_progname; gnulib's error() and many coreutils use getprogname() for the message
+ * prefix. Kept tiny — just a pointer to the basename of whatever was set. */
+static const char* g_progname = "nanos";
+static const char* nx_basename(const char* p) {
+	const char* b = p;
+	for (; p && *p; p++)
+		if (*p == '/') b = p + 1;
+	return b;
+}
+const char* getprogname(void) { return g_progname; }
+void setprogname(const char* p) { if (p && *p) g_progname = nx_basename(p); }
+void __nx_set_progname(const char* argv0) { if (argv0 && *argv0) g_progname = nx_basename(argv0); }
+
 /* getrlimit/setrlimit: NanOS has a single flat address space and no per-process limits, so
  * every resource is reported as unlimited and setting one is accepted-and-ignored. Ports probe
  * these (vim sizes its memory off RLIMIT_DATA); "no limit" is the honest answer. */

@@ -31,4 +31,10 @@ struct rlimit { unsigned long rlim_cur; unsigned long rlim_max; };
 #define RLIM_INFINITY (~0UL)
 #endif
 
+/* getprogname/setprogname (BSD): picolibc doesn't declare them; the SDK sysroot adds the same
+ * decls for external ports. The crt0 hook __nx_set_progname seeds it from argv[0]. */
+const char* getprogname(void);
+void setprogname(const char* p);
+void __nx_set_progname(const char* argv0);
+
 #endif /* NX_COMPAT_DECLS_H */

@@ -12,6 +12,12 @@
 
 #include <stdint.h>
 
+/* C linkage even when included from C++ (the kernel's FbConsole), so the same vt.o/vtk.o links
+ * against C++ and C callers alike regardless of how the .c is compiled. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum { VT_MAXC = 256, VT_MAXR = 128, VT_NPAR = 16 };
 
 typedef struct { unsigned char ch, fg, bg; } vt_cell;
@@ -31,5 +37,9 @@ void     vt_init(vt *t, int cols, int rows);          /* clear grid, cursor home
 void     vt_resize(vt *t, int cols, int rows);        /* change geometry, clamp cursor */
 void     vt_feed(vt *t, const unsigned char *b, int n); /* process `n` shell-output bytes */
 uint32_t vt_pal(int idx);                             /* palette index (0..255) -> 0x00RRGGBB */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NX_VT_H */
