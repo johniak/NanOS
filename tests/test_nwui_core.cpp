@@ -347,6 +347,46 @@ TEST_CASE("list: selection scrolls into view when it leaves the visible window")
 	delete u;
 }
 
+TEST_CASE("list scrollbar: track click pages; thumb drag scrolls; release ends the drag") {
+	nwui *u = new nwui; nwui_init(u);
+	const char *items[30];
+	for (int i = 0; i < 30; i++) items[i] = "row";
+	nwui_node *L = nwui_list(u, 0, 0);
+	nwui_list_set(L, items, 30);
+	nwui_set_root(u, nwui_flex(L, 1));
+	u->win_w = 200; u->win_h = 5 * NWUI_ROW_H; nwui_layout(u);   // ~5 rows visible, 30 items
+	CHECK(L->scroll == 0);
+	int vis = L->h / NWUI_ROW_H;
+	int maxs = L->count - vis;
+	CHECK(maxs > 0);                                             // overflow -> scrollbar present
+	int sbx = L->x + L->w - NWUI_SB_W;
+
+	// click the track well below the thumb -> page down
+	pointer(u, sbx + 2, L->y + L->h - 2, 1); pointer(u, sbx + 2, L->y + L->h - 2, 0);
+	CHECK(L->scroll == vis);                                     // paged down by one screen
+	int paged = L->scroll;
+
+	// click the track at the very top (above the thumb) -> page up, back toward 0
+	pointer(u, sbx + 2, L->y + 1, 1); pointer(u, sbx + 2, L->y + 1, 0);
+	CHECK(L->scroll < paged);
+
+	// grab the thumb (at the top with scroll 0) and drag to the bottom -> scroll to max
+	CHECK(L->scroll == 0);
+	pointer(u, sbx + 2, L->y + 2, 1);                           // press on the thumb
+	CHECK(L->sb_drag == 1);
+	pointer(u, sbx + 2, L->y + L->h, 1);                        // drag to the bottom (held)
+	CHECK(L->scroll == maxs);                                    // clamped to the last page
+	pointer(u, sbx + 2, L->y + L->h, 0);                        // release
+	CHECK(L->sb_drag == 0);
+
+	// a click in the CONTENT area (left of the scrollbar) still selects a row, not scrolls
+	int before = L->scroll;
+	pointer(u, L->x + 4, L->y + 1 + NWUI_ROW_H / 2, 1); pointer(u, L->x + 4, L->y + 1 + NWUI_ROW_H / 2, 0);
+	CHECK(L->scroll == before);                                 // unchanged
+	CHECK(nwui_list_selected(L) == L->scroll);                  // selected the first visible row
+	delete u;
+}
+
 TEST_CASE("list: nwui_list_set installs a fresh model — clears selection + scroll") {
 	nwui *u = new nwui; nwui_init(u);
 	const char *big[] = { "0", "1", "2", "3", "4" };

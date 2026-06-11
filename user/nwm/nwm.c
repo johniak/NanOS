@@ -51,6 +51,7 @@ enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 #define CLIENT_OUTCAP   (64 * 1024)
 #define CLIENT_COMMITCAP (512 * 1024)   /* max COMMIT payload reassembled per client */
 #define NWNOTE_PATH "/disks/main/apps/nwnote/nwnote.nxe"
+#define NWEXP_PATH  "/disks/main/apps/nwexp/nwexp.nxe"
 
 /* framebuffer + the cached scene (desktop+windows, NO cursor) */
 static uint8_t  *g_fb;
@@ -91,7 +92,9 @@ static int spawn_client(int slot, const char *path)
 		dup2(evtp[0], 4);                 /* client reads events on fd 4    */
 		fcntl(3, F_SETFD, 0);             /* keep 3/4 across execve         */
 		fcntl(4, F_SETFD, 0);
-		char *argv[] = { (char *) "nwnote", 0 };
+		const char *base = path;                     /* argv[0] = the binary's basename */
+		for (const char *p = path; *p; p++) if (*p == '/') base = p + 1;
+		char *argv[] = { (char *) base, 0 };
 		char *envp[] = { (char *) "NW_DISPLAY=1", 0 };
 		execve(path, argv, envp);
 		_exit(127);
@@ -297,7 +300,7 @@ int main(void)
 	termmode(1);                              /* silence the kernel console echo-draw */
 
 	spawn_client(0, NWNOTE_PATH);
-	spawn_client(1, NWNOTE_PATH);
+	spawn_client(1, NWEXP_PATH);              /* explorer spawned last -> on top + focused */
 
 	S.dirty = 1;
 	present();                                /* first frame: desktop + cursor */

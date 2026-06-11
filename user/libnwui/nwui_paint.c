@@ -46,6 +46,9 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 	case NWUI_LIST: {
 		nw_fill_rect(s, n->x, n->y, n->w, n->h, n->focused ? COL_TF_FOC : COL_TF_BRD);
 		nw_fill_rect(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, COL_TF_BG);   /* inner paper */
+		int maxs = n->count - n->h / NWUI_ROW_H;
+		int has_sb = maxs > 0;
+		int roww = n->w - 2 - (has_sb ? NWUI_SB_W : 0);    /* rows stop before the scrollbar */
 		int vis = n->h / NWUI_ROW_H;
 		for (int r = 0; r < vis; r++) {
 			int idx = n->scroll + r;
@@ -54,10 +57,19 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			int seld = (idx == n->sel);
 			uint32_t bg = seld ? COL_TF_FOC : COL_TF_BG;
 			uint32_t fg = seld ? 0x00ffffff : COL_INK;
-			if (seld) nw_fill_rect(s, n->x + 1, ry, n->w - 2, NWUI_ROW_H, bg);
+			if (seld) nw_fill_rect(s, n->x + 1, ry, roww, NWUI_ROW_H, bg);
 			if (n->items && n->items[idx])
 				nw_draw_text(s, n->x + NWUI_TF_PAD, ry + (NWUI_ROW_H - NW_FONT_H) / 2,
 				             n->items[idx], fg, bg);
+		}
+		if (has_sb) {                                      /* vertical scrollbar: track + thumb */
+			int sbx = n->x + n->w - NWUI_SB_W;
+			nw_fill_rect(s, sbx, n->y + 1, NWUI_SB_W - 1, n->h - 2, 0x00d8d8d0);  /* track */
+			int track = n->h - 2;
+			int th = track * vis / n->count; if (th < NWUI_SB_MIN) th = NWUI_SB_MIN;
+			if (th > track) th = track;
+			int ty = n->y + 1 + (maxs > 0 ? (track - th) * n->scroll / maxs : 0);
+			nw_fill_rect(s, sbx + 1, ty, NWUI_SB_W - 3, th, COL_TF_FOC);          /* thumb */
 		}
 		break;
 	}

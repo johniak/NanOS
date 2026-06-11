@@ -79,11 +79,12 @@ nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user)
 void nwui_list_set(nwui_node *list, const char *const *items, int count)
 {
 	if (!list || list->kind != NWUI_LIST) return;
-	list->items  = items;
-	list->count  = count;
-	list->scroll = 0;
-	list->sel    = -1;           /* a fresh model -> no carried-over selection */
-	list->dirty  = 1;
+	list->items   = items;
+	list->count   = count;
+	list->scroll  = 0;
+	list->sel     = -1;          /* a fresh model -> no carried-over selection */
+	list->sb_drag = 0;
+	list->dirty   = 1;
 	if (list->owner) list->owner->layout_dirty = 1;
 }
 
@@ -361,6 +362,44 @@ static void tf_changed(nwui_node *tf) { tf->dirty = 1; if (tf->on_change) tf->on
 
 /* ---- list ---- */
 static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
+static int list_max_scroll(const nwui_node *L)   /* largest valid scroll (0 if everything fits) */
+{
+	int m = L->count - list_visible(L);
+	return m > 0 ? m : 0;
+}
+static int list_has_sb(const nwui_node *L) { return list_max_scroll(L) > 0; }  /* overflow -> bar */
+
+static void list_clamp_scroll(nwui_node *L)
+{
+	int m = list_max_scroll(L);
+	if (L->scroll > m) L->scroll = m;
+	if (L->scroll < 0) L->scroll = 0;
+}
+
+/* Scrollbar thumb geometry within the list rect: top y and height, in screen pixels. */
+static void list_thumb(const nwui_node *L, int *ty, int *th)
+{
+	int track = L->h - 2;                         /* inside the 1px border */
+	int t = L->count > 0 ? track * list_visible(L) / L->count : track;
+	if (t < NWUI_SB_MIN) t = NWUI_SB_MIN;
+	if (t > track)       t = track;
+	int maxs = list_max_scroll(L);
+	int span = track - t;
+	int pos  = maxs > 0 ? span * L->scroll / maxs : 0;
+	*ty = L->y + 1 + pos;
+	*th = t;
+}
+
+static void list_sb_set_from_y(nwui_node *L, int mouse_y)   /* drag: map thumb-top to scroll */
+{
+	int ty, th; list_thumb(L, &ty, &th);
+	int track = L->h - 2;
+	int span  = track - th;
+	int maxs  = list_max_scroll(L);
+	int top   = mouse_y - L->sb_grab - (L->y + 1);
+	L->scroll = span > 0 ? top * maxs / span : 0;
+	list_clamp_scroll(L);
+}
 
 static void list_scroll_to(nwui_node *L)     /* keep the selection within the visible window */
 {
@@ -455,20 +494,34 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			}
 			else if (over && over->kind == NWUI_LIST) {
 				set_focus(u, over);
-				int row = over->scroll + (ev->y - over->y) / NWUI_ROW_H;
-				if (row >= 0 && row < over->count) {
-					over->sel = row; over->dirty = 1;
-					list_activate(over);                 /* single-click selects + activates */
+				int sb_x = over->x + over->w - NWUI_SB_W;
+				if (list_has_sb(over) && ev->x >= sb_x) {       /* hit the scrollbar */
+					int ty, th; list_thumb(over, &ty, &th);
+					if (ev->y < ty)              over->scroll -= list_visible(over);  /* page up */
+					else if (ev->y >= ty + th)   over->scroll += list_visible(over);  /* page down */
+					else { over->sb_drag = 1; over->sb_grab = ev->y - ty; }           /* grab thumb */
+					list_clamp_scroll(over);
+					over->dirty = 1;
+				} else {                                        /* hit a row in the content area */
+					int row = over->scroll + (ev->y - over->y) / NWUI_ROW_H;
+					if (row >= 0 && row < over->count) {
+						over->sel = row; over->dirty = 1;
+						list_activate(over);             /* single-click selects + activates */
+					}
 				}
 			}
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTFIELD) {
 			u->armed->caret = char_at_x(u->armed, ev->x);            /* drag-select */
+			u->armed->dirty = 1;
+		} else if (left && pleft && u->armed && u->armed->kind == NWUI_LIST && u->armed->sb_drag) {
+			list_sb_set_from_y(u->armed, ev->y);                     /* drag the scrollbar thumb */
 			u->armed->dirty = 1;
 		} else if (!left && pleft) {                  /* left release edge */
 			if (u->armed && u->armed->kind == NWUI_BUTTON) {
 				u->armed->pressed = 0; u->armed->dirty = 1;
 				if (over == u->armed && over->on_click) over->on_click(over, over->user);
 			}
+			if (u->armed && u->armed->kind == NWUI_LIST) u->armed->sb_drag = 0;
 			u->armed = 0;
 		}
 		u->prev_buttons = ev->buttons;

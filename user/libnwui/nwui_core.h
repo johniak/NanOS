@@ -13,6 +13,7 @@
 enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST };
 
 enum { NWUI_ROW_H = 18 };   /* list item row height */
+enum { NWUI_SB_W = 12, NWUI_SB_MIN = 16 };   /* list scrollbar: width, min thumb height */
 
 enum {
 	NWUI_MAX_NODES = 128,
@@ -45,6 +46,7 @@ struct nwui_node {
 
 	const char *const *items;        /* list: app-owned array of item strings */
 	int        count, sel, scroll;   /* list: item count, selected/visible-from index */
+	int        sb_drag, sb_grab;     /* list: scrollbar thumb being dragged + grab offset (px) */
 
 	nwui_cb    on_click, on_change;
 	void      *user;
