@@ -1,9 +1,9 @@
 /*
  * RamFs.cpp — the in-memory writable filesystem (tmpfs). See RamFs.h.
  *
- * A small tree of RamNodes walked by path. Directories hold a fixed child array; files
- * hold a malloc'd, geometrically-grown data buffer. Errors use the kernel's negative
- * errno convention (-ENOENT etc.), matching the rest of the VFS.
+ * A small tree of RamNodes. Directories hold RamDirent entries (name -> node), so a node can
+ * appear under several names (hard links); files hold a malloc'd, geometrically-grown data
+ * buffer. Errors use the kernel's negative-errno convention, matching the rest of the VFS.
  */
 #include "RamFs.h"
 #include "string.h"
@@ -17,6 +17,7 @@ const int E_ISDIR = -21;
 const int E_INVAL = -22;
 const int E_EXIST = -17;
 const int E_NOSPC = -28;
+const int E_NOTEMPTY = -39;
 
 bool nameEq(const char* a, const char* b, int len) {
 	for (int i = 0; i < len; i++)
@@ -27,36 +28,35 @@ bool nameEq(const char* a, const char* b, int len) {
 }
 
 RamFs::RamFs() {
-	root = mk("", 0, true);
+	root = mk(true);
 }
 
 int RamFs::mount() { return 0; }
 
-RamNode* RamFs::mk(const char* name, int len, bool isDir) {
+RamNode* RamFs::mk(bool isDir) {
 	RamNode* n = (RamNode*) malloc(sizeof(RamNode));
 	memset(n, 0, sizeof(RamNode));
-	if (len > 63)
-		len = 63;
-	for (int i = 0; i < len; i++)
-		n->name[i] = name[i];
-	n->name[len] = 0;
 	n->isDir = isDir;
 	n->mode = isDir ? 0755 : 0644;   // sensible default; create/mkdir override from the arg
+	n->nlink = 1;
 	return n;
 }
 
-// Append a child to a directory, geometrically growing the child array (tmpfs has no
-// per-directory entry limit, so neither do we — no silent -ENOSPC at a magic count).
-bool RamFs::addChild(RamNode* d, RamNode* c) {
+// Bind `name` to node `c` in directory `d`, geometrically growing the entry array.
+bool RamFs::addChild(RamNode* d, const char* name, int len, RamNode* c) {
 	if (d->nchild >= d->childCap) {
 		int cap = d->childCap ? d->childCap * 2 : 8;
-		RamNode** p = (RamNode**) realloc(d->child, (unsigned) cap * sizeof(RamNode*));
+		RamDirent* p = (RamDirent*) realloc(d->ent, (unsigned) cap * sizeof(RamDirent));
 		if (!p)
 			return false;
-		d->child = p;
+		d->ent = p;
 		d->childCap = cap;
 	}
-	d->child[d->nchild++] = c;
+	RamDirent* e = &d->ent[d->nchild++];
+	if (len > 63) len = 63;
+	for (int i = 0; i < len; i++) e->name[i] = name[i];
+	e->name[len] = 0;
+	e->node = c;
 	return true;
 }
 
@@ -64,8 +64,8 @@ RamNode* RamFs::dirChild(RamNode* d, const char* name, int len) {
 	if (!d->isDir)
 		return 0;
 	for (int i = 0; i < d->nchild; i++)
-		if (nameEq(d->child[i]->name, name, len))
-			return d->child[i];
+		if (nameEq(d->ent[i].name, name, len))
+			return d->ent[i].node;
 	return 0;
 }
 
@@ -91,12 +91,32 @@ RamNode* RamFs::walk(const char* path) {
 	return cur;
 }
 
+// Resolve a path, following a symbolic link in the FINAL component (depth-guarded). Intermediate
+// symlink components are not followed (rare in a tmpfs); absolute and parent-relative targets work.
+RamNode* RamFs::walkFollow(const char* path, int depth) {
+	if (depth > 8)
+		return 0;
+	RamNode* n = walk(path);
+	if (!n || !n->isSymlink || !n->link)
+		return n;
+	const char* tgt = n->link;
+	if (tgt[0] == '/')
+		return walkFollow(tgt, depth + 1);
+	char buf[512];
+	int end = (int) strlen(path);
+	while (end > 0 && path[end - 1] != '/') end--;       // keep the trailing '/'
+	int k = 0;
+	for (int i = 0; i < end && k < 400; i++) buf[k++] = path[i];
+	for (int i = 0; tgt[i] && k < 510; i++) buf[k++] = tgt[i];
+	buf[k] = 0;
+	return walkFollow(buf, depth + 1);
+}
+
 // Resolve the parent directory of the last component. Sets leaf/leafLen to the final
 // name. Returns 0 if the path is malformed, the parent is missing, or it is not a dir.
 RamNode* RamFs::walkParent(const char* path, const char*& leaf, int& leafLen) {
 	if (!path || path[0] != '/')
 		return 0;
-	// Find the last non-empty component.
 	int end = (int) strlen(path);
 	while (end > 0 && path[end - 1] == '/')
 		end--;                       // ignore trailing slashes
@@ -107,7 +127,6 @@ RamNode* RamFs::walkParent(const char* path, const char*& leaf, int& leafLen) {
 	leafLen = end - start;
 	if (leafLen <= 0 || leafLen > 63)
 		return 0;
-	// Walk the directory prefix [0, start).
 	RamNode* cur = root;
 	int i = 1;
 	while (i < start) {
@@ -140,7 +159,7 @@ bool RamFs::ensureCap(RamNode* f, unsigned want) {
 }
 
 int RamFs::read(String path, unsigned size, unsigned off, void* buf) {
-	RamNode* n = walk((char*) path);
+	RamNode* n = walkFollow((char*) path, 0);
 	if (!n)
 		return E_NOENT;
 	if (n->isDir)
@@ -154,7 +173,7 @@ int RamFs::read(String path, unsigned size, unsigned off, void* buf) {
 }
 
 int RamFs::write(String path, unsigned size, unsigned off, const void* buf) {
-	RamNode* n = walk((char*) path);
+	RamNode* n = walkFollow((char*) path, 0);
 	if (!n)
 		return E_NOENT;
 	if (n->isDir)
@@ -182,12 +201,12 @@ int RamFs::create(String path, unsigned mode) {
 		existing->size = 0;                  // make-or-truncate
 		return 0;
 	}
-	RamNode* node = mk(leaf, len, false);
-	if (!node || !addChild(parent, node)) {
+	RamNode* node = mk(false);
+	if (!node || !addChild(parent, leaf, len, node)) {
 		if (node) free(node);
 		return E_NOSPC;
 	}
-	node->mode = mode & 0777;                // honor the requested permission bits
+	node->mode = mode & 0777;
 	return 0;
 }
 
@@ -199,13 +218,23 @@ int RamFs::mkdir(String path, unsigned mode) {
 		return E_NOENT;
 	if (dirChild(parent, leaf, len))
 		return E_EXIST;
-	RamNode* node = mk(leaf, len, true);
-	if (!node || !addChild(parent, node)) {
+	RamNode* node = mk(true);
+	if (!node || !addChild(parent, leaf, len, node)) {
 		if (node) free(node);
 		return E_NOSPC;
 	}
-	node->mode = mode & 0777;                // honor the requested permission bits
+	node->mode = mode & 0777;
 	return 0;
+}
+
+// Free a node when its last name goes away.
+static void releaseNode(RamNode* c) {
+	if (--c->nlink <= 0) {
+		if (c->data) free(c->data);
+		if (c->link) free(c->link);
+		if (c->ent) free(c->ent);
+		free(c);
+	}
 }
 
 int RamFs::unlink(String path) {
@@ -215,35 +244,57 @@ int RamFs::unlink(String path) {
 	if (!parent)
 		return E_NOENT;
 	for (int i = 0; i < parent->nchild; i++) {
-		RamNode* c = parent->child[i];
-		if (nameEq(c->name, leaf, len)) {
+		if (nameEq(parent->ent[i].name, leaf, len)) {
+			RamNode* c = parent->ent[i].node;
 			if (c->isDir)
 				return E_ISDIR;              // unlink targets files; rmdir is separate
-			if (c->data)
-				free(c->data);
-			free(c);
-			for (int j = i; j < parent->nchild - 1; j++)   // compact the child array
-				parent->child[j] = parent->child[j + 1];
+			for (int j = i; j < parent->nchild - 1; j++)
+				parent->ent[j] = parent->ent[j + 1];
 			parent->nchild--;
+			releaseNode(c);
 			return 0;
 		}
 	}
 	return E_NOENT;
 }
 
+// Fill a FileStat from a node (shared by stat/lstat).
+static void fillStat(FileStat& out, RamNode* n) {
+	out.type = n->isSymlink ? NODE_SYMLINK : n->isDir ? NODE_DIR : NODE_FILE;
+	out.size = n->isSymlink ? (n->link ? (unsigned) strlen(n->link) : 0) : (n->isDir ? 0 : n->size);
+	unsigned fmt = n->isSymlink ? 0xA000u : n->isDir ? 0x4000u : 0x8000u;
+	out.mode = fmt | (n->mode & 0777);
+	out.nlink = (unsigned) (n->nlink < 1 ? 1 : n->nlink);
+	out.uid = n->uid;
+	out.gid = n->gid;
+	out.mtime = n->mtime;
+}
+
 int RamFs::stat(String path, FileStat& out) {
+	RamNode* n = walkFollow((char*) path, 0);   // stat follows symlinks
+	if (!n)
+		return E_NOENT;
+	fillStat(out, n);
+	return 0;
+}
+
+int RamFs::lstat(String path, FileStat& out) {
+	RamNode* n = walk((char*) path);            // lstat stats the link itself
+	if (!n)
+		return E_NOENT;
+	fillStat(out, n);
+	return 0;
+}
+
+int RamFs::readlink(String path, char* buf, unsigned size) {
 	RamNode* n = walk((char*) path);
 	if (!n)
 		return E_NOENT;
-	out.type = n->isDir ? NODE_DIR : NODE_FILE;
-	out.size = n->isDir ? 0 : n->size;
-	// Type bits (S_IFDIR/S_IFREG) | the stored permission bits.
-	out.mode = (n->isDir ? 0x4000u : 0x8000u) | (n->mode & 0777);
-	out.nlink = 1;
-	out.uid = 0;
-	out.gid = 0;
-	out.mtime = n->mtime;
-	return 0;
+	if (!n->isSymlink || !n->link)
+		return E_INVAL;
+	unsigned k = 0;
+	while (n->link[k] && k < size) { buf[k] = n->link[k]; k++; }
+	return (int) k;
 }
 
 int RamFs::readdir(String path, List<DirEntry>& out) {
@@ -252,7 +303,6 @@ int RamFs::readdir(String path, List<DirEntry>& out) {
 		return E_NOENT;
 	if (!n->isDir)
 		return E_NOTDIR;
-	// "." and ".." first (so ls shows them, matching SynthFs and a real Unix readdir).
 	DirEntry dot;
 	dot.type = NODE_DIR;
 	dot.name[0] = '.'; dot.name[1] = 0;
@@ -262,12 +312,146 @@ int RamFs::readdir(String path, List<DirEntry>& out) {
 	for (int i = 0; i < n->nchild; i++) {
 		DirEntry e;
 		int k = 0;
-		for (; n->child[i]->name[k] && k < 255; k++)
-			e.name[k] = n->child[i]->name[k];
+		for (; n->ent[i].name[k] && k < 255; k++)
+			e.name[k] = n->ent[i].name[k];
 		e.name[k] = 0;
-		e.type = n->child[i]->isDir ? NODE_DIR : NODE_FILE;
+		RamNode* c = n->ent[i].node;
+		e.type = c->isSymlink ? NODE_SYMLINK : c->isDir ? NODE_DIR : NODE_FILE;
 		out.add(e);
 	}
+	return 0;
+}
+
+// Detach entry `idx` from directory `d` (compacting), returning the node; not freed.
+static RamNode* detach(RamNode* d, int idx) {
+	RamNode* c = d->ent[idx].node;
+	for (int j = idx; j < d->nchild - 1; j++)
+		d->ent[j] = d->ent[j + 1];
+	d->nchild--;
+	return c;
+}
+
+int RamFs::rmdir(String path) {
+	const char* leaf; int len;
+	RamNode* parent = walkParent((char*) path, leaf, len);
+	if (!parent)
+		return E_NOENT;
+	for (int i = 0; i < parent->nchild; i++)
+		if (nameEq(parent->ent[i].name, leaf, len)) {
+			RamNode* c = parent->ent[i].node;
+			if (!c->isDir)
+				return E_NOTDIR;
+			if (c->nchild != 0)
+				return E_NOTEMPTY;
+			detach(parent, i);
+			if (c->ent) free(c->ent);
+			free(c);
+			return 0;
+		}
+	return E_NOENT;
+}
+
+int RamFs::rename(String oldpath, String newpath) {
+	const char* ol; int oln;
+	RamNode* op = walkParent((char*) oldpath, ol, oln);
+	if (!op) return E_NOENT;
+	int oidx = -1;
+	for (int i = 0; i < op->nchild; i++)
+		if (nameEq(op->ent[i].name, ol, oln)) { oidx = i; break; }
+	if (oidx < 0) return E_NOENT;
+	const char* nl; int nln;
+	RamNode* np = walkParent((char*) newpath, nl, nln);
+	if (!np) return E_NOENT;
+	// Replace an existing destination (empty dir / file).
+	for (int i = 0; i < np->nchild; i++)
+		if (nameEq(np->ent[i].name, nl, nln)) {
+			RamNode* d = np->ent[i].node;
+			if (d->isDir && d->nchild != 0) return E_NOTEMPTY;
+			detach(np, i);
+			if (d->isDir) { if (d->ent) free(d->ent); free(d); }
+			else releaseNode(d);
+			if (np == op && i < oidx) oidx--;     // detaching shifted the source index
+			break;
+		}
+	RamNode* node = detach(op, oidx);
+	if (!addChild(np, nl, nln, node)) return E_NOSPC;
+	return 0;
+}
+
+int RamFs::link(String oldpath, String newpath) {
+	RamNode* t = walk((char*) oldpath);
+	if (!t) return E_NOENT;
+	if (t->isDir) return -1;                 // -EPERM: no hard links to directories
+	const char* nl; int nln;
+	RamNode* np = walkParent((char*) newpath, nl, nln);
+	if (!np) return E_NOENT;
+	if (dirChild(np, nl, nln)) return E_EXIST;
+	if (!addChild(np, nl, nln, t)) return E_NOSPC;   // the SAME node, a second name
+	t->nlink++;
+	return 0;
+}
+
+int RamFs::symlink(String target, String path) {
+	const char* leaf; int len;
+	RamNode* parent = walkParent((char*) path, leaf, len);
+	if (!parent) return E_NOENT;
+	if (dirChild(parent, leaf, len)) return E_EXIST;
+	RamNode* node = mk(false);
+	if (!node) return E_NOSPC;
+	node->isSymlink = true;
+	const char* tgt = (char*) target;
+	unsigned tl = (unsigned) strlen(tgt);
+	node->link = (char*) malloc(tl + 1);
+	if (!node->link) { free(node); return E_NOSPC; }
+	for (unsigned i = 0; i < tl; i++) node->link[i] = tgt[i];
+	node->link[tl] = 0;
+	node->mode = 0777;
+	if (!addChild(parent, leaf, len, node)) { free(node->link); free(node); return E_NOSPC; }
+	return 0;
+}
+
+int RamFs::truncate(String path, unsigned length) {
+	RamNode* n = walkFollow((char*) path, 0);
+	if (!n) return E_NOENT;
+	if (n->isDir) return E_ISDIR;
+	if (!ensureCap(n, length)) return E_NOSPC;
+	if (length > n->size)
+		memset(n->data + n->size, 0, length - n->size);
+	n->size = length;
+	return 0;
+}
+
+int RamFs::chmod(String path, unsigned mode) {
+	RamNode* n = walkFollow((char*) path, 0);
+	if (!n) return E_NOENT;
+	n->mode = mode & 0777;
+	return 0;
+}
+
+int RamFs::chown(String path, unsigned uid, unsigned gid) {
+	RamNode* n = walkFollow((char*) path, 0);
+	if (!n) return E_NOENT;
+	if (uid != 0xFFFFFFFFu) n->uid = uid;
+	if (gid != 0xFFFFFFFFu) n->gid = gid;
+	return 0;
+}
+
+int RamFs::utimes(String path, unsigned atime, unsigned mtime) {
+	RamNode* n = walkFollow((char*) path, 0);
+	if (!n) return E_NOENT;
+	n->atime = atime;
+	n->mtime = mtime;
+	return 0;
+}
+
+int RamFs::statfs(String path, StatFs& out) {
+	(void) path;
+	out.blockSize = 4096;
+	out.totalBlocks = 0;
+	out.freeBlocks = 0;
+	out.totalInodes = 0;
+	out.freeInodes = 0;
+	out.nameMax = 63;
 	return 0;
 }
 

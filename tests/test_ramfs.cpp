@@ -158,3 +158,74 @@ TEST_CASE("RamFs unlink removes a file; dirs and missing names are rejected") {
 	fs.mkdir(String("/d"), 0755);
 	CHECK(fs.unlink(String("/d")) == -21);            // -EISDIR: unlink is for files
 }
+
+TEST_CASE("RamFs rmdir/rename/link/symlink/chmod/chown/utimes/truncate/statfs parity") {
+	RamFs fs;
+	REQUIRE(fs.mount() == 0);
+
+	// rmdir: empty only.
+	CHECK(fs.mkdir(String("/d"), 0755) == 0);
+	CHECK(fs.create(String("/d/f"), 0644) == 0);
+	CHECK(fs.rmdir(String("/d")) == -39);             // -ENOTEMPTY
+	CHECK(fs.unlink(String("/d/f")) == 0);
+	CHECK(fs.rmdir(String("/d")) == 0);
+	FileStat st;
+	CHECK(fs.stat(String("/d"), st) == -2);
+
+	// chmod / chown / utimes.
+	CHECK(fs.create(String("/m"), 0644) == 0);
+	CHECK(fs.chmod(String("/m"), 0600) == 0);
+	REQUIRE(fs.stat(String("/m"), st) == 0);
+	CHECK((st.mode & 0777) == 0600);
+	CHECK(fs.chown(String("/m"), 11, 22) == 0);
+	REQUIRE(fs.stat(String("/m"), st) == 0);
+	CHECK(st.uid == 11); CHECK(st.gid == 22);
+	CHECK(fs.utimes(String("/m"), 100, 200) == 0);
+	REQUIRE(fs.stat(String("/m"), st) == 0);
+	CHECK(st.mtime == 200);
+
+	// truncate (grow with zero-fill, then shrink).
+	CHECK(fs.write(String("/m"), 3, 0, "abc") == 3);
+	CHECK(fs.truncate(String("/m"), 5) == 0);
+	REQUIRE(fs.stat(String("/m"), st) == 0);
+	CHECK(st.size == 5);
+	char rb[8] = {0};
+	CHECK(fs.read(String("/m"), 5, 0, rb) == 5);
+	CHECK(rb[3] == 0); CHECK(rb[4] == 0);
+	CHECK(fs.truncate(String("/m"), 2) == 0);
+	REQUIRE(fs.stat(String("/m"), st) == 0);
+	CHECK(st.size == 2);
+
+	// hard link: same content via two names, nlink 2; unlink one keeps the other.
+	CHECK(fs.write(String("/m"), 2, 0, "hi") == 2);
+	CHECK(fs.link(String("/m"), "/m2") == 0);
+	REQUIRE(fs.stat(String("/m2"), st) == 0);
+	CHECK(st.nlink == 2);
+	CHECK(fs.read(String("/m2"), 2, 0, rb) == 2);
+	CHECK(rb[0] == 'h');
+	CHECK(fs.unlink(String("/m")) == 0);
+	REQUIRE(fs.stat(String("/m2"), st) == 0);          // still here
+	CHECK(st.nlink == 1);
+
+	// symlink + readlink + lstat; stat follows it.
+	CHECK(fs.symlink("/m2", "/sl") == 0);
+	REQUIRE(fs.lstat(String("/sl"), st) == 0);
+	CHECK(st.type == NODE_SYMLINK);
+	char tg[8] = {0};
+	CHECK(fs.readlink(String("/sl"), tg, sizeof(tg) - 1) == 3);
+	CHECK(strcmp(tg, "/m2") == 0);
+	REQUIRE(fs.stat(String("/sl"), st) == 0);          // stat follows -> the target file
+	CHECK(st.type == NODE_FILE);
+	CHECK(fs.read(String("/sl"), 2, 0, rb) == 2);      // read through the link
+
+	// rename within the root.
+	CHECK(fs.rename(String("/m2"), "/m3") == 0);
+	CHECK(fs.stat(String("/m2"), st) == -2);
+	REQUIRE(fs.stat(String("/m3"), st) == 0);
+
+	// statfs.
+	StatFs sfs;
+	CHECK(fs.statfs(String("/"), sfs) == 0);
+	CHECK(sfs.blockSize == 4096);
+	CHECK(sfs.nameMax == 63);
+}
