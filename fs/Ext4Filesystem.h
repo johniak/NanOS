@@ -41,9 +41,9 @@ public:
 	}
 
 	unsigned resolveBlock(Ext2Inode& inode, unsigned fileBlockIndex) {
-		// Inodes without the extents flag use classic direct blocks.
+		// Inodes without the extents flag use the classic direct+indirect map (shared core).
 		if (!(inode.flags & 0x80000))
-			return inode.directBlocks[fileBlockIndex];
+			return resolveIndirect(inode, fileBlockIndex);
 
 		// The 60-byte i_block area starts at directBlocks[0]: an extent header
 		// followed by up to 4 entries. Copy it out, then walk the tree (reading
@@ -218,20 +218,9 @@ public:
 	}
 
 	unsigned bmapAlloc(Ext2Inode& inode, unsigned inodeNo, unsigned fb) {
-		// Non-extent ext4 inode (rare): classic direct blocks only.
-		if (!(inode.flags & 0x80000)) {
-			if (fb < 12) {
-				if (inode.directBlocks[fb])
-					return (unsigned) inode.directBlocks[fb];
-				unsigned nb = alloc->allocBlock(goalGroup(inodeNo));
-				if (!nb) return 0;
-				zeroBlock(nb);
-				inode.directBlocks[fb] = (int) nb;
-				addBlocksToInode(inode, 1);
-				return nb;
-			}
-			return 0;
-		}
+		// Non-extent ext4 inode (rare): full classic direct+indirect map (shared core).
+		if (!(inode.flags & 0x80000))
+			return bmapAllocIndirect(inode, inodeNo, fb);
 		unsigned existing = resolveBlock(inode, fb);
 		if (existing)
 			return existing;
@@ -375,13 +364,8 @@ public:
 	}
 
 	void truncateBlocks(Ext2Inode& inode, unsigned inodeNo, unsigned firstFree) {
-		if (!(inode.flags & 0x80000)) {           // non-extent fallback: free direct tail
-			for (unsigned i = firstFree; i < 12; i++)
-				if (inode.directBlocks[i]) {
-					alloc->freeBlock((unsigned) inode.directBlocks[i]);
-					inode.directBlocks[i] = 0;
-					addBlocksToInode(inode, -1);
-				}
+		if (!(inode.flags & 0x80000)) {           // non-extent fallback: classic direct+indirect
+			truncateIndirect(inode, firstFree);
 			return;
 		}
 		char* root = (char*) &inode.directBlocks[0];

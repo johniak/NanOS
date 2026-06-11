@@ -564,6 +564,138 @@ public:
 		cache->write(block, dataBuff);
 	}
 
+	// ---- shared direct/indirect block mapping (ext2, and non-extent ext4 inodes) ----------
+	// Read pointer-block `blk`'s `idx`-th 4-byte pointer (0 = hole).
+	unsigned blockPtr(unsigned blk, unsigned idx) {
+		if (blk == 0) return 0;
+		cache->read(blk, commonBuff);
+		return (unsigned) ((unsigned*) commonBuff)[idx];
+	}
+	// Ensure a top-level indirect slot names an allocated, zeroed pointer block.
+	unsigned ensureSlotBlock(int& slot, unsigned goal, Ext2Inode& inode) {
+		if (slot) return (unsigned) slot;
+		unsigned nb = alloc->allocBlock(goal);
+		if (!nb) return 0;
+		zeroBlock(nb);
+		slot = (int) nb;
+		addBlocksToInode(inode, 1);
+		return nb;
+	}
+	// Ensure entry `idx` of pointer block `pb` names an allocated, zeroed block; write it back.
+	unsigned ensureEntry(unsigned pb, unsigned idx, unsigned goal, Ext2Inode& inode) {
+		unsigned char buf[4096];
+		cache->read(pb, buf);
+		unsigned cur = ((unsigned*) buf)[idx];
+		if (cur) return cur;
+		unsigned nb = alloc->allocBlock(goal);
+		if (!nb) return 0;
+		zeroBlock(nb);
+		((unsigned*) buf)[idx] = nb;
+		cache->write(pb, buf);
+		addBlocksToInode(inode, 1);
+		return nb;
+	}
+	// Free everything reachable from level-`level` pointer block `pb` for fb >= firstFree.
+	bool freePtrTree(unsigned pb, int level, unsigned base, unsigned firstFree, Ext2Inode& inode) {
+		unsigned k = (unsigned) blockSize / 4u;
+		unsigned* e = (unsigned*) malloc((unsigned) blockSize);
+		cache->read(pb, e);
+		unsigned span = (level == 1) ? 1u : (level == 2) ? k : k * k;
+		bool dirty = false, anyLeft = false;
+		for (unsigned i = 0; i < k; i++) {
+			if (e[i] == 0) continue;
+			unsigned childBase = base + i * span;
+			if (childBase + span <= firstFree) { anyLeft = true; continue; }
+			if (level == 1) {
+				if (childBase >= firstFree) { alloc->freeBlock(e[i]); e[i] = 0; dirty = true; addBlocksToInode(inode, -1); }
+				else anyLeft = true;
+			} else {
+				if (freePtrTree(e[i], level - 1, childBase, firstFree, inode)) {
+					alloc->freeBlock(e[i]); e[i] = 0; dirty = true; addBlocksToInode(inode, -1);
+				} else anyLeft = true;
+			}
+		}
+		if (dirty) cache->write(pb, e);
+		free(e);
+		return !anyLeft;
+	}
+	void freeTopIndirect(int& slot, int level, unsigned base, unsigned firstFree, Ext2Inode& inode) {
+		if (slot == 0) return;
+		unsigned k = (unsigned) blockSize / 4u;
+		unsigned span = (level == 1) ? k : (level == 2) ? k * k : k * k * k;
+		if (base + span <= firstFree) return;
+		if (freePtrTree((unsigned) slot, level, base, firstFree, inode)) {
+			alloc->freeBlock((unsigned) slot);
+			addBlocksToInode(inode, -1);
+			slot = 0;
+		}
+	}
+
+	// The shared classic (direct + single/double/triple indirect) operations.
+	unsigned resolveIndirect(Ext2Inode& inode, unsigned fb) {
+		unsigned k = (unsigned) blockSize / 4u;
+		if (fb < 12) return (unsigned) inode.directBlocks[fb];
+		fb -= 12;
+		if (fb < k) return blockPtr((unsigned) inode.indirectPtr, fb);
+		fb -= k;
+		if (fb < k * k) {
+			unsigned mid = blockPtr((unsigned) inode.doubleIndirectPtr, fb / k);
+			return blockPtr(mid, fb % k);
+		}
+		fb -= k * k;
+		unsigned hi = blockPtr((unsigned) inode.tripleIndirectPtr, fb / (k * k));
+		unsigned mid = blockPtr(hi, (fb / k) % k);
+		return blockPtr(mid, fb % k);
+	}
+	unsigned bmapAllocIndirect(Ext2Inode& inode, unsigned inodeNo, unsigned fb) {
+		unsigned existing = resolveIndirect(inode, fb);
+		if (existing) return existing;
+		unsigned k = (unsigned) blockSize / 4u;
+		unsigned goal = (inodeNo - 1) / (unsigned) baseSuperBlock.inodesInGroup;
+		if (fb < 12) {
+			unsigned nb = alloc->allocBlock(goal);
+			if (!nb) return 0;
+			zeroBlock(nb);
+			inode.directBlocks[fb] = (int) nb;
+			addBlocksToInode(inode, 1);
+			return nb;
+		}
+		fb -= 12;
+		if (fb < k) {
+			unsigned ind = ensureSlotBlock(inode.indirectPtr, goal, inode);
+			if (!ind) return 0;
+			return ensureEntry(ind, fb, goal, inode);
+		}
+		fb -= k;
+		if (fb < k * k) {
+			unsigned dbl = ensureSlotBlock(inode.doubleIndirectPtr, goal, inode);
+			if (!dbl) return 0;
+			unsigned mid = ensureEntry(dbl, fb / k, goal, inode);
+			if (!mid) return 0;
+			return ensureEntry(mid, fb % k, goal, inode);
+		}
+		fb -= k * k;
+		unsigned tri = ensureSlotBlock(inode.tripleIndirectPtr, goal, inode);
+		if (!tri) return 0;
+		unsigned hi = ensureEntry(tri, fb / (k * k), goal, inode);
+		if (!hi) return 0;
+		unsigned mid = ensureEntry(hi, (fb / k) % k, goal, inode);
+		if (!mid) return 0;
+		return ensureEntry(mid, fb % k, goal, inode);
+	}
+	void truncateIndirect(Ext2Inode& inode, unsigned firstFree) {
+		unsigned k = (unsigned) blockSize / 4u;
+		for (unsigned i = 0; i < 12; i++)
+			if (i >= firstFree && inode.directBlocks[i]) {
+				alloc->freeBlock((unsigned) inode.directBlocks[i]);
+				inode.directBlocks[i] = 0;
+				addBlocksToInode(inode, -1);
+			}
+		freeTopIndirect(inode.indirectPtr, 1, 12, firstFree, inode);
+		freeTopIndirect(inode.doubleIndirectPtr, 2, 12 + k, firstFree, inode);
+		freeTopIndirect(inode.tripleIndirectPtr, 3, 12 + k + k * k, firstFree, inode);
+	}
+
 	// Persist a modified inode: read its full on-disk bytes, overlay the 128-byte struct (so the
 	// large-inode tail — extra_isize / checksum / xattrs — is preserved), recompute i_checksum
 	// and write it back.
