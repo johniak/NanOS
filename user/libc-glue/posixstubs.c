@@ -63,6 +63,13 @@ const char* getprogname(void) { return g_progname; }
 void setprogname(const char* p) { if (p && *p) g_progname = nx_basename(p); }
 void __nx_set_progname(const char* argv0) { if (argv0 && *argv0) g_progname = nx_basename(argv0); }
 
+/* __fpending (glibc <stdio_ext.h>): bytes still in a stream's output buffer. gnulib's closeout
+ * uses it to detect a write error at exit. picolibc's tinystdio writes through without an
+ * exposed buffer, so report 0 (nothing pending) — closeout then relies on the close/fflush
+ * return value, which is correct here. */
+#include <stdio.h>
+size_t __fpending(FILE* fp) { (void) fp; return 0; }
+
 /* getrlimit/setrlimit: NanOS has a single flat address space and no per-process limits, so
  * every resource is reported as unlimited and setting one is accepted-and-ignored. Ports probe
  * these (vim sizes its memory off RLIMIT_DATA); "no limit" is the honest answer. */
