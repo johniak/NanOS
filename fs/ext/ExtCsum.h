@@ -57,6 +57,13 @@ unsigned extInodeSeed(unsigned fsSeed, unsigned inodeNo, unsigned generation);
 // extent trees (in the inode i_block) have no tail — they ride the inode checksum instead.
 unsigned extExtentBlockCsum(unsigned inodeSeed, const void* extentBlock, unsigned tailOffset);
 
+// Directory-block tail checksum. With metadata_csum a directory block ends in a fake dirent
+// "tail" (the last 12 bytes: inode=0, rec_len=12, name_len=0, file_type=0xDE, then a 4-byte
+// checksum). The checksum is crc32c(inodeSeed, block, blockSize-12) continued over the 8-byte
+// tail header (det_checksum excluded). `block` is the whole directory block; returns the value to
+// store in the last 4 bytes.
+unsigned extDirBlockCsum(unsigned inodeSeed, const void* block, unsigned blockSize);
+
 }  // namespace kernel
 
 #endif /* EXT_EXTCSUM_H_ */

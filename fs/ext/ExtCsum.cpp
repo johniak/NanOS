@@ -60,6 +60,12 @@ unsigned extExtentBlockCsum(unsigned inodeSeed, const void* extentBlock, unsigne
 	return crc32c(inodeSeed, extentBlock, tailOffset);
 }
 
+unsigned extDirBlockCsum(unsigned inodeSeed, const void* block, unsigned blockSize) {
+	// The checksum covers the real dirents only — everything up to the 12-byte fake-dirent tail
+	// (verified byte-exact against a real ext4 directory block). The tail itself is not folded in.
+	return crc32c(inodeSeed, block, blockSize - 12);
+}
+
 void extInodeCsum(unsigned seed, unsigned inodeNo, void* inode, unsigned inodeSize) {
 	unsigned char* p = (unsigned char*) inode;
 	// i_extra_isize (off 0x80, u16) tells how far the large-inode area extends; i_checksum_hi

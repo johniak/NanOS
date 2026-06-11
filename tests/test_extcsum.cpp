@@ -70,3 +70,33 @@ TEST_CASE("ExtCsum: inode checksum round-trips (recompute matches the stored val
 
 	free(img);
 }
+
+TEST_CASE("ExtCsum: directory-block tail checksum matches the real ext4 root directory") {
+	long sz; unsigned char* img = loadExt4(&sz);
+	const unsigned char* sb = img + 1024;
+	unsigned seed = extCsumSeed(sb);
+	unsigned blockSize = 1024u << rd32(sb, 0x18);
+	unsigned inodeSize = rd16(sb, 0x58);
+
+	// Root inode (#2) from group-0 inode table.
+	const unsigned char* desc0 = img + 2 * blockSize;
+	unsigned itable = rd32(desc0, 0x08);
+	const unsigned char* ino = img + itable * blockSize + 1u * inodeSize;
+	unsigned gen = rd32(ino, 0x64);
+
+	// Root is an extents inode; its inline extent header is at i_block (inode offset 0x28),
+	// depth 0, first extent -> the root's first directory block (ext4_extent.ee_start_lo @ +8).
+	const unsigned char* iblock = ino + 0x28;
+	REQUIRE(rd16(iblock, 0) == 0xF30A);                   // extent magic
+	REQUIRE(rd16(iblock, 6) == 0);                        // depth 0
+	const unsigned char* ext0 = iblock + 12;
+	unsigned dirBlock = rd32(ext0, 8);                    // ee_start_lo
+	REQUIRE(dirBlock != 0);
+
+	const unsigned char* db = img + dirBlock * blockSize;
+	unsigned stored = rd32(db, blockSize - 4);            // det_checksum (last 4 bytes)
+	unsigned iseed = extInodeSeed(seed, 2, gen);
+	CHECK(extDirBlockCsum(iseed, db, blockSize) == stored);
+
+	free(img);
+}
