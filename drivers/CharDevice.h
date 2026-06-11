@@ -9,6 +9,8 @@
 
 namespace kernel {
 
+struct WaitQueue;   // event wait list (kernel/WaitQueue.h); a streaming device may expose one
+
 // poll(2) event/revent bits (Linux values), used by CharDevice::pollReady and the syscall
 // layer. Defined here so device drivers can report readiness without pulling in Syscall.h.
 #define POLLIN   0x001
@@ -29,6 +31,10 @@ struct CharDevice {
 	// Default = always ready (suits mmap devices like /dev/fb0); streaming devices (pty,
 	// keyboard) override to report buffer state.
 	virtual short pollReady(short events) { return events; }
+	// The wait list a blocked reader/writer of this device parks on (woken when readiness
+	// changes), or 0 if the device never blocks (always-ready mmap devices). Lets the syscall
+	// dispatch sleep event-driven instead of re-polling the device every timer tick.
+	virtual WaitQueue* waitQueue() { return 0; }
 };
 
 }  // namespace kernel

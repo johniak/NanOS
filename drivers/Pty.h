@@ -19,6 +19,7 @@
 #include "CharDevice.h"
 #include "Termios.h"
 #include "Syscall.h"   // EAGAIN, POLLIN/POLLOUT
+#include "WaitQueue.h" // readers/writers of either end park here (event-driven, no tick-poll)
 
 namespace kernel {
 
@@ -41,6 +42,10 @@ public:
 
 	int ioctl(unsigned cmd, void* arg);             // TCGETS/TCSETS/TIOCGWINSZ/...
 	void setSignalFn(PtySignalFn fn, void* ctx) { m_sigFn = fn; m_sigCtx = ctx; }
+	// One wait list for the whole pty: a reader/writer of EITHER end parks here, and the
+	// dispatch wakes it after any read/write on the pair changes a ring's readiness. Shared
+	// (so a master write wakes a slave reader); harmless spurious wakeups just re-test.
+	WaitQueue* waitQueue() { return &m_wq; }
 
 private:
 	static const int CAP = 4096;
@@ -52,6 +57,7 @@ private:
 	int m_fgPgrp;
 	PtySignalFn m_sigFn;
 	void* m_sigCtx;
+	WaitQueue m_wq;
 
 	void s2mPush(unsigned char c);
 	bool m2sPush(unsigned char c);          // false if the slave input ring is full
@@ -82,6 +88,7 @@ public:
 		if ((events & POLLIN) && m_pty->masterReadable()) r |= POLLIN;
 		return r;
 	}
+	WaitQueue* waitQueue() { return m_pty->waitQueue(); }
 };
 
 class PtySlave : public CharDevice {
@@ -97,6 +104,7 @@ public:
 		if ((events & POLLIN) && m_pty->slaveReadable()) r |= POLLIN;
 		return r;
 	}
+	WaitQueue* waitQueue() { return m_pty->waitQueue(); }
 };
 
 }  // namespace kernel

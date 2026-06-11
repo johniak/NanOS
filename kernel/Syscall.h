@@ -149,6 +149,10 @@ public:
 	bool fdWritable(int fd);
 	bool isPipe(int fd) { return valid(fd) && fds[fd].pipe != 0; }
 	bool nonblock(int fd) { return valid(fd) && (fds[fd].flags & O_NONBLOCK) != 0; }
+	// The wait list a blocking read/write on `fd` should park on (the pipe's, or the backing
+	// char device's), or 0 for fds that never block this way (regular files; the console, which
+	// blocks inside arch::inputRead). Lets the dispatch sleep event-driven, not per tick.
+	WaitQueue* fdWaitQueue(int fd);
 	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 	// Time. clockGettime fills `out` from a monotonic tick count (1000 Hz => ms); the
 	// dispatch supplies Scheduler::ticks(). nanosleepMs converts a requested timespec to

@@ -14,6 +14,7 @@
 #include "KeyDecoder.h"
 #include "Console.h"
 #include "Scheduler.h"
+#include "WaitQueue.h"          // console readers park here (multi-waiter, event-driven)
 #include "Signal.h"             // SIGINT / SIGQUIT numbers
 #include "SignalDispatch.h"     // kernel::consoleSignal / hasPendingSignalCurrent
 #include "Syscall.h"            // kernel::EAGAIN (O_NONBLOCK no-data return)
@@ -23,7 +24,7 @@ namespace {
 kernel::LineDiscipline g_line;
 kernel::KeyDecoder g_decoder;
 int g_raw = 0;
-kernel::Task* g_inputWaiter = 0;   // the task blocked in inputRead, if any
+kernel::WaitQueue g_inputWq;       // tasks blocked in inputRead (>=1; the keyboard IRQ wakes all)
 
 // Raw-mode byte ring (filled in IRQ context, drained by inputRead).
 const int RAWCAP = 256;
@@ -85,9 +86,9 @@ void inputFeedScancode(unsigned char sc) {
 			}
 		});
 	}
-	// Wake the blocked reader once its read is satisfiable.
-	if (g_inputWaiter && ((g_raw && !rawEmpty()) || (!g_raw && g_line.lineReady())))
-		kernel::Scheduler::wake(g_inputWaiter);
+	// Wake blocked console readers once a read is satisfiable (they re-test their condition).
+	if ((g_raw && !rawEmpty()) || (!g_raw && g_line.lineReady()))
+		kernel::Scheduler::wakeAll(&g_inputWq);
 }
 
 int inputRead(char* buf, unsigned n, int nonblock) {
@@ -96,14 +97,10 @@ int inputRead(char* buf, unsigned n, int nonblock) {
 			return -EAGAIN;
 		}
 		while (rawEmpty()) {                       // block until a byte arrives
-			g_inputWaiter = kernel::Scheduler::current();
-			kernel::Scheduler::block();            // deschedule; keyboard IRQ wakes us
-			if (kernel::hasPendingSignalCurrent()) {   // woken by a signal, not input
-				g_inputWaiter = 0;
+			kernel::Scheduler::sleepOn(&g_inputWq);    // deschedule; keyboard IRQ wakes us
+			if (kernel::hasPendingSignalCurrent())     // woken by a signal, not input
 				return -kernel::ERESTARTSYS;       // restart or -> EINTR, decided at delivery
-			}
 		}
-		g_inputWaiter = 0;
 		unsigned i = 0;
 		while (i < n && !rawEmpty())
 			buf[i++] = (char) rawPop();
@@ -113,14 +110,10 @@ int inputRead(char* buf, unsigned n, int nonblock) {
 		return -EAGAIN;
 	}
 	while (!g_line.lineReady()) {                  // block until a full line is ready
-		g_inputWaiter = kernel::Scheduler::current();
-		kernel::Scheduler::block();
-		if (kernel::hasPendingSignalCurrent()) {   // woken by a signal, not a full line
-			g_inputWaiter = 0;
+		kernel::Scheduler::sleepOn(&g_inputWq);
+		if (kernel::hasPendingSignalCurrent())     // woken by a signal, not a full line
 			return -kernel::ERESTARTSYS;           // restart or -> EINTR, decided at delivery
-		}
 	}
-	g_inputWaiter = 0;
 	return g_line.takeLine(buf, (int) n);
 }
 

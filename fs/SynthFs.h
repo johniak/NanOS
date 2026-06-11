@@ -99,6 +99,7 @@ public:
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
 	short pollReady(String path, short events);
+	WaitQueue* waitQueueAt(String path);
 
 private:
 	int readNode(String path, unsigned size, unsigned off, void* buf);   // static-tree read

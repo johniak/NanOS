@@ -169,6 +169,14 @@ short Vfs::pollReady(String path, short events) {
 	return fs->pollReady(rel, events);
 }
 
+WaitQueue* Vfs::waitQueueAt(String path) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return 0;
+	return fs->waitQueueAt(rel);
+}
+
 int Vfs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);

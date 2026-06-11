@@ -9,11 +9,17 @@
  */
 #pragma once
 
+#include "WaitQueue.h"
+
 namespace kernel {
 
 class Pipe {
 public:
 	Pipe() : m_head(0), m_tail(0), m_count(0), m_readers(0), m_writers(0) {}
+
+	// Tasks blocked reading (empty) or writing (full) this pipe park here; the dispatch wakes
+	// them after any read/write/close changes readiness, instead of re-polling every tick.
+	WaitQueue* waitQueue() { return &m_wq; }
 
 	// Open-end refcounts: pipe() opens one of each; dup() bumps; close() drops.
 	void addReader() { m_readers++; }
@@ -56,6 +62,7 @@ private:
 	unsigned char m_buf[CAP];
 	int m_head, m_tail, m_count;
 	int m_readers, m_writers;
+	WaitQueue m_wq;
 };
 
 }  // namespace kernel

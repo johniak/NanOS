@@ -3,6 +3,7 @@
 #include "memory_manager.h"   // malloc/free: kernel stacks are heap-allocated per task
 #include <arch/sched.h>
 #include <arch/cpu.h>         // cpuIrqSave/Restore: protect the schedule() state mutation
+#include "WaitQueue.h"        // sleepOn/wakeAll operate on these event lists
 
 namespace kernel {
 
@@ -95,6 +96,7 @@ static Task* allocSlot(int id) {
 	t->body = 0;
 	t->state = TASK_BLOCKED;   // not runnable until the caller has fabricated a valid kesp
 	t->wakeAt = 0;
+	t->waitNext = 0;
 	t->kstack = stk;
 	t->proc = 0;               // set when a Process binds this task (Kernel/forkProcess)
 	t->esp0 = ((unsigned) (unsigned long) (stk + KSTACK_SIZE)) & ~15u;   // 16-aligned TSS.esp0
@@ -255,6 +257,34 @@ void Scheduler::resume(Task* t) {
 		t->state = TASK_READY;
 		g_needResched = true;
 	}
+}
+
+// Park the current task on `q` until wakeAll() (or a signal) makes it READY again, then
+// unlink it. The queue add + BLOCKED flip are interrupts-off so a wakeAll from an IRQ can't
+// slip between them and lose the wakeup; if it fires in the gap before schedule(), it simply
+// finds us READY and schedule() keeps/repicks us — never a missed event.
+void Scheduler::sleepOn(WaitQueue* q) {
+	if (!q) { ioWait(); return; }            // no queue (shouldn't happen): degrade to tick poll
+	unsigned long f = arch::cpuIrqSave();
+	q->add(&g_tasks[g_cur]);
+	g_tasks[g_cur].state = TASK_BLOCKED;
+	arch::cpuIrqRestore(f);
+	schedule();
+	f = arch::cpuIrqSave();
+	q->remove(&g_tasks[g_cur]);              // resumed: we no longer wait on q (woken or signalled)
+	arch::cpuIrqRestore(f);
+}
+
+// Make every task parked on `q` runnable (the object became readable/writable, or closed).
+// Tasks unlink themselves in sleepOn on return, so we only flip states here.
+void Scheduler::wakeAll(WaitQueue* q) {
+	if (!q) return;
+	unsigned long f = arch::cpuIrqSave();
+	for (Task* t = q->head; t; t = t->waitNext)
+		if (t->state == TASK_BLOCKED)
+			t->state = TASK_READY;
+	g_needResched = true;
+	arch::cpuIrqRestore(f);
 }
 
 void Scheduler::reap(Task* t) {

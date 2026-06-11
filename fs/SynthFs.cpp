@@ -574,6 +574,13 @@ short SynthFs::pollReady(String path, short events) {
 	return n->dev->pollReady(events);
 }
 
+WaitQueue* SynthFs::waitQueueAt(String path) {
+	SynthNode* n = walk((char*) path);
+	if (!n || n->kind != SK_CHARDEV)
+		return 0;              // only char devices (pty/keyboard) block; others never do
+	return n->dev->waitQueue();
+}
+
 int SynthFs::stat(String path, FileStat& out) {
 	int pid = 0;
 	const char* file = 0;

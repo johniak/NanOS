@@ -221,6 +221,13 @@ bool Syscalls::fdReadable(int fd) {
 	return true;   // files/devices: assume ready (console handled in the dispatch)
 }
 
+WaitQueue* Syscalls::fdWaitQueue(int fd) {
+	if (!valid(fd)) return 0;
+	if (fds[fd].pipe) return fds[fd].pipe->waitQueue();
+	if (fds[fd].isConsole) return 0;          // console blocks inside arch::inputRead, not here
+	return vfs->waitQueueAt(fds[fd].path);    // a char device (pty) exposes its queue; else 0
+}
+
 bool Syscalls::fdWritable(int fd) {
 	if (!valid(fd)) return false;
 	if (fds[fd].pipe) return fds[fd].pipe->writable() || fds[fd].pipe->readers() == 0;

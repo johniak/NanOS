@@ -5,6 +5,8 @@
 
 namespace kernel {
 
+struct WaitQueue;   // event wait list (kernel/WaitQueue.h); a char device may expose one
+
 enum NodeType { NODE_FILE, NODE_DIR, NODE_OTHER, NODE_SYMLINK };
 
 struct FileStat {
@@ -47,6 +49,9 @@ public:
 	// poll() readiness for a path: return the ready subset of `events`. Default = ready
 	// (ordinary files don't block); SynthFs forwards to the char device.
 	virtual short pollReady(String, short events) { return events; }
+	// The wait list a blocked reader/writer of this path parks on (a char device's queue), or
+	// 0 if the path never blocks. Lets the dispatch sleep event-driven instead of tick-polling.
+	virtual WaitQueue* waitQueueAt(String) { return 0; }
 
 	// Write extensions. Default to read-only (-EROFS); a writable fs (RamFs/tmpfs)
 	// overrides them. create() makes-or-truncates a regular file.
@@ -98,6 +103,7 @@ public:
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
 	short pollReady(String path, short events);
+	WaitQueue* waitQueueAt(String path);   // the char device's block wait list for `path`, or 0
 	int create(String path, unsigned mode);
 	int unlink(String path);
 	int mkdir(String path, unsigned mode);

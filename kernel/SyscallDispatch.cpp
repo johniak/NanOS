@@ -156,14 +156,17 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			break;
 		}
 		ret = g_sys->read(a0, (void*) a1, a2);
-		// A blocking read on an empty pipe or pty returns -EAGAIN; wait (waking each tick as
-		// the writer is scheduled) until data/EOF, or a signal interrupts. Console blocking
-		// happens inside read() itself; an O_NONBLOCK fd returns -EAGAIN to the caller.
+		// A blocking read on an empty pipe or pty returns -EAGAIN; park on the object's wait
+		// queue (event-driven: the writer wakes us) until data/EOF, or a signal interrupts.
+		// Console blocking happens inside read() itself; an O_NONBLOCK fd returns -EAGAIN.
 		while (ret == -EAGAIN && !g_sys->nonblock(a0)) {
 			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
-			Scheduler::ioWait();
+			WaitQueue* wq = g_sys->fdWaitQueue(a0);
+			if (wq) Scheduler::sleepOn(wq); else Scheduler::ioWait();
 			ret = g_sys->read(a0, (void*) a1, a2);
 		}
+		if (ret > 0)                              // we drained bytes -> ring has space: wake writers
+			Scheduler::wakeAll(g_sys->fdWaitQueue(a0));
 		break;
 	}
 	case SYS_write: {
@@ -178,12 +181,14 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			if (r == -EAGAIN) {
 				if (g_sys->nonblock(a0)) { ret = done ? (int) done : -EAGAIN; break; }
 				if (hasPendingSignalCurrent()) { ret = done ? (int) done : -ERESTARTSYS; break; }
-				Scheduler::ioWait();
+				WaitQueue* wq = g_sys->fdWaitQueue(a0);
+				if (wq) Scheduler::sleepOn(wq); else Scheduler::ioWait();
 				continue;
 			}
 			if (r < 0) { ret = done ? (int) done : r; break; }
 			done += (unsigned) r;
 			ret = (int) done;
+			Scheduler::wakeAll(g_sys->fdWaitQueue(a0));   // bytes landed -> wake the reader/peer
 		}
 		break;
 	}
@@ -219,9 +224,15 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_open:
 		ret = g_sys->open(String((char*) a0), a1);
 		break;
-	case SYS_close:
+	case SYS_close: {
+		// Wake anyone blocked on this object before/after dropping the fd, so a peer reading a
+		// pipe whose last writer just closed sees EOF (and a writer sees EPIPE) instead of
+		// sleeping forever. The queue lives on the shared object, which outlives this fd.
+		WaitQueue* wq = g_sys->fdWaitQueue(a0);
 		ret = g_sys->close(a0);
+		Scheduler::wakeAll(wq);
 		break;
+	}
 	case SYS_unlink:
 		ret = g_sys->unlink(String((char*) a0));
 		break;
