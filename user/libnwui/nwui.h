@@ -42,9 +42,10 @@ nwui_node *nwui_button(nwui *u, const char *text, nwui_cb on_click, void *user);
 /* An editable field over an APP-OWNED buffer (the app reads the typed value straight from it). */
 nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *user);
 
-/* A scrollable list of rows. Items are an APP-OWNED array of strings (set with nwui_list_set);
- * clicking a row (or Enter) selects + fires on_activate; arrows move the selection. The app
- * reads which row fired with nwui_list_selected. */
+/* A scrollable list of rows. Items are an APP-OWNED array of strings (set with nwui_list_set).
+ * A single click selects a row; a DOUBLE-click (or Enter) fires on_activate ("open"); arrows
+ * move the selection and a scrollbar appears when rows overflow. The app reads which row fired
+ * with nwui_list_selected. */
 nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user);
 void       nwui_list_set(nwui_node *list, const char *const *items, int count);
 int        nwui_list_selected(nwui_node *list);
@@ -70,6 +71,10 @@ nwui_node *nwui_colors(nwui_node *n, uint32_t fg, uint32_t bg);
 /* ---- state mutation (marks the node dirty -> repaint) ---- */
 void        nwui_set_text(nwui_node *n, const char *text);
 const char *nwui_get_text(nwui_node *n);
+
+/* Ask the compositor to launch a program (by name or absolute path), the same way the Super+R
+ * Run dialog does — used e.g. by a file manager to open/run an app. Fire-and-forget. */
+void        nwui_spawn(nwui *u, const char *cmd);
 
 #ifdef __cplusplus
 }

@@ -44,6 +44,9 @@ for st in STEPS:
         dx,dy = st[6:].split(","); send("mouse_move %s %s" % (dx,dy)); time.sleep(0.3)
     elif st.startswith("mbtn:"):
         send("mouse_button %s" % st[5:]); time.sleep(0.3)
+    elif st == "dclick":                              # two fast clicks (< the double-click window)
+        send("mouse_button 1"); send("mouse_button 0")
+        send("mouse_button 1"); send("mouse_button 0"); time.sleep(0.3)
     elif st.startswith("raw:"):
         for ch in st[4:]: key(ch); time.sleep(0.06)   # type WITHOUT trailing Enter
     else: typ(st)

@@ -59,6 +59,10 @@ void nw_set_clipboard(nw_display *d, const char *text, int len);
 /* Ask the compositor for the clipboard; it replies with an NW_EV_PASTE event. */
 void nw_get_clipboard(nw_display *d);
 
+/* Ask the compositor to launch a program (by name or absolute path), the same path the Run
+ * dialog uses. Fire-and-forget; the new program connects as its own client. */
+void nw_spawn(nw_display *d, const char *cmd);
+
 /* Wait up to timeout_ms (<0 = forever, 0 = poll) for one event.
  *   1  = an event was written to *ev
  *   0  = timed out, no event

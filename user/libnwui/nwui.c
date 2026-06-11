@@ -6,8 +6,24 @@
 #include "nwui_core.h"
 #include "libnw.h"
 #include <stdlib.h>
+#include <time.h>
 
 struct nwui_io { nw_display *d; nw_win *win; };
+
+/* Milliseconds on the monotonic clock — fed to the core so it can time double-clicks. */
+static int now_ms(void)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		return 0;
+	return (int) (ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
+void nwui_spawn(nwui *u, const char *cmd)
+{
+	struct nwui_io *io = (struct nwui_io *) u->io;
+	nw_spawn(io->d, cmd);
+}
 
 nwui *nwui_open(const char *title, int w, int h)
 {
@@ -52,6 +68,7 @@ void nwui_run(nwui *u)
 			break;                             /* compositor gone */
 		if (r == 0)
 			continue;
+		u->now_ms = now_ms();                  /* stamp time so the core can detect double-clicks */
 		if (!nwui_dispatch(u, &ev))            /* CLOSE */
 			break;
 		if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }

@@ -73,6 +73,7 @@ nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user)
 	n->user      = user;
 	n->focusable = 1;
 	n->sel       = -1;
+	n->last_row  = -1;           /* no prior click -> first click is never a double */
 	return n;
 }
 
@@ -81,10 +82,11 @@ void nwui_list_set(nwui_node *list, const char *const *items, int count)
 	if (!list || list->kind != NWUI_LIST) return;
 	list->items   = items;
 	list->count   = count;
-	list->scroll  = 0;
-	list->sel     = -1;          /* a fresh model -> no carried-over selection */
-	list->sb_drag = 0;
-	list->dirty   = 1;
+	list->scroll   = 0;
+	list->sel      = -1;         /* a fresh model -> no carried-over selection */
+	list->sb_drag  = 0;
+	list->last_row = -1;         /* and no stale double-click state */
+	list->dirty    = 1;
 	if (list->owner) list->owner->layout_dirty = 1;
 }
 
@@ -506,7 +508,14 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 					int row = over->scroll + (ev->y - over->y) / NWUI_ROW_H;
 					if (row >= 0 && row < over->count) {
 						over->sel = row; over->dirty = 1;
-						list_activate(over);             /* single-click selects + activates */
+						int dbl = (row == over->last_row &&
+						           u->now_ms - over->last_ms <= NWUI_DBL_MS);
+						over->last_row = row;
+						over->last_ms  = u->now_ms;
+						if (dbl) {                       /* double-click -> open/run */
+							over->last_row = -1;     /* reset so a 3rd click isn't a 2nd dbl */
+							list_activate(over);
+						}
 					}
 				}
 			}

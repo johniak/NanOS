@@ -28,6 +28,7 @@ enum {
 	NW_REQ_DESTROY_WINDOW = 4,   /* window                                                  */
 	NW_REQ_SET_CLIPBOARD  = 5,   /* payload=text (reply to NW_EVT_COPY)                     */
 	NW_REQ_GET_CLIPBOARD  = 6,   /* ask for the clipboard -> server replies NW_EVT_PASTE    */
+	NW_REQ_SPAWN          = 7,   /* payload=command/path; server launches it (like Run)     */
 
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */

@@ -478,6 +478,16 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 			emit_win(s, s->focus, NW_EVT_PASTE, 0, 0, 0, 0,
 			         (const unsigned char *) s->clip, (uint32_t) s->clip_len);
 		break;
+	case NW_REQ_SPAWN: {
+		/* a client asks the compositor to launch a program — route it through the same
+		 * pending-spawn slot the Run dialog uses; the I/O shell does the fork+exec. */
+		int n = (int) m->length;
+		if (n > NW_RUN_MAX - 1) n = NW_RUN_MAX - 1;
+		if (payload && n > 0) memcpy(s->run_cmd, payload, n);
+		s->run_cmd[n > 0 ? n : 0] = 0;
+		if (n > 0) s->want_spawn = 1;
+		break;
+	}
 	default:
 		break;
 	}

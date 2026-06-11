@@ -14,6 +14,7 @@ enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD,
 
 enum { NWUI_ROW_H = 18 };   /* list item row height */
 enum { NWUI_SB_W = 12, NWUI_SB_MIN = 16 };   /* list scrollbar: width, min thumb height */
+enum { NWUI_DBL_MS = 400 };   /* two clicks on the same row within this -> a double-click */
 
 enum {
 	NWUI_MAX_NODES = 128,
@@ -47,6 +48,7 @@ struct nwui_node {
 	const char *const *items;        /* list: app-owned array of item strings */
 	int        count, sel, scroll;   /* list: item count, selected/visible-from index */
 	int        sb_drag, sb_grab;     /* list: scrollbar thumb being dragged + grab offset (px) */
+	int        last_row, last_ms;    /* list: last clicked row + time, for double-click detect */
 
 	nwui_cb    on_click, on_change;
 	void      *user;
@@ -61,6 +63,7 @@ struct nwui {
 	nwui_node *focus;             /* focused textfield, or NULL */
 	nwui_node *armed;             /* node a left-press landed on (for click-on-release) */
 	int        win_w, win_h;
+	int        now_ms;            /* current time (ms) injected by the I/O shell before dispatch */
 	int        prev_buttons;
 	int        layout_dirty;      /* tree/sizes changed -> full relayout + repaint */
 	void      *io;                /* nwui.c stashes its nw_display + nw_win here; core ignores it */

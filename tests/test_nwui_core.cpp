@@ -279,7 +279,7 @@ TEST_CASE("CONFIGURE sets the window size + requests relayout; CLOSE stops the l
 static int g_activations;
 static void on_activate(nwui_node *, void *u) { (*(int *) u)++; }
 
-TEST_CASE("list: clicking a row selects + activates it; out-of-range clicks are ignored") {
+TEST_CASE("list: single click selects (no activate); double-click activates; out-of-range ignored") {
 	nwui *u = new nwui; nwui_init(u);
 	const char *items[] = { "alpha", "beta", "gamma", "delta" };
 	g_activations = 0;
@@ -290,16 +290,40 @@ TEST_CASE("list: clicking a row selects + activates it; out-of-range clicks are 
 	nwui_set_root(u, nwui_flex(L, 1));
 	u->win_w = 200; u->win_h = 100; nwui_layout(u);
 
-	// click row 2 (gamma): rows are NWUI_ROW_H tall, starting 1px inside the border
+	// single click row 2 (gamma): selects, but does NOT activate
 	int ry = L->y + 1 + 2 * NWUI_ROW_H + NWUI_ROW_H / 2;
+	u->now_ms = 1000;
 	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);
 	CHECK(nwui_list_selected(L) == 2);
-	CHECK(g_activations == 1);
+	CHECK(g_activations == 0);                        // single click never opens
 	CHECK(u->focus == L);
+
+	// a second click on the same row within the double-click window -> activate
+	u->now_ms = 1000 + NWUI_DBL_MS - 50;
+	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);
+	CHECK(g_activations == 1);
 
 	// a click far below the last row selects nothing new
 	pointer(u, L->x + 5, L->y + 1 + 99 * NWUI_ROW_H, 1);
 	CHECK(nwui_list_selected(L) == 2);               // unchanged
+	delete u;
+}
+
+TEST_CASE("list: two clicks too far apart in time are NOT a double-click") {
+	nwui *u = new nwui; nwui_init(u);
+	const char *items[] = { "a", "b", "c" };
+	g_activations = 0;
+	nwui_node *L = nwui_list(u, on_activate, &g_activations);
+	nwui_list_set(L, items, 3);
+	nwui_set_root(u, nwui_flex(L, 1));
+	u->win_w = 200; u->win_h = 100; nwui_layout(u);
+	int ry = L->y + 1 + NWUI_ROW_H / 2;
+	u->now_ms = 5000;
+	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);   // first click
+	u->now_ms = 5000 + NWUI_DBL_MS + 100;                       // too slow
+	pointer(u, L->x + 5, ry, 1); pointer(u, L->x + 5, ry, 0);   // second click
+	CHECK(g_activations == 0);                                   // not a double-click
+	CHECK(nwui_list_selected(L) == 0);                          // but still selected
 	delete u;
 }
 

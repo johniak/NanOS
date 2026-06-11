@@ -2,10 +2,11 @@
  * nwexp.c — a simple file explorer for NanWM, built on libnwui's list widget.
  *
  * Lists a directory (opendir/readdir over the kernel's getdents64), one row per entry with a
- * trailing "/" on sub-directories. Activating a row (click or Enter) descends into a directory
- * or, for ".." , climbs to the parent; the path label tracks the current directory. Files are
- * inert (read support is the kernel's job; this is just a browser). The whole UI — list, focus,
- * keyboard navigation, scrolling — comes from the toolkit; this app is the tree + a little state.
+ * trailing "/" on sub-directories. A single click selects; a double-click (or Enter) opens:
+ * a directory is entered (".." climbs to the parent), a ".nxe" program is launched via the
+ * compositor (nwui_spawn). The path label tracks the current directory. The whole UI — list,
+ * focus, keyboard nav, scrollbar, double-click timing — comes from the toolkit; this app is
+ * just the tree + a little state.
  */
 #include "nwui.h"
 #include <dirent.h>
@@ -20,8 +21,16 @@ static char        g_is_dir[MAX_ENT];            /* parallel: 1 = directory, "..
 static const char *g_items[MAX_ENT];             /* pointers into g_names for nwui_list_set */
 static int         g_count;
 
+static nwui       *g_ui;
 static nwui_node  *g_list;
 static nwui_node  *g_path;
+
+/* True if `name` looks like an executable program (a .nxe binary). */
+static int is_nxe(const char *name)
+{
+	int n = (int) strlen(name);
+	return n > 4 && strcmp(name + n - 4, ".nxe") == 0;
+}
 
 /* Build the absolute path of child `name` under g_cwd into `out`. */
 static void join_path(char *out, int cap, const char *dir, const char *name)
@@ -85,8 +94,14 @@ static void on_activate(nwui_node *self, void *user)
 	int sel = nwui_list_selected(g_list);
 	if (sel < 0 || sel >= g_count)
 		return;
-	if (!g_is_dir[sel])
-		return;                                  /* a file: nothing to open (read-only browser) */
+	if (!g_is_dir[sel]) {                        /* a file: run it if it's a program */
+		if (is_nxe(g_names[sel])) {
+			char target[256];
+			join_path(target, sizeof target, g_cwd, g_names[sel]);
+			nwui_spawn(g_ui, target);            /* ask the compositor to launch it */
+		}
+		return;
+	}
 
 	if (strcmp(g_names[sel], "..") == 0) {
 		go_parent();                             /* edits g_cwd in place */
@@ -110,6 +125,7 @@ int main(void)
 	nwui *u = nwui_open("Files", 360, 280);
 	if (!u)
 		return 1;
+	g_ui = u;
 
 	g_path = nwui_label(u, g_cwd);
 	g_list = nwui_list(u, on_activate, 0);

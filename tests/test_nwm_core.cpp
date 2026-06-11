@@ -322,6 +322,23 @@ TEST_CASE("nw_peek_damage reads the damage rect without clearing it") {
 	CHECK(nw_peek_damage(&s, &x, &y, &w, &h) == 0);      // now cleared
 }
 
+TEST_CASE("NW_REQ_SPAWN queues the command for the shell to launch (like the Run dialog)") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	char out[NW_RUN_MAX];
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);   // nothing pending yet
+	const char* path = "/disks/main/apps/doom/doom.nxe";
+	nw_msg m{}; m.type = NW_REQ_SPAWN; m.length = (uint32_t) strlen(path);
+	nw_client_msg(&s, 0, &m, (const unsigned char*) path);
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);   // a launch is now pending
+	CHECK(strcmp(out, path) == 0);
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);   // taking it cleared the flag
+	// an empty spawn payload is ignored (no launch)
+	nw_msg e{}; e.type = NW_REQ_SPAWN; e.length = 0;
+	nw_client_msg(&s, 0, &e, (const unsigned char*) "");
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 0);
+}
+
 TEST_CASE("panel buttons hit-test and clicks set the quit/shutdown flags") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());

@@ -129,6 +129,15 @@ void nw_get_clipboard(nw_display *d)
 	send_hdr(d->reqfd, NW_REQ_GET_CLIPBOARD, 0, 0, 0, 0, 0, 0);   /* -> arrives as NW_EV_PASTE */
 }
 
+void nw_spawn(nw_display *d, const char *cmd)
+{
+	int len = 0;
+	while (cmd && cmd[len]) len++;
+	if (send_hdr(d->reqfd, NW_REQ_SPAWN, 0, 0, 0, 0, 0, (uint32_t) len) < 0)
+		return;
+	if (len) write_all(d->reqfd, cmd, len);
+}
+
 /* ---- event pump ---- */
 static int translate(nw_display *d, struct nw_event *ev)
 {
