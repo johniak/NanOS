@@ -225,12 +225,16 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->open(String((char*) a0), a1);
 		break;
 	case SYS_close: {
-		// Wake anyone blocked on this object before/after dropping the fd, so a peer reading a
-		// pipe whose last writer just closed sees EOF (and a writer sees EPIPE) instead of
-		// sleeping forever. The queue lives on the shared object, which outlives this fd.
+		// Wake anyone blocked on this object after dropping the fd, so a peer reading a pipe
+		// whose last writer just closed sees EOF (and a writer sees EPIPE) instead of sleeping
+		// forever. BUT if this was the pipe's last end, close() frees the Pipe (and its embedded
+		// WaitQueue), so `wq` would dangle — skip the wake then. That is always safe: a pipe with
+		// no open ends can have no blocked waiter (a blocked reader/writer holds an end open).
 		WaitQueue* wq = g_sys->fdWaitQueue(a0);
-		ret = g_sys->close(a0);
-		Scheduler::wakeAll(wq);
+		bool freedShared = false;
+		ret = g_sys->close(a0, &freedShared);
+		if (!freedShared)
+			Scheduler::wakeAll(wq);
 		break;
 	}
 	case SYS_unlink:

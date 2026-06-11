@@ -46,6 +46,24 @@ TEST_CASE("Syscalls pipe round-trips and reports EOF on write-end close") {
 	CHECK(sys.read(fd[0], b, 8) == 0);         // writer closed -> EOF
 }
 
+TEST_CASE("close() reports when the last pipe end frees the shared object") {
+	// The kernel uses this flag to avoid waking a freed pipe's WaitQueue (use-after-free):
+	// the wake is skipped exactly when close frees the Pipe.
+	Vfs vfs;
+	Syscalls sys(&vfs, nullsink);
+	int fd[2];
+	sys.pipe(fd);
+	bool freed = true;
+	CHECK(sys.close(fd[0], &freed) == 0);   // read end gone, write end still open
+	CHECK(freed == false);                  // pipe survives -> waking its queue is safe
+	freed = false;
+	CHECK(sys.close(fd[1], &freed) == 0);   // last end gone -> pipe deleted
+	CHECK(freed == true);                   // caller must NOT touch the (now freed) queue
+	// A non-pipe fd never frees a shared object.
+	int cf = sys.open(String("/x"), 0);
+	if (cf >= 0) { freed = true; CHECK(sys.close(cf, &freed) == 0); CHECK(freed == false); }
+}
+
 TEST_CASE("Syscalls dup2 aliases a pipe write end (shared backing + refcount)") {
 	Vfs vfs;
 	Syscalls sys(&vfs, nullsink);

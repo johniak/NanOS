@@ -141,14 +141,17 @@ int Syscalls::open(String path, int flags) {
 	return -EBADF;   // out of descriptors
 }
 
-int Syscalls::close(int fd) {
+int Syscalls::close(int fd, bool* freedShared) {
+	if (freedShared) *freedShared = false;
 	if (!valid(fd))
 		return -EBADF;
 	if (fds[fd].pipe) {                       // drop this end; free the pipe when both gone
 		Pipe* p = fds[fd].pipe;
 		if (fds[fd].pipeWrite) p->dropWriter(); else p->dropReader();
-		if (p->readers() == 0 && p->writers() == 0)
-			delete p;
+		if (p->readers() == 0 && p->writers() == 0) {
+			delete p;                         // the pipe's WaitQueue dies with it
+			if (freedShared) *freedShared = true;
+		}
 		fds[fd].pipe = 0;
 		fds[fd].pipeWrite = false;
 	}

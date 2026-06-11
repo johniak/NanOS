@@ -107,7 +107,9 @@ public:
 	Syscalls(const Syscalls& o);   // fork: dup the fd table, bumping pipe-end refcounts
 	~Syscalls();                   // process exit: close fds, dropping pipe-end refcounts
 	int open(String path, int flags);
-	int close(int fd);
+	// On the last close of a pipe, the Pipe (and its embedded WaitQueue) is freed; *freedShared
+	// is set true so the caller knows NOT to touch that queue afterwards (use-after-free guard).
+	int close(int fd, bool* freedShared = nullptr);
 	int read(int fd, void* buf, unsigned n);
 	int write(int fd, const void* buf, unsigned n);
 	int lseek(int fd, int off, int whence);
