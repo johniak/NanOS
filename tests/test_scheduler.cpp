@@ -50,6 +50,31 @@ TEST_CASE("wake only revives a BLOCKED task; never resurrects a zombie/done/stop
 	Scheduler::wake(0);   // must not crash
 }
 
+TEST_CASE("resume un-stops only a STOPPED task (SIGCONT), distinct from wake") {
+	Task t;
+	t.kesp = t.esp0 = 0; t.body = 0; t.id = 1; t.kstack = 0; t.wantTick = false;
+
+	// STOPPED -> READY (the job-control continue path).
+	t.state = TASK_STOPPED;
+	Scheduler::resume(&t);
+	CHECK(t.state == TASK_READY);
+
+	// resume() must not touch a blocked/dead task — only a stop is continued this way.
+	const TaskState untouched[] = { TASK_BLOCKED, TASK_ZOMBIE, TASK_DONE, TASK_FREE,
+	                                TASK_READY, TASK_RUNNING };
+	for (TaskState s : untouched) {
+		t.state = s;
+		Scheduler::resume(&t);
+		CHECK(t.state == s);
+	}
+	Scheduler::resume(0);   // null is a no-op
+
+	// wake() must NOT resume a stopped task (a child's SIGCHLD can't un-stop a Ctrl+Z'd proc).
+	t.state = TASK_STOPPED;
+	Scheduler::wake(&t);
+	CHECK(t.state == TASK_STOPPED);
+}
+
 TEST_CASE("loadDecay: blends toward the runnable count over successive 5s steps") {
 	unsigned load[3] = { 0, 0, 0 };
 	// With a steady runnable count, each EWMA rises toward it; the 1-min average rises

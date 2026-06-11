@@ -125,6 +125,12 @@ int ProcTable::reparentChildren(int oldParent, int newParent) {
 	return n;
 }
 
+void ProcTable::forEachLive(void (*fn)(int, bool, void*), void* ctx) {
+	for (int i = 0; i < MAXPROC; i++)
+		if (g_procs[i].used)
+			fn(g_procs[i].pid, g_procs[i].kthread, ctx);
+}
+
 // Linux-style single-letter run state, derived from the exit flag + scheduler task.
 static char stateChar(const Process* p) {
 	if (p->exited)

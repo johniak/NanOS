@@ -46,7 +46,8 @@ public:
 	static void yield() { schedule(); }
 	static void ioWait();                          // BLOCKED until the next tick (I/O retry loop)
 	static void block();                           // current -> BLOCKED, then schedule
-	static void wake(Task* t);                     // -> READY (IRQ-safe: just a flag)
+	static void wake(Task* t);                     // BLOCKED -> READY (IRQ-safe: just a flag)
+	static void resume(Task* t);                   // STOPPED -> READY (job-control SIGCONT/KILL)
 	static void reap(Task* t);                     // -> FREE: release the slot for reuse
 	static Task* current();
 	static Task* idle();                           // the idle task (slot 0)

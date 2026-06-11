@@ -106,6 +106,10 @@ public:
 	// POSIX orphan handling: re-home every live child of `oldParent` onto `newParent` (init,
 	// pid 1) when their parent dies, so they stay reapable instead of leaking. Returns the count.
 	static int reparentChildren(int oldParent, int newParent);
+	// Visit every live process without a snapshot buffer (so a broadcast signal needs no heap
+	// allocation): calls fn(pid, kthread, ctx) per process. The callback must not add/remove
+	// processes — posting a signal to each is fine.
+	static void forEachLive(void (*fn)(int pid, bool kthread, void* ctx), void* ctx);
 
 	// Sessions + process groups. All operate on the current process unless `pid` names
 	// another; `pid == 0` means the current process. Pure process-table bookkeeping

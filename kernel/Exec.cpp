@@ -358,6 +358,17 @@ static void procStop(int sig) {
 	p->stopped = false;
 }
 
+// Broadcast (kill(-1)) helper: visited once per live process by ProcTable::forEachLive, so the
+// whole table is signalled without allocating a snapshot buffer on the heap.
+struct BcastCtx { int sig; int self; int rc; };
+static void bcastVisit(int pid, bool kthread, void* c) {
+	BcastCtx* b = (BcastCtx*) c;
+	if (pid == 1 || pid == b->self || kthread)
+		return;                       // never signal init, ourselves, or a kernel thread
+	if (signalSend(pid, b->sig) == 0)
+		b->rc = 0;
+}
+
 // kill(2): post `sig` to process `pid`. Wakes a blocked target so it can deliver. Per POSIX
 // a non-positive pid targets a process group: pid == 0 is the caller's group, pid < 0 is
 // the group |pid|.
@@ -366,20 +377,9 @@ int signalSend(int pid, int sig) {
 		return -22;   // -EINVAL
 	if (pid == -1) {  // broadcast: every process we may signal, except init (pid 1) and self
 		Process* me = ProcTable::current();
-		int self = me ? me->pid : 0;
-		ProcInfo* arr = (ProcInfo*) malloc(sizeof(ProcInfo) * ProcTable::MAX);   // heap, not stack
-		if (!arr)
-			return -3;   // -ESRCH-ish: cannot enumerate (OOM)
-		int n = ProcTable::snapshot(arr, ProcTable::MAX);
-		int rc = -3;
-		for (int i = 0; i < n; i++) {
-			if (arr[i].pid == 1 || arr[i].pid == self || arr[i].kthread)
-				continue;
-			if (signalSend(arr[i].pid, sig) == 0)
-				rc = 0;
-		}
-		free(arr);
-		return rc;
+		BcastCtx bc = { sig, me ? me->pid : 0, -3 };
+		ProcTable::forEachLive(bcastVisit, &bc);   // snapshot-free: no heap allocation
+		return bc.rc;
 	}
 	if (pid <= 0) {
 		Process* me = ProcTable::current();
@@ -404,7 +404,7 @@ int signalSend(int pid, int sig) {
 		if (t->task->state == TASK_BLOCKED)
 			Scheduler::wake(t->task);
 		else if (t->task->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
-			Scheduler::wake(t->task);
+			Scheduler::resume(t->task);   // STOPPED -> READY: only a continue/kill un-stops it
 	}
 	return 0;
 }
@@ -528,18 +528,14 @@ void consoleSignal(int sig) {
 int signalSendGroup(int pgid, int sig) {
 	if (pgid <= 0)
 		return -3;    // -ESRCH
-	// Reach EVERY member of the group: enumerate into a heap buffer sized to the whole table,
-	// falling back to a small stack buffer if the heap is exhausted (typical groups are tiny).
-	int stackpids[64];
-	int* pids = stackpids;
-	int cap = 64;
-	int* heappids = (int*) malloc(sizeof(int) * ProcTable::MAX);
-	if (heappids) { pids = heappids; cap = ProcTable::MAX; }
-	int n = ProcTable::groupMembers(pgid, pids, cap);
-	if (n == 0) {
-		if (heappids) free(heappids);
+	// Enumerate group members into a small ON-STACK buffer. This runs from the keyboard IRQ
+	// (Ctrl+C/Z -> consoleSignal), and the kernel heap is NOT reentrant against an interrupt,
+	// so there must be no malloc on this path. A terminal process group never approaches this
+	// many members; a larger one would have its tail dropped (acceptable for signal delivery).
+	int pids[64];
+	int n = ProcTable::groupMembers(pgid, pids, 64);
+	if (n == 0)
 		return -3;
-	}
 	int rc = -3;
 	for (int i = 0; i < n; i++) {
 		Process* p = ProcTable::byPid(pids[i]);
@@ -556,7 +552,7 @@ int signalSendGroup(int pgid, int sig) {
 			if (p->task->state == TASK_BLOCKED)
 				Scheduler::wake(p->task);
 			else if (p->task->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
-				Scheduler::wake(p->task);
+				Scheduler::resume(p->task);   // STOPPED -> READY: only a continue/kill un-stops it
 		}
 		rc = 0;
 	}

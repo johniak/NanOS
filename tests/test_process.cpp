@@ -64,6 +64,28 @@ TEST_CASE("reapChild: child alive -> 0; exited -> pid + frees slot") {
 	CHECK(ProcTable::reapChild(parent->pid, -1, &out2) == -10);
 }
 
+static int g_visited;
+static int g_visitedKthreads;
+static void countVisit(int /*pid*/, bool kthread, void* /*ctx*/) {
+	g_visited++;
+	if (kthread) g_visitedKthreads++;
+}
+
+TEST_CASE("forEachLive visits every live process once, skipping freed slots") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	Process* b = ProcTable::alloc(0);
+	Process* c = ProcTable::alloc(0);
+	b->kthread = true;
+	ProcTable::freeSlot(a);          // a is gone -> must not be visited
+
+	g_visited = 0; g_visitedKthreads = 0;
+	ProcTable::forEachLive(countVisit, nullptr);
+	CHECK(g_visited == 2);           // only b and c remain
+	CHECK(g_visitedKthreads == 1);   // b was flagged a kernel thread
+	(void) c;
+}
+
 TEST_CASE("reparentChildren: orphans move to init and become reapable there") {
 	ProcTable::init();
 	Process* init   = ProcTable::alloc(0);          // stands in for pid 1

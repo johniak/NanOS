@@ -205,6 +205,16 @@ void Scheduler::wake(Task* t) {
 	}
 }
 
+// Resume a job-control-STOPPED task (SIGCONT, or SIGKILL so it can run far enough to die).
+// Kept distinct from wake() so an ordinary wakeup (I/O ready, a child's SIGCHLD) can NEVER
+// un-stop a Ctrl+Z'd process — only an explicit continue/kill does.
+void Scheduler::resume(Task* t) {
+	if (t && t->state == TASK_STOPPED) {
+		t->state = TASK_READY;
+		g_needResched = true;
+	}
+}
+
 void Scheduler::reap(Task* t) {
 	if (!t)
 		return;
