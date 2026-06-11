@@ -2,6 +2,7 @@
 #include "Process.h"
 #include "memory_manager.h"   // malloc/free: kernel stacks are heap-allocated per task
 #include <arch/sched.h>
+#include <arch/cpu.h>         // cpuIrqSave/Restore: protect the schedule() state mutation
 
 namespace kernel {
 
@@ -118,9 +119,16 @@ static int pickNext(int cur) {
 }
 
 void Scheduler::schedule() {
+	// Pick the next task and flip the run-state fields under a brief interrupts-off section, so
+	// a timer IRQ (onTick scans/mutates the same g_tasks states) can't interleave here. The flags
+	// are restored BEFORE the context switch — the switch itself touches no shared state and runs
+	// with the caller's original IF (kthreads with IF=1, syscalls with IF=0), exactly as before.
+	unsigned long flags = arch::cpuIrqSave();
 	int next = pickNext(g_cur);
-	if (next == g_cur)
+	if (next == g_cur) {
+		arch::cpuIrqRestore(flags);
 		return;                                   // nothing else to run
+	}
 	g_ctxt++;                                     // an actual context switch (for /proc/stat)
 	int prev = g_cur;
 	g_cur = next;
@@ -129,6 +137,7 @@ void Scheduler::schedule() {
 	g_tasks[next].state = TASK_RUNNING;
 	arch::setKernelStack(g_tasks[next].esp0);   // ring3 traps land on next's kstack
 	ProcTable::setCurrent(g_tasks[next].proc);  // route syscalls to it (O(1) back-pointer)
+	arch::cpuIrqRestore(flags);
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
 }
 

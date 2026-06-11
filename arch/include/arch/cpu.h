@@ -13,6 +13,12 @@ void cpuDisableInterrupts();
 void cpuEnableInterrupts();
 void cpuHalt();
 
+// Interrupt-flag save/restore for short critical sections: cpuIrqSave returns the prior EFLAGS
+// and disables interrupts; cpuIrqRestore restores them (re-enabling IF only if it was set). Lets
+// a critical region nest and stay correct whether the caller already had interrupts off.
+unsigned long cpuIrqSave();
+void cpuIrqRestore(unsigned long flags);
+
 // Power the machine off (x86: the ACPI/QEMU shutdown ports). Does not return; if the
 // platform can't power off it halts forever.
 void powerOff();

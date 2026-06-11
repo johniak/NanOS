@@ -40,6 +40,8 @@ unsigned archKernelCr3() { return 0; }
 void archTimerInit(unsigned) {}
 void setKernelStack(unsigned) {}
 void halt_or_hlt() {}
+unsigned long cpuIrqSave() { return 0; }   // no interrupts on the host harness
+void cpuIrqRestore(unsigned long) {}
 
 // CPUID is x86-only; under the host harness fill a representative CpuInfo so the
 // /proc/cpuinfo generator links and renders. (The pure cpuinfoString renderer is tested

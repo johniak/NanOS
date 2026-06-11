@@ -42,6 +42,17 @@ void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts() { __asm__ __volatile__("sti"); }
 void cpuHalt() { __asm__ __volatile__("hlt"); }
 
+// Save EFLAGS then disable interrupts; restore EFLAGS (re-enabling IF only if it was set).
+// Lets a critical section nest and run correctly whether the caller had interrupts on or off.
+unsigned long cpuIrqSave() {
+	unsigned long flags;
+	__asm__ __volatile__("pushf; pop %0; cli" : "=r"(flags) :: "memory");
+	return flags;
+}
+void cpuIrqRestore(unsigned long flags) {
+	__asm__ __volatile__("push %0; popf" :: "r"(flags) : "memory", "cc");
+}
+
 // Power off via the ACPI PM1a control port. QEMU's i440fx exposes it at 0x604 (newer),
 // the PIIX4 at 0xB004 (older); 0x4004 covers VirtualBox. SLP_EN|SLP_TYP=0x2000. We try all
 // then halt — on real hardware without these ports this just stops the CPU.
