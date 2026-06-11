@@ -115,6 +115,16 @@ void ProcTable::freeSlot(Process* p) {
 		p->used = false;
 }
 
+int ProcTable::reparentChildren(int oldParent, int newParent) {
+	int n = 0;
+	for (int i = 0; i < MAXPROC; i++)
+		if (g_procs[i].used && g_procs[i].parent == oldParent) {
+			g_procs[i].parent = newParent;
+			n++;
+		}
+	return n;
+}
+
 // Linux-style single-letter run state, derived from the exit flag + scheduler task.
 static char stateChar(const Process* p) {
 	if (p->exited)

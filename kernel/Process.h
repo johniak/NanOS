@@ -103,6 +103,9 @@ public:
 	// *childOut, or 0 if there is none. Distinct from reapChild (which reaps the dead).
 	static int reapStopped(int parentPid, int wantPid, Process** childOut);
 	static void freeSlot(Process* p);    // release a process slot after teardown
+	// POSIX orphan handling: re-home every live child of `oldParent` onto `newParent` (init,
+	// pid 1) when their parent dies, so they stay reapable instead of leaking. Returns the count.
+	static int reparentChildren(int oldParent, int newParent);
 
 	// Sessions + process groups. All operate on the current process unless `pid` names
 	// another; `pid == 0` means the current process. Pure process-table bookkeeping

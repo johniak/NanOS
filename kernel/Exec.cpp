@@ -233,15 +233,25 @@ void procExit() {
 	p->sys->closeAll();      // drop fd/pipe refcounts NOW so peers (e.g. a window server) see
 	                         // EOF at exit, not only when the parent reaps this zombie
 	orphanCheckOnExit(p);    // re-parent fallout: SIGHUP+SIGCONT any newly-orphaned stopped group
+	// POSIX: our children are now orphans — re-home them on init (pid 1) so they stay reapable
+	// (their pid would otherwise name a dead parent forever, leaking the slot + 8 KB stack).
+	// Nudge init in case any are already zombies waiting to be collected.
+	if (p->pid != 1 && ProcTable::reparentChildren(p->pid, 1) > 0) {
+		Process* init = ProcTable::byPid(1);
+		if (init) { sigPost(init->sig, SIGCHLD); Scheduler::wake(init->task); }
+	}
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 		p->space = 0;
 	}
-	// Wake the parent if it is blocked in waitpid; it will reap this zombie.
+	// Notify our parent of our death (SIGCHLD + wake) so a parent blocked in waitpid — or one
+	// sitting in its SIGCHLD handler's read(), like the init shell collecting orphans — reaps us.
 	Process* parent = ProcTable::byPid(p->parent);
-	if (parent)
+	if (parent) {
+		sigPost(parent->sig, SIGCHLD);
 		Scheduler::wake(parent->task);
+	}
 	Scheduler::current()->state = TASK_ZOMBIE;
 	Scheduler::schedule();   // never returns to this (now zombie) task
 	for (;;) {}              // unreachable

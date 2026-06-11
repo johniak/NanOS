@@ -64,6 +64,28 @@ TEST_CASE("reapChild: child alive -> 0; exited -> pid + frees slot") {
 	CHECK(ProcTable::reapChild(parent->pid, -1, &out2) == -10);
 }
 
+TEST_CASE("reparentChildren: orphans move to init and become reapable there") {
+	ProcTable::init();
+	Process* init   = ProcTable::alloc(0);          // stands in for pid 1
+	Process* parent = ProcTable::alloc(init->pid);
+	Process* c1 = ProcTable::alloc(parent->pid);
+	Process* c2 = ProcTable::alloc(parent->pid);
+	Process* other = ProcTable::alloc(init->pid);   // not a child of `parent`
+
+	// Re-home parent's children onto init; only its own two children move.
+	CHECK(ProcTable::reparentChildren(parent->pid, init->pid) == 2);
+	CHECK(c1->parent == init->pid);
+	CHECK(c2->parent == init->pid);
+	CHECK(other->parent == init->pid);              // unchanged (already init's)
+
+	// init can now reap them once they exit; the dead original parent never could.
+	c1->exited = true;
+	Process* out = nullptr;
+	CHECK(ProcTable::reapChild(init->pid, c1->pid, &out) == c1->pid);
+	CHECK(out == c1);
+	CHECK(ProcTable::reapChild(parent->pid, -1, &out) == -10);   // parent has no children left
+}
+
 TEST_CASE("reapChild: wantPid narrows to a specific child") {
 	ProcTable::init();
 	Process* parent = ProcTable::alloc(0);
