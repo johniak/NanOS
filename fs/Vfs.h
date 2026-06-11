@@ -58,6 +58,12 @@ public:
 	virtual int create(String, unsigned) { return -30; }                        // -EROFS
 	virtual int unlink(String) { return -30; }                                  // -EROFS
 	virtual int mkdir(String, unsigned) { return -30; }                         // -EROFS
+	// Namespace + size mutations (Phase 3). Defaults read-only; ext + RamFs override.
+	virtual int rmdir(String) { return -30; }                                   // -EROFS
+	virtual int rename(String, String) { return -30; }                          // -EROFS
+	virtual int link(String, String) { return -30; }                           // -EROFS
+	virtual int symlink(String, String) { return -30; }                        // -EROFS (target, path)
+	virtual int truncate(String, unsigned) { return -30; }                     // -EROFS
 };
 
 // Factory registered by type name; creates a FileSystem for a device.

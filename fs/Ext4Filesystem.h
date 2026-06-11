@@ -390,6 +390,19 @@ public:
 		// inode stays a minimal, e2fsck-optimal extent tree.
 		maybeCollapseInline(inode);
 	}
+
+	void initInodeBlockmap(Ext2Inode& inode, bool isDir) {
+		(void) isDir;
+		inode.flags |= 0x80000;           // EXTENTS_FL
+		char* root = (char*) &inode.directBlocks[0];
+		memset(root, 0, 60);
+		Ext4ExtentHeader* h = (Ext4ExtentHeader*) root;
+		h->magic = EXT_MAGIC;
+		h->entries = 0;
+		h->max = 4;
+		h->depth = 0;
+		h->generation = 0;
+	}
 };
 
 // Factory + probe so the VFS can mount "ext4" (or pick it via auto-detect).

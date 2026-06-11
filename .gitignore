@@ -19,3 +19,4 @@ user/rust/rustform/target/
 disk/*_deep.img
 disk/*_full.img
 disk/*_split.img
+disk/*_dir.img

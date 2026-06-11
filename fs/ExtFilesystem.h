@@ -14,6 +14,7 @@
 #include "String.h"
 #include "ext/BlockCache.h"
 #include "ext/ExtAllocator.h"
+#include "ext/ExtCsum.h"
 #ifndef EXTFILESYSTEM_H_
 #define EXTFILESYSTEM_H_
 
@@ -146,6 +147,11 @@ public:
 	// indirect/index blocks), updating i_blocks and clearing the freed pointers in `inode`.
 	virtual unsigned bmapAlloc(Ext2Inode& inode, unsigned inodeNo, unsigned fileBlockIndex) = 0;
 	virtual void truncateBlocks(Ext2Inode& inode, unsigned inodeNo, unsigned firstFreeBlock) = 0;
+
+	// Initialise a freshly allocated inode's block mapping to "empty": ext2 zeroes the direct/
+	// indirect pointers (no extents); ext4 plants an empty extent header in i_block and sets
+	// EXTENTS_FL. (Inline fast symlinks bypass this and keep their target in i_block.)
+	virtual void initInodeBlockmap(Ext2Inode& inode, bool isDir) = 0;
 
 	int mount() {
 		device->readSectors(this->partitionLba + 2, 2, superblockBuff);
@@ -616,6 +622,389 @@ public:
 		writeInodeStruct((unsigned) inodeNo, inode);
 		cache->flush();
 		return 0;
+	}
+
+	// ---- directory operations (Phase 3) ---------------------------------------------------
+	enum { FT_REG = 1, FT_DIR = 2, FT_SYMLINK = 7 };
+
+	unsigned round4(unsigned n) { return (n + 3u) & ~3u; }
+	// Bytes of a directory block usable for entries (the metadata_csum tail takes the last 12).
+	unsigned dirUsable() { return (unsigned) blockSize - (alloc->metaCsum() ? 12u : 0u); }
+
+	// Stamp a directory block's metadata_csum tail (if enabled) then write it back through cache.
+	void dirStampAndWrite(unsigned blk, unsigned char* buf, unsigned dirNo, Ext2Inode& dir) {
+		if (alloc->metaCsum()) {
+			unsigned u = (unsigned) blockSize - 12u;
+			buf[u] = buf[u + 1] = buf[u + 2] = buf[u + 3] = 0;   // fake-dirent inode = 0
+			buf[u + 4] = 12; buf[u + 5] = 0;                     // rec_len = 12
+			buf[u + 6] = 0; buf[u + 7] = 0xDE;                   // name_len=0, fake file_type
+			unsigned iseed = extInodeSeed(alloc->csumSeed(), dirNo, (unsigned) dir.generationNumber);
+			unsigned c = extDirBlockCsum(iseed, buf, (unsigned) blockSize);
+			buf[blockSize - 4] = (unsigned char) c; buf[blockSize - 3] = (unsigned char) (c >> 8);
+			buf[blockSize - 2] = (unsigned char) (c >> 16); buf[blockSize - 1] = (unsigned char) (c >> 24);
+		}
+		cache->write(blk, buf);
+	}
+
+	void dirPutEntry(unsigned char* buf, unsigned off, unsigned ino, unsigned recLen,
+	                 const char* name, int nameLen, unsigned char ft) {
+		buf[off] = (unsigned char) ino; buf[off + 1] = (unsigned char) (ino >> 8);
+		buf[off + 2] = (unsigned char) (ino >> 16); buf[off + 3] = (unsigned char) (ino >> 24);
+		buf[off + 4] = (unsigned char) recLen; buf[off + 5] = (unsigned char) (recLen >> 8);
+		buf[off + 6] = (unsigned char) nameLen; buf[off + 7] = ft;
+		for (int i = 0; i < nameLen; i++) buf[off + 8 + i] = (unsigned char) name[i];
+	}
+
+	// Insert (name -> ino, type ft) into directory `dir`: reuse a free slot or split an entry's
+	// slack, else append a fresh directory block. Grows dir.lowerSize; caller persists the inode.
+	bool dirAddEntry(Ext2Inode& dir, unsigned dirNo, const char* name, int nameLen,
+	                 unsigned ino, unsigned char ft) {
+		unsigned need = 8u + round4((unsigned) nameLen);
+		unsigned usable = dirUsable();
+		unsigned nblocks = ((unsigned) dir.lowerSize + blockSize - 1) / blockSize;
+		unsigned char buf[4096];
+		for (unsigned fb = 0; fb < nblocks; fb++) {
+			unsigned blk = resolveBlock(dir, fb);
+			if (!blk) continue;
+			cache->read(blk, buf);
+			unsigned off = 0;
+			while (off + 8 <= usable) {
+				unsigned eino = (unsigned) buf[off] | ((unsigned) buf[off + 1] << 8)
+				              | ((unsigned) buf[off + 2] << 16) | ((unsigned) buf[off + 3] << 24);
+				unsigned rec = buf[off + 4] | (buf[off + 5] << 8);
+				unsigned nl = buf[off + 6];
+				if (rec == 0) break;
+				if (eino == 0) {
+					if (rec >= need) {
+						dirPutEntry(buf, off, ino, rec, name, nameLen, ft);
+						dirStampAndWrite(blk, buf, dirNo, dir);
+						return true;
+					}
+				} else {
+					unsigned actual = 8u + round4(nl);
+					if (rec - actual >= need) {
+						buf[off + 4] = (unsigned char) actual; buf[off + 5] = (unsigned char) (actual >> 8);
+						dirPutEntry(buf, off + actual, ino, rec - actual, name, nameLen, ft);
+						dirStampAndWrite(blk, buf, dirNo, dir);
+						return true;
+					}
+				}
+				off += rec;
+			}
+		}
+		unsigned fb = nblocks;                          // no room -> append a fresh dir block
+		unsigned blk = bmapAlloc(dir, dirNo, fb);
+		if (!blk) return false;
+		memset(buf, 0, (unsigned) blockSize);
+		dirPutEntry(buf, 0, ino, usable, name, nameLen, ft);
+		dirStampAndWrite(blk, buf, dirNo, dir);
+		dir.lowerSize += blockSize;
+		return true;
+	}
+
+	// Remove the entry named `name` from `dir` (merge its space into the previous entry, or zero
+	// its inode if it is first in the block). Returns true if found.
+	bool dirRemoveEntry(Ext2Inode& dir, unsigned dirNo, const char* name, int nameLen) {
+		unsigned usable = dirUsable();
+		unsigned nblocks = ((unsigned) dir.lowerSize + blockSize - 1) / blockSize;
+		unsigned char buf[4096];
+		for (unsigned fb = 0; fb < nblocks; fb++) {
+			unsigned blk = resolveBlock(dir, fb);
+			if (!blk) continue;
+			cache->read(blk, buf);
+			unsigned off = 0, prev = 0xFFFFFFFFu;
+			while (off + 8 <= usable) {
+				unsigned eino = (unsigned) buf[off] | ((unsigned) buf[off + 1] << 8)
+				              | ((unsigned) buf[off + 2] << 16) | ((unsigned) buf[off + 3] << 24);
+				unsigned rec = buf[off + 4] | (buf[off + 5] << 8);
+				unsigned nl = buf[off + 6];
+				if (rec == 0) break;
+				if (eino != 0 && (int) nl == nameLen) {
+					bool match = true;
+					for (int i = 0; i < nameLen; i++)
+						if (buf[off + 8 + i] != (unsigned char) name[i]) { match = false; break; }
+					if (match) {
+						if (prev != 0xFFFFFFFFu) {
+							unsigned prec = buf[prev + 4] | (buf[prev + 5] << 8);
+							prec += rec;
+							buf[prev + 4] = (unsigned char) prec; buf[prev + 5] = (unsigned char) (prec >> 8);
+						} else {
+							buf[off] = buf[off + 1] = buf[off + 2] = buf[off + 3] = 0;
+						}
+						dirStampAndWrite(blk, buf, dirNo, dir);
+						return true;
+					}
+				}
+				prev = off;
+				off += rec;
+			}
+		}
+		return false;
+	}
+
+	// True if `dir` contains only "." and "..".
+	bool dirIsEmpty(Ext2Inode& dir) {
+		unsigned usable = dirUsable();
+		unsigned nblocks = ((unsigned) dir.lowerSize + blockSize - 1) / blockSize;
+		unsigned char buf[4096];
+		for (unsigned fb = 0; fb < nblocks; fb++) {
+			unsigned blk = resolveBlock(dir, fb);
+			if (!blk) continue;
+			cache->read(blk, buf);
+			unsigned off = 0;
+			while (off + 8 <= usable) {
+				unsigned eino = (unsigned) buf[off] | ((unsigned) buf[off + 1] << 8)
+				              | ((unsigned) buf[off + 2] << 16) | ((unsigned) buf[off + 3] << 24);
+				unsigned rec = buf[off + 4] | (buf[off + 5] << 8);
+				unsigned nl = buf[off + 6];
+				if (rec == 0) break;
+				if (eino != 0) {
+					bool dot = (nl == 1 && buf[off + 8] == '.');
+					bool dotdot = (nl == 2 && buf[off + 8] == '.' && buf[off + 9] == '.');
+					if (!dot && !dotdot) return false;
+				}
+				off += rec;
+			}
+		}
+		return true;
+	}
+
+	// Write a freshly allocated inode: zero the full inodeSize, overlay the 128-byte struct, set
+	// i_extra_isize, recompute i_checksum. (Its on-disk bytes were stale before allocation.)
+	void writeNewInode(unsigned inodeNo, Ext2Inode& inode) {
+		unsigned char buf[256];
+		memset(buf, 0, inodeSize);
+		memcpy(buf, &inode, sizeof(Ext2Inode));
+		if (inodeSize > 128) { buf[0x80] = 32; buf[0x81] = 0; }   // i_extra_isize = 32
+		alloc->writeInode(inodeNo, buf);
+	}
+
+	// Resolve `path`'s parent directory and split off the final component into name/nameLen.
+	bool resolveParent(const char* path, Ext2Inode& parent, int& parentNo, char* name, int& nameLen) {
+		if (!path || path[0] != '/') return false;
+		int end = 0; while (path[end]) end++;
+		while (end > 0 && path[end - 1] == '/') end--;
+		int start = end; while (start > 0 && path[start - 1] != '/') start--;
+		nameLen = end - start;
+		if (nameLen <= 0 || nameLen > 255) return false;
+		for (int i = 0; i < nameLen; i++) name[i] = path[start + i];
+		name[nameLen] = 0;
+		char pp[256]; int k = 0;
+		for (int i = 0; i < start && k < 255; i++) pp[k++] = path[i];
+		if (k == 0) pp[k++] = '/';
+		pp[k] = 0;
+		return resolvePathNum(pp, parent, parentNo, 0);
+	}
+
+	unsigned inodeGoal(unsigned dirNo) { return (dirNo - 1) / (unsigned) baseSuperBlock.inodesInGroup; }
+
+	// ---- VFS namespace operations ----
+	int create(String path, unsigned mode) {
+		Ext2Inode parent; int parentNo; char name[256]; int nl;
+		if (!resolveParent((char*) path, parent, parentNo, name, nl)) return -2;
+		Ext2Inode existing; int exNo;
+		if (getChildrenInodeNum(parent, name, nl, existing, exNo)) {
+			if (isDirectory(existing)) return -21;
+			return truncate(path, 0);                       // make-or-truncate an existing file
+		}
+		unsigned ino = alloc->allocInode(false, inodeGoal((unsigned) parentNo));
+		if (!ino) return -28;
+		Ext2Inode ni; memset(&ni, 0, sizeof(ni));
+		ni.typeAndPermisions = (short) (0x8000 | (mode & 0xFFF));
+		ni.hardlinksCount = 1;
+		initInodeBlockmap(ni, false);
+		writeNewInode(ino, ni);
+		if (!dirAddEntry(parent, (unsigned) parentNo, name, nl, ino, FT_REG)) {
+			alloc->freeInode(ino, false); return -28;
+		}
+		writeInodeStruct((unsigned) parentNo, parent);
+		cache->flush();
+		return 0;
+	}
+
+	int mkdir(String path, unsigned mode) {
+		Ext2Inode parent; int parentNo; char name[256]; int nl;
+		if (!resolveParent((char*) path, parent, parentNo, name, nl)) return -2;
+		Ext2Inode dummy; int dn;
+		if (getChildrenInodeNum(parent, name, nl, dummy, dn)) return -17;   // -EEXIST
+		unsigned ino = alloc->allocInode(true, inodeGoal((unsigned) parentNo));
+		if (!ino) return -28;
+		Ext2Inode ni; memset(&ni, 0, sizeof(ni));
+		ni.typeAndPermisions = (short) (0x4000 | (mode & 0xFFF));
+		ni.hardlinksCount = 2;
+		initInodeBlockmap(ni, true);
+		writeNewInode(ino, ni);
+		unsigned blk = bmapAlloc(ni, ino, 0);
+		if (!blk) { alloc->freeInode(ino, true); return -28; }
+		ni.lowerSize = blockSize;
+		unsigned char buf[4096]; memset(buf, 0, (unsigned) blockSize);
+		dirPutEntry(buf, 0, ino, 12, ".", 1, FT_DIR);
+		dirPutEntry(buf, 12, (unsigned) parentNo, dirUsable() - 12, "..", 2, FT_DIR);
+		dirStampAndWrite(blk, buf, ino, ni);
+		writeInodeStruct(ino, ni);
+		if (!dirAddEntry(parent, (unsigned) parentNo, name, nl, ino, FT_DIR)) {
+			alloc->freeInode(ino, true); return -28;
+		}
+		parent.hardlinksCount = (short) (parent.hardlinksCount + 1);   // child's ".." backlink
+		writeInodeStruct((unsigned) parentNo, parent);
+		cache->flush();
+		return 0;
+	}
+
+	int unlink(String path) {
+		Ext2Inode parent; int parentNo; char name[256]; int nl;
+		if (!resolveParent((char*) path, parent, parentNo, name, nl)) return -2;
+		Ext2Inode child; int childNo;
+		if (!getChildrenInodeNum(parent, name, nl, child, childNo)) return -2;
+		if (isDirectory(child)) return -21;                 // use rmdir
+		if (!dirRemoveEntry(parent, (unsigned) parentNo, name, nl)) return -2;
+		child.hardlinksCount = (short) (child.hardlinksCount - 1);
+		if (child.hardlinksCount <= 0) {
+			truncateBlocks(child, (unsigned) childNo, 0);
+			alloc->freeInode((unsigned) childNo, false);
+		} else {
+			writeInodeStruct((unsigned) childNo, child);
+		}
+		cache->flush();
+		return 0;
+	}
+
+	int rmdir(String path) {
+		Ext2Inode parent; int parentNo; char name[256]; int nl;
+		if (!resolveParent((char*) path, parent, parentNo, name, nl)) return -2;
+		Ext2Inode child; int childNo;
+		if (!getChildrenInodeNum(parent, name, nl, child, childNo)) return -2;
+		if (!isDirectory(child)) return -20;                // -ENOTDIR
+		if (!dirIsEmpty(child)) return -39;                 // -ENOTEMPTY
+		if (!dirRemoveEntry(parent, (unsigned) parentNo, name, nl)) return -2;
+		truncateBlocks(child, (unsigned) childNo, 0);
+		alloc->freeInode((unsigned) childNo, true);
+		parent.hardlinksCount = (short) (parent.hardlinksCount - 1);
+		writeInodeStruct((unsigned) parentNo, parent);
+		cache->flush();
+		return 0;
+	}
+
+	int link(String oldpath, String newpath) {
+		Ext2Inode target; int targetNo;
+		if (!resolvePathNum((char*) oldpath, target, targetNo, 0)) return -2;
+		if (isDirectory(target)) return -1;                 // -EPERM
+		Ext2Inode parent; int parentNo; char name[256]; int nl;
+		if (!resolveParent((char*) newpath, parent, parentNo, name, nl)) return -2;
+		Ext2Inode dummy; int dn;
+		if (getChildrenInodeNum(parent, name, nl, dummy, dn)) return -17;
+		unsigned char ft = isSymlink(target) ? FT_SYMLINK : FT_REG;
+		if (!dirAddEntry(parent, (unsigned) parentNo, name, nl, (unsigned) targetNo, ft)) return -28;
+		writeInodeStruct((unsigned) parentNo, parent);
+		target.hardlinksCount = (short) (target.hardlinksCount + 1);
+		writeInodeStruct((unsigned) targetNo, target);
+		cache->flush();
+		return 0;
+	}
+
+	int symlink(String target, String path) {
+		Ext2Inode parent; int parentNo; char name[256]; int nl;
+		if (!resolveParent((char*) path, parent, parentNo, name, nl)) return -2;
+		Ext2Inode dummy; int dn;
+		if (getChildrenInodeNum(parent, name, nl, dummy, dn)) return -17;
+		const char* tgt = (char*) target;
+		int tlen = 0; while (tgt[tlen]) tlen++;
+		if (tlen > 255) return -22;
+		unsigned ino = alloc->allocInode(false, inodeGoal((unsigned) parentNo));
+		if (!ino) return -28;
+		Ext2Inode ni; memset(&ni, 0, sizeof(ni));
+		ni.typeAndPermisions = (short) (0xA000 | 0x1FF);
+		ni.hardlinksCount = 1;
+		ni.lowerSize = tlen;
+		if (tlen <= 60) {                                   // fast symlink: target inline in i_block
+			ni.flags &= ~0x80000;
+			memcpy(&ni.directBlocks[0], tgt, tlen);
+			writeNewInode(ino, ni);
+		} else {                                            // slow symlink: a data block
+			initInodeBlockmap(ni, false);
+			writeNewInode(ino, ni);
+			unsigned blk = bmapAlloc(ni, ino, 0);
+			if (!blk) { alloc->freeInode(ino, false); return -28; }
+			unsigned char buf[4096]; memset(buf, 0, (unsigned) blockSize);
+			memcpy(buf, tgt, tlen);
+			cache->write(blk, buf);
+			writeInodeStruct(ino, ni);
+		}
+		if (!dirAddEntry(parent, (unsigned) parentNo, name, nl, ino, FT_SYMLINK)) {
+			alloc->freeInode(ino, false); return -28;
+		}
+		writeInodeStruct((unsigned) parentNo, parent);
+		cache->flush();
+		return 0;
+	}
+
+	int rename(String oldpath, String newpath) {
+		Ext2Inode oldParent; int oldParentNo; char oldName[256]; int oldNl;
+		if (!resolveParent((char*) oldpath, oldParent, oldParentNo, oldName, oldNl)) return -2;
+		Ext2Inode src; int srcNo;
+		if (!getChildrenInodeNum(oldParent, oldName, oldNl, src, srcNo)) return -2;
+		Ext2Inode newParent; int newParentNo; char newName[256]; int newNl;
+		if (!resolveParent((char*) newpath, newParent, newParentNo, newName, newNl)) return -2;
+		Ext2Inode dst; int dstNo;
+		if (getChildrenInodeNum(newParent, newName, newNl, dst, dstNo)) {   // replace destination
+			if (isDirectory(dst)) {
+				if (!dirIsEmpty(dst)) return -39;
+				dirRemoveEntry(newParent, (unsigned) newParentNo, newName, newNl);
+				truncateBlocks(dst, (unsigned) dstNo, 0);
+				alloc->freeInode((unsigned) dstNo, true);
+				newParent.hardlinksCount = (short) (newParent.hardlinksCount - 1);
+			} else {
+				dirRemoveEntry(newParent, (unsigned) newParentNo, newName, newNl);
+				dst.hardlinksCount = (short) (dst.hardlinksCount - 1);
+				if (dst.hardlinksCount <= 0) {
+					truncateBlocks(dst, (unsigned) dstNo, 0);
+					alloc->freeInode((unsigned) dstNo, false);
+				} else writeInodeStruct((unsigned) dstNo, dst);
+			}
+		}
+		unsigned char ft = isDirectory(src) ? FT_DIR : isSymlink(src) ? FT_SYMLINK : FT_REG;
+		bool sameDir = (oldParentNo == newParentNo);
+		if (!dirAddEntry(newParent, (unsigned) newParentNo, newName, newNl, (unsigned) srcNo, ft))
+			return -28;
+		if (sameDir) {
+			// Re-read so removing the old name sees the just-added entry (same block buffer).
+			writeInodeStruct((unsigned) newParentNo, newParent);
+			newParent = getInode(newParentNo);
+			dirRemoveEntry(newParent, (unsigned) newParentNo, oldName, oldNl);
+			writeInodeStruct((unsigned) newParentNo, newParent);
+		} else {
+			dirRemoveEntry(oldParent, (unsigned) oldParentNo, oldName, oldNl);
+			if (isDirectory(src)) {
+				updateDotDot(src, (unsigned) srcNo, (unsigned) newParentNo);
+				oldParent.hardlinksCount = (short) (oldParent.hardlinksCount - 1);
+				newParent.hardlinksCount = (short) (newParent.hardlinksCount + 1);
+			}
+			writeInodeStruct((unsigned) oldParentNo, oldParent);
+			writeInodeStruct((unsigned) newParentNo, newParent);
+		}
+		cache->flush();
+		return 0;
+	}
+
+	// Repoint a directory's ".." entry to a new parent inode (used by cross-directory rename).
+	void updateDotDot(Ext2Inode& dir, unsigned dirNo, unsigned newParentNo) {
+		unsigned blk = resolveBlock(dir, 0);
+		if (!blk) return;
+		unsigned char buf[4096];
+		cache->read(blk, buf);
+		unsigned usable = dirUsable(), off = 0;
+		while (off + 8 <= usable) {
+			unsigned rec = buf[off + 4] | (buf[off + 5] << 8);
+			unsigned nl = buf[off + 6];
+			if (rec == 0) break;
+			if (nl == 2 && buf[off + 8] == '.' && buf[off + 9] == '.') {
+				buf[off] = (unsigned char) newParentNo; buf[off + 1] = (unsigned char) (newParentNo >> 8);
+				buf[off + 2] = (unsigned char) (newParentNo >> 16); buf[off + 3] = (unsigned char) (newParentNo >> 24);
+				dirStampAndWrite(blk, buf, dirNo, dir);
+				return;
+			}
+			off += rec;
+		}
 	}
 };
 

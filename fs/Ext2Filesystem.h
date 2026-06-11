@@ -187,6 +187,16 @@ public:
 		freeTopIndirect(inode.doubleIndirectPtr, 2, 12 + k, firstFree, inode);
 		freeTopIndirect(inode.tripleIndirectPtr, 3, 12 + k + k * k, firstFree, inode);
 	}
+
+	void initInodeBlockmap(Ext2Inode& inode, bool isDir) {
+		(void) isDir;
+		for (int i = 0; i < 12; i++)
+			inode.directBlocks[i] = 0;
+		inode.indirectPtr = 0;
+		inode.doubleIndirectPtr = 0;
+		inode.tripleIndirectPtr = 0;
+		inode.flags &= ~0x80000;          // ext2 has no extents
+	}
 };
 
 // Factory + probe so the VFS can mount "ext2" (or pick it via auto-detect).
