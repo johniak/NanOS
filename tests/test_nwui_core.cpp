@@ -371,7 +371,7 @@ TEST_CASE("list: selection scrolls into view when it leaves the visible window")
 	delete u;
 }
 
-TEST_CASE("list scrollbar: track click pages; thumb drag scrolls; release ends the drag") {
+TEST_CASE("list scrollbar: clicking the track seeks the thumb to the cursor; drag fine-tunes") {
 	nwui *u = new nwui; nwui_init(u);
 	const char *items[30];
 	for (int i = 0; i < 30; i++) items[i] = "row";
@@ -385,25 +385,22 @@ TEST_CASE("list scrollbar: track click pages; thumb drag scrolls; release ends t
 	CHECK(maxs > 0);                                             // overflow -> scrollbar present
 	int sbx = L->x + L->w - NWUI_SB_W;
 
-	// click the track well below the thumb -> page down
-	pointer(u, sbx + 2, L->y + L->h - 2, 1); pointer(u, sbx + 2, L->y + L->h - 2, 0);
-	CHECK(L->scroll == vis);                                     // paged down by one screen
-	int paged = L->scroll;
-
-	// click the track at the very top (above the thumb) -> page up, back toward 0
-	pointer(u, sbx + 2, L->y + 1, 1); pointer(u, sbx + 2, L->y + 1, 0);
-	CHECK(L->scroll < paged);
-
-	// grab the thumb (at the top with scroll 0) and drag to the bottom -> scroll to max
-	CHECK(L->scroll == 0);
-	pointer(u, sbx + 2, L->y + 2, 1);                           // press on the thumb
+	// click low on the track (not on the thumb) -> the list seeks near the bottom + arms a drag
+	pointer(u, sbx + 2, L->y + L->h - 2, 1);
 	CHECK(L->sb_drag == 1);
-	pointer(u, sbx + 2, L->y + L->h, 1);                        // drag to the bottom (held)
-	CHECK(L->scroll == maxs);                                    // clamped to the last page
-	pointer(u, sbx + 2, L->y + L->h, 0);                        // release
+	CHECK(L->scroll > maxs / 2);                                 // jumped toward the end, not paged
+	// drag back up to the very top -> scroll 0
+	pointer(u, sbx + 2, L->y, 1);
+	CHECK(L->scroll == 0);
+	pointer(u, sbx + 2, L->y, 0);                               // release
 	CHECK(L->sb_drag == 0);
 
-	// a click in the CONTENT area (left of the scrollbar) still selects a row, not scrolls
+	// click low again (near the bottom edge) -> clamps to max
+	pointer(u, sbx + 2, L->y + L->h - 1, 1);
+	CHECK(L->scroll == maxs);
+	pointer(u, sbx + 2, L->y + L->h - 1, 0);
+
+	// a click in the CONTENT area (left of the scrollbar) selects a row, never scrolls
 	int before = L->scroll;
 	pointer(u, L->x + 4, L->y + 1 + NWUI_ROW_H / 2, 1); pointer(u, L->x + 4, L->y + 1 + NWUI_ROW_H / 2, 0);
 	CHECK(L->scroll == before);                                 // unchanged

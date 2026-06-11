@@ -499,10 +499,13 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				int sb_x = over->x + over->w - NWUI_SB_W;
 				if (list_has_sb(over) && ev->x >= sb_x) {       /* hit the scrollbar */
 					int ty, th; list_thumb(over, &ty, &th);
-					if (ev->y < ty)              over->scroll -= list_visible(over);  /* page up */
-					else if (ev->y >= ty + th)   over->scroll += list_visible(over);  /* page down */
-					else { over->sb_drag = 1; over->sb_grab = ev->y - ty; }           /* grab thumb */
-					list_clamp_scroll(over);
+					if (ev->y >= ty && ev->y < ty + th) {
+						over->sb_grab = ev->y - ty;              /* grabbed the thumb itself */
+					} else {                                     /* clicked the track: jump here */
+						over->sb_grab = th / 2;                  /* center the thumb on the cursor */
+						list_sb_set_from_y(over, ev->y);
+					}
+					over->sb_drag = 1;                           /* either way: drag to fine-tune */
 					over->dirty = 1;
 				} else {                                        /* hit a row in the content area */
 					int row = over->scroll + (ev->y - over->y) / NWUI_ROW_H;
