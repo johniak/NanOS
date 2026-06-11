@@ -375,6 +375,9 @@ int main(void)
 				disconnect(i);
 
 		reconcile_buffers();
+		termmode(1);   /* keep the kernel console in raw/no-echo: a windowed shell's job control
+		                * can flip the shared console back to cooked, which would echo typed keys
+		                * straight onto the framebuffer behind our windows. Re-assert every frame. */
 
 		if (S.want_shutdown) {                 /* Shutdown button: power the machine off */
 			termmode(0);

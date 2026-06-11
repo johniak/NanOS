@@ -15,6 +15,11 @@
 #include <string.h>
 #include <sys/termios.h>
 #include "libnw.h"
+
+int setsid(void);
+int getpid(void);
+int ioctl(int fd, unsigned long request, ...);
+#define NWT_TIOCSPGRP 0x5410
 #include "nw_gfx.h"
 #include "vt.h"
 
@@ -105,7 +110,14 @@ static int spawn_shell(void)
 	tcsetattr(master, TCSANOW, &t);
 	int pid = fork();
 	if (pid == 0) {
+		/* Own session with pts0 as its job-control terminal, isolated from the console — else a
+		 * job-control shell (bash) grabs the console and writes to the screen, not the window.
+		 * No TIOCSCTTY in the kernel, so make pts0's foreground group our new session group; that
+		 * keeps bash's job-control gate (tcgetpgrp == our pgid) satisfied so it doesn't stop. */
+		setsid();
 		int s = open("/dev/pts0", O_RDWR);
+		int pg = getpid();
+		ioctl(s, NWT_TIOCSPGRP, &pg);
 		dup2(s, 0); dup2(s, 1); dup2(s, 2);
 		if (s > 2) close(s);
 		close(master); close(3); close(4);             /* drop the compositor pipes in the shell */
@@ -113,7 +125,15 @@ static int spawn_shell(void)
 		                 (char *) "TERMINFO=/disks/main/nanos/share/terminfo",
 		                 (char *) "PATH=/disks/main/nanos/bin:/disks/main/bin",
 		                 (char *) "HOME=/disks/main", 0 };
-		/* the native NanOS shell — simple, prompts on a raw pty without bash's job-control setup */
+		/* the login shell from the account database (pw_shell, e.g. bash); nsh if absent */
+		struct passwd *pw = getpwuid(getuid());
+		const char *shell = (pw && pw->pw_shell && pw->pw_shell[0]) ? pw->pw_shell
+		                  : "/disks/main/nanos/bin/nsh.nxe";
+		const char *base = strrchr(shell, '/'); base = base ? base + 1 : shell;
+		static char name0[64];
+		{ int i = 0; while (base[i] && i < (int) sizeof name0 - 1) { name0[i] = base[i]; i++; }
+		  name0[i] = 0; if (i >= 4 && strcmp(name0 + i - 4, ".nxe") == 0) name0[i - 4] = 0; }
+		execve(shell, (char *[]){ name0, 0 }, envp);
 		execve("/disks/main/nanos/bin/nsh.nxe", (char *[]){ (char *) "nsh", 0 }, envp);
 		_exit(127);
 	}
