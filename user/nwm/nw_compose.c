@@ -180,6 +180,7 @@ static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 static void draw_panel(const struct nw_server *s, const struct nw_surface *back, const char *app)
 {
 	int W = s->screen_w;
+	nw_blur_rect(back, 0, 0, W, NW_PANEL_H, 6, 2);                      /* frosted backdrop */
 	nw_blend_rect(back, 0, 0, W, NW_PANEL_H, COL_PANEL, 205);
 	nw_blend_rect(back, 0, NW_PANEL_H - 1, W, 1, 0x9fb2cc, 140);        /* hairline */
 	int y = (NW_PANEL_H - NW_FONT_H) / 2;
@@ -206,6 +207,7 @@ static void draw_dock(const struct nw_server *s, const struct nw_surface *back)
 	int dw = n * slot + 2 * pad, dh = NW_DOCK_H;
 	int dx = (s->screen_w - dw) / 2, dy = s->screen_h - dh - 10;
 	draw_shadow(back, dx, dy, dw, dh, 20);
+	nw_blur_rect(back, dx, dy, dw, dh, 7, 2);                          /* frosted dock backdrop */
 	nw_fill_round(back, dx, dy, dw, dh, 20, COL_DOCK, 150);
 	nw_stroke_round(back, dx, dy, dw, dh, 20, 0xffffff, 180);
 	for (int i = 0; i < n; i++) {
@@ -230,6 +232,8 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
 		if (scratch) {
 			draw_shadow(back, w->x, w->y, fw, fh, NW_RADIUS);
+			if (s->drag_win < 0)                  /* backdrop glass; skipped mid-drag for speed */
+				nw_blur_rect(back, w->x, w->y, fw, fh, 5, 2);
 			draw_window_to(scratch, w, focused);
 			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS,
 			                (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA);
