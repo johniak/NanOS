@@ -54,6 +54,17 @@ bash: docker-image
 	cp "$(BASH_FORK)/nanos/bash.nxe" $(BINFOLDER)bash.nxe
 	@echo "staged $(BINFOLDER)bash.nxe — run 'make image' to install it into /apps/bash"
 
+# GNU grep (optional, external). Built by the nanos-sdk in its own work dir (cross toolchain +
+# gnulib). This target only copies the finished grep.nxe into bin/, where _image installs it as
+# the /nanos/bin/grep system utility. The SDK build itself lives outside this repo (see the
+# nanos-sdk-and-vim-port notes); `make image` never depends on this, so a missing artifact can't
+# break a normal build.
+SDK_WORK ?= $(HOME)/Projects/nanos-sdk-work
+grep:
+	@test -f "$(SDK_WORK)/grep-3.11/src/grep.nxe" || { echo "grep.nxe not found at $(SDK_WORK)/grep-3.11/src (build it with the nanos-sdk first)"; exit 1; }
+	cp "$(SDK_WORK)/grep-3.11/src/grep.nxe" $(BINFOLDER)grep.nxe
+	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' to install it into /nanos/bin"
+
 run: image
 	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
 
@@ -209,6 +220,11 @@ _image: _all _userland _kext _grub2-image
 	# absent. bzip2 -d decompresses (same binary), so no separate bunzip2 is shipped.
 	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
 	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# grep (optional, external): GNU grep built by the nanos-sdk port and staged into bin/grep.nxe.
+	# A system utility (flat in /nanos/bin) — a single self-contained binary. Skipped if absent.
+	if [ -f $(BINFOLDER)grep.nxe ]; then \
+	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"

@@ -84,6 +84,15 @@ static void bput(Buf* b, const void* d, unsigned n) {
 }
 static unsigned bu32(Buf* b, unsigned v) { unsigned o = b->len; bput(b, &v, 4); return o; }
 
+/* Add `lib` to the needed-library list unless already present (by name). The list is small
+ * (one entry per distinct import library, typically just "libc.ndl"), so a linear scan is fine. */
+static void addNeed(char** needs, int* nNeeds, const char* lib) {
+	for (int i = 0; i < *nNeeds; i++)
+		if (!strcmp(needs[i], lib)) return;
+	if (*nNeeds >= 64) die("too many needed libraries (max 64)");
+	needs[(*nNeeds)++] = (char*) lib;
+}
+
 int main(int argc, char** argv) {
 	const char* in = 0; const char* out = 0;
 	int isDll = 0, exportAll = 0, implib = 0;
@@ -275,6 +284,11 @@ int main(int argc, char** argv) {
 				if (!strncmp(sn, ".nxlib.", 7) && sn[7]) {
 					libOff = strs.len;
 					bput(&strs, sn + 7, strlen(sn + 7) + 1);
+					/* A symbol imported from this library means the module needs it at load;
+					 * record it so `needed` is derived from the actual imports rather than relying
+					 * on the caller to pass a matching --need (the section name is stable for the
+					 * program's lifetime, so storing the pointer is safe). */
+					addNeed(needs, &nNeeds, sn + 7);
 				}
 			}
 			NxImport im = { nameOff, sym[i].st_value, libOff };   /* offsets fixed up below */
