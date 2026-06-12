@@ -89,7 +89,9 @@ int execProgram(Vfs* vfs, const char* path) {
 		"VIMINIT=set nocompatible backspace=indent,eol,start hlsearch incsearch ruler showcmd wildmenu",
 		0,
 	};
-	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 2, envp, 4);
+	int argc = 0; while (argv[argc]) argc++;             // count, don't hard-code (a stale literal
+	int envc = 0; while (envp[envc]) envc++;             // silently truncated newly-added entries)
+	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, argc, envp, envc);
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
 	ProcTable::setCommand(ProcTable::current(), argv, 1);

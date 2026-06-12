@@ -213,12 +213,16 @@ _image: _all _userland _kext _grub2-image
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# terminfo database: the xterm-256color entry (matches TERM), shipped under /nanos/share/
-	# terminfo. We rewrite setaf/setab to the DIRECT 256-colour form (\E[38;5;Nm / \E[48;5;Nm)
-	# instead of the stock conditional `%?%p1%{8}%<%t...` string: our libtinfo's tparm mis-evals
-	# those arithmetic/conditional operators and leaks junk (e.g. "6}38;5;Nm") onto the screen.
-	# The direct form uses only %p1%d, which tparm handles correctly. Recompiled with tic.
+	# terminfo. We rewrite setaf/setab to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form instead of the
+	# stock conditional `%?%p1%{8}%<%t...` string. Reason: vim's term_color() recognises the
+	# simple form and does its OWN 16-vs-256-colour selection (emitting \E[3Nm / \E[9Nm / \E[38;5;Nm
+	# correctly), whereas for any other setaf it falls back to its minimal tgoto(), which does not
+	# implement terminfo's %{n}/%<%/%t conditional+arithmetic grammar and leaks junk like
+	# "6}38;5;Nm". Recompiled with tic. (Properly fixing the general case means full terminfo
+	# param support in vim's tgoto — out of scope; this is the standard "give vim a terminfo it
+	# can drive" approach used by other minimal systems.)
 	infocmp xterm-256color 2>/dev/null \
-	  | sed -E 's@setaf=[^,]*,@setaf=\\E[38;5;%p1%dm,@; s@setab=[^,]*,@setab=\\E[48;5;%p1%dm,@' \
+	  | sed -E 's@setaf=[^,]*,@setaf=\\E[3%p1%dm,@; s@setab=[^,]*,@setab=\\E[4%p1%dm,@' \
 	  > /tmp/xterm-256color.ti
 	tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null
 	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
