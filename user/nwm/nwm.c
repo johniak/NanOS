@@ -77,6 +77,38 @@ static unsigned char  *cl_out[NW_MAX_CLIENTS];
 /* per-window-slot backing buffer the shell allocated (freed when the slot frees) */
 static uint32_t *g_winbuf[NW_MAX_WINDOWS];
 
+/* --- Frame-time profiling (Phase 0). Off by default; build with -DNWM_PROFILE=1 to print the
+ * cost of each recompose+blit (the per-frame cost paid while dragging) to stderr — the kernel
+ * text console behind the desktop — averaged over ~2 s windows. Integer microseconds only, so it
+ * needs no float printf. Add nothing to the hot path when disabled. */
+#ifndef NWM_PROFILE
+#define NWM_PROFILE 0
+#endif
+#if NWM_PROFILE
+static long g_pf_n, g_pf_sum, g_pf_min, g_pf_max, g_pf_window_ns;
+static long pf_now_ns(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (long) t.tv_sec * 1000000000L + t.tv_nsec;
+}
+static void pf_record(long dt_ns)
+{
+	long us = dt_ns / 1000;
+	if (g_pf_n == 0 || us < g_pf_min) g_pf_min = us;
+	if (g_pf_n == 0 || us > g_pf_max) g_pf_max = us;
+	g_pf_sum += us; g_pf_n++;
+	long t = pf_now_ns();
+	if (g_pf_window_ns == 0) g_pf_window_ns = t;
+	if (t - g_pf_window_ns >= 2000000000L) {
+		long avg = g_pf_sum / g_pf_n;
+		fprintf(stderr, "nwm: recompose n=%ld avg=%ldus min=%ldus max=%ldus (~%ld fps)\n",
+		        g_pf_n, avg, g_pf_min, g_pf_max, avg ? 1000000L / avg : 0);
+		g_pf_n = g_pf_sum = 0; g_pf_window_ns = t;
+	}
+}
+#endif
+
 static struct nw_server S;
 
 static void set_cloexec(int fd) { fcntl(fd, F_SETFD, FD_CLOEXEC); }
@@ -281,6 +313,9 @@ static void present(void)
 	if (g_prev_cx >= 0)
 		blit_scene(g_prev_cx, g_prev_cy, NW_CURSOR_W, NW_CURSOR_H);   /* erase old cursor */
 	if (S.dirty) {
+#if NWM_PROFILE
+		long pf_t0 = pf_now_ns();
+#endif
 		int dx, dy, dw, dh;
 		int have = nw_peek_damage(&S, &dx, &dy, &dw, &dh);
 		if (have) {                                /* recompose only the damage region */
@@ -299,6 +334,9 @@ static void present(void)
 		else
 			blit_scene(0, 0, (int) g_xres, (int) g_yres);   /* first frame / fallback */
 		S.dirty = 0;
+#if NWM_PROFILE
+		pf_record(pf_now_ns() - pf_t0);
+#endif
 	}
 	blit_scene(S.cursor_x, S.cursor_y, NW_CURSOR_W, NW_CURSOR_H);     /* scene under cursor */
 	nw_draw_cursor(&g_fb_surf, S.cursor_x, S.cursor_y);
