@@ -14,7 +14,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 5 — IPv4 | **DONE** | Ip 97.4% / Route 100% | byte-exact header (host); on wire via ICMP (F6) | n/a | builds, wired | — |
 | 6 — ICMP | **DONE** | Icmp 100% | echo req/reply on wire (tcpdump) | n/a | round-trip to gw OK | — |
 | 7 — sockets + UDP + RAW (AF_PACKET→F10) | **DONE** | Socket/Udp/Raw ≥92% | UDP/ICMP byte-exact (host) | n/a | builds, wired | — |
-| 8 — TCP | todo | | | | | |
+| 8 — TCP | **DONE** | Tcp 92.2% | full session w/ 1.1.1.1 (tcpdump) | n/a | clean boot, no faults | — |
 | 9 — socket syscall ABI | todo | | | | | |
 | 10 — DHCP + iface bring-up | todo | | | | | |
 | 11 — DNS resolver (libc) | todo | | | | | |
@@ -214,3 +214,34 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   alongside its consumer (not a shortcut: it's reordering within the plan's intent).
 - The socket layer reaches userland in FAZA 9 (syscall ABI + fd integration); on-wire UDP/RAW
   proof arrives with DNS (FAZA 11) and ping (FAZA 13).
+
+## FAZA 8 — TCP (2026-06-12)
+
+- `net/Tcp.{h,cpp}`: a full TCP — the complete RFC-793 state machine (CLOSED..TIME_WAIT),
+  3-way handshake (active + passive open), sliding send/recv windows, RTO with Jacobson/Karn
+  RTT estimation, **Reno congestion control** (slow start / congestion avoidance / 3-dupack fast
+  retransmit+recovery), out-of-order reassembly, MSS option, immediate ACK, basic Nagle, and a
+  proper four-way close with TIME-WAIT (2 MSL). TCBs live in this module's pool (orphaned on
+  close so TIME-WAIT finishes after the socket is freed, like Linux). 92.2% cov.
+- `net/Net`: factored out `inetPseudoChecksum` (shared by UDP + TCP). `include/string.h` +
+  `lib/string_funcs.cpp`: added `memmove` (freestanding; the send-buffer compaction needs it).
+- Socket integration: socketCreate(STREAM) attaches a TCB; connect/send/recv/close/readable/
+  writable dispatch to tcp*; accept() mints a new socket via a hook. A net-timer kthread (id 3)
+  drives `tcpTick`/`arpTick`/`ipReasmTick` every 50 ms (TCP needs timers even when idle); the
+  RX softirq stays event-driven.
+- `tests/test_tcp.cpp` (15 cases): active-open handshake, data send + window, in-order +
+  out-of-order receive, active close (FIN_WAIT_1→2→TIME_WAIT→reaped), RTO retransmission, RST to
+  a closed port, passive open + accept, CLOSE_WAIT/EOF + LAST_ACK, RST abort (SO_ERROR), MSG_PEEK,
+  fast retransmit (3 dupacks), bare-SYN RST+ACK + send-buffer EAGAIN. 481 host tests green,
+  check-arch clean.
+- **QEMU verification (the no-shortcuts gate — a real internet TCP session):** a temp boot probe
+  TCP-connected to `1.1.1.1:80` over slirp NAT and sent an HTTP request. The pcap shows the
+  textbook exchange — `[S] seq 65536 mss 1460` → `[S.] ack` → `[.]` → `[P.] GET / HTTP/1.0` →
+  server `[.] ack 42` → `[P.] HTTP/1.1 301 Moved Permanently` → server `[F.]` → our `[.] ack` →
+  our `[F.]` → server `[.] ack` — a complete handshake, data exchange and clean four-way close
+  with **a real Cloudflare server**. Probe since removed; the production net code boots clean
+  (0 `v=08/0d/0e`).
+- **Watch-item for FAZA 9:** the probe (run in the init task with deep synchronous call chains +
+  busy-wait) triggered a kernel-stack issue in *that task's* context (the production kthreads are
+  fault-free). When socket syscalls run the net path on a process's syscall stack in FAZA 9,
+  verify the kernel stack depth is sufficient for connect→ipOutput→ethSend→e1000-tx chains.

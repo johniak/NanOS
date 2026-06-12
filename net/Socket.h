@@ -60,6 +60,7 @@ struct Socket {
 // Lifecycle. socketCreate validates the family/type (AF_INET + DGRAM/RAW now; STREAM in FAZA 8;
 // AF_PACKET in FAZA 10) and returns a socket with refs=1, or 0 with *err set (negative errno).
 Socket* socketCreate(int domain, int type, int protocol, int* err);
+Socket* socketCreateRaw(int domain, int type, int protocol);   // err-less form (TCP accept hook)
 void    socketRef(Socket* s);
 void    socketClose(Socket* s);     // drop one reference; frees + unregisters at 0
 
@@ -99,6 +100,10 @@ uint16_t socketEphemeralPort();
 // Kernel installs a wake hook (Scheduler::wakeAll) so this MI core needs no scheduler dep.
 typedef void (*SocketWakeFn)(WaitQueue*);
 void socketSetWakeFn(SocketWakeFn fn);
+
+// Wake a socket's blocked readers (used by TCP, which manages its own recv buffer rather than
+// going through socketDeliver).
+void socketWakeReaders(Socket* s);
 
 void socketReset();   // tests: free all sockets + clear the registry
 

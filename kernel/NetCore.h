@@ -14,4 +14,7 @@ struct Task;
 // can registerKthread() it for /proc visibility. Call AFTER Scheduler::init(), before start().
 Task* netCoreInit();
 
+// The periodic protocol-timer thread (TCP RTO/TIME-WAIT, ARP/IP-reasm aging). Register as a kthread.
+Task* netTimerThread();
+
 }  // namespace kernel

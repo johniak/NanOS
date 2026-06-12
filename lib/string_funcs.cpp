@@ -10,6 +10,20 @@ void *memcpy(void *dest, const void *src, size_t n) {
     return dest;
 }
 
+void *memmove(void *dest, const void *src, size_t n) {
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    if (d == s || n == 0)
+        return dest;
+    if (d < s) {                      // forward copy is safe when dest precedes src
+        while (n--) *d++ = *s++;
+    } else {                          // overlapping with dest after src: copy backward
+        d += n; s += n;
+        while (n--) *--d = *--s;
+    }
+    return dest;
+}
+
 void *memset(void *s, int c, size_t n) {
     unsigned char *p = (unsigned char *)s;
     while (n--)

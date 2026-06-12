@@ -44,4 +44,8 @@ uint16_t inetChecksum(const void* data, int len, uint32_t init = 0);
 uint32_t inetChecksumAccum(const void* data, int len, uint32_t sum);
 uint16_t inetChecksumFinish(uint32_t sum);
 
+// TCP/UDP checksum over the IPv4 pseudo-header {src, dst, 0, proto, segLen} + the segment.
+// A correct segment re-checksums to 0.
+uint16_t inetPseudoChecksum(uint32_t src, uint32_t dst, uint8_t proto, const void* seg, int segLen);
+
 }  // namespace kernel

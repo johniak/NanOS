@@ -14,6 +14,7 @@
 #include "Socket.h"
 #include "Udp.h"
 #include "Raw.h"
+#include "Tcp.h"
 #include "WaitQueue.h"
 #include "Scheduler.h"
 #include "WaitQueue.h"
@@ -53,9 +54,18 @@ void netSoftirqBody() {
 	for (;;) {
 		Scheduler::sleepOnUntil(&g_netWq, netRxReady, 0);   // sleep until a frame is queued
 		netRxProcess();                                     // drain + demux (never in IRQ)
+	}
+}
+
+// Periodic timer thread: drives the protocol timers (TCP RTO/TIME-WAIT need ticks even when
+// idle; ARP/IP-reasm aging too) on a fixed cadence. 50 ms granularity is well under RTO_MIN.
+void netTimerBody() {
+	for (;;) {
 		unsigned t = Scheduler::ticks();
-		arpTick(t);                                         // traffic-driven neighbor aging
-		ipReasmTick(t);                                     // expire incomplete fragment datagrams
+		tcpTick(t);
+		arpTick(t);
+		ipReasmTick(t);
+		Scheduler::sleepUntil(t + 50);
 	}
 }
 }  // namespace
@@ -126,10 +136,17 @@ Task* netCoreInit() {
 	icmpInit();                                               // ICMP echo reply + errors (IP proto 1)
 	udpInit();                                                // UDP (IP proto 17) -> sockets
 	rawInit();                                                // SOCK_RAW ICMP (ping)
+	tcpInit();                                                // TCP (IP proto 6)
 	socketSetWakeFn(netSocketWake);                           // wake blocked socket readers
+	tcpSetNewSockHook(socketCreateRaw);                       // accept() mints a new socket
 	arpSetClock(netClock);                                   // real ticks for neighbor aging
 	ipReasmSetClock(netClock);                               // real ticks for fragment expiry
+	tcpSetClock(netClock);                                   // real ticks for RTO/TIME-WAIT
 	return Scheduler::create(netSoftirqBody, 2);             // ksoftirqd-net (task id 2)
 }
+
+// The periodic timer thread (id 3); the caller registers it as a kthread for /proc visibility.
+Task* netTimerThread() { return Scheduler::create(netTimerBody, 3); }
+
 
 }  // namespace kernel

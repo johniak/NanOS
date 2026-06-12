@@ -11,20 +11,6 @@
 
 namespace kernel {
 
-namespace {
-// UDP/TCP pseudo-header checksum: sum over {src, dst, 0, proto, transportLen} + the segment.
-uint16_t transportChecksum(uint32_t src, uint32_t dst, uint8_t proto, const void* seg, int segLen) {
-	unsigned char ph[12];
-	wr32be(ph + 0, src);
-	wr32be(ph + 4, dst);
-	ph[8] = 0; ph[9] = proto;
-	wr16be(ph + 10, (uint16_t) segLen);
-	uint32_t sum = inetChecksumAccum(ph, 12, 0);
-	sum = inetChecksumAccum(seg, segLen, sum);
-	return inetChecksumFinish(sum);
-}
-}  // namespace
-
 void udpInit() { ipSetHandler(IPPROTO_UDP, udpRx); }
 
 void udpRx(NetBuf* skb) {
@@ -38,7 +24,7 @@ void udpRx(NetBuf* skb) {
 	if (ulen < UDP_HLEN || ulen > skb->len) { netbufFree(skb); return; }
 	skb->trim(ulen);
 	// Verify the checksum if present (0 = sender omitted it, allowed for IPv4 UDP).
-	if (csum != 0 && transportChecksum(skb->saddr, skb->daddr, IPPROTO_UDP, u, ulen) != 0) {
+	if (csum != 0 && inetPseudoChecksum(skb->saddr, skb->daddr, IPPROTO_UDP, u, ulen) != 0) {
 		netbufFree(skb);
 		return;
 	}
@@ -76,7 +62,7 @@ int udpSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t d
 	wr16be(u + 2, dstPort);
 	wr16be(u + 4, (uint16_t) (UDP_HLEN + len));
 	wr16be(u + 6, 0);
-	uint16_t c = transportChecksum(src, dstIp, IPPROTO_UDP, u, UDP_HLEN + len);
+	uint16_t c = inetPseudoChecksum(src, dstIp, IPPROTO_UDP, u, UDP_HLEN + len);
 	wr16be(u + 6, c ? c : 0xFFFF);             // 0 checksum is transmitted as 0xFFFF (RFC 768)
 	if (ipOutput(dstIp, IPPROTO_UDP, skb) < 0)
 		return -SOCK_ENOBUFS;

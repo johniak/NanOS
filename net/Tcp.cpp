@@ -1,0 +1,535 @@
+#include "Tcp.h"
+#include "Socket.h"
+#include "Ip.h"
+#include "Ether.h"     // NET_HEADROOM
+#include "Route.h"
+#include "NetDevice.h"
+#include "NetBuf.h"
+#include "Net.h"
+#include "WaitQueue.h"
+#include <string.h>
+
+namespace kernel {
+
+namespace {
+
+const int SNDBUF = 8192;
+const int RCVBUF = 8192;
+const int MSS_MAX = 1460;
+const int OOO_N = 4;            // out-of-order pending segments
+const int TCB_N = 8;
+const int ACCEPT_N = 8;        // pending accept queue per listener
+
+// Timer constants (ticks == ms; the net-timer thread calls tcpTick).
+const int RTO_INIT = 1000, RTO_MIN = 200, RTO_MAX = 60000;
+const int MSL = 30000;         // 2*MSL = 60 s TIME-WAIT
+
+struct Ooo { uint32_t seq; int len; bool used; unsigned char data[MSS_MAX]; };
+
+struct Tcb {
+	bool used;
+	Socket* sock;              // nullable (orphaned after close)
+	int state;
+	uint32_t localIp, remoteIp;
+	uint16_t localPort, remotePort;
+
+	uint32_t iss, snd_una, snd_nxt, snd_wnd;
+	uint32_t irs, rcv_nxt;
+	uint16_t mss;
+
+	uint32_t cwnd, ssthresh;
+	int dupacks;
+
+	int srtt, rttvar, rto;
+	uint32_t rttSeq; unsigned rttStart; bool rttPending;
+
+	unsigned rtoDeadline, timeWaitDeadline;
+	bool finSent; uint32_t finSeq;
+	bool peerFin;
+
+	unsigned char sndBuf[SNDBUF]; int sndLen;          // buffered bytes starting at snd_una
+	unsigned char rcvBuf[RCVBUF]; int rcvHead, rcvTail, rcvCount;
+	Ooo ooo[OOO_N];
+
+	bool isListen;
+	Tcb* acceptq[ACCEPT_N]; int acceptCount;           // completed connections waiting for accept()
+	Tcb* parent;                                       // listener that birthed us (for accept queue)
+};
+
+Tcb g_tcbs[TCB_N];
+unsigned (*g_clock)() = 0;
+TcpNewSockFn g_newSock = 0;
+uint32_t g_isnCounter = 0x10000;   // monotonic ISN base (deterministic for tests; varied per conn)
+
+unsigned now() { return g_clock ? g_clock() : 0; }
+
+// wrap-safe sequence comparisons
+inline bool seqLt(uint32_t a, uint32_t b)  { return (int32_t)(a - b) < 0; }
+inline bool seqLeq(uint32_t a, uint32_t b) { return (int32_t)(a - b) <= 0; }
+inline bool seqGt(uint32_t a, uint32_t b)  { return (int32_t)(a - b) > 0; }
+inline bool seqGeq(uint32_t a, uint32_t b) { return (int32_t)(a - b) >= 0; }
+
+Tcb* tcbAlloc() {
+	for (int i = 0; i < TCB_N; i++)
+		if (!g_tcbs[i].used) {
+			Tcb* t = &g_tcbs[i];
+			memset(t, 0, sizeof(*t));
+			t->used = true; t->state = TCP_CLOSED;
+			t->mss = 536;                  // default until the peer's MSS option is seen
+			t->cwnd = 1 * 1460; t->ssthresh = 65535;
+			t->srtt = 0; t->rttvar = 0; t->rto = RTO_INIT;
+			t->snd_wnd = 4096;
+			return t;
+		}
+	return 0;
+}
+void tcbFree(Tcb* t) { if (t) t->used = false; }
+
+int rcvFree(Tcb* t) { return RCVBUF - t->rcvCount; }
+
+// Build + send one TCP segment: flags, `dataOff` bytes of payload from the send buffer (len),
+// optional MSS option on SYN. Updates checksum. Does NOT advance snd_nxt (caller decides).
+void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int len) {
+	NetBuf* skb = netbufAlloc();
+	if (!skb) return;
+	skb->reserve(NET_HEADROOM);
+	int optLen = (flags & TCP_SYN) ? 4 : 0;            // MSS option on SYN
+	if (len) memcpy(skb->put(len), data, len);
+	unsigned char* h = skb->push(20 + optLen);
+	wr16be(h + 0, t->localPort);
+	wr16be(h + 2, t->remotePort);
+	wr32be(h + 4, seq);
+	wr32be(h + 8, (flags & TCP_ACK) ? t->rcv_nxt : 0);
+	h[12] = (unsigned char) (((20 + optLen) / 4) << 4);   // data offset
+	h[13] = flags;
+	wr16be(h + 14, (uint16_t) rcvFree(t));                // advertised receive window
+	wr16be(h + 16, 0);                                    // checksum
+	wr16be(h + 18, 0);                                    // urgent ptr
+	if (optLen) { h[20] = 2; h[21] = 4; wr16be(h + 22, MSS_MAX); }   // MSS option
+	uint16_t c = inetPseudoChecksum(t->localIp, t->remoteIp, IPPROTO_TCP, h, 20 + optLen + len);
+	wr16be(h + 16, c);
+	ipOutput(t->remoteIp, IPPROTO_TCP, skb);
+}
+
+void armRto(Tcb* t) { t->rtoDeadline = now() + t->rto; }
+
+// Transmit as much new data as the window allows (Reno: min(snd_wnd, cwnd)).
+void sendData(Tcb* t) {
+	uint32_t win = t->snd_wnd < t->cwnd ? t->snd_wnd : t->cwnd;
+	uint32_t inflight = t->snd_nxt - t->snd_una;
+	int sentOff = (int) (t->snd_nxt - t->snd_una);       // offset into sndBuf of next unsent byte
+	bool sentAny = false;
+	while (sentOff < t->sndLen && inflight < win) {
+		int chunk = t->sndLen - sentOff;
+		if (chunk > t->mss) chunk = t->mss;
+		if ((uint32_t) chunk > win - inflight) chunk = (int) (win - inflight);
+		if (chunk <= 0) break;
+		// Nagle: hold a small (<MSS) segment while data is already in flight (unless nothing's out).
+		if (chunk < t->mss && inflight > 0 && (sentOff + chunk) >= t->sndLen) break;
+		uint8_t fl = TCP_ACK | TCP_PSH;
+		sendSeg(t, fl, t->snd_nxt, t->sndBuf + sentOff, chunk);
+		t->snd_nxt += chunk;
+		inflight += chunk;
+		sentOff += chunk;
+		sentAny = true;
+		if (!t->rttPending) { t->rttPending = true; t->rttSeq = t->snd_nxt; t->rttStart = now(); }
+	}
+	if (sentAny) armRto(t);
+}
+
+// Deliver in-order payload into the recv buffer; returns bytes accepted.
+int rcvAppend(Tcb* t, const unsigned char* data, int len) {
+	int free = rcvFree(t);
+	if (len > free) len = free;
+	for (int i = 0; i < len; i++) {
+		t->rcvBuf[t->rcvHead] = data[i];
+		t->rcvHead = (t->rcvHead + 1) % RCVBUF;
+		t->rcvCount++;
+	}
+	return len;
+}
+
+void drainOoo(Tcb* t) {
+	bool progress = true;
+	while (progress) {
+		progress = false;
+		for (int i = 0; i < OOO_N; i++) {
+			Ooo* o = &t->ooo[i];
+			if (!o->used) continue;
+			if (seqLeq(o->seq, t->rcv_nxt) && seqGt(o->seq + o->len, t->rcv_nxt)) {
+				int skip = (int) (t->rcv_nxt - o->seq);
+				int got = rcvAppend(t, o->data + skip, o->len - skip);
+				t->rcv_nxt += got;
+				o->used = false;
+				progress = true;
+			} else if (seqLeq(o->seq + o->len, t->rcv_nxt)) {
+				o->used = false;   // fully stale
+			}
+		}
+	}
+}
+
+void queueOoo(Tcb* t, uint32_t seq, const unsigned char* data, int len) {
+	if (len > MSS_MAX) len = MSS_MAX;
+	for (int i = 0; i < OOO_N; i++)
+		if (!t->ooo[i].used) {
+			t->ooo[i].used = true; t->ooo[i].seq = seq; t->ooo[i].len = len;
+			memcpy(t->ooo[i].data, data, len);
+			return;
+		}
+	// queue full: drop (sender will retransmit)
+}
+
+void enterTimeWait(Tcb* t) { t->state = TCP_TIME_WAIT; t->timeWaitDeadline = now() + 2 * MSL; }
+
+void sockWake(Tcb* t) { if (t->sock) socketWakeReaders(t->sock); }
+
+Tcb* lookup(uint32_t la, uint16_t lp, uint32_t ra, uint16_t rp) {
+	Tcb* listener = 0;
+	for (int i = 0; i < TCB_N; i++) {
+		Tcb* t = &g_tcbs[i];
+		if (!t->used) continue;
+		if (t->localPort != lp) continue;
+		if (t->isListen) { if (t->localIp == 0 || t->localIp == la) listener = t; continue; }
+		if (t->remotePort == rp && t->remoteIp == ra && (t->localIp == 0 || t->localIp == la))
+			return t;
+	}
+	return listener;   // fall back to a LISTEN socket for a new SYN
+}
+
+}  // namespace anon
+
+// ---- RTT / congestion helpers ----
+namespace {
+void rttUpdate(Tcb* t, int measured) {
+	if (measured < 1) measured = 1;
+	if (t->srtt == 0) { t->srtt = measured; t->rttvar = measured / 2; }
+	else {
+		int err = measured - t->srtt;
+		t->srtt += err / 8;
+		int aerr = err < 0 ? -err : err;
+		t->rttvar += (aerr - t->rttvar) / 4;
+	}
+	t->rto = t->srtt + 4 * t->rttvar;
+	if (t->rto < RTO_MIN) t->rto = RTO_MIN;
+	if (t->rto > RTO_MAX) t->rto = RTO_MAX;
+}
+void onAckCwnd(Tcb* t, int acked) {
+	if (acked <= 0) return;
+	if (t->cwnd < t->ssthresh) t->cwnd += t->mss;                       // slow start
+	else t->cwnd += (uint32_t) t->mss * t->mss / (t->cwnd ? t->cwnd : 1); // congestion avoidance
+}
+}  // namespace
+
+void tcpSetClock(unsigned (*fn)()) { g_clock = fn; }
+void tcpSetNewSockHook(TcpNewSockFn fn) { g_newSock = fn; }
+
+void tcpInit() { ipSetHandler(IPPROTO_TCP, tcpRx); }
+
+// ---- the segment handler ----
+void tcpRx(NetBuf* skb) {
+	if (!skb) { return; }
+	if (skb->len < 20) { netbufFree(skb); return; }
+	const unsigned char* h = skb->head();
+	if (inetPseudoChecksum(skb->saddr, skb->daddr, IPPROTO_TCP, h, skb->len) != 0) { netbufFree(skb); return; }
+	uint16_t sport = rd16be(h + 0), dport = rd16be(h + 2);
+	uint32_t seq = rd32be(h + 4), ack = rd32be(h + 8);
+	int doff = (h[12] >> 4) * 4;
+	uint8_t flags = h[13];
+	uint16_t wnd = rd16be(h + 14);
+	if (doff < 20 || doff > skb->len) { netbufFree(skb); return; }
+	const unsigned char* payload = h + doff;
+	int plen = skb->len - doff;
+
+	// peer MSS option (kind 2, len 4) on a SYN.
+	uint16_t peerMss = 0;
+	for (int i = 20; i + 1 < doff; ) {
+		uint8_t kind = h[i];
+		if (kind == 0) break;
+		if (kind == 1) { i++; continue; }
+		uint8_t olen = h[i + 1];
+		if (olen < 2 || i + olen > doff) break;
+		if (kind == 2 && olen == 4) peerMss = rd16be(h + i + 2);
+		i += olen;
+	}
+
+	Tcb* t = lookup(skb->daddr, dport, skb->saddr, sport);
+	if (!t) {
+		// No socket: RST (unless this is itself a RST). Send a courtesy reset to the peer.
+		if (!(flags & TCP_RST)) {
+			// Build a minimal TCB-less RST.
+			Tcb tmp; memset(&tmp, 0, sizeof(tmp));
+			tmp.localIp = skb->daddr; tmp.remoteIp = skb->saddr;
+			tmp.localPort = dport; tmp.remotePort = sport;
+			if (flags & TCP_ACK) sendSeg(&tmp, TCP_RST, ack, 0, 0);
+			else { tmp.rcv_nxt = seq + plen + ((flags & TCP_SYN) ? 1 : 0); sendSeg(&tmp, TCP_RST | TCP_ACK, 0, 0, 0); }
+		}
+		netbufFree(skb);
+		return;
+	}
+
+	if (flags & TCP_RST) {
+		if (t->state != TCP_LISTEN) { if (t->sock) t->sock->soError = SOCK_ECONNREFUSED; t->state = TCP_CLOSED; sockWake(t); }
+		netbufFree(skb);
+		return;
+	}
+
+	switch (t->state) {
+	case TCP_SYN_SENT: {
+		if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
+			if (ack != t->snd_nxt) { netbufFree(skb); return; }      // wrong ACK -> drop (would RST in full impl)
+			t->irs = seq; t->rcv_nxt = seq + 1;
+			t->snd_una = ack; t->snd_wnd = wnd;
+			if (peerMss) t->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
+			t->state = TCP_ESTABLISHED;
+			t->rtoDeadline = 0;
+			sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);
+			sockWake(t);
+		} else if (flags & TCP_SYN) {                                 // simultaneous open
+			t->irs = seq; t->rcv_nxt = seq + 1; t->state = TCP_SYN_RCVD;
+			sendSeg(t, TCP_SYN | TCP_ACK, t->iss, 0, 0);
+		}
+		netbufFree(skb);
+		return;
+	}
+	case TCP_LISTEN: {
+		if (flags & TCP_SYN) {
+			Tcb* c = tcbAlloc();
+			if (!c) { netbufFree(skb); return; }
+			c->localIp = skb->daddr; c->localPort = dport;
+			c->remoteIp = skb->saddr; c->remotePort = sport;
+			c->irs = seq; c->rcv_nxt = seq + 1;
+			c->iss = g_isnCounter; g_isnCounter += 0x4000;
+			c->snd_una = c->iss; c->snd_nxt = c->iss + 1;
+			c->snd_wnd = wnd ? wnd : 4096;
+			if (peerMss) c->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
+			c->state = TCP_SYN_RCVD; c->parent = t;
+			sendSeg(c, TCP_SYN | TCP_ACK, c->iss, 0, 0);
+			armRto(c);
+		}
+		netbufFree(skb);
+		return;
+	}
+	default: break;
+	}
+
+	// Established-ish states: validate the ACK, accept data, handle FIN.
+	if (flags & TCP_ACK) {
+		if (seqGt(ack, t->snd_una) && seqLeq(ack, t->snd_nxt)) {
+			int acked = (int) (ack - t->snd_una);
+			// free acked bytes from the send buffer
+			int dataAcked = acked;
+			if (t->finSent && seqGt(ack, t->finSeq)) dataAcked -= 1;   // FIN consumes one seq
+			if (dataAcked > 0) {
+				int move = dataAcked <= t->sndLen ? dataAcked : t->sndLen;
+				memmove(t->sndBuf, t->sndBuf + move, t->sndLen - move);
+				t->sndLen -= move;
+			}
+			t->snd_una = ack;
+			t->snd_wnd = wnd;
+			t->dupacks = 0;
+			onAckCwnd(t, acked);
+			if (t->rttPending && seqGeq(ack, t->rttSeq)) { rttUpdate(t, (int)(now() - t->rttStart)); t->rttPending = false; }
+			if (t->snd_una == t->snd_nxt) t->rtoDeadline = 0;          // all acked: stop RTO
+			else armRto(t);
+			// state transitions on our FIN being acked
+			if (t->state == TCP_FIN_WAIT_1 && t->finSent && seqGt(ack, t->finSeq)) t->state = TCP_FIN_WAIT_2;
+			else if (t->state == TCP_CLOSING && seqGt(ack, t->finSeq)) enterTimeWait(t);
+			else if (t->state == TCP_LAST_ACK && seqGt(ack, t->finSeq)) { t->state = TCP_CLOSED; tcbFree(t); netbufFree(skb); return; }
+			sendData(t);   // window may have opened
+		} else if (ack == t->snd_una && t->snd_una != t->snd_nxt && plen == 0 && !(flags & (TCP_SYN|TCP_FIN))) {
+			// duplicate ACK -> fast retransmit on the 3rd
+			if (++t->dupacks == 3) {
+				t->ssthresh = (t->snd_nxt - t->snd_una) / 2;
+				if (t->ssthresh < (uint32_t) 2 * t->mss) t->ssthresh = 2 * t->mss;
+				t->cwnd = t->ssthresh + 3 * t->mss;
+				sendSeg(t, TCP_ACK, t->snd_una, t->sndBuf, t->sndLen < t->mss ? t->sndLen : t->mss);
+				armRto(t);
+			}
+		}
+		if (t->state == TCP_SYN_RCVD) {                               // handshake completed (passive)
+			t->state = TCP_ESTABLISHED;
+			if (t->parent && t->parent->acceptCount < ACCEPT_N) {
+				t->parent->acceptq[t->parent->acceptCount++] = t;
+				sockWake(t->parent);
+			}
+		}
+	}
+
+	// data
+	if (plen > 0 && (t->state == TCP_ESTABLISHED || t->state == TCP_FIN_WAIT_1 || t->state == TCP_FIN_WAIT_2)) {
+		if (seq == t->rcv_nxt) {
+			int got = rcvAppend(t, payload, plen);
+			t->rcv_nxt += got;
+			drainOoo(t);
+			sockWake(t);
+		} else if (seqGt(seq, t->rcv_nxt) && seqLt(seq, t->rcv_nxt + RCVBUF)) {
+			queueOoo(t, seq, payload, plen);
+		}
+		sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);                        // ack (immediate)
+	}
+
+	// FIN
+	if ((flags & TCP_FIN) && seqLeq(seq, t->rcv_nxt)) {
+		if (!t->peerFin) {
+			t->peerFin = true;
+			t->rcv_nxt += 1;
+			sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);
+			sockWake(t);
+			if (t->state == TCP_ESTABLISHED) t->state = TCP_CLOSE_WAIT;
+			else if (t->state == TCP_FIN_WAIT_2) enterTimeWait(t);
+			else if (t->state == TCP_FIN_WAIT_1) {                    // simultaneous close
+				if (t->finSent && seqGt(t->snd_una, t->finSeq)) enterTimeWait(t);
+				else t->state = TCP_CLOSING;
+			}
+		}
+	}
+	netbufFree(skb);
+}
+
+void tcpTick(unsigned t_now) {
+	for (int i = 0; i < TCB_N; i++) {
+		Tcb* t = &g_tcbs[i];
+		if (!t->used) continue;
+		if (t->state == TCP_TIME_WAIT && t->timeWaitDeadline && (int)(t_now - t->timeWaitDeadline) >= 0) {
+			t->state = TCP_CLOSED; tcbFree(t); continue;
+		}
+		if (t->rtoDeadline && (int)(t_now - t->rtoDeadline) >= 0 && t->snd_una != t->snd_nxt) {
+			// Retransmission timeout: shrink the window (Reno), retransmit the oldest segment.
+			t->ssthresh = (t->snd_nxt - t->snd_una) / 2;
+			if (t->ssthresh < (uint32_t) 2 * t->mss) t->ssthresh = 2 * t->mss;
+			t->cwnd = t->mss;
+			t->dupacks = 0;
+			t->rttPending = false;                  // Karn: don't sample a retransmitted segment
+			t->rto *= 2; if (t->rto > RTO_MAX) t->rto = RTO_MAX;
+			int chunk = t->sndLen < t->mss ? t->sndLen : t->mss;
+			if (chunk > 0) sendSeg(t, TCP_ACK | TCP_PSH, t->snd_una, t->sndBuf, chunk);
+			else if (t->finSent) sendSeg(t, TCP_ACK | TCP_FIN, t->finSeq, 0, 0);
+			t->rtoDeadline = t_now + t->rto;
+		}
+	}
+}
+
+// ---- socket integration ----
+int tcpAttach(Socket* s) {
+	Tcb* t = tcbAlloc();
+	if (!t) return -SOCK_ENOBUFS;
+	t->sock = s; s->tcp = t;
+	return 0;
+}
+
+int tcpConnect(Socket* s, uint32_t ip, uint16_t port) {
+	if (!s || !s->tcp) return -SOCK_EINVAL;
+	Tcb* t = (Tcb*) s->tcp;
+	if (t->state != TCP_CLOSED) return -SOCK_EISCONN;
+	NetDevice* dev = 0; uint32_t nh = 0;
+	if (!routeLookup(ip, &dev, &nh) || !dev) return -SOCK_ENOBUFS;
+	t->localIp = dev->ip;
+	t->remoteIp = ip; t->remotePort = port;
+	if (!s->bound) { s->localPort = socketEphemeralPort(); s->bound = true; }
+	t->localPort = s->localPort;
+	t->iss = g_isnCounter; g_isnCounter += 0x4000;
+	t->snd_una = t->iss; t->snd_nxt = t->iss + 1;
+	t->state = TCP_SYN_SENT;
+	sendSeg(t, TCP_SYN, t->iss, 0, 0);
+	armRto(t);
+	return 0;
+}
+
+int tcpSend(Socket* s, const void* buf, unsigned len) {
+	if (!s || !s->tcp) return -SOCK_EINVAL;
+	Tcb* t = (Tcb*) s->tcp;
+	if (t->state != TCP_ESTABLISHED && t->state != TCP_CLOSE_WAIT) return -SOCK_ENOTCONN;
+	int free = SNDBUF - t->sndLen;
+	if (free <= 0) return -SOCK_EAGAIN;                  // send buffer full (dispatch may block)
+	int n = (int) len < free ? (int) len : free;
+	memcpy(t->sndBuf + t->sndLen, buf, n);
+	t->sndLen += n;
+	sendData(t);
+	return n;
+}
+
+int tcpRecv(Socket* s, void* buf, unsigned len, int flags) {
+	if (!s || !s->tcp) return -SOCK_EINVAL;
+	Tcb* t = (Tcb*) s->tcp;
+	if (t->rcvCount == 0) {
+		if (t->peerFin || t->state == TCP_CLOSE_WAIT || t->state == TCP_CLOSED) return 0;  // EOF
+		return -SOCK_EAGAIN;
+	}
+	int n = (int) len < t->rcvCount ? (int) len : t->rcvCount;
+	unsigned char* d = (unsigned char*) buf;
+	int tail = t->rcvTail;
+	for (int i = 0; i < n; i++) { d[i] = t->rcvBuf[tail]; tail = (tail + 1) % RCVBUF; }
+	if (!(flags & MSG_PEEK)) { t->rcvTail = tail; t->rcvCount -= n; }
+	return n;
+}
+
+void tcpClose(Socket* s) {
+	if (!s || !s->tcp) return;
+	Tcb* t = (Tcb*) s->tcp;
+	t->sock = 0;                                          // orphan: TCB finishes closing on its own
+	s->tcp = 0;
+	switch (t->state) {
+	case TCP_ESTABLISHED:
+		t->finSeq = t->snd_nxt;
+		sendSeg(t, TCP_ACK | TCP_FIN, t->snd_nxt, 0, 0);
+		t->snd_nxt += 1; t->finSent = true; t->state = TCP_FIN_WAIT_1; armRto(t);
+		break;
+	case TCP_CLOSE_WAIT:
+		t->finSeq = t->snd_nxt;
+		sendSeg(t, TCP_ACK | TCP_FIN, t->snd_nxt, 0, 0);
+		t->snd_nxt += 1; t->finSent = true; t->state = TCP_LAST_ACK; armRto(t);
+		break;
+	case TCP_SYN_SENT:
+	case TCP_LISTEN:
+	default:
+		t->state = TCP_CLOSED; tcbFree(t);
+		break;
+	}
+}
+
+int tcpListen(Socket* s, int /*backlog*/) {
+	if (!s || !s->tcp) return -SOCK_EINVAL;
+	Tcb* t = (Tcb*) s->tcp;
+	if (!s->bound) return -SOCK_EINVAL;
+	t->localIp = s->localIp; t->localPort = s->localPort;
+	t->isListen = true; t->state = TCP_LISTEN;
+	return 0;
+}
+
+Socket* tcpAccept(Socket* s, int* err) {
+	if (!s || !s->tcp) { if (err) *err = -SOCK_EINVAL; return 0; }
+	Tcb* t = (Tcb*) s->tcp;
+	if (!t->isListen || t->acceptCount == 0) { if (err) *err = -SOCK_EAGAIN; return 0; }
+	Tcb* c = t->acceptq[0];
+	for (int i = 1; i < t->acceptCount; i++) t->acceptq[i - 1] = t->acceptq[i];
+	t->acceptCount--;
+	Socket* ns = g_newSock ? g_newSock(AF_INET, SOCK_STREAM, 0) : 0;
+	if (!ns) { if (err) *err = -SOCK_ENOBUFS; return 0; }
+	// Re-point: the new socket adopts the established child TCB (drop the auto-attached one).
+	if (ns->tcp && ns->tcp != c) tcbFree((Tcb*) ns->tcp);
+	ns->tcp = c; c->sock = ns;
+	ns->connected = true; ns->localPort = c->localPort; ns->remoteIp = c->remoteIp; ns->remotePort = c->remotePort;
+	if (err) *err = 0;
+	return ns;
+}
+
+bool tcpReadable(Socket* s) {
+	if (!s || !s->tcp) return false;
+	Tcb* t = (Tcb*) s->tcp;
+	if (t->isListen) return t->acceptCount > 0;
+	return t->rcvCount > 0 || t->peerFin || t->state == TCP_CLOSE_WAIT || t->state == TCP_CLOSED;
+}
+bool tcpWritable(Socket* s) {
+	if (!s || !s->tcp) return false;
+	Tcb* t = (Tcb*) s->tcp;
+	return (t->state == TCP_ESTABLISHED || t->state == TCP_CLOSE_WAIT) && t->sndLen < SNDBUF;
+}
+int tcpState(Socket* s) { return (s && s->tcp) ? ((Tcb*) s->tcp)->state : TCP_CLOSED; }
+
+void tcpReset() {
+	for (int i = 0; i < TCB_N; i++) g_tcbs[i].used = false;
+	g_clock = 0; g_isnCounter = 0x10000;
+}
+
+}  // namespace kernel

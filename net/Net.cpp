@@ -25,4 +25,15 @@ uint16_t inetChecksum(const void* data, int len, uint32_t init) {
 	return inetChecksumFinish(inetChecksumAccum(data, len, init));
 }
 
+uint16_t inetPseudoChecksum(uint32_t src, uint32_t dst, uint8_t proto, const void* seg, int segLen) {
+	unsigned char ph[12];
+	wr32be(ph + 0, src);
+	wr32be(ph + 4, dst);
+	ph[8] = 0; ph[9] = proto;
+	wr16be(ph + 10, (uint16_t) segLen);
+	uint32_t sum = inetChecksumAccum(ph, 12, 0);
+	sum = inetChecksumAccum(seg, segLen, sum);
+	return inetChecksumFinish(sum);
+}
+
 }  // namespace kernel

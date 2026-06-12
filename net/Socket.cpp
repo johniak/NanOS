@@ -1,6 +1,7 @@
 #include "Socket.h"
 #include "NetBuf.h"
 #include "Ip.h"       // IPPROTO_* for RAW protocol validation
+#include "Tcp.h"      // SOCK_STREAM dispatch
 #include <string.h>
 
 namespace kernel {
@@ -22,10 +23,11 @@ const int DEFAULT_BUF = 64 * 1024;
 }  // namespace
 
 void socketSetWakeFn(SocketWakeFn fn) { g_wake = fn; }
+void socketWakeReaders(Socket* s) { if (s && g_wake) g_wake(&s->rxWait); }
 
 Socket* socketCreate(int domain, int type, int protocol, int* err) {
 	if (domain == AF_INET) {
-		if (type != SOCK_DGRAM && type != SOCK_RAW) {   // STREAM = FAZA 8
+		if (type != SOCK_DGRAM && type != SOCK_RAW && type != SOCK_STREAM) {
 			if (err) *err = -SOCK_EPROTONOSUPPORT;
 			return 0;
 		}
@@ -42,6 +44,10 @@ Socket* socketCreate(int domain, int type, int protocol, int* err) {
 			s->domain = domain; s->type = type; s->protocol = protocol;
 			s->rcvbuf = DEFAULT_BUF; s->sndbuf = DEFAULT_BUF;
 			s->rxHead = s->rxTail = s->rxCount = s->rxBytes = 0;
+			if (type == SOCK_STREAM) {
+				int rc = tcpAttach(s);                  // give it a TCB
+				if (rc < 0) { s->used = false; if (err) *err = rc; return 0; }
+			}
 			if (err) *err = 0;
 			return s;
 		}
@@ -50,11 +56,15 @@ Socket* socketCreate(int domain, int type, int protocol, int* err) {
 	return 0;
 }
 
+Socket* socketCreateRaw(int domain, int type, int protocol) { return socketCreate(domain, type, protocol, 0); }
+
 void socketRef(Socket* s) { if (s) s->refs++; }
 
 void socketClose(Socket* s) {
 	if (!s) return;
 	if (--s->refs > 0) return;
+	if (s->type == SOCK_STREAM && s->tcp)    // begin the TCP close handshake (orphans the TCB)
+		tcpClose(s);
 	while (s->rxCount > 0) {                 // free any queued datagrams
 		netbufFree(s->rxq[s->rxTail].skb);
 		s->rxTail = (s->rxTail + 1) % Socket::RXQ;
@@ -89,12 +99,18 @@ int socketBind(Socket* s, uint32_t ip, uint16_t port) {
 		if (port == 0) port = socketEphemeralPort();
 		else if (portInUseUdp(port, s)) return -SOCK_EADDRINUSE;
 	}
+	// (STREAM bind just records the local addr/port for listen(); TCP demux disambiguates by 4-tuple.)
 	s->localIp = ip; s->localPort = port; s->bound = true;
 	return 0;
 }
 
 int socketConnect(Socket* s, uint32_t ip, uint16_t port) {
 	if (!s) return -SOCK_EINVAL;
+	if (s->type == SOCK_STREAM) {            // TCP active open (3-way handshake)
+		int rc = tcpConnect(s, ip, port);
+		if (rc == 0) { s->remoteIp = ip; s->remotePort = port; s->connected = true; }
+		return rc;
+	}
 	s->remoteIp = ip; s->remotePort = port; s->connected = true;
 	if (!s->bound && s->type == SOCK_DGRAM) {     // pick a local port (Linux auto-binds on connect)
 		s->localPort = socketEphemeralPort();
@@ -145,6 +161,7 @@ int socketGetOpt(Socket* s, int level, int name, void* val, unsigned* len) {
 
 int socketSendTo(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t dstPort) {
 	if (!s) return -SOCK_EINVAL;
+	if (s->type == SOCK_STREAM) return tcpSend(s, buf, len);    // stream: ignore dst, use the connection
 	if (s->connected) { dstIp = s->remoteIp; dstPort = s->remotePort; }
 	else if (dstIp == 0) return -SOCK_ENOTCONN;       // unconnected send needs a destination
 	if (s->type == SOCK_DGRAM) return udpSend(s, buf, len, dstIp, dstPort);
@@ -154,6 +171,11 @@ int socketSendTo(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint1
 
 int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t* srcPort, int flags) {
 	if (!s) return -SOCK_EINVAL;
+	if (s->type == SOCK_STREAM) {            // stream: byte recv from the connection
+		if (srcIp) *srcIp = s->remoteIp;
+		if (srcPort) *srcPort = s->remotePort;
+		return tcpRecv(s, buf, len, flags);
+	}
 	if (s->rxCount == 0)
 		return -SOCK_EAGAIN;                          // dispatch blocks on socketReadable unless nonblock
 	Socket::Dgram* d = &s->rxq[s->rxTail];
@@ -171,8 +193,15 @@ int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t
 	return n;
 }
 
-bool socketReadable(const Socket* s) { return s && (s->rxCount > 0 || s->soError != 0); }
-bool socketWritable(const Socket* s) { return s != 0; }   // datagram sockets are always writable
+bool socketReadable(const Socket* s) {
+	if (!s) return false;
+	if (s->type == SOCK_STREAM) return tcpReadable((Socket*) s);
+	return s->rxCount > 0 || s->soError != 0;
+}
+bool socketWritable(const Socket* s) {
+	if (s && s->type == SOCK_STREAM) return tcpWritable((Socket*) s);
+	return s != 0;   // datagram sockets are always writable
+}
 int socketPoll(Socket* s) {
 	int e = 0;
 	if (socketReadable(s)) e |= POLLIN;

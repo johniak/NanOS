@@ -337,6 +337,7 @@ void Kernel::start() {
 	// Net stack: install lo + the RX softirq thread (drains the backlog outside IRQ) + the
 	// driver hooks. Any frames the e1000 already queued during kext load drain on its first run.
 	registerKthread(netCoreInit(), "ksoftirqd-net");
+	registerKthread(netTimerThread(), "net-timer");
 	arch::archTimerInit(1000);
 	okEnd();
 	Scheduler::start();

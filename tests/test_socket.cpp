@@ -64,16 +64,16 @@ static void feedUdp(uint32_t src, uint16_t sport, uint16_t dport, const unsigned
 
 // ---------------- socket creation / options ----------------
 
-TEST_CASE("socketCreate: AF_INET DGRAM ok; IPv6 -> EAFNOSUPPORT; STREAM -> not yet") {
+TEST_CASE("socketCreate: AF_INET DGRAM/STREAM ok; IPv6 -> EAFNOSUPPORT") {
 	setup();
 	int err=-1;
 	Socket* u=socketCreate(AF_INET, SOCK_DGRAM, 0, &err);
 	REQUIRE(u != nullptr); CHECK(err==0);
 	CHECK(socketCreate(10 /*AF_INET6*/, SOCK_DGRAM, 0, &err) == nullptr);
 	CHECK(err == -SOCK_EAFNOSUPPORT);
-	CHECK(socketCreate(AF_INET, SOCK_STREAM, 0, &err) == nullptr);
-	CHECK(err == -SOCK_EPROTONOSUPPORT);   // TCP arrives in FAZA 8
-	socketClose(u);
+	Socket* t=socketCreate(AF_INET, SOCK_STREAM, 0, &err);   // TCP (FAZA 8)
+	REQUIRE(t != nullptr); CHECK(err==0);
+	socketClose(u); socketClose(t);
 }
 
 TEST_CASE("bind: ephemeral on port 0, EADDRINUSE on a taken port") {
