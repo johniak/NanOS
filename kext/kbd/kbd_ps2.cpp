@@ -48,6 +48,11 @@ extern "C" int nkext_init() {
 	unsigned char cfg = readData();
 	cfg |= 0x01;                          // bit0: enable keyboard IRQ (IRQ1)
 	cfg &= ~0x10;                         // bit4: enable keyboard clock (clear "disable")
+	cfg |= 0x40;                          // bit6: TRANSLATION on -> controller converts the
+	                                      // keyboard's scancode set 2 into set 1, which our
+	                                      // decoder (KeyDecoder, set-1 table) expects. Without it
+	                                      // raw set-2 reaches the decoder and mistranslates (e.g.
+	                                      // 's' = set2 0x1B -> read as set1 ']'; 'l' drops).
 	waitWrite(); outb(PS2_CMD, 0x60);     // write controller config byte
 	waitWrite(); outb(PS2_DATA, cfg);
 	knx_register_irq(1, kbdIrq);
