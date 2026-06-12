@@ -31,6 +31,12 @@ typedef struct {
 	int savecx, savecy;
 	int state, par[VT_NPAR], npar, priv;   /* parser */
 	unsigned char dirty[VT_MAXR];          /* row changed since last render */
+	/* Alternate screen (xterm DECSET 47/1047/1049): a full-screen app (vim, less, top) switches
+	 * to a blank scratch screen on entry and the main screen is restored on exit — so the shell's
+	 * prompt + scrollback reappear instead of the app's leftover frame. `save` holds the main
+	 * screen while `alt` is set; `alt_cx/cy` is the main-screen cursor to restore. */
+	vt_cell save[VT_MAXR][VT_MAXC];
+	int alt, alt_cx, alt_cy;
 } vt;
 
 void     vt_init(vt *t, int cols, int rows);          /* clear grid, cursor home */

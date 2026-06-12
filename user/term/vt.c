@@ -57,6 +57,28 @@ static void put_glyph(vt *t, unsigned char ch)
 
 static void line_feed(vt *t) { if (++t->cy > t->bot) { t->cy = t->bot; scroll_up(t); } }
 
+/* Switch to / from the alternate screen (DECSET 47/1047/1049). On entry the main screen + cursor
+ * are stashed and the screen is cleared (a blank scratch buffer for the full-screen app); on exit
+ * the main screen + cursor are restored and every row marked dirty so the renderer repaints it.
+ * This is why a normal terminal shows your shell again the moment vim/less/top exit. */
+static void swap_screen(vt *t, int enter)
+{
+	if (enter && !t->alt) {
+		t->alt_cx = t->cx; t->alt_cy = t->cy;
+		for (int y = 0; y < t->rows; y++)
+			for (int x = 0; x < t->cols; x++) t->save[y][x] = t->grid[y][x];
+		t->alt = 1;
+		clear_region(t, 0, 0, t->cols - 1, t->rows - 1);
+	} else if (!enter && t->alt) {
+		for (int y = 0; y < t->rows; y++) {
+			for (int x = 0; x < t->cols; x++) t->grid[y][x] = t->save[y][x];
+			mark(t, y);
+		}
+		t->cx = t->alt_cx; t->cy = t->alt_cy;
+		t->alt = 0;
+	}
+}
+
 static int clampr(vt *t, int v) { return v < 0 ? 0 : (v >= t->rows ? t->rows - 1 : v); }
 static int clampc(vt *t, int v) { return v < 0 ? 0 : (v >= t->cols ? t->cols - 1 : v); }
 
@@ -112,7 +134,10 @@ static void csi_final(vt *t, unsigned char f)
 		t->cx = 0; t->cy = t->top; break;
 	case 's': t->savecx = t->cx; t->savecy = t->cy; break;
 	case 'u': t->cx = t->savecx; t->cy = t->savecy; break;
-	case 'h': case 'l': if (t->priv && a == 1049) t->cx = t->cy = 0; break;
+	case 'h': case 'l':   /* DECSET/DECRST: alternate screen (the rest are noted + ignored) */
+		if (t->priv && (a == 1049 || a == 1047 || a == 47))
+			swap_screen(t, f == 'h');
+		break;
 	}
 	mark(t, t->cy);
 }

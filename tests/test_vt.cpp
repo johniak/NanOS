@@ -110,3 +110,29 @@ TEST_CASE("vt: BS and TAB move the cursor; reverse video swaps fg/bg") {
 	feed(t, "\x1b[7mX");                          // reverse video
 	CHECK(t.grid[0][8].fg == 0);                 // fg/bg swapped (default bg 0 -> fg)
 }
+
+TEST_CASE("vt: alternate screen (DECSET 1049) saves and restores the main screen") {
+	vt t; vt_init(&t, 20, 5);
+	feed(t, "shell$ ");                  // main screen content + cursor where it left off
+	int mcx = t.cx, mcy = t.cy;
+	CHECK(t.grid[0][0].ch == 's');
+	feed(t, "\x1b[?1049h");              // a full-screen app starts: enter the alternate screen
+	CHECK(t.alt == 1);
+	CHECK(t.grid[0][0].ch == ' ');       // alt screen is blank
+	feed(t, "\x1b[1;1HVIM");             // app draws into the alt screen
+	CHECK(t.grid[0][0].ch == 'V');
+	feed(t, "\x1b[?1049l");              // app exits: leave the alternate screen
+	CHECK(t.alt == 0);
+	CHECK(t.grid[0][0].ch == 's');       // main screen restored ('shell$ ')
+	CHECK(t.grid[0][5].ch == '$');
+	CHECK(t.cx == mcx);                  // and the main-screen cursor restored
+	CHECK(t.cy == mcy);
+}
+
+TEST_CASE("vt: legacy alt-screen codes 47 and 1047 also save/restore") {
+	vt t; vt_init(&t, 20, 5);
+	feed(t, "main");
+	feed(t, "\x1b[?47h");      CHECK(t.alt == 1); CHECK(t.grid[0][0].ch == ' ');
+	feed(t, "\x1b[1;1HX");     CHECK(t.grid[0][0].ch == 'X');   // app homes the cursor itself
+	feed(t, "\x1b[?47l");      CHECK(t.alt == 0); CHECK(t.grid[0][0].ch == 'm');
+}
