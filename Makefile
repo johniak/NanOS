@@ -110,6 +110,21 @@ run: image
 run-iso: iso
 	qemu-system-i386 -cdrom nanos.iso
 
+# Networking harness (FAZA 0 of docs/superpowers/plans/2026-06-12-networking.md). Attach an
+# Intel e1000 (82540EM = PCI 8086:100E — a REAL NIC with the canonical Linux driver) on QEMU's
+# user-mode NAT and dump EVERY frame (RX+TX) to a pcap. NIC_OPTS is shared by run-net and
+# scripts/net-capture.sh so the wire we observe is exactly the wire we ship. The NAT hands the
+# guest 10.0.2.15 (gateway 10.0.2.2, DNS forwarder 10.0.2.3, DHCP server 10.0.2.2); traffic
+# reaches the real internet through the host, so `ping wp.pl` can actually go out. The pcap is
+# the "no-shortcuts" gate: we byte-compare our ARP/IP/ICMP/DNS/TCP against real Linux. hostfwd
+# (host:5555 -> guest:80) lets a host client reach a guest server for loopback-free tests.
+PCAP ?= /tmp/nanos.pcap
+NIC_OPTS=-netdev user,id=n0,hostfwd=tcp::5555-:80 -device e1000,netdev=n0 \
+         -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
+
+run-net: image
+	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
+
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
 TEST_IMAGE=nanos-test
