@@ -365,7 +365,7 @@ TEST_CASE("logo menu: About queues a spawn, Shut Down / Quit set the flags") {
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
 	CHECK(s.menu_open == 1);
 	CHECK(s.menu_which == NW_MENU_LOGO);
-	CHECK(nw_menu_open_item_count(&s) == 3);
+	CHECK(nw_menu_open_item_count(&s) == 4);   // About, Run..., Shut Down, Quit
 	// hover + click "About This Computer" (item 0) -> spawn nwabout queued
 	int ix, iy, iw, ih; nw_menu_dropdown_rect(&s, &ix, &iy, &iw, &ih);
 	int cy = iy + NW_MENU_ITEM_H / 2;
@@ -376,10 +376,15 @@ TEST_CASE("logo menu: About queues a spawn, Shut Down / Quit set the flags") {
 	char out[64];
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
 	CHECK(strcmp(out, "nwabout") == 0);
-	// reopen, click "Shut Down" (item 1)
+	// reopen, click "Run..." (item 1) -> opens the Run launcher
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
-	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, 0);
 	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
+	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, 0);
+	CHECK(s.run_open == 1);
+	s.run_open = 0;
+	// reopen, click "Shut Down" (item 2)
+	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
+	nw_pointer(&s, ix + 5, iy + 2 * NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
 	CHECK(s.want_shutdown == 1);
 }
 
