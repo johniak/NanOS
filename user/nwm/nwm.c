@@ -74,8 +74,10 @@ static struct nw_decoder cl_dec[NW_MAX_CLIENTS];
 static unsigned char  *cl_pay[NW_MAX_CLIENTS];
 static unsigned char  *cl_out[NW_MAX_CLIENTS];
 
-/* per-window-slot backing buffer the shell allocated (freed when the slot frees) */
+/* per-window-slot backing buffers the shell allocated (freed when the slot frees):
+ * g_winbuf = client content (cw*ch); g_winframe = the cached chrome+content frame (fw*fh). */
 static uint32_t *g_winbuf[NW_MAX_WINDOWS];
+static uint32_t *g_winframe[NW_MAX_WINDOWS];
 
 /* --- Frame-time profiling (Phase 0). Off by default; build with -DNWM_PROFILE=1 to print the
  * cost of each recompose+blit (the per-frame cost paid while dragging) to stderr — the kernel
@@ -253,9 +255,18 @@ static void reconcile_buffers(void)
 		g_winbuf[slot] = (uint32_t *) malloc((size_t) w->cw * w->ch * 4);
 		if (g_winbuf[slot]) memset(g_winbuf[slot], 0, (size_t) w->cw * w->ch * 4);
 		w->buf = g_winbuf[slot];
+		/* the cached frame: chrome (title bar + border) around the content */
+		int fw = w->cw + 2 * NW_BORDER, fh = NW_TITLEBAR_H + w->ch + NW_BORDER;
+		g_winframe[slot] = (uint32_t *) malloc((size_t) fw * fh * 4);
+		if (g_winframe[slot]) memset(g_winframe[slot], 0, (size_t) fw * fh * 4);
+		w->frame = g_winframe[slot];
+		w->frame_dirty = 1;            /* render it on the next compose */
 	}
 	for (int i = 0; i < NW_MAX_WINDOWS; i++)
-		if (!S.win[i].used && g_winbuf[i]) { free(g_winbuf[i]); g_winbuf[i] = 0; }
+		if (!S.win[i].used) {
+			if (g_winbuf[i])   { free(g_winbuf[i]);   g_winbuf[i] = 0; }
+			if (g_winframe[i]) { free(g_winframe[i]); g_winframe[i] = 0; }
+		}
 }
 
 /* try to push a client's queued events to its pipe (non-blocking) */
@@ -316,6 +327,7 @@ static void present(void)
 #if NWM_PROFILE
 		long pf_t0 = pf_now_ns();
 #endif
+		nw_render_dirty_frames(&S);              /* refresh any window whose content/focus changed */
 		int dx, dy, dw, dh;
 		int have = nw_peek_damage(&S, &dx, &dy, &dw, &dh);
 		if (have) {                                /* recompose only the damage region */

@@ -24,6 +24,12 @@ enum { NW_CURSOR_W = 11, NW_CURSOR_H = 16 };
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
                       const struct nw_surface *scratch, const struct nw_surface *wall);
 
+/* Re-render every window whose cached frame is marked dirty (content/focus/create changed) into
+ * its window-local frame buffer, clearing the flag. Run this before nw_compose_scene: windows
+ * with a frame buffer are then composited from the cache, so a drag (which only moves x/y, never
+ * dirtying) costs no chrome/content re-render. Windows without a frame fall back to the live path. */
+void nw_render_dirty_frames(struct nw_server *s);
+
 /* Render the static gradient wallpaper into `dst` once (the shell caches it). */
 void nw_render_wallpaper(const struct nw_surface *dst);
 

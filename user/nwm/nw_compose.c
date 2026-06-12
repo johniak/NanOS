@@ -75,34 +75,37 @@ void nw_render_wallpaper(const struct nw_surface *dst)
 static int frame_w(const struct nw_window *w) { return w->cw + 2 * NW_BORDER; }
 static int frame_h(const struct nw_window *w) { return NW_TITLEBAR_H + w->ch + NW_BORDER; }
 
-/* Render the window opaquely (material + title bar + controls + content) into `scratch`,
- * at its on-screen position. The rounded/alpha composite happens afterwards. */
-static void draw_window_to(const struct nw_surface *sc, const struct nw_window *w, int focused)
+/* Render the window opaquely (material + title bar + controls + content) into `sc`, with the
+ * frame's top-left at (ox,oy). Callers pass the on-screen (w->x,w->y) to draw into a screen-space
+ * buffer, or (0,0) to render window-local into the per-window frame cache. The rounded/alpha
+ * composite happens afterwards. */
+static void draw_window_to(const struct nw_surface *sc, const struct nw_window *w, int focused,
+                           int ox, int oy)
 {
 	int fw = frame_w(w), fh = frame_h(w);
 	int dark = (w->title[0] == '\x01');       /* a leading 0x01 in the title flags a dark window */
 	uint32_t mat = dark ? COL_WIN_DARK : COL_WIN_LIGHT;
 	const char *title = dark ? w->title + 1 : w->title;
 
-	nw_fill_rect(sc, w->x, w->y, fw, fh, mat);                       /* material */
-	nw_vgrad_rect(sc, w->x, w->y, fw, NW_TITLEBAR_H,                 /* title bar */
+	nw_fill_rect(sc, ox, oy, fw, fh, mat);                          /* material */
+	nw_vgrad_rect(sc, ox, oy, fw, NW_TITLEBAR_H,                    /* title bar */
 	              dark ? COL_TB_DTOP : COL_TB_TOP, dark ? COL_TB_DBOT : COL_TB_BOT);
 	if (!focused)                                                    /* dim the bar when unfocused */
-		nw_blend_rect(sc, w->x, w->y, fw, NW_TITLEBAR_H, mat, 80);
+		nw_blend_rect(sc, ox, oy, fw, NW_TITLEBAR_H, mat, 80);
 
 	/* title text (with a little app dot to the left) */
 	uint32_t tfg = dark ? COL_TITLE_DFG : COL_TITLE_FG;
-	int ty = w->y + (NW_TITLEBAR_H - NW_FONT_H) / 2;
-	nw_fill_round(sc, w->x + 10, ty + 2, 12, 12, 3, focused ? 0x12a8f4 : 0x9fb2cc, 255);
-	nw_text(sc, w->x + 28, ty, title, tfg);                 /* bg 0 = ignored (opaque text bg) */
+	int ty = oy + (NW_TITLEBAR_H - NW_FONT_H) / 2;
+	nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? 0x12a8f4 : 0x9fb2cc, 255);
+	nw_text(sc, ox + 28, ty, title, tfg);                 /* bg 0 = ignored (opaque text bg) */
 
 	/* window controls on the right: —  □  × */
 	uint32_t cfg = dark ? COL_CTRL_D : COL_CTRL;
 	int cw = NW_CLOSE, ch2 = NW_TITLEBAR_H;
-	int x3 = w->x + fw - cw;                       /* × */
+	int x3 = ox + fw - cw;                         /* × */
 	int x2 = x3 - cw;                              /* □ */
 	int x1 = x2 - cw;                              /* — */
-	int gy = w->y + ch2 / 2;
+	int gy = oy + ch2 / 2;
 	nw_blend_rect(sc, x1 + cw / 2 - 4, gy, 8, 2, cfg, 255);                       /* minimize */
 	nw_stroke_round(sc, x2 + cw / 2 - 5, gy - 5, 10, 10, 2, cfg, 255);            /* maximize */
 	for (int i = -4; i <= 4; i++) {                                               /* close × */
@@ -111,7 +114,7 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	}
 
 	/* content */
-	int cox = w->x + NW_BORDER, coy = w->y + NW_TITLEBAR_H;
+	int cox = ox + NW_BORDER, coy = oy + NW_TITLEBAR_H;
 	if (w->buf) {
 		struct nw_surface src;
 		src.px = w->buf; src.w = w->cw; src.h = w->ch; src.stride = w->cw;
@@ -129,11 +132,13 @@ static inline uint32_t cmix(uint32_t d, uint32_t s, int a)
 	return nw_blend8(d, s, (unsigned) a);
 }
 
-/* Composite scratch[winrect] onto `back` with rounded corners (AA) + per-window alpha. Fast:
- * the clip bounds are resolved once; the straight middle rows are one tight blend loop (or a
- * memcpy when opaque), and only the two corner bands (top r + bottom r rows) pay per-pixel AA. */
+/* Composite the source window onto `back` with rounded corners (AA) + per-window alpha. The
+ * source pixel for back(px,py) is sc[(py-soy)*stride + (px-sox)]; pass (sox,soy)=(x,y) when the
+ * source is a window-local frame (origin at the window's top-left), or (0,0) when it is a
+ * screen-space buffer aligned with `back`. Fast: clip bounds resolved once; straight middle rows
+ * are one tight blend loop (or memcpy when opaque); only the two corner bands pay per-pixel AA. */
 static void composite_round(const struct nw_surface *back, const struct nw_surface *sc,
-                            int x, int y, int w, int h, int r, int alpha)
+                            int x, int y, int w, int h, int r, int alpha, int sox, int soy)
 {
 	int bx0, by0, bx1, by1;
 	nw_surface_bounds(back, &bx0, &by0, &bx1, &by1);
@@ -142,7 +147,7 @@ static void composite_round(const struct nw_surface *back, const struct nw_surfa
 	for (int py = (y < by0 ? by0 : y); py < (y + h > by1 ? by1 : y + h); py++) {
 		int yy = py - y;
 		uint32_t       *drow = back->px + (long) py * back->stride;
-		const uint32_t *srow = sc->px   + (long) py * sc->stride;
+		const uint32_t *srow = sc->px   + (long) (py - soy) * sc->stride - sox;
 		if (yy >= r && yy < h - r) {                  /* straight middle row: no AA */
 			if (alpha >= 255)
 				for (int px = x0; px < x1; px++) drow[px] = srow[px];
@@ -258,6 +263,24 @@ static void draw_dock(const struct nw_server *s, const struct nw_surface *back)
 }
 
 /* ---- the scene ------------------------------------------------------------------- */
+/* Render every dirty window frame into its window-local cache, clearing the flag. Callers
+ * (the shell, and tests) run this before nw_compose_scene so the cached frames are current;
+ * a move (x/y change) leaves frames clean, so dragging recomposites from the cache with no
+ * chrome/content re-render. Windows without a frame buffer are left to the live path below. */
+void nw_render_dirty_frames(struct nw_server *s)
+{
+	for (int i = 0; i < NW_MAX_WINDOWS; i++) {
+		struct nw_window *w = &s->win[i];
+		if (!w->used || !w->frame || !w->frame_dirty)
+			continue;
+		struct nw_surface fs;
+		fs.px = w->frame; fs.w = frame_w(w); fs.h = frame_h(w); fs.stride = frame_w(w);
+		nw_surface_noclip(&fs);
+		draw_window_to(&fs, w, (i == s->focus), 0, 0);   /* window-local: origin (0,0) */
+		w->frame_dirty = 0;
+	}
+}
+
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
                       const struct nw_surface *scratch, const struct nw_surface *wall)
 {
@@ -269,13 +292,19 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		const struct nw_window *w = &s->win[idx];
 		if (!w->used) continue;
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
-		if (scratch) {
-			draw_window_to(scratch, w, focused);
-			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS,
-			                (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA);
+		int alpha = (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA;
+		if (w->frame) {                          /* cached frame: composite window-local source */
+			struct nw_surface fs;
+			fs.px = w->frame; fs.w = fw; fs.h = fh; fs.stride = fw;
+			nw_surface_noclip(&fs);
+			composite_round(back, &fs, w->x, w->y, fw, fh, NW_RADIUS, alpha, w->x, w->y);
+			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
+		} else if (scratch) {                    /* screen-space scratch: render live + composite */
+			draw_window_to(scratch, w, focused, w->x, w->y);
+			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS, alpha, 0, 0);
 			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
 		} else {
-			draw_window_to(back, w, focused);     /* simple/host path: opaque, square */
+			draw_window_to(back, w, focused, w->x, w->y);     /* simple/host path: opaque, square */
 		}
 	}
 	draw_panel(s, back);

@@ -109,10 +109,12 @@ static void set_focus(struct nw_server *s, int idx)
 	if (old >= 0 && s->win[old].used) {
 		emit_win(s, old, NW_EVT_FOCUS, 0, 0, 0, 0, 0, 0);
 		damage_frame(s, old);            /* title bar color changes */
+		s->win[old].frame_dirty = 1;     /* its title bar redraws dimmed -> re-render the frame */
 	}
 	if (idx >= 0 && s->win[idx].used) {
 		emit_win(s, idx, NW_EVT_FOCUS, 1, 0, 0, 0, 0, 0);
 		damage_frame(s, idx);
+		s->win[idx].frame_dirty = 1;
 	}
 	/* The global menu bar shows the focused window's menu (draw_panel reads s->focus), so it
 	 * must be repainted whenever focus changes — otherwise it keeps the old app's menu until
@@ -569,6 +571,7 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		w->cw     = m->a > 0 ? m->a : 1;
 		w->ch     = m->b > 0 ? m->b : 1;
 		w->buf    = 0;
+		w->frame  = 0; w->frame_dirty = 1;   /* shell binds the frame buffer; render it once bound */
 		/* The first few windows get a designed spread (the demo desktop layout); beyond that,
 		 * new windows cascade from the top-left. */
 		static const int LX[4] = { 90, 520, 150, 70 };
@@ -589,6 +592,7 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		if (idx < 0 || s->win[idx].client != client)
 			break;
 		commit_rect(&s->win[idx], m->a, m->b, m->c, m->d, payload, m->length);
+		s->win[idx].frame_dirty = 1;        /* content changed -> the cached frame is stale */
 		/* damage just the committed rect, in screen coordinates */
 		damage(s, s->win[idx].x + NW_BORDER + m->a, s->win[idx].y + NW_TITLEBAR_H + m->b,
 		       m->c, m->d);

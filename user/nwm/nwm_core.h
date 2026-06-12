@@ -58,6 +58,10 @@ struct nw_window {
 	int       x, y;        /* frame top-left, in screen pixels                       */
 	int       cw, ch;      /* content size                                           */
 	uint32_t *buf;         /* content pixels (cw*ch), bound by the shell after create */
+	uint32_t *frame;       /* cached frame_w*frame_h window-local render (chrome+content); the
+	                        * shell allocates it. NULL = render straight to the scene (host path). */
+	int       frame_dirty; /* the cached frame is stale and must be re-rendered. Set on content
+	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
 	char      title[NW_TITLE_MAX];
 	char      menu[NW_MENU_MAX];   /* app menu spec (NW_REQ_SET_MENU); empty = no app menu */
 	int       menu_len;
