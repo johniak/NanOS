@@ -11,6 +11,14 @@
 > **wprost** uruchamiać przekompilowane linuksowe (i686) aplikacje sieciowe. **Zero skrótów**
 > (celowych i niecelowych), zero lenistwa, zero „atrap" TCP/DNS/DHCP. Każda warstwa ma być pełna,
 > poprawna bajtowo na drucie i bramkowana host-testami + porównaniem pcap z prawdziwym Linuksem.
+>
+> **Rewizja 2026-06-12 (po recenzji):** plan poprawiony w kilku punktach (bramka pcap, baseline
+> slirp/ICMP, AF_PACKET dla DHCP, `select` jako nowy syscall, wybór `inetutils`, semantyka
+> resolvera bez IPv6, sockety a fork). **ŻADNA z tych poprawek nie jest skrótem** — to korekty
+> wykonalności i wierności Linuksowi. Zasada „zero skrótów" obowiązuje bez zmian; tam, gdzie
+> poprawka zamienia kryterium na inne, nowe kryterium jest *ostrzejsze merytorycznie* (np.
+> porównanie pole-po-polu z maską pól losowych zamiast naiwnego bajtowego, które nie przechodzi
+> nawet Linux-vs-Linux).
 
 ---
 
@@ -97,9 +105,21 @@ i686 (rozmiary, offsety, kolejność pól, network byte order).
 ## 2. Fazy (każda: pomiar/spec → implementacja → host-testy → pcap byte-compare → QEMU → commit)
 
 Bramka „bez skrótów" dla KAŻDEJ fazy: (a) host-testy logiki MI ≥90% pokrycia nowych modułów;
-(b) **porównanie pcap** — zrzut z `filter-dump` (QEMU) lub z host-testu rozkodować `tcpdump`/Scapy i
-**porównać bajtowo** z tym, co generuje prawdziwy Linux dla tej samej operacji; (c) `make check-arch`
-czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty na drucie ≠ Linux.
+(b) **porównanie pcap pole-po-polu** — zrzut z `filter-dump` (QEMU) lub z host-testu rozkodować
+Scapy i porównać z tym, co generuje prawdziwy Linux dla tej samej operacji: **KAŻDE pole nagłówka
+identyczne**, z jawną, krótką **maską pól legalnie losowych/stanowych** (IP ID, TCP ISN, porty
+efemeryczne, DNS query ID, TCP timestamps, rozmiar okna — oraz sumy kontrolne w zakresie, w jakim
+pokrywają pola zamaskowane; sumy SĄ weryfikowane niezależnie jako poprawne dla naszych bajtów).
+UWAGA: to NIE jest poluzowanie — naiwne „bajt-w-bajt" nie przechodzi nawet Linux-vs-Linux (pola
+losowe), więc byłoby bramką fikcyjną. Maska jest zamknięta i skończona; **dopisanie pola do maski
+wymaga uzasadnienia w komentarzu testu** (dlaczego Linux losuje/zmienia to pole). Wszystko poza
+maską = bajtowo identyczne;
+(c) **parytet semantyczny strace** — dla operacji, które ćwiczy faza, sekwencja syscalli zwraca te
+same wartości/errno i ma tę samą semantykę blokowania co Linux (wzorzec: `strace` tej samej
+operacji na referencyjnym Linuksie i686, zarchiwizowany w `tests/fixtures/strace/`). Aplikacje
+psują się na semantyce, nie na bajtach na drucie — to równorzędna bramka, nie dodatek;
+(d) `make check-arch` czysty; (e) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki drut
+i semantyka ≠ Linux.
 
 ---
 
@@ -111,6 +131,19 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
   w pcap. Na hoście `tcpdump -r /tmp/nanos.pcap -v` / Wireshark / Scapy do bajt-po-bajcie porównania.
 - Skrypt `scripts/net-capture.sh` (boot + scenariusz + zrzut pcap + dekod). To nasz „złoty standard"
   poprawności — bo bajty na drucie nie kłamią.
+- **BASELINE WYKONALNOŚCI (obowiązkowy, PRZED napisaniem jakiegokolwiek kodu):** odpalić zwykłego
+  Linuksa (np. Alpine ISO, i686) w QEMU z **identyczną** konfiguracją `-netdev user` na TYM hoście
+  (macOS) i potwierdzić, że `ping wp.pl` przechodzi przez slirp w realny internet. Slirp forwarduje
+  ICMP echo tylko, gdy host pozwala na nieuprzywilejowane sockety ICMP — na macOS bywa to zależne od
+  wersji QEMU/libslirp. Jeśli baseline NIE przechodzi: kryterium sukcesu ICMP przedefiniować z góry
+  (np. `ping 10.0.2.2`, na który odpowiada sam slirp, + pełny dowód internetowy przez DNS+TCP), a NIE
+  odkrywać tego w FAZIE 13. To ryzyko **zewnętrzne** wobec NanOS — żadna poprawność stosu go nie
+  obejdzie.
+- **AUDYT STRACE docelowych aplikacji (obowiązkowy):** na referencyjnym Linuksie i686 zebrać `strace`
+  z `inetutils ping wp.pl` i `wget http://example.com` → dokładna lista syscalli, sockoptów, ioctl-i
+  i ścieżek `/etc`/`/proc`, które MUSIMY pokryć. Zarchiwizować w `tests/fixtures/strace/` — to
+  kontrakt wejściowy dla faz 7–13 (i wzorzec dla bramki parytetu semantycznego). Robimy to teraz,
+  żeby braki wyszły w specyfikacji, nie w FAZIE 13.
 - Makefile: opcjonalne `make run-net` (run z NIC + pcap). Cel: zanim cokolwiek napiszemy, umieć
   **zobaczyć i porównać** każdy bajt.
 
@@ -186,7 +219,17 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
 - **UDP**: porty, demux (proto,local-addr/port,remote), `sendto`/`recvfrom`, datagram bufory,
   pseudo-header checksum, ephemeral ports, `connect` (default peer). Niezbędne dla DNS.
 - **RAW** (SOCK_RAW): dostarcz/przyjmij surowe IP/ICMP po protokole — to czego używa `ping`.
-- **Weryfikacja**: host-testy demux/buforów; QEMU: ręczny klient UDP echo do `10.0.2.2`; bajtowo pcap.
+- **AF_PACKET** (SOCK_RAW/SOCK_DGRAM na poziomie L2, `sockaddr_ll`, jak Linux): wymagany przez
+  klienty DHCP (`udhcpc`/`dhclient` wysyłają DISCOVER packet-socketem, BO interfejs nie ma jeszcze
+  adresu IP). Bez tego FAZA 10 nie ma jak być „bez łatek". Do kompletu: stos MUSI dostarczać
+  broadcasty (255.255.255.255 / L2 broadcast) do socketów również, gdy interfejs nie ma adresu —
+  jak Linux. To nie jest opcja „nice to have", tylko brakujące ogniwo ścieżki DHCP.
+- **Sockety a `fork`/`dup`/`exec`**: obiekt socketu w tablicy fd jest **refcountowany** dokładnie
+  jak `Pipe` (`kernel/Pipe.h` — istniejący wzorzec): fork/dup współdzielą gniazdo, `close` zwalnia
+  przy ostatniej referencji, CLOEXEC respektowany przy exec. Jawnie testowane (fork + komunikacja
+  przez odziedziczony socket), bo NanOS ma pełny fork i aplikacje z tego korzystają.
+- **Weryfikacja**: host-testy demux/buforów; QEMU: ręczny klient UDP echo do `10.0.2.2`; pcap
+  pole-po-polu.
 
 ### FAZA 8 — TCP (MI) — największa, „bez atrap"
 - **Pełna maszyna stanów** (CLOSED/LISTEN/SYN_SENT/SYN_RCVD/ESTABLISHED/FIN_WAIT_1/2/CLOSE_WAIT/
@@ -200,28 +243,44 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
   pcap: handshake/teardown/okna bajtowo zgodne z Linuksem; QEMU: pełny `wget` po HTTP (TCP/80).
 
 ### FAZA 9 — ABI syscalli socketów (DOKŁADNIE Linux i686)
-- `kernel/SyscallNr.h`: numery Linux i686 — `socketcall`=102 ORAZ bezpośrednie (`socket`=359,
-  `bind`=361, `connect`=362, `listen`=363, `accept4`=364, `getsockopt`=365, `setsockopt`=366,
-  `getsockname`=367, `getpeername`=368, `send`/`recv`/`sendto`/`recvfrom`/`sendmsg`/`recvmsg`,
-  `shutdown`, `socketpair` — pełna lista i386).
+- `kernel/SyscallNr.h`: numery Linux i686 — `socketcall`=102 ORAZ bezpośrednie (Linux ≥4.3):
+  `socket`=359, `socketpair`=360, `bind`=361, `connect`=362, `listen`=363, `accept4`=364,
+  `getsockopt`=365, `setsockopt`=366, `getsockname`=367, `getpeername`=368, `sendto`=369,
+  `sendmsg`=370, `recvfrom`=371, `recvmsg`=372, `shutdown`=373. **UWAGA (korekta): `send`/`recv`
+  NIE istnieją na i386 jako bezpośrednie syscalle** — wyłącznie jako podnumery `socketcall`
+  (SYS_SEND=9, SYS_RECV=10); tak właśnie ma być, jak w Linuksie.
 - `socketcall(call, args*)`: demux (1=socket,2=bind,...,18=accept4) — kopiuje argumenty z userspace
   wg dokładnego layoutu i woła wspólny rdzeń (ten sam co bezpośrednie syscalle).
-- Sockety w **tablicy fd**: `read/write` = recv/send, `close` = zamknięcie gniazda, `poll/select/
-  epoll` po readiness, `fcntl(O_NONBLOCK)`, `ioctl` (FIONREAD, SIOCATMARK), `dup`/`dup2`/CLOEXEC.
+- **`select` to NOWY syscall, nie integracja** — w NanOS istnieje dziś tylko `poll` (`SYS_poll`=168).
+  Dodać `_newselect`=142 (semantyka Linux: modyfikacja fd_setów w miejscu, timeout aktualizowany)
+  — **wymagany**, bo `wget` używa wzorca nonblocking `connect` → `select` → `getsockopt(SO_ERROR)`;
+  ta ścieżka jest jawnie testowana host-testem. `epoll` (`epoll_create1`/`ctl`/`wait`) —
+  **opcjonalny** (żadna z docelowych aplikacji go nie używa); jeśli robiony, to pełny, bez atrap.
+- Sockety w **tablicy fd**: `read/write` = recv/send, `close` = zamknięcie gniazda, `poll`/`select`
+  (+ `epoll` jeśli jest) po readiness, `fcntl(O_NONBLOCK)`, `ioctl` (FIONREAD, SIOCATMARK),
+  `dup`/`dup2`/CLOEXEC; semantyka fork/dup = refcount jak Pipe (patrz FAZA 7).
 - **Net ioctl-e** (jak Linux): `SIOCGIFADDR/SIOCSIFADDR`, `SIOCGIFFLAGS`, `SIOCGIFHWADDR`,
   `SIOCGIFMTU`, `SIOCADDRT/SIOCDELRT` (trasy), `SIOCGIFCONF` — na specjalnym gnieździe (jak Linux).
 - **Weryfikacja**: host-testy kopiowania/ABI; parytet z bezpośrednimi; binarka i686 z glibc (socketcall)
   i z musl (direct) — obie działają.
 
 ### FAZA 10 — konfiguracja interfejsu (DHCP „jak w Linuksie")
-- **Klient DHCP** (pełny DISCOVER/OFFER/REQUEST/ACK, lease, opcje: IP/maska/gw/DNS/MTU) — w userlandzie,
-  port `busybox udhcpc` lub `dhclient` (przez SDK) albo mały własny zgodny z RFC 2131; konfiguruje
-  `eth0` (adres+maska), tablicę tras (default → gw), zapisuje **`/etc/resolv.conf`** (nameserver z DHCP).
-  Statyka jako fallback (QEMU zna adresy: IP `10.0.2.15`, gw `10.0.2.2`, dns `10.0.2.3`).
+- **Klient DHCP** (pełny DISCOVER/OFFER/REQUEST/ACK, lease, opcje: IP/maska/gw/DNS/MTU): port
+  **`busybox udhcpc`** przez SDK, **bez łatek logiki** — co WYMAGA `AF_PACKET` z FAZY 7 (udhcpc
+  wysyła DISCOVER packet-socketem, zanim interfejs ma adres IP) + dostarczania broadcastów do
+  socketów na nieskonfigurowanym interfejsie. Świadomie NIE piszemy „małego własnego klienta" —
+  to byłby skrót, który ominąłby AF_PACKET i nie udowodniłby, że prawdziwy linuksowy klient DHCP
+  działa. Konfiguruje `eth0` (adres+maska), tablicę tras (default → gw), zapisuje
+  **`/etc/resolv.conf`** (nameserver z DHCP). Statyka jako fallback awaryjny (QEMU zna adresy:
+  IP `10.0.2.15`, gw `10.0.2.2`, dns `10.0.2.3`) — fallback nie zwalnia z działającego DHCP.
 - Bring-up przy boocie: `lo` UP + `eth0` UP + DHCP (jak `ifup`/`networkd`). Narzędzia `ifconfig`/`route`/
   `ip` (busybox/inetutils) — opcjonalne, ale „jak w Linuksie".
-- `/etc` → symlink lub realny katalog na `/disks/main` (`resolv.conf`, `hosts`, `nsswitch.conf`,
-  `services`, `protocols`).
+- **`/etc` — wariant konkretny:** root VFS jest syntetyczny (SynthFs), więc „katalog w roocie" nie
+  istnieje za darmo. Decyzja: **mount RamFs na `/etc`** (jak `/tmp`), populowany przy boocie z
+  `/disks/main/nanos/config/etc/` (kopiowanie plików bazowych: `hosts`, `nsswitch.conf`,
+  `services`, `protocols`); `resolv.conf` zapisuje tam udhcpc w runtime. Dzięki temu `/etc` jest
+  zapisywalny bez angażowania ścieżki write ext na gorąco, a aplikacje widzą kanoniczne ścieżki
+  `/etc/...` dokładnie jak na Linuksie.
 - **Weryfikacja**: pcap DHCP bajtowo jak Linux; po boocie `eth0` ma `10.0.2.15`, default route, resolv.conf.
 
 ### FAZA 11 — resolver DNS (userland, w libc — „jak w Linuksie")
@@ -232,6 +291,12 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
 - **SDK**: dostarczyć w sysroot **prawdziwy** resolver kompatybilny z Linuksem — albo port glibc
   `resolv`/`nss`, albo wierny minimalny (musl-style) z **dokładnym** API `<netdb.h>`. Bez skrótów:
   pełne parsowanie DNS, kompresja, wiele nameserverów, search domains.
+- **Semantyka bez IPv6 (jawna, nie przypadkowa):** stos jest IPv4-only, więc `getaddrinfo` z
+  `AF_UNSPEC` zwraca **wyłącznie wpisy A/AF_INET** (nie pyta o AAAA albo ignoruje odpowiedź), a
+  `socket(AF_INET6, ...)` zwraca **`EAFNOSUPPORT`** — dokładnie tak zachowuje się Linux z
+  wykompilowanym/wyłączonym IPv6, i na ten errno aplikacje (ping/wget) mają gotowy fallback na A.
+  To zachowanie jest częścią kontraktu i ma host-test; bez niego apki próbujące najpierw AF_INET6
+  wywracałyby się w niezdefiniowany sposób.
 - **Weryfikacja**: pcap: nasze zapytanie DNS dla `wp.pl` bajtowo jak Linux (`dig wp.pl`); `getaddrinfo`
   zwraca poprawne A; host-testy parsera DNS (w tym kompresja nazw, truncation→TCP).
 
@@ -242,7 +307,9 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
   `<netinet/in.h>` (sockaddr_in/in6, in_addr, INADDR_*, IPPROTO_*, htons/htonl), `<netinet/tcp.h>`
   (TCP_NODELAY...), `<netinet/ip.h>`/`<netinet/ip_icmp.h>` (dla ping/raw), `<arpa/inet.h>`
   (inet_pton/ntop/aton, ntoh*), `<netdb.h>` (addrinfo, hostent, getaddrinfo, EAI_*, gai_strerror),
-  `<net/if.h>`/`<ifaddrs.h>` (ifreq, if_nameindex, getifaddrs), `<sys/select.h>`/`<poll.h>`/`<sys/epoll.h>`.
+  `<net/if.h>`/`<ifaddrs.h>` (ifreq, if_nameindex, getifaddrs), `<netpacket/packet.h>`/
+  `<net/ethernet.h>` (sockaddr_ll, ETH_P_* — dla AF_PACKET/udhcpc), `<sys/select.h>`/`<poll.h>`
+  (+ `<sys/epoll.h>` jeśli epoll robiony).
 - **Te struktury muszą 1:1 odpowiadać temu, co jądro przyjmuje w syscallach** — inaczej skrót się zemści.
   To jest „dokładnie jak Linux": precompiled binarka i SDK-build używają identycznego ABI.
 - `libc-glue`: wrappery socketcall/direct, `inet_*`, byte-order, integracja errno.
@@ -250,9 +317,14 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
   Linux i686 (test porównawczy z prawdziwym nagłówkiem Linuksa).
 
 ### FAZA 13 — `ping` (cel końcowy) + drugi dowód TCP
-- Port **GNU `ping`** (`inetutils` lub `iputils`) przez nanos-sdk — **bez** łatania logiki sieciowej
-  (jak grep/vim: tylko mechanika SDK). `ping` używa SOCK_RAW/ICMP (lub SOCK_DGRAM ICMP), `getaddrinfo`
-  dla `wp.pl`, pętli echo+RTT.
+- Port **GNU `ping` z `inetutils`** (decyzja wiążąca) przez nanos-sdk — **bez** łatania logiki
+  sieciowej (jak grep/vim: tylko mechanika SDK). `inetutils ping` to klasyczny SOCK_RAW/ICMP +
+  `getaddrinfo` + pętla echo/RTT — dokładnie powierzchnia, którą budujemy. **`iputils ping`
+  świadomie NIE jest celem podstawowym** (używa `IP_RECVERR`+`MSG_ERRQUEUE`, cmsg `SO_TIMESTAMP`,
+  socketów ICMP-datagram — to osobny, głęboki podsystem Linuksa); to nie skrót, tylko wybór
+  reprezentatywnego, prawdziwego GNU ping. Port iputils = opcjonalne rozszerzenie po FAZIE 14,
+  z pełnym MSG_ERRQUEUE, jeśli w ogóle. Listę faktycznych syscalli/sockoptów inetutils-ping zna
+  audyt strace z FAZY 0 — implementujemy DOKŁADNIE ją, w całości.
 - Instalacja jak inne porty (`make ping` → `bin/ping.nxe` → `/nanos/bin`, opcjonalne).
 - **Drugi dowód kompletności**: port `wget`/`curl` (TCP) — `wget http://example.com` pobiera stronę.
 - **Weryfikacja końcowa (definicja sukcesu)**: w QEMU `ping wp.pl` → rozwiązuje DNS, wysyła ICMP,
@@ -275,10 +347,13 @@ czysty; (d) QEMU bez `v=08/0d/0e`. Żadna faza nie jest „done" dopóki bajty n
 
 **Nowe (MI, host-testowane):** `kernel/Pci.{h,cpp}`, `net/NetDevice.{h,cpp}`, `net/NetBuf.{h,cpp}`,
 `net/Ether.{h,cpp}`, `net/Arp.{h,cpp}`, `net/Ip.{h,cpp}`, `net/Icmp.{h,cpp}`, `net/Route.{h,cpp}`,
-`net/Socket.{h,cpp}`, `net/Udp.{h,cpp}`, `net/Tcp.{h,cpp}`, `net/Raw.{h,cpp}`, `net/Loopback.{h,cpp}`,
-`net/NetProc.cpp` (/proc/net), `kernel/SocketSyscalls.{h,cpp}`; testy
+`net/Socket.{h,cpp}`, `net/Udp.{h,cpp}`, `net/Tcp.{h,cpp}`, `net/Raw.{h,cpp}`, `net/Packet.{h,cpp}`
+(AF_PACKET), `net/Loopback.{h,cpp}`, `net/NetProc.cpp` (/proc/net), `kernel/SocketSyscalls.{h,cpp}`
+(socketcall + direct + `_newselect`); testy
 `tests/test_pci.cpp test_checksum.cpp test_arp.cpp test_ip.cpp test_icmp.cpp test_route.cpp
-test_udp.cpp test_tcp.cpp test_socket.cpp test_dns.cpp test_netdev.cpp`.
+test_udp.cpp test_tcp.cpp test_socket.cpp test_dns.cpp test_netdev.cpp test_select.cpp`;
+fixtures `tests/fixtures/strace/` (wzorce strace z referencyjnego Linuksa i686 — FAZA 0) i maski
+pól zmiennych dla porównań Scapy.
 
 **Nowe (MD, arch/x86):** `arch/x86/io/pci_x86.cpp` (+ `arch/include/arch/pci.h`),
 `kext/e1000/e1000.cpp` (+ `e1000.nkext`).
@@ -294,27 +369,40 @@ bottom-half + bring-up), `fs/SynthFs` (/proc/net), Makefile (`MI_SOURCES` += `ne
 ## 4. Inwarianty / ryzyka / kolejność
 
 - **MI/MD**: stos = MI (`net/` host-testowalny mockiem), `check-arch` czysty; tylko PCI-IO + e1000 = MD.
-- **Zero skrótów = pcap byte-compare**: dopóki nasze ARP/IP/ICMP/DNS/TCP nie są bajtowo jak Linux,
-  faza nie jest skończona. To pilnuje, że nic nie jest „na niby".
+- **Zero skrótów = pcap pole-po-polu + parytet strace**: dopóki nasze ARP/IP/ICMP/DNS/TCP nie są
+  identyczne z Linuksem na każdym polu poza jawną maską pól losowych (i sumy nie są niezależnie
+  poprawne), ORAZ semantyka syscalli (wartości zwrotne, errno, blokowanie) nie zgadza się ze
+  wzorcami strace, faza nie jest skończona. To pilnuje, że nic nie jest „na niby".
 - **Współbieżność**: RX z IRQ → kolejka → bottom-half/wątek (NIGDY stos w IRQ — zgodnie z
   deferred-preemption [[nanos-terminal-and-deferred-scheduler]]); timery TCP z zegara; blokowanie
   socketów przez `WaitQueue`; ostrożnie z wyścigami rx/tx/timer (sekcje krytyczne `cpuIrqSave`).
 - **DMA**: ciągłe ramki fizyczne, identyczne mapowanie; bus-master; brak desync (lekcja z ATA:
   jeden deskryptor naraz, poprawne head/tail).
-- **Największe ryzyka**: (1) **TCP** (maszyna stanów + retransmisja + congestion) — stąd ciężkie
-  host-testy symulujące zgubę/reordering + pcap; (2) **e1000 DMA/IRQ** — stąd pcap + test obciążeniowy;
-  (3) **ABI/struktury** — stąd test sizeof/offsetof vs prawdziwy Linux i686; (4) **DNS** (kompresja
-  nazw) — host-test parsera. Kolejność ścisła: drut (0) → PCI (1) → NIC (2) → netdev/bh (3) → Ethernet/
-  ARP (4) → IP (5) → ICMP (6) → sockety/UDP/RAW (7) → TCP (8) → ABI (9) → DHCP (10) → DNS (11) →
-  sysroot (12) → ping (13) → weryfikacja (14). Data-path zanim aplikacje; pcap-parytet na każdym kroku.
+- **Największe ryzyka**: (0) **slirp/ICMP na macOS** — ryzyko ZEWNĘTRZNE wobec NanOS: user-net może
+  nie forwardować ICMP echo w internet na tym hoście; zdejmowane baseline'em w FAZIE 0 (Linux-guest
+  w identycznej konfiguracji), z przedefiniowanym z góry kryterium awaryjnym; (1) **TCP** (maszyna
+  stanów + retransmisja + congestion) — stąd ciężkie host-testy symulujące zgubę/reordering + pcap;
+  (2) **e1000 DMA/IRQ** — stąd pcap + test obciążeniowy; (3) **ABI/struktury** — stąd test
+  sizeof/offsetof vs prawdziwy Linux i686; (4) **DNS** (kompresja nazw) — host-test parsera;
+  (5) **DHCP przed adresem IP** (AF_PACKET + broadcast na nieskonfigurowanym interfejsie) — stąd
+  port udhcpc bez łatek jako test prawdy. Kolejność ścisła: drut+baseline+strace (0) → PCI (1) →
+  NIC (2) → netdev/bh (3) → Ethernet/ARP (4) → IP (5) → ICMP (6) → sockety/UDP/RAW/AF_PACKET (7) →
+  TCP (8) → ABI (9) → DHCP (10) → DNS (11) → sysroot (12) → ping (13) → weryfikacja (14).
+  Data-path zanim aplikacje; pcap- i strace-parytet na każdym kroku.
 
 ## 5. Kryteria akceptacji (definicja „idealne, pełne, dokładne")
-1. **`ping wp.pl`** w QEMU (prawdziwy GNU ping z SDK, bez łatek logiki) — DNS → ICMP echo → RTT z
-   realnego internetu przez NAT. **Plus** `wget http://example.com` (TCP) i samodzielny lookup DNS.
-2. **Bajt-w-bajt jak Linux** na drucie (pcap byte-compare): ARP, IP, ICMP, UDP, TCP handshake/teardown,
-   DNS query — identyczne z referencyjnym Linuksem dla tej samej operacji.
+1. **`ping wp.pl`** w QEMU (prawdziwy GNU `inetutils` ping z SDK, bez łatek logiki) — DNS → ICMP
+   echo → RTT z realnego internetu przez NAT. Jeżeli baseline z FAZY 0 wykaże, że slirp na tym
+   hoście NIE forwarduje ICMP w internet (ograniczenie QEMU/macOS, nie NanOS), kryterium ICMP =
+   `ping 10.0.2.2` (slirp odpowiada sam) + ICMP-echo potwierdzone w pcap, a dowód „realnego
+   internetu" przejmują DNS + TCP. **Plus zawsze:** `wget http://example.com` (TCP) i samodzielny
+   lookup DNS — te muszą wyjść w prawdziwy świat.
+2. **Jak Linux na drucie, pole-po-polu** (pcap compare z jawną maską pól losowych — patrz bramka
+   w §2): ARP, IP, ICMP, UDP, TCP handshake/teardown, DNS query — każde pole poza maską identyczne
+   z referencyjnym Linuksem dla tej samej operacji; sumy kontrolne niezależnie poprawne.
 3. **Wprost przekompilowane apki Linuxa i686 działają** bez łatania logiki sieciowej (ping/wget/
-   nslookup), bo ABI syscalli + układy struktur + resolver = dokładnie Linux.
+   nslookup), bo ABI syscalli + układy struktur + resolver + semantyka errno/blokowania (parytet
+   strace) = dokładnie Linux. W tym `udhcpc` przez AF_PACKET — bez łatek.
 4. `make test` zielone, pokrycie nowych modułów MI ≥90%; `make check-arch` czysty; QEMU bez
    `v=08/0d/0e`; złośliwe pakiety nie wywalają jądra.
 5. Commity czyste (bez wzmianki o AI), praca fazami na gałęzi.
