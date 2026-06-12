@@ -5,6 +5,7 @@
 #include "NetDevice.h"
 #include "NetBuf.h"
 #include "Net.h"
+#include "NetStats.h"   // /proc/net/snmp counters
 #include <string.h>
 
 namespace kernel {
@@ -104,6 +105,7 @@ void deliver(NetBuf* skb, uint32_t src, uint32_t dst, uint8_t proto, int ihl) {
 	skb->l3 = skb->data;
 	skb->pull(ihl);
 	skb->l4 = skb->data;
+	g_netStats.ipInDelivers++;
 	if (g_proto[proto]) g_proto[proto](skb);
 	else netbufFree(skb);
 }
@@ -142,20 +144,21 @@ void ipInit() { ethSetIpHandler(ipRx); }
 
 void ipRx(NetBuf* skb) {
 	if (!skb) return;
-	if (skb->len < IP_HLEN_MIN) { netbufFree(skb); return; }
+	g_netStats.ipInReceives++;
+	if (skb->len < IP_HLEN_MIN) { g_netStats.ipInHdrErrors++; netbufFree(skb); return; }
 	const unsigned char* h = skb->head();
 	int ver = h[0] >> 4;
 	int ihl = (h[0] & 0x0f) * 4;
-	if (ver != 4 || ihl < IP_HLEN_MIN || skb->len < ihl) { netbufFree(skb); return; }
+	if (ver != 4 || ihl < IP_HLEN_MIN || skb->len < ihl) { g_netStats.ipInHdrErrors++; netbufFree(skb); return; }
 	int total = rd16be(h + 2);
-	if (total < ihl || total > skb->len) { netbufFree(skb); return; }
-	if (inetChecksum(h, ihl) != 0) { netbufFree(skb); return; }     // bad header checksum: drop
+	if (total < ihl || total > skb->len) { g_netStats.ipInHdrErrors++; netbufFree(skb); return; }
+	if (inetChecksum(h, ihl) != 0) { g_netStats.ipInHdrErrors++; netbufFree(skb); return; }  // bad checksum
 	skb->trim(total);                                               // strip any L2 padding
 
 	NetDevice* dev = skb->dev;
 	uint32_t src = rd32be(h + 12), dst = rd32be(h + 16);
 	uint8_t proto = h[9];
-	if (!acceptForUs(dev, dst)) { netbufFree(skb); return; }        // host: no forwarding
+	if (!acceptForUs(dev, dst)) { g_netStats.ipInAddrErrors++; netbufFree(skb); return; }  // host: no forwarding
 
 	uint16_t flags = rd16be(h + 6);
 	int fragOff = (flags & IP_FRAG_MASK) * 8;
@@ -176,9 +179,10 @@ void ipRx(NetBuf* skb) {
 
 int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df) {
 	if (!skb) return -1;
+	g_netStats.ipOutRequests++;
 	NetDevice* dev = 0;
 	uint32_t nexthop = 0;
-	if (!routeLookup(dst, &dev, &nexthop) || !dev) { netbufFree(skb); return -1; }
+	if (!routeLookup(dst, &dev, &nexthop) || !dev) { g_netStats.ipOutNoRoutes++; netbufFree(skb); return -1; }
 	uint32_t src = dev->ip;
 	uint16_t id = g_ipId++;
 

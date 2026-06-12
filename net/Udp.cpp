@@ -7,6 +7,7 @@
 #include "NetDevice.h"
 #include "NetBuf.h"
 #include "Net.h"
+#include "NetStats.h"   // /proc/net/snmp counters
 #include <string.h>
 
 namespace kernel {
@@ -31,11 +32,13 @@ void udpRx(NetBuf* skb) {
 	Socket* s = socketLookupUdp(skb->daddr, dstPort, skb->saddr, srcPort);
 	if (!s) {
 		// No listener: ICMP port-unreachable (unless it was a broadcast/multicast). l3/l4 still set.
+		g_netStats.udpNoPorts++;
 		if (skb->daddr != 0xFFFFFFFFu)
 			icmpSendError(skb, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH);
 		netbufFree(skb);
 		return;
 	}
+	g_netStats.udpInDatagrams++;
 	skb->pull(UDP_HLEN);                       // hand the payload to the socket
 	if (!socketDeliver(s, skb, skb->saddr, srcPort))
 		netbufFree(skb);                       // socket buffer full: drop (UDP has no flow control)
@@ -66,6 +69,7 @@ int udpSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t d
 	wr16be(u + 6, c ? c : 0xFFFF);             // 0 checksum is transmitted as 0xFFFF (RFC 768)
 	if (ipOutput(dstIp, IPPROTO_UDP, skb) < 0)
 		return -SOCK_ENOBUFS;
+	g_netStats.udpOutDatagrams++;
 	return (int) len;
 }
 

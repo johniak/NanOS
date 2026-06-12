@@ -43,6 +43,16 @@ bool tcpReadable(Socket* s);                            // data available or pee
 bool tcpWritable(Socket* s);                            // ESTABLISHED with send-buffer room
 int  tcpState(Socket* s);                               // for poll/tests
 
+// Snapshot of active TCBs for /proc/net/tcp (keeps the private Tcb struct encapsulated). All
+// addresses/ports are host order. txQueue = unsent bytes, rxQueue = unread received bytes.
+struct TcpConnInfo {
+	uint32_t localIp, remoteIp;
+	uint16_t localPort, remotePort;
+	int      state;
+	int      txQueue, rxQueue;
+};
+int tcpSnapshot(TcpConnInfo* out, int max);             // fills up to max; returns count written
+
 // Hook so a new passively-accepted connection can be wrapped in a Socket (Socket.cpp installs it).
 typedef Socket* (*TcpNewSockFn)(int domain, int type, int protocol);
 void tcpSetNewSockHook(TcpNewSockFn fn);

@@ -94,6 +94,11 @@ bool socketDeliver(Socket* s, NetBuf* skb, uint32_t srcIp, uint16_t srcPort);
 Socket* socketLookupUdp(uint32_t dstIp, uint16_t dstPort, uint32_t srcIp, uint16_t srcPort);
 void    socketForEachRaw(int protocol, void (*fn)(Socket*, void*), void* ctx);
 
+// Slot iteration for /proc/net/{udp,raw} + tests. socketSlots() is the table size; socketAt(i)
+// returns the in-use socket in slot i, or 0 for a free/out-of-range slot.
+int     socketSlots();
+Socket* socketAt(int i);
+
 // Allocate an ephemeral local port (Linux range 32768..60999) not in use for DGRAM.
 uint16_t socketEphemeralPort();
 

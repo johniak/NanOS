@@ -2,6 +2,8 @@
 #include "CharDevice.h"
 #include "Scheduler.h"
 #include "Process.h"
+#include "NetProc.h"          // /proc/net/{dev,route,arp,tcp,udp,raw,snmp} renderers
+#include "Pci.h"              // /proc/bus/pci/devices enumeration
 #include "memory_manager.h"   // malloc/free: /proc snapshots go on the heap, not the kernel stack
 #include <string.h>
 
@@ -284,6 +286,53 @@ static int serveSnap(unsigned off, void* buf, unsigned n, const char* s, int len
 	return (int) cnt;
 }
 
+// /proc/net/* : render the live networking state (NetProc.cpp) into a snapshot, serve by offset.
+// One static buffer per file (the kernel reads these sequentially; re-render per call like
+// /proc/meminfo). 2 KiB holds the header + every device/route/arp/socket slot.
+static int gen_net_dev(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcDev(s, sizeof s)); }
+static int gen_net_route(unsigned off, void* buf, unsigned n){ static char s[2048]; return serveSnap(off, buf, n, s, netProcRoute(s, sizeof s)); }
+static int gen_net_arp(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcArp(s, sizeof s)); }
+static int gen_net_tcp(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcTcp(s, sizeof s)); }
+static int gen_net_udp(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcUdp(s, sizeof s)); }
+static int gen_net_raw(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcRaw(s, sizeof s)); }
+static int gen_net_snmp(unsigned off, void* buf, unsigned n) { static char s[2048]; return serveSnap(off, buf, n, s, netProcSnmp(s, sizeof s)); }
+
+// /proc/bus/pci/devices — Linux format: one line per device, tab-separated:
+//   bbDD  vvvvdddd  irq  <7 resource starts:16-hex>  <7 resource lengths:16-hex>  driver
+// (7 resources = BAR0..BAR5 + ROM; we don't track the ROM BAR, so it is 0.) Deferred from FAZA 1.
+static char* apHex(char* p, char* end, unsigned long long v, int width) {
+	char t[16]; int k = 0;
+	do { int d = (int) (v & 0xf); t[k++] = (char) (d < 10 ? '0' + d : 'a' + d - 10); v >>= 4; } while (v && k < 16);
+	for (int i = k; i < width; i++) if (p < end) *p++ = '0';
+	while (k) if (p < end) *p++ = t[--k]; else k--;
+	return p;
+}
+static int pciDevicesString(char* buf, int cap) {
+	char* p = buf; char* end = buf + cap;
+	if (!Pci::hasBackend()) return 0;
+	PciDevice devs[16];
+	int n = Pci::enumerate(devs, 16);
+	for (int i = 0; i < n; i++) {
+		const PciDevice& d = devs[i];
+		unsigned devfn = (unsigned) ((d.dev << 3) | d.func);
+		p = apHex(p, end, ((unsigned) d.bus << 8) | devfn, 4); if (p < end) *p++ = '\t';
+		p = apHex(p, end, ((unsigned) d.vendor << 16) | d.device, 8); if (p < end) *p++ = '\t';
+		p = apHex(p, end, d.irqLine, 1);
+		for (int b = 0; b < 6; b++) {            // BAR0..BAR5 start (with the I/O flag bit)
+			if (p < end) *p++ = '\t';
+			unsigned long long start = d.bar[b].addr;
+			if (d.bar[b].size && d.bar[b].isIo) start |= 0x1;
+			p = apHex(p, end, start, 16);
+		}
+		if (p < end) *p++ = '\t'; p = apHex(p, end, 0, 16);   // ROM (untracked)
+		for (int b = 0; b < 6; b++) { if (p < end) *p++ = '\t'; p = apHex(p, end, d.bar[b].size, 16); }
+		if (p < end) *p++ = '\t'; p = apHex(p, end, 0, 16);   // ROM size
+		if (p < end) *p++ = '\n';
+	}
+	return (int) (p - buf);
+}
+static int gen_pci_devices(unsigned off, void* buf, unsigned n) { static char s[2048]; return serveSnap(off, buf, n, s, pciDevicesString(s, sizeof s)); }
+
 // Live process counts for /proc/stat and /proc/loadavg.
 static void procCounts(unsigned* total, unsigned* running, unsigned* blocked) {
 	*total = *running = *blocked = 0;
@@ -359,6 +408,21 @@ SynthFs::SynthFs() {
 	addGen(m_proc, "loadavg", gen_loadavg, 0444);
 	addGen(m_proc, "cpuinfo", gen_cpuinfo, 0444);
 	addGen(m_proc, "version", gen_version, 0444);
+
+	// /proc/net — Linux-style networking introspection (see net/NetProc.cpp).
+	SynthNode* m_net = addDir(m_proc, "net");
+	addGen(m_net, "dev", gen_net_dev, 0444);
+	addGen(m_net, "route", gen_net_route, 0444);
+	addGen(m_net, "arp", gen_net_arp, 0444);
+	addGen(m_net, "tcp", gen_net_tcp, 0444);
+	addGen(m_net, "udp", gen_net_udp, 0444);
+	addGen(m_net, "raw", gen_net_raw, 0444);
+	addGen(m_net, "snmp", gen_net_snmp, 0444);
+
+	// /proc/bus/pci/devices — PCI device list (deferred from FAZA 1).
+	SynthNode* m_bus = addDir(m_proc, "bus");
+	SynthNode* m_pci = addDir(m_bus, "pci");
+	addGen(m_pci, "devices", gen_pci_devices, 0444);
 }
 
 int SynthFs::mount() { return 0; }

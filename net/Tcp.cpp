@@ -7,6 +7,7 @@
 #include "NetBuf.h"
 #include "Net.h"
 #include "WaitQueue.h"
+#include "NetStats.h"   // /proc/net/snmp counters
 #include <string.h>
 
 namespace kernel {
@@ -92,6 +93,8 @@ int rcvFree(Tcb* t) { return RCVBUF - t->rcvCount; }
 void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int len) {
 	NetBuf* skb = netbufAlloc();
 	if (!skb) return;
+	g_netStats.tcpOutSegs++;
+	if (flags & TCP_RST) g_netStats.tcpOutRsts++;
 	skb->reserve(NET_HEADROOM);
 	int optLen = (flags & TCP_SYN) ? 4 : 0;            // MSS option on SYN
 	if (len) memcpy(skb->put(len), data, len);
@@ -229,9 +232,10 @@ void tcpInit() { ipSetHandler(IPPROTO_TCP, tcpRx); }
 // ---- the segment handler ----
 void tcpRx(NetBuf* skb) {
 	if (!skb) { return; }
-	if (skb->len < 20) { netbufFree(skb); return; }
+	if (skb->len < 20) { g_netStats.tcpInErrs++; netbufFree(skb); return; }
 	const unsigned char* h = skb->head();
-	if (inetPseudoChecksum(skb->saddr, skb->daddr, IPPROTO_TCP, h, skb->len) != 0) { netbufFree(skb); return; }
+	if (inetPseudoChecksum(skb->saddr, skb->daddr, IPPROTO_TCP, h, skb->len) != 0) { g_netStats.tcpInErrs++; netbufFree(skb); return; }
+	g_netStats.tcpInSegs++;
 	uint16_t sport = rd16be(h + 0), dport = rd16be(h + 2);
 	uint32_t seq = rd32be(h + 4), ack = rd32be(h + 8);
 	int doff = (h[12] >> 4) * 4;
@@ -304,6 +308,7 @@ void tcpRx(NetBuf* skb) {
 			c->snd_wnd = wnd ? wnd : 4096;
 			if (peerMss) c->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			c->state = TCP_SYN_RCVD; c->parent = t;
+			g_netStats.tcpPassiveOpens++;
 			sendSeg(c, TCP_SYN | TCP_ACK, c->iss, 0, 0);
 			armRto(c);
 		}
@@ -431,6 +436,7 @@ int tcpConnect(Socket* s, uint32_t ip, uint16_t port) {
 	t->iss = g_isnCounter; g_isnCounter += 0x4000;
 	t->snd_una = t->iss; t->snd_nxt = t->iss + 1;
 	t->state = TCP_SYN_SENT;
+	g_netStats.tcpActiveOpens++;
 	sendSeg(t, TCP_SYN, t->iss, 0, 0);
 	armRto(t);
 	return 0;
@@ -543,6 +549,23 @@ bool tcpWritable(Socket* s) {
 	return (t->state == TCP_ESTABLISHED || t->state == TCP_CLOSE_WAIT) && t->sndLen < SNDBUF;
 }
 int tcpState(Socket* s) { return (s && s->tcp) ? ((Tcb*) s->tcp)->state : TCP_CLOSED; }
+
+int tcpSnapshot(TcpConnInfo* out, int max) {
+	int n = 0;
+	for (int i = 0; i < TCB_N && n < max; i++) {
+		Tcb* t = &g_tcbs[i];
+		if (!t->used) continue;
+		out[n].localIp    = t->localIp;
+		out[n].localPort  = t->localPort;
+		out[n].remoteIp   = t->remoteIp;
+		out[n].remotePort = t->remotePort;
+		out[n].state      = t->state;
+		out[n].txQueue    = t->sndLen;
+		out[n].rxQueue    = t->rcvCount;
+		n++;
+	}
+	return n;
+}
 
 void tcpReset() {
 	for (int i = 0; i < TCB_N; i++) g_tcbs[i].used = false;

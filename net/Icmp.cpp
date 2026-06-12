@@ -3,6 +3,7 @@
 #include "Ether.h"   // NET_HEADROOM
 #include "NetBuf.h"
 #include "Net.h"
+#include "NetStats.h"   // /proc/net/snmp counters
 #include <string.h>
 
 namespace kernel {
@@ -24,6 +25,10 @@ int icmpEmit(uint32_t dst, uint8_t type, uint8_t code, const unsigned char hdr4[
 	memcpy(m + 4, hdr4, 4);
 	if (bodyLen > 0 && body) memcpy(m + 8, body, bodyLen);
 	wr16be(m + 2, inetChecksum(m, 8 + bodyLen));
+	g_netStats.icmpOutMsgs++;
+	if (type == ICMP_ECHO_REQUEST)      g_netStats.icmpOutEchos++;
+	else if (type == ICMP_ECHO_REPLY)   g_netStats.icmpOutEchoReps++;
+	else if (type == ICMP_DEST_UNREACH) g_netStats.icmpOutDestUnreachs++;
 	return ipOutput(dst, IPPROTO_ICMP, skb);
 }
 }  // namespace
@@ -35,10 +40,14 @@ void icmpInit() { ipSetHandler(IPPROTO_ICMP, icmpRx); }
 
 void icmpRx(NetBuf* skb) {
 	if (!skb) return;
-	if (skb->len < 8) { netbufFree(skb); return; }     // too short for echo/error (hardening)
+	if (skb->len < 8) { g_netStats.icmpInMsgs++; g_netStats.icmpInErrors++; netbufFree(skb); return; }
 	const unsigned char* m = skb->head();
-	if (inetChecksum(m, skb->len) != 0) { netbufFree(skb); return; }   // bad ICMP checksum: drop
+	if (inetChecksum(m, skb->len) != 0) { g_netStats.icmpInMsgs++; g_netStats.icmpInErrors++; netbufFree(skb); return; }
 	uint8_t type = m[0];
+	g_netStats.icmpInMsgs++;
+	if (type == ICMP_ECHO_REQUEST)      g_netStats.icmpInEchos++;
+	else if (type == ICMP_ECHO_REPLY)   g_netStats.icmpInEchoReps++;
+	else if (type == ICMP_DEST_UNREACH) g_netStats.icmpInDestUnreachs++;
 
 	// Auto-reply to echo requests (kernel behaviour, independent of raw sockets): swap to a
 	// reply, keep id/seq/data, send back to the sender. Build a new skb so the original can also

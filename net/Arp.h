@@ -58,6 +58,8 @@ void arpSetClock(ArpClockFn fn);
 // Introspection (for /proc/net/arp + tests).
 const ArpEntry* arpLookup(uint32_t ip);
 int  arpCacheCount();
+int  arpSlots();                       // total cache slots (iterate 0..arpSlots()-1)
+const ArpEntry* arpEntryAt(int slot);  // raw slot (may be ARP_FREE); 0 if out of range
 void arpReset();              // clear cache + pending queue (tests)
 
 }  // namespace kernel

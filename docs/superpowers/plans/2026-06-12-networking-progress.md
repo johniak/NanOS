@@ -20,7 +20,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 11 — DNS resolver (libc) | **DONE** | n/a (userland) | getaddrinfo(wp.pl) on the wire | matches glibc stub | nettest resolves wp.pl | — |
 | 12 — net headers + libc socket glue | **DONE** | n/a (userland) | TCP to wp.pl via POSIX API | n/a | nettest: getaddrinfo+BSD OK | — |
 | 13 — ping (inetutils) + wget | **DONE** | n/a (port) | **real GNU ping `ping wp.pl`** (DNS→ICMP echo) + **real GNU wget `wget http://neverssl.com`** (DNS→TCP→HTTP 200, file saved) on the wire | unmodified upstream binaries | clean boot, no faults | — |
-| 14 — /proc/net + hardening | todo | | | | | |
+| 14 — /proc/net + hardening | **DONE** | NetProc 93.5% / NetStats 100%; 499 tests, agg 90.7% | n/a (read-only introspection) | Linux /proc format | `cat /proc/net/{dev,route,snmp}` + `/proc/bus/pci/devices` render, no faults | — |
 
 ## FAZA 0 — outcomes (2026-06-12)
 
@@ -433,3 +433,37 @@ pcap: DNS `A? neverssl.com → 34.223.124.45`, full TCP handshake, `GET / HTTP/1
 
 **HTTPS is out of scope** until a TLS library (OpenSSL/GnuTLS, themselves big gnulib/asm ports) lands.
 
+## FAZA 14 — outcomes (2026-06-12): /proc/net, /proc/bus/pci, hardening, full host-test sweep
+
+**`/proc/net/{dev,route,arp,tcp,udp,raw,snmp}` + `/proc/bus/pci/devices`** — all Linux-format,
+rendered from live state. New MI module `net/NetProc.{h,cpp}` (the renderers) + `net/NetStats.{h,cpp}`
+(SNMP counters); iteration accessors added to the modules (`arpEntryAt`/`arpSlots`, `socketAt`/
+`socketSlots`, `tcpSnapshot` keeping the private Tcb encapsulated); wired into `fs/SynthFs.cpp` as
+`/proc/net/*` and `/proc/bus/pci/devices` generators.
+
+- **Address columns** follow Linux exactly: /proc/net/{tcp,udp,raw,route} print IPv4 as the
+  network-order bytes read little-endian (`hton32`, %08X) + port %04X; arp dotted-decimal; TCP `st`
+  remapped to Linux's state numbering (ESTABLISHED=01 … LISTEN=0A). Verified on the wire in QEMU:
+  `/proc/net/route` shows the on-link `0002000A`/mask `00FFFFFF` and default `00000000` via `0202000A`
+  (flags `0001`/`0003`); `/proc/bus/pci/devices` lists the e1000 at devfn `0018` (0:3.0) irq `b`(=11);
+  `/proc/net/snmp` emits the full `Ip:/Icmp:/Tcp:/Udp:` header+value lines (`netstat -s` format).
+- **SNMP counters** wired into the data path (single lines at the RX/TX entry points): IP
+  InReceives/InHdrErrors/InAddrErrors/InDelivers/OutRequests/OutNoRoutes; ICMP InMsgs/InEchos/
+  OutMsgs/OutEchoReps/…; TCP InSegs/OutSegs/ActiveOpens/PassiveOpens/OutRsts/InErrs; UDP
+  InDatagrams/OutDatagrams/NoPorts. Counters we don't maintain report 0 (never a fabricated number).
+  `apU`/`apURight` use `unsigned long` (32-bit on i686) so the freestanding kernel needs no libgcc
+  64-bit divide.
+
+- **Hardening** (`tests/test_net_hardening.cpp`, 4 cases): malformed IP headers (truncated, bad
+  version/ihl/total/checksum), malformed ICMP/UDP/TCP payloads (runts, bad checksums, all-flags TCP
+  to a closed port), a 200-deep fragment flood, and malformed Ethernet/ARP frames — each asserts the
+  stack returns normally AND `netbufInUse()` is back to baseline (no NetBuf leak; the fragment flood
+  never exhausts the 96-buffer pool and is reclaimed by `ipReasmTick`).
+
+- **Host-test sweep**: 499 doctest cases (3.24M assertions) green; new modules NetProc 93.5% /
+  NetStats 100%; aggregate line coverage 90.7% (≥90% gate). `make check-arch` clean (NetProc/NetStats
+  are MI). QEMU boot + `cat /proc/net/*` + `/proc/bus/pci/devices`: no `v=08/0d/0e`; image e2fsck-clean.
+
+**The networking plan (FAZY 0–14) is complete.** Real GNU ping + wget run over the full stack on the
+real internet; the system exposes Linux-compatible `/proc/net` introspection; the data path is
+hardened against malformed input. Out of plan scope (future): HTTPS/TLS, IPv6, window scaling/SACK.

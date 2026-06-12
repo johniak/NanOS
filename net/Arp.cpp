@@ -181,6 +181,11 @@ int arpCacheCount() {
 	for (int i = 0; i < CACHE_N; i++) if (g_cache[i].state != ARP_FREE) n++;
 	return n;
 }
+int arpSlots() { return CACHE_N; }
+const ArpEntry* arpEntryAt(int slot) {
+	if (slot < 0 || slot >= CACHE_N) return 0;
+	return &g_cache[slot];
+}
 void arpReset() {
 	for (int i = 0; i < CACHE_N; i++) g_cache[i].state = ARP_FREE;
 	for (int i = 0; i < PEND_N; i++) { if (g_pend[i].skb) netbufFree(g_pend[i].skb); g_pend[i].skb = 0; }

@@ -248,6 +248,12 @@ void socketForEachRaw(int protocol, void (*fn)(Socket*, void*), void* ctx) {
 	}
 }
 
+int socketSlots() { return SOCK_N; }
+Socket* socketAt(int i) {
+	if (i < 0 || i >= SOCK_N) return 0;
+	return g_socks[i].used ? &g_socks[i] : 0;
+}
+
 void socketReset() {
 	for (int i = 0; i < SOCK_N; i++) {
 		Socket* s = &g_socks[i];
