@@ -689,6 +689,7 @@ char nw_scancode_ascii(unsigned char code, int shift)
 	if (code & 0x80)
 		return 0;                              /* extended keys have no ASCII here */
 	switch (code) {
+	case 0x01: return 0x1b;                    /* Esc — vim/readline need it (leave insert mode) */
 	case 0x02: return shift ? '!' : '1';
 	case 0x03: return shift ? '@' : '2';
 	case 0x04: return shift ? '#' : '3';

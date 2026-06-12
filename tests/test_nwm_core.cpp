@@ -224,6 +224,8 @@ TEST_CASE("scancode keymap: full sweep plus representative mappings") {
 	CHECK(nw_scancode_ascii(0x0F, 0) == '\t');
 	CHECK(nw_scancode_ascii(0x1C, 0) == '\n');
 	CHECK(nw_scancode_ascii(0x0E, 0) == 8);
+	CHECK(nw_scancode_ascii(0x01, 0) == 0x1b);       // Esc (vim/readline leave insert mode)
+	CHECK(nw_scancode_ascii(0x01, 1) == 0x1b);       // Esc is Esc with Shift too
 	CHECK(nw_scancode_ascii(0x80 | 0x1E, 0) == 0);   // extended -> no ASCII
 	CHECK(nw_scancode_ascii(0x70, 0) == 0);          // unmapped -> 0
 }
