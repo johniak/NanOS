@@ -180,10 +180,10 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
 - [x] **D6. Keepalive:** `SO_KEEPALIVE` + `TCP_KEEPIDLE/INTVL/CNT` (defaulty Linuksa
   7200 s/75 s/9 — w testach skracane opcjami); sonda = ACK z seq−1; po CNT bez odpowiedzi →
   ETIMEDOUT na sockecie. Test: symulowany czas przez `tcpTick`.
-- [ ] **D7.** Bramka drutu: w QEMU sesja do 1.1.1.1:80 — nasz SYN niesie
+- [x] **D7.** Bramka drutu: w QEMU sesja do 1.1.1.1:80 — nasz SYN niesie
   `[mss,sackOK,TS,nop,wscale]` w TEJ SAMEJ kolejności i formacie co Linux i686 (tcpdump,
   porównanie pole-po-polu; TS val w masce); zero faultów; cała suita TCP zielona.
-- [ ] **D8.** Commit per podpunkt: `tcp: window scaling`, `tcp: timestamps+PAWS`, `tcp: SACK`,
+- [x] **D8.** Commit per podpunkt: `tcp: window scaling`, `tcp: timestamps+PAWS`, `tcp: SACK`,
   `tcp: delayed ACK`, `tcp: persist timer`, `tcp: keepalive`.
 
 ### FAZA E — resolver i /etc: czytać NAPRAWDĘ to, co leży na dysku

@@ -291,7 +291,7 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 | Stack-in-IRQ | NAPI + ksoftirqd (polling) | one softirq thread, no NAPI |
 | sk_buff | nonlinear (frags/scatter) | one linear 2 KiB buffer |
 | Memory | slab, dynamic | static pools (128/64/16/16) |
-| TCP options | window scaling, SACK, timestamps | **none** (MSS only) |
+| TCP options | window scaling, SACK, timestamps, delayed/persist/keepalive | MSS, window scaling, SACK, timestamps+PAWS; delayed ACK, persist & keepalive timers |
 | Concurrent TCP | thousands | **16** |
 | IP version | v4 + v6 | **IPv4 only** |
 | Firewall/NAT | netfilter/iptables/nftables | **none** |
