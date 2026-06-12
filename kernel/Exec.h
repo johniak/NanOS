@@ -43,4 +43,9 @@ int waitProcess(int wantPid, int* statusOut, int options);
 // zombie, and schedule away. Does NOT return.
 void procExit();
 
+// Kill the current (ring-3) process with a fatal signal — the CPU-exception backstop: a user
+// program that faults (bad pointer, #GP, ...) is terminated like a SIGSEGV instead of taking the
+// whole system down. Mirrors a fatal signal: the parent gets SIGCHLD/WIFSIGNALED. Does NOT return.
+void killCurrentProcess(int sig);
+
 }

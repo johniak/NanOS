@@ -354,6 +354,10 @@ static void procKill(int sig) {
 	for (;;) {}   // unreachable
 }
 
+// Public entry for the CPU-exception backstop (arch fault handler): a ring-3 fault terminates the
+// faulting process like a fatal signal, leaving the rest of the system running. Does NOT return.
+void killCurrentProcess(int sig) { procKill(sig); }
+
 // Stop the current process (job-control SIGTSTP/SIGSTOP). Notifies the parent (SIGCHLD +
 // wake, so waitpid(WUNTRACED) reports the stop) and deschedules. RETURNS when a later
 // SIGCONT marks the task runnable again — the trap frame is untouched, so the eventual

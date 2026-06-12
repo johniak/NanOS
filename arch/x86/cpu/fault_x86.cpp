@@ -9,11 +9,26 @@
 #include "Interrupt.h"
 #include "PagingControl.h"
 #include "Console.h"
+#include "Exec.h"
+#include "Signal.h"
 
 namespace {
 
 void faultHandler(kernel::Registers* r) {
-	kernel::Console::write("\n*** CPU EXCEPTION vec=");
+	// A fault from ring 3 (cs low 2 bits set) is the user program's bug, NOT the kernel's: kill
+	// just that process (like a SIGSEGV) and let the scheduler keep running — a crashing app must
+	// not take the whole system down. A fault from ring 0 is a real kernel bug: print + halt.
+	if (r->cs & 3) {
+		kernel::Console::write("\n[nanos: killed faulting process: vec=");
+		kernel::Console::writeHex((int) r->int_no);
+		if (r->int_no == 14) { kernel::Console::write(" cr2="); kernel::Console::writeHex((int) kernel::readCr2()); }
+		kernel::Console::write(" eip=");
+		kernel::Console::writeHex((int) r->eip);
+		kernel::Console::writeLine("]");
+		kernel::killCurrentProcess(SIGSEGV);   // terminates current + reschedules; does NOT return
+		return;                                // (unreachable)
+	}
+	kernel::Console::write("\n*** KERNEL EXCEPTION vec=");
 	kernel::Console::writeHex((int) r->int_no);
 	kernel::Console::write(" err=");
 	kernel::Console::writeHex((int) r->err_code);
@@ -26,7 +41,7 @@ void faultHandler(kernel::Registers* r) {
 		kernel::Console::writeHex((int) kernel::readCr2());
 	}
 	kernel::Console::writeLine(" ***");
-	// Do NOT iret (would re-fault on the same instruction). Halt forever.
+	// A kernel fault is unrecoverable: do NOT iret (would re-fault on the same instruction). Halt.
 	for (;;)
 		__asm__ __volatile__("hlt");
 }
