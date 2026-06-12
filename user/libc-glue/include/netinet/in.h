@@ -46,7 +46,11 @@ extern const struct in6_addr in6addr_any;
 #define IPPROTO_TCP   6
 #define IPPROTO_UDP   17
 #define IPPROTO_IPV6  41
+#define IPPROTO_ICMPV6 58
 #define IPPROTO_RAW   255
+
+#define INET_ADDRSTRLEN  16
+#define INET6_ADDRSTRLEN 46
 
 /* IP-level setsockopt (a couple apps probe these; benign no-ops in the kernel). */
 #define IP_TOS      1

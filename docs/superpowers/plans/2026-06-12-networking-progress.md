@@ -19,7 +19,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 10 — iface bring-up + /etc (DHCP→follow-up) | **DONE** | n/a (boot/image) | **ping wp.pl on the wire** (tcpdump) | n/a | DNS+ICMP to wp.pl OK, no faults | — |
 | 11 — DNS resolver (libc) | **DONE** | n/a (userland) | getaddrinfo(wp.pl) on the wire | matches glibc stub | nettest resolves wp.pl | — |
 | 12 — net headers + libc socket glue | **DONE** | n/a (userland) | TCP to wp.pl via POSIX API | n/a | nettest: getaddrinfo+BSD OK | — |
-| 13 — ping + wget | todo | | | | | |
+| 13 — ping (inetutils) + wget | **DONE** | n/a (port) | **real GNU ping `ping wp.pl`** (DNS→ICMP echo) + **real GNU wget `wget http://neverssl.com`** (DNS→TCP→HTTP 200, file saved) on the wire | unmodified upstream binaries | clean boot, no faults | — |
 | 14 — /proc/net + hardening | todo | | | | | |
 
 ## FAZA 0 — outcomes (2026-06-12)
@@ -350,3 +350,86 @@ libc.ndl + the sysroot headers, the foundation precompiled-style Linux net apps 
 - **FAZA 13 (real GNU ping/wget) is now a port, not new code:** sync these headers + the updated
   `libc.ndl.a` into the nanos-sdk sysroot, then `configure && make` inetutils — the API surface
   (`getaddrinfo` + BSD sockets, verified above) is exactly what they expect.
+
+## FAZA 13 — outcomes (2026-06-12): real GNU inetutils ping runs `ping wp.pl`
+
+**Result (binding goal MET, wire-verified):** the *unmodified* GNU inetutils 2.5 `ping`, cross-built
+through the nanos-sdk and installed at `/nanos/bin/ping.nxe`, resolves `wp.pl` via DNS and exchanges
+ICMP echo with the real internet from a NanOS bash prompt:
+```
+bash-5.2# ping wp.pl
+PING wp.pl (212.77.98.9): 56 data bytes
+64 bytes from 212.77.98.9: icmp_seq=0 ttl=255 time=11.000 ms
+64 bytes from 212.77.98.9: icmp_seq=1 ttl=255 time=31.000 ms
+...
+```
+pcap (filter-dump): `A? wp.pl → A 212.77.98.9`, ARP for the gateway, then echo request/reply pairs
+(seq 0..N, id 5). Zero `v=08/0d/0e`. Driven via `scripts/ping-qemu.sh` (boots headless, types the
+command through the QEMU monitor `sendkey`, screendumps + decodes the pcap).
+
+**How it was built (no source patches — the binary is upstream):**
+- New `make ping` target (mirrors `make bash`/`grep`): refreshes the SDK sysroot from this checkout
+  (`user/libc-glue/include` + freshly built `bin/libc.ndl{,.a}`) and drives `nanos-port` (inetutils
+  manifest at `$(SDK_WORK)/inetutils-port/nxport.toml`). `_image` installs `bin/ping.nxe` into
+  `/nanos/bin`; `externals` stages it.
+- **gnulib portability fight (config.cache, not patches):** inetutils bundles 221 gnulib modules and
+  compiles all of them. Forced the right detection via cross-compile cache entries: `glob`
+  (REPLACE_GLOB=1 so gnulib uses its own GNU `glob.h`), `fts` (DT_* in `<dirent.h>`), `openpty`/
+  `forkpty`/`fdopendir`/`dirfd`/`rewinddir`/`scandir` (claim present so the dead server-only
+  replacements compile but never link), `sys/uio.h` (real header so gnulib stops redefining
+  `struct iovec`).
+- **New sysroot/libc-glue headers (POSIX surface picolibc lacks):** `sys/uio.h`, `net/if.h`,
+  `utmp.h`, `arpa/tftp.h`, `arpa/telnet.h`, `netinet/{in_systm,ip,ip_icmp,icmp6}.h`, `sys/utsname.h`,
+  `sys/un.h`, `pty.h`; extended `netdb.h` (`struct protoent`/`servent`, `NI_MAXHOST`), `netinet/in.h`
+  (`IPPROTO_ICMPV6`, `INET[6]_ADDRSTRLEN`), `dirent.h` (DT_* + dir-walk decls).
+- **New libc.ndl implementations (ping LINKS these):** `getprotobyname`/`getprotobynumber`,
+  `getservbyname`/`getservbyport`, `gethostbyaddr` (no reverse DNS → numeric, like `ping -n`) in
+  `resolv.c`; `uname`, `openpty`/`forkpty`/`login_tty` ENOSYS stubs in `posixstubs.c`.
+
+**Two correctness fixes found via ping (not shortcuts — fixed properly):**
+1. **Float printf** — picolibc was built `-Dformat-default=integer`, so ping's `%f` RTT printed the
+   literal `*float*`. Switched the NanOS picolibc to `-Dformat-default=double` (docker/Dockerfile);
+   userland now formats floats. (Kernel is freestanding — unaffected.)
+2. **Negative ping RTTs** — `clockGettime(CLOCK_REALTIME)` mixed live-RTC *whole seconds* with the
+   *monotonic tick* sub-second, so the timestamp went backwards at every RTC second boundary →
+   ping computed negative `recv − send`. Fixed: realtime now = boot epoch (RTC sampled once at boot)
+   + the FULL monotonic tick, so seconds and sub-seconds share one source and the clock is monotonic
+   (`kernel/Syscall.cpp` clockGettime, `SyscallDispatch.cpp` passes `kernel::bootEpochSeconds()`).
+   Host test updated; 488 tests green, coverage 91.0%, `make check-arch` clean.
+
+**Remaining (follow-up):** `wget` (same port path; bigger gnulib/TLS surface — HTTP-only first).
+
+## FAZA 13 — wget outcome (2026-06-12): real GNU wget fetches over HTTP
+
+**Result (wire-verified):** the *unmodified* GNU wget 1.21.4, cross-built via nanos-port (HTTP-only,
+`--without-ssl`), installed at `/nanos/bin/wget.nxe`, fetches a real page from a NanOS bash prompt:
+```
+bash-5.2# wget -O /tmp/n.html http://neverssl.com
+Resolving neverssl.com... 34.223.124.45
+Connecting to neverssl.com|34.223.124.45|:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 3961 (3.9K) [text/html]
+'/tmp/n.html' saved [3961/3961]
+```
+pcap: DNS `A? neverssl.com → 34.223.124.45`, full TCP handshake, `GET / HTTP/1.1` → `HTTP/1.1 200 OK`
++ body, clean FIN both ways. Zero faults. (Build: `make wget`; same reproducible flow as `make ping`.)
+
+**New libc/sysroot surface wget needed (all in libc-glue, tracked + synced — no wget patch):**
+- **stdio-ext over picolibc tinystdio** (`user/libc-glue/stdio_ext.c` + `include/stdio_ext.h`):
+  `__freading/__fwriting/__freadable/__fwritable/__fpurge/__fbufsize/__flbf/__fsetlocking` — gnulib's
+  `freading.c`/`fpurge.c` `#error` on picolibc's FILE; with these present gnulib uses ours.
+- **link()** (`syscalls.c`, over SYS_link — NanOS hardlinks) — gnulib `link` module has no fallback.
+- **munmap()** (`syscalls.c`, no-op: mmap eagerly backs pages, no unmap syscall) + **sys/mman.h**.
+- **pathconf()/fpathconf()** (`posixstubs.c`, POSIX defaults: PATH_MAX 4096, NAME_MAX 255) — so wget
+  uses pathconf, not the out-of-scope raw PATH_MAX fallback. + **limits.h** overlay (guarantees PATH_MAX).
+- **rewinddir()/fdopendir()/dirfd()** (`dirent.c`, real impls over the getdents64 DIR) — declared for
+  ping but now genuinely linked by wget's dir handling.
+- **clock_getres()** (`syscalls.c`, fixed 1 ms — the 1000 Hz tick).
+- **sys/utime.h** overlay (picolibc's "dummy" copy uses time_t without including it).
+- gnulib cross-compile cache (`nxport.toml`): force the stdio-ext `HAVE___*`, `*_unlocked` decls OFF
+  (single-threaded → gnulib maps them to plain calls), and the same glob/fts/openpty set as ping.
+- One **toolchain** header fix: picolibc's `<stdio.h>` `__nanos__` block defined `putc_unlocked` etc.
+  as macros, which broke gnulib's `unlocked-io.h`; removed (single-threaded ⇒ locked == unlocked).
+
+**HTTPS is out of scope** until a TLS library (OpenSSL/GnuTLS, themselves big gnulib/asm ports) lands.
+

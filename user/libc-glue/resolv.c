@@ -204,6 +204,87 @@ struct hostent* gethostbyname(const char* name) {
 	return &he;
 }
 
+/* gethostbyaddr — reverse (PTR) lookup. NanOS's stub resolver does no reverse DNS, so this
+ * always fails; callers (e.g. ping) then print the numeric address, exactly like `ping -n`. */
+struct hostent* gethostbyaddr(const void* addr, socklen_t len, int type) {
+	(void) addr; (void) len; (void) type;
+	h_errno = HOST_NOT_FOUND;
+	return 0;
+}
+
+/* /etc/protocols, the handful that matter. Backs getprotobyname/getprotobynumber (ping looks up
+ * "icmp" to pick the raw-socket protocol number). */
+static const struct { const char* name; int proto; } g_protos[] = {
+	{ "ip", 0 }, { "icmp", 1 }, { "igmp", 2 }, { "tcp", 6 },
+	{ "udp", 17 }, { "ipv6", 41 }, { "ipv6-icmp", 58 }, { "icmpv6", 58 },
+	{ "raw", 255 },
+};
+static struct protoent g_pe;
+static char* g_pe_noaliases[1] = { 0 };
+static char g_pe_name[16];
+
+static struct protoent* fill_protoent(const char* name, int proto) {
+	int i = 0;
+	while (i < (int) sizeof(g_pe_name) - 1 && name[i]) { g_pe_name[i] = name[i]; i++; }
+	g_pe_name[i] = 0;
+	g_pe.p_name = g_pe_name;
+	g_pe.p_aliases = g_pe_noaliases;
+	g_pe.p_proto = proto;
+	return &g_pe;
+}
+struct protoent* getprotobyname(const char* name) {
+	for (unsigned i = 0; i < sizeof(g_protos) / sizeof(g_protos[0]); i++)
+		if (strcmp(g_protos[i].name, name) == 0)
+			return fill_protoent(g_protos[i].name, g_protos[i].proto);
+	return 0;
+}
+struct protoent* getprotobynumber(int proto) {
+	for (unsigned i = 0; i < sizeof(g_protos) / sizeof(g_protos[0]); i++)
+		if (g_protos[i].proto == proto)
+			return fill_protoent(g_protos[i].name, g_protos[i].proto);
+	return 0;
+}
+struct protoent* getprotoent(void) { return 0; }
+void setprotoent(int stayopen) { (void) stayopen; }
+void endprotoent(void) {}
+
+/* getservbyname/getservbyport — minimal table for the common ports apps probe. */
+static const struct { const char* name; int port; const char* proto; } g_servs[] = {
+	{ "echo", 7, "tcp" }, { "ftp", 21, "tcp" }, { "ssh", 22, "tcp" },
+	{ "telnet", 23, "tcp" }, { "domain", 53, "udp" }, { "domain", 53, "tcp" },
+	{ "http", 80, "tcp" }, { "https", 443, "tcp" }, { "tftp", 69, "udp" },
+};
+static struct servent g_se;
+static char* g_se_noaliases[1] = { 0 };
+static char g_se_name[16];
+static char g_se_proto[8];
+static struct servent* fill_servent(const char* name, int port, const char* proto) {
+	int i = 0;
+	while (i < (int) sizeof(g_se_name) - 1 && name[i]) { g_se_name[i] = name[i]; i++; }
+	g_se_name[i] = 0;
+	i = 0;
+	while (i < (int) sizeof(g_se_proto) - 1 && proto[i]) { g_se_proto[i] = proto[i]; i++; }
+	g_se_proto[i] = 0;
+	g_se.s_name = g_se_name;
+	g_se.s_aliases = g_se_noaliases;
+	g_se.s_port = htons((uint16_t) port);
+	g_se.s_proto = g_se_proto;
+	return &g_se;
+}
+struct servent* getservbyname(const char* name, const char* proto) {
+	for (unsigned i = 0; i < sizeof(g_servs) / sizeof(g_servs[0]); i++)
+		if (strcmp(g_servs[i].name, name) == 0 && (!proto || strcmp(g_servs[i].proto, proto) == 0))
+			return fill_servent(g_servs[i].name, g_servs[i].port, g_servs[i].proto);
+	return 0;
+}
+struct servent* getservbyport(int port, const char* proto) {
+	int h = ntohs((uint16_t) port);
+	for (unsigned i = 0; i < sizeof(g_servs) / sizeof(g_servs[0]); i++)
+		if (g_servs[i].port == h && (!proto || strcmp(g_servs[i].proto, proto) == 0))
+			return fill_servent(g_servs[i].name, g_servs[i].port, g_servs[i].proto);
+	return 0;
+}
+
 int getnameinfo(const struct sockaddr* sa, socklen_t salen, char* host, socklen_t hostlen,
                 char* serv, socklen_t servlen, int flags) {
 	(void) salen; (void) flags;

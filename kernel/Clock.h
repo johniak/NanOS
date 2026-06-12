@@ -13,6 +13,7 @@
 namespace kernel {
 
 void     setBootEpoch(unsigned epochSeconds);   // called once at boot with arch::rtcEpoch()
+unsigned bootEpochSeconds();                     // the boot epoch itself (RTC sampled once at boot)
 unsigned wallClockSeconds();                     // current wall-clock time in seconds since epoch
 
 }  // namespace kernel

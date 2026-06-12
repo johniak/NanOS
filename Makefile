@@ -79,6 +79,48 @@ bzip2:
 	cp "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" $(BINFOLDER)bzip2.nxe
 	@echo "staged $(BINFOLDER)bzip2.nxe — run 'make image' to install it into /nanos/bin"
 
+# GNU inetutils ping (optional, external). The plan's real ping: SOCK_RAW/ICMP + getaddrinfo,
+# unmodified upstream. Unlike grep/vim (prebuilt by hand), this target is REPRODUCIBLE: it
+# refreshes the SDK sysroot from THIS checkout (net/POSIX headers in user/libc-glue/include +
+# the freshly built libc.ndl{,.a}) and drives nanos-port inside the nanos-sdk-dev container.
+# The manifest (configure flags + cross-compile cache) lives at $(SDK_WORK)/inetutils-port.
+# `make image` never depends on this; a missing toolchain/port errors clearly and is skipped.
+NANOS_SDK   ?= $(HOME)/Projects/nanos-sdk
+SDK_TC      := $(SDK_WORK)/toolchain
+PING_PORT   := $(SDK_WORK)/inetutils-port
+ping: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(PING_PORT)/nxport.toml"     || { echo "inetutils port not found at $(PING_PORT)/nxport.toml"; exit 1; }
+	# Refresh the SDK sysroot from this repo (the source of truth for headers + libc).
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(PING_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(PING_PORT)/ping.nxe" $(BINFOLDER)ping.nxe
+	@echo "staged $(BINFOLDER)ping.nxe — run 'make image' to install it into /nanos/bin"
+
+# GNU wget 1.21.4 (optional, external). Unmodified upstream, HTTP-only (no TLS yet). Same
+# reproducible flow as `make ping`: refresh the SDK sysroot from this checkout, drive nanos-port.
+# Manifest at $(SDK_WORK)/wget-port. `make image` never depends on this.
+WGET_PORT   := $(SDK_WORK)/wget-port
+wget: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(WGET_PORT)/nxport.toml"     || { echo "wget port not found at $(WGET_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(WGET_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(WGET_PORT)/wget.nxe" $(BINFOLDER)wget.nxe
+	@echo "staged $(BINFOLDER)wget.nxe — run 'make image' to install it into /nanos/bin"
+
 # Stage EVERY already-built external app into bin/ in one go (best-effort: skips any whose artifact
 # is not present, so a partial set still works). The staged .nxe are build artifacts that `make
 # clean` removes, so the workflow after a clean is: `make externals && make image`. This copies
@@ -88,7 +130,9 @@ externals:
 	for spec in "bash:$(BASH_FORK)/nanos/bash.nxe" \
 	            "vim:$(SDK_WORK)/vim/src/vim.nxe" \
 	            "grep:$(SDK_WORK)/grep-3.11/src/grep.nxe" \
-	            "bzip2:$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe"; do \
+	            "bzip2:$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" \
+	            "ping:$(SDK_WORK)/inetutils-port/ping.nxe" \
+	            "wget:$(SDK_WORK)/wget-port/wget.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
 	  else echo "  skip $$name (not built: $$src)"; fi; \
@@ -100,7 +144,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -306,6 +350,16 @@ _image: _all _userland _kext _grub2-image
 	# A system utility (flat in /nanos/bin) — a single self-contained binary. Skipped if absent.
 	if [ -f $(BINFOLDER)grep.nxe ]; then \
 	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# ping (optional, external): GNU inetutils ping built by `make ping` (the nanos-sdk port) and
+	# staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	if [ -f $(BINFOLDER)ping.nxe ]; then \
+	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# wget (optional, external): GNU wget built by `make wget` (the nanos-sdk port), staged into
+	# bin/wget.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	if [ -f $(BINFOLDER)wget.nxe ]; then \
+	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
 	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
@@ -556,7 +610,8 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 # (getentropy/sigprocmask). Instead our glue overrides those, and we export-all the rest of
 # picolibc via the generated --undefined list below (see the libc.elf rule).
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
-  $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o
+  $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
+  $(BINFOLDER)stdio_ext.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not

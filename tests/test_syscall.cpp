@@ -487,18 +487,19 @@ TEST_CASE("resetForRun clears the exit state so the instance can run again") {
 	CHECK(sc.code() == 0);
 }
 
-TEST_CASE("clockGettime: MONOTONIC from ticks, REALTIME from the RTC seconds") {
+TEST_CASE("clockGettime: MONOTONIC + REALTIME both derive from the tick (monotonic, no RTC desync)") {
 	Syscalls sc(mountFixture(), sink);
 	KTimespec ts;
 	// CLOCK_MONOTONIC (1): seconds come from the uptime tick count.
 	CHECK(sc.clockGettime(1, 1500, 0, &ts) == 0);          // 1.5 s uptime
 	CHECK(ts.tv_sec == 1);
 	CHECK(ts.tv_nsec == 500000000);
-	// CLOCK_REALTIME (0): whole seconds come from the RTC value, sub-second from the tick.
+	// CLOCK_REALTIME (0): boot epoch base + uptime; sub-second from the SAME tick, so the
+	// combined timestamp is monotonic — never the live-RTC/tick mix that made ping RTTs negative.
 	CHECK(sc.clockGettime(0, 1500, 1700000000u, &ts) == 0);
-	CHECK(ts.tv_sec == 1700000000);
+	CHECK(ts.tv_sec == 1700000001);                        // 1700000000 + 1 s uptime
 	CHECK(ts.tv_nsec == 500000000);
-	// MONOTONIC ignores the realtime seconds entirely.
+	// MONOTONIC ignores the epoch base entirely.
 	CHECK(sc.clockGettime(1, 999, 1700000000u, &ts) == 0); // just under a second
 	CHECK(ts.tv_sec == 0);
 	CHECK(ts.tv_nsec == 999000000);

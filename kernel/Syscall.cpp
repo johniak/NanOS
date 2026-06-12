@@ -17,6 +17,7 @@ namespace kernel {
 // scheduler tick). MI, so filesystem code can timestamp inodes without touching the arch.
 static unsigned g_bootEpoch = 0;
 void setBootEpoch(unsigned epochSeconds) { g_bootEpoch = epochSeconds; }
+unsigned bootEpochSeconds() { return g_bootEpoch; }
 unsigned wallClockSeconds() { return g_bootEpoch + Scheduler::ticks() / 1000u; }
 
 // Canonical "cooked" terminal defaults, matching what a Linux tty starts with: line-based
@@ -932,17 +933,20 @@ void Syscalls::exit(int code) {
 	exitCode = code;
 }
 
-int Syscalls::clockGettime(int clkId, unsigned ticks, unsigned realtimeSec, KTimespec* out) {
-	// ticks are milliseconds since boot (1000 Hz). CLOCK_REALTIME (0) is wall-clock time:
-	// the RTC's whole seconds plus the sub-second part of the monotonic tick. Every other
-	// clock id is monotonic: seconds since boot. (CLOCK_REALTIME == 0, MONOTONIC == 1.)
+int Syscalls::clockGettime(int clkId, unsigned ticks, unsigned epochBaseSec, KTimespec* out) {
+	// ticks are milliseconds since boot (1000 Hz). BOTH the seconds AND the sub-second nanos
+	// derive from this single tick value, so the timestamp is monotonic. CLOCK_REALTIME (0)
+	// just offsets by `epochBaseSec` — the RTC sampled ONCE at boot — to land on wall-clock time.
+	// (Reading the live RTC seconds here instead would desync from the tick sub-second at every
+	// RTC second-boundary, making realtime non-monotonic — which makes ping RTTs go negative.)
+	// Every other clock id is monotonic: seconds since boot. (CLOCK_REALTIME == 0, MONOTONIC == 1.)
 	if (!out)
 		return -EINVAL;
-	unsigned long long sec = ticks / 1000;
+	unsigned long long sec = ticks / 1000u;
 	if (clkId == 0)
-		sec = realtimeSec;        // wall clock from the RTC (whole seconds)
+		sec += epochBaseSec;      // wall clock = boot epoch (RTC@boot) + monotonic uptime
 	out->tv_sec = (long long) sec;
-	out->tv_nsec = (int) ((ticks % 1000) * 1000000u);
+	out->tv_nsec = (int) ((ticks % 1000u) * 1000000u);
 	return 0;
 }
 

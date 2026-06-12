@@ -4,6 +4,7 @@
 #include "Exec.h"
 #include "SignalDispatch.h"
 #include "Scheduler.h"
+#include "Clock.h"
 #include <arch/syscall.h>
 #include <arch/console.h>
 #include <arch/cpu.h>
@@ -700,9 +701,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = 0;
 		break;
 	case SYS_clock_gettime:
-		// a0 = clk_id, a1 = user struct timespec*. Pass the RTC wall-clock seconds so
-		// CLOCK_REALTIME is real time; CLOCK_MONOTONIC ignores it. User space is active.
-		ret = g_sys->clockGettime((int) a0, Scheduler::ticks(), arch::rtcEpoch(),
+		// a0 = clk_id, a1 = user struct timespec*. Pass the BOOT epoch (RTC sampled once at
+		// boot), not the live RTC: clockGettime derives both seconds and sub-seconds from the
+		// monotonic tick and offsets realtime by this base, so the clock stays monotonic
+		// (a live-RTC read would desync at second boundaries — negative ping RTTs). MONOTONIC
+		// ignores the base. User space is active.
+		ret = g_sys->clockGettime((int) a0, Scheduler::ticks(), kernel::bootEpochSeconds(),
 				(KTimespec*) a1);
 		break;
 	case SYS_nanosleep: {

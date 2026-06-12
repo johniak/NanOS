@@ -69,3 +69,27 @@ int closedir(DIR* d) {
 	free(d);
 	return sys3(SYS_close, fd, 0, 0);
 }
+
+/* dirfd: the underlying file descriptor (so callers can fstat/openat relative to the dir). */
+int dirfd(DIR* d) { return d->fd; }
+
+/* rewinddir: seek the directory fd back to the start and drop the read-ahead buffer, so the
+ * next readdir() re-reads from the first entry. */
+void rewinddir(DIR* d) {
+	sys3(SYS_lseek, d->fd, 0, 0 /* SEEK_SET */);
+	d->bufpos = 0;
+	d->buflen = 0;
+}
+
+/* fdopendir: wrap an already-open directory fd in a DIR stream (takes ownership of fd). */
+DIR* fdopendir(int fd) {
+	if (fd < 0)
+		return 0;
+	DIR* d = (DIR*) malloc(sizeof(DIR));
+	if (!d)
+		return 0;
+	d->fd = fd;
+	d->bufpos = 0;
+	d->buflen = 0;
+	return d;
+}

@@ -102,6 +102,9 @@ int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off,
 int unlink(const char* p) {
 	return reterr(sys3(SYS_unlink, (int) p, 0, 0));
 }
+int link(const char* oldp, const char* newp) {
+	return reterr(sys3(SYS_link, (int) oldp, (int) newp, 0));
+}
 int mkdir(const char* p, mode_t mode) {
 	return reterr(sys3(SYS_mkdir, (int) p, (int) mode, 0));
 }
@@ -225,6 +228,14 @@ int times(void* b)                      { return sys3(SYS_times, (int) b, 0, 0);
  * it the struct pointer directly. */
 int clock_gettime(clockid_t clk, struct timespec* tp) {
 	return reterr(sys3(SYS_clock_gettime, (int) clk, (int) tp, 0));
+}
+
+/* clock_getres(2): the kernel clock advances on the 1000 Hz scheduler tick, so the resolution
+ * is 1 ms for every supported clock. No kernel syscall — the value is fixed. */
+int clock_getres(clockid_t clk, struct timespec* res) {
+	(void) clk;
+	if (res) { res->tv_sec = 0; res->tv_nsec = 1000000; }   /* 1 ms */
+	return 0;
 }
 
 /* nanosleep(2): block for the requested duration; rem (if given) gets the unslept
@@ -389,6 +400,11 @@ void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
 	if (r < 0) { errno = -r; return (void*) -1; }
 	return (void*) r;
 }
+
+/* munmap(2): the kernel's mmap eagerly backs mappings with allocated pages and has no unmap
+ * syscall yet, so this is a no-op (the region is reclaimed when the process exits). Safe for
+ * the short-lived tools that mmap-then-process-then-exit (e.g. wget reading a local file). */
+int munmap(void* addr, size_t length) { (void) addr; (void) length; return 0; }
 
 /* brk(2)/sbrk(2): the heap is a growable high-VA region the kernel maps on demand (see
  * kernel SYS_brk / arch mmuSetUserBrk). brk(0) reports the current break; brk(addr) sets

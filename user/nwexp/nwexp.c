@@ -14,7 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 
-enum { MAX_ENT = 256, NAME_CAP = 64, DT_DIR = 4 };
+enum { MAX_ENT = 256, NAME_CAP = 64 };   /* DT_DIR now comes from <dirent.h> */
 
 static char        g_cwd[256] = "/disks/main";
 static char        g_names[MAX_ENT][NAME_CAP];   /* display rows (dirs end with '/') */

@@ -14,8 +14,56 @@
 #include <signal.h>
 #include <pwd.h>
 #include <grp.h>
+#include <sys/utsname.h>
 
 extern char** environ;
+
+/* Pseudo-terminal helpers: NanOS userland doesn't expose these yet — honest ENOSYS. Present so
+ * inetutils' shared (telnet/login) sources link; ping never calls them. */
+struct termios;
+struct winsize;
+int openpty(int* a, int* b, char* n, const struct termios* t, const struct winsize* w) {
+	(void) a; (void) b; (void) n; (void) t; (void) w; errno = ENOSYS; return -1;
+}
+int forkpty(int* a, char* n, const struct termios* t, const struct winsize* w) {
+	(void) a; (void) n; (void) t; (void) w; errno = ENOSYS; return -1;
+}
+int login_tty(int fd) { (void) fd; errno = ENOSYS; return -1; }
+
+/* pathconf/fpathconf: report fixed POSIX limits (NanOS has no per-path configuration). Values
+ * match <limits.h> (PATH_MAX 4096, NAME_MAX 255). Without this, gnulib/wget fall back to a
+ * raw PATH_MAX that isn't always in scope. */
+long pathconf(const char* path, int name) {
+	(void) path;
+	switch (name) {
+	case _PC_LINK_MAX:    return 127;
+	case _PC_MAX_CANON:   return 255;
+	case _PC_MAX_INPUT:   return 255;
+	case _PC_NAME_MAX:    return 255;
+	case _PC_PATH_MAX:    return 4096;
+	case _PC_PIPE_BUF:    return 4096;
+	case _PC_CHOWN_RESTRICTED: return 1;
+	case _PC_NO_TRUNC:    return 1;
+	case _PC_VDISABLE:    return 0;
+	case _PC_SYMLINK_MAX: return 4096;
+	case _PC_2_SYMLINKS:  return 1;
+	case _PC_FILESIZEBITS: return 32;
+	default:              return -1;
+	}
+}
+long fpathconf(int fd, int name) { (void) fd; return pathconf("/", name); }
+
+/* uname: report a fixed NanOS identity (no per-host config). */
+int uname(struct utsname* buf) {
+	if (!buf) { errno = EFAULT; return -1; }
+	strcpy(buf->sysname, "NanOS");
+	strcpy(buf->nodename, "nanos");
+	strcpy(buf->release, "1.0");
+	strcpy(buf->version, "NanOS 1.0");
+	strcpy(buf->machine, "i686");
+	strcpy(buf->domainname, "(none)");
+	return 0;
+}
 
 /* ---- identity: single-user root ---- */
 uid_t getuid(void)   { return 0; }

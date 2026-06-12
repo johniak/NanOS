@@ -251,8 +251,10 @@ public:
 	// the number of whole milliseconds to block (rounding up); the actual blocking loop
 	// lives in the dispatch (it needs the scheduler/IRQs).
 	// CLOCK_MONOTONIC (and default): seconds/nanos from `ticks` (1000 Hz => ms since boot).
-	// CLOCK_REALTIME: wall clock = `realtimeSec` (from the RTC) + the sub-second tick part.
-	int clockGettime(int clkId, unsigned ticks, unsigned realtimeSec, KTimespec* out);
+	// CLOCK_REALTIME: wall clock = `epochBaseSec` (the RTC sampled ONCE at boot) + the FULL
+	// monotonic tick (seconds AND sub-second), so realtime stays monotonic across second
+	// boundaries (a live-RTC seconds read mixed with tick sub-seconds made ping RTTs negative).
+	int clockGettime(int clkId, unsigned ticks, unsigned epochBaseSec, KTimespec* out);
 	unsigned nanosleepMs(const KTimespec* req);
 	void exit(int code);
 	bool hasExited() { return exited; }

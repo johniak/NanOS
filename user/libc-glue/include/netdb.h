@@ -33,6 +33,19 @@ struct hostent {
 };
 #define h_addr h_addr_list[0]
 
+struct protoent {
+	char*  p_name;
+	char** p_aliases;
+	int    p_proto;
+};
+
+struct servent {
+	char*  s_name;
+	char** s_aliases;
+	int    s_port;
+	char*  s_proto;
+};
+
 /* getaddrinfo ai_flags */
 #define AI_PASSIVE     0x0001
 #define AI_CANONNAME   0x0002
@@ -58,12 +71,25 @@ struct hostent {
 #define NI_NAMEREQD    8
 #define NI_DGRAM       16
 
+#define NI_MAXHOST     1025
+#define NI_MAXSERV     32
+
 int  getaddrinfo(const char* node, const char* service, const struct addrinfo* hints, struct addrinfo** res);
 void freeaddrinfo(struct addrinfo* res);
 const char* gai_strerror(int errcode);
 int  getnameinfo(const struct sockaddr* sa, socklen_t salen, char* host, socklen_t hostlen,
                  char* serv, socklen_t servlen, int flags);
 struct hostent* gethostbyname(const char* name);
+struct hostent* gethostbyaddr(const void* addr, socklen_t len, int type);
+
+struct protoent* getprotobyname(const char* name);
+struct protoent* getprotobynumber(int proto);
+struct protoent* getprotoent(void);
+void setprotoent(int stayopen);
+void endprotoent(void);
+
+struct servent* getservbyname(const char* name, const char* proto);
+struct servent* getservbyport(int port, const char* proto);
 
 extern int h_errno;
 #define HOST_NOT_FOUND 1

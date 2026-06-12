@@ -8,6 +8,7 @@
 
 #include <sys/types.h>
 #include <stdint.h>
+#include <sys/uio.h>   /* struct iovec (POSIX home), shared with gnulib's <sys/uio.h> */
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,10 +81,7 @@ struct sockaddr_storage {
 	char        __ss_pad[128 - sizeof(sa_family_t)];
 };
 
-struct iovec {
-	void*  iov_base;
-	size_t iov_len;
-};
+/* struct iovec now lives in <sys/uio.h> (included above). */
 
 struct msghdr {
 	void*         msg_name;
