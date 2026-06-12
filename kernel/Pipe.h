@@ -58,7 +58,11 @@ public:
 	}
 
 private:
-	static const int CAP = 4096;
+	// 64 KiB, not 4 KiB: a windowed app's framebuffer COMMIT (e.g. a full vim redraw, ~770 KiB of
+	// pixels through the request pipe) otherwise ping-pongs ~190 times against a 4 KiB ring —
+	// each block waits a scheduler round-trip, which is brutally slow under QEMU TCG. A larger
+	// ring cuts the round-trips ~16x. Pipes are heap-allocated and few, so the extra bytes are cheap.
+	static const int CAP = 64 * 1024;
 	unsigned char m_buf[CAP];
 	int m_head, m_tail, m_count;
 	int m_readers, m_writers;
