@@ -290,9 +290,9 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 |---|---|---|
 | Stack-in-IRQ | NAPI + ksoftirqd (polling) | one softirq thread, no NAPI |
 | sk_buff | nonlinear (frags/scatter) | one linear 2 KiB buffer |
-| Memory | slab, dynamic | static pools (96/64/16/4) |
+| Memory | slab, dynamic | static pools (128/64/16/16) |
 | TCP options | window scaling, SACK, timestamps | **none** (MSS only) |
-| Concurrent TCP | thousands | **4** |
+| Concurrent TCP | thousands | **16** |
 | IP version | v4 + v6 | **IPv4 only** |
 | Firewall/NAT | netfilter/iptables/nftables | **none** |
 | Routing | multiple tables, policy | one 16-entry longest-prefix table |
@@ -310,17 +310,17 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `POOL_N` | 96 | NetBuf pool |
+| `POOL_N` | 128 | NetBuf pool |
 | `BACKLOG` | 64 | RX backlog (the drop point) |
 | `MAX_DEV` | 8 | registered net devices |
 | `CACHE_N` | 16 | ARP cache entries |
 | `ROUTE_N` | 16 | routes |
 | `SOCK_N` | 64 | sockets |
-| `TCB_N` | 4 | concurrent TCP connections |
+| `TCB_N` | 16 | concurrent TCP connections |
 | `RXQ` | 16 | datagram receive ring per socket |
 | `OOO_N` | 4 | TCP out-of-order pending segments |
 | `ACCEPT_N` | 8 | TCP accept queue per listener |
-| `SNDBUF`/`RCVBUF` | 4096 | TCP send/recv buffers |
+| `SNDBUF`/`RCVBUF` | 8192 | TCP send/recv buffers |
 | `NET_HEADROOM` | 144 | NetBuf headroom for headers |
 | `MSS_MAX` | 1460 | max TCP MSS |
 | `RTO_MIN`/`RTO_MAX` | 200 / 60000 ms | retransmit timeout bounds |

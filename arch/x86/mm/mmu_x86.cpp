@@ -68,7 +68,7 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 	// Re-reserve the windows the frame pool must never hand out.
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint32_t) (unsigned) &end - 0x100000); // kernel image
-	fa.markRangeUsed(0x400000, 0x400000);                           // exec staging window (4 MiB)
+	fa.markRangeUsed(0x800000, 0x400000);                           // exec staging window (4 MiB, raised from 0x400000)
 	uint32_t heapBase = 0x75BCD15 & kernel::PAGE_MASK;              // kernel byte heap
 	fa.markRangeUsed(heapBase, topOfRam - heapBase);
 	// Lay out the kernel heap over its reserved region before the first malloc below.
@@ -99,8 +99,8 @@ void mmuLoadDirPhys(uint32_t dirPhys) { kernel::loadCr3(dirPhys); }
 
 AddressSpace* mmuCreateAddressSpace() {
 	AddressSpace* s = new AddressSpace(g_env);
-	// Share the whole kernel half; the user window (0x400000) gets a private PT.
-	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x400000);
+	// Share the whole kernel half; the user window (0x800000) gets a private PT.
+	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x800000);
 	return s;
 }
 
@@ -125,7 +125,7 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 	// PDEs (anonymous RAM, so freeUserWindow's frame-free is correct), and the directory.
 	// The kernel-half PDEs alias shared kernel page tables — leave them. The framebuffer
 	// window (0x10000000) is MMIO and is intentionally NOT freed here.
-	s->impl.freeUserWindow(0x400000);
+	s->impl.freeUserWindow(0x800000);
 	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
 		s->impl.freeUserWindow(va);   // no-op for PDEs the heap never grew into
 	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
@@ -140,12 +140,12 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	AddressSpace* s = new AddressSpace(g_env);
 	// Share the kernel half, private (empty) user window, then copy the user pages and
 	// every populated heap PDE (fork duplicates the heap, as a Unix child expects).
-	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x400000);
+	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x800000);
 	// Eager copy of every user window. If any allocation fails (we hit the physical-memory
 	// ceiling — fork duplicates the program, heap and shared-library pages with no COW), tear
 	// the half-built space down and return 0 so fork degrades to -EAGAIN instead of handing
 	// back a corrupt child.
-	bool ok = s->impl.copyUserWindowFrom(src->impl, 0x400000);
+	bool ok = s->impl.copyUserWindowFrom(src->impl, 0x800000);
 	for (uint32_t va = NX_BRK_BASE; ok && va < NX_BRK_MAX; va += 0x400000)
 		ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint32_t va = NX_MOD_BASE; ok && va < NX_MOD_MAX; va += NX_MOD_STRIDE)

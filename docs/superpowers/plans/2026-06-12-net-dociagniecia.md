@@ -68,14 +68,14 @@ Każda faza kończy się commitem (bez wzmianki o AI) i jest samodzielnie warto�
 **Files:**
 - Modify: `docs/networking.md`
 
-- [ ] **A1.** W tabeli §10 wiersz `AF_UNIX / AF_PACKET`: zamienić `AF_UNIX declared (ENOSYS),
+- [x] **A1.** W tabeli §10 wiersz `AF_UNIX / AF_PACKET`: zamienić `AF_UNIX declared (ENOSYS),
   AF_PACKET partial` na `both: constants in headers only — socket() returns EAFNOSUPPORT
   (socketpair: ENOSYS)`. Stan faktyczny: `net/Socket.cpp:35` (EAFNOSUPPORT dla ≠AF_INET),
   `kernel/SyscallDispatch.cpp:135` (socketpair −38).
-- [ ] **A2.** W §12 zamienić „byte-compared" na „field-compared (with an explicit mask of
+- [x] **A2.** W §12 zamienić „byte-compared" na „field-compared (with an explicit mask of
   legitimately random fields — IP ID, ISN, ephemeral ports, DNS ID; see the plan §2 gate)".
-- [ ] **A3.** W §5 i §13 dopisać odnośnik do tego planu jako „follow-up in progress".
-- [ ] **A4.** Commit: `docs: correct networking.md (AF_UNIX/AF_PACKET reality, field-compare wording)`.
+- [x] **A3.** W §5 i §13 dopisać odnośnik do tego planu jako „follow-up in progress".
+- [x] **A4.** Commit: `docs: correct networking.md (AF_UNIX/AF_PACKET reality, field-compare wording)`.
 
 ### FAZA B — budżet pamięci: podnieść bazę okna usera, odbudować pule (fundament)
 
@@ -91,21 +91,21 @@ base rather than trimming further". Fazy C–H POWIĘKSZĄ kernel — robimy to 
 - Test: istniejące suity (to zmiana rozmiarów, nie logiki) + `tests/test_tcp.cpp` (TCB_N przez
   `tcpSlots()`)
 
-- [ ] **B1.** Zinwentaryzować WSZYSTKIE wystąpienia stałej 0x400000/0x500000 (grep po kernel/,
+- [x] **B1.** Zinwentaryzować WSZYSTKIE wystąpienia stałej 0x400000/0x500000 (grep po kernel/,
   user/, arch/, docs/): load base, stack top, granica user-window w AddressSpace, walidacje
   wskaźników user w Syscall. Wynik = checklista zmian (jedna stała w jednym miejscu per moduł).
-- [ ] **B2.** Podnieść bazę okna usera do **0x800000** (8 MiB): kernel ma wtedy ~5 MiB
+- [x] **B2.** Podnieść bazę okna usera do **0x800000** (8 MiB): kernel ma wtedy ~5 MiB
   headroomu (dziś 3.03 MB kończy się @0x3e2f98). Stack top usera analogicznie (+0x100000 nad
   obrazem jak dziś). Wszystkie programy .nxe i .ndl są linkowane naszym `nx.ld` — wymaga
   PRZEBUDOWY całego userlandu i portów (`make _userland`, `make bash/grep/vim/ping/wget`),
   ale ZERO zmian źródeł.
-- [ ] **B3.** Odbudować pule: `POOL_N=128`, `TCB_N=16`, `SNDBUF/RCVBUF=8192`. Backlog zostaje
+- [x] **B3.** Odbudować pule: `POOL_N=128`, `TCB_N=16`, `SNDBUF/RCVBUF=8192`. Backlog zostaje
   64 (nadal < pool — punkt dropu się nie zmienia; zaktualizować komentarz w `NetBuf.cpp:10`).
-- [ ] **B4.** `make test` zielone; QEMU: boot + bash + `ping wp.pl` + `wget` (pełna regresja
+- [x] **B4.** `make test` zielone; QEMU: boot + bash + `ping wp.pl` + `wget` (pełna regresja
   starych portów na nowej bazie), `readelf`/mapfile potwierdza koniec kernela < 0x800000 z
   zapasem; zero `v=08/0d/0e`.
-- [ ] **B5.** Zaktualizować `docs/networking.md` §11 (nowe wartości) + CLAUDE.md (mapa pamięci).
-- [ ] **B6.** Commit: `mm+net: raise user window to 0x800000, restore right-sized net pools`.
+- [x] **B5.** Zaktualizować `docs/networking.md` §11 (nowe wartości) + CLAUDE.md (mapa pamięci).
+- [x] **B6.** Commit: `mm+net: raise user window to 0x800000, restore right-sized net pools`.
 
 ### FAZA C — dostarczanie błędów ICMP do socketów (jak Linux)
 
@@ -149,7 +149,17 @@ bajtowo na drucie i behawioralnie w długich sesjach.
 - Modify: `net/Tcp.{h,cpp}`
 - Test: `tests/test_tcp.cpp` (rozszerzenie) + `tests/test_tcp_opts.cpp`
 
+> **Odkryte w FAZIE B (2026-06-12):** `tcpTick` (net/Tcp.cpp:402-413) retransmituje przy RTO
+> TYLKO dane (`chunk>0`) albo FIN — **NIE retransmituje SYN-a w `SYN_SENT`**. Połączenie zależy
+> więc od pojedynczego SYN-a; gdy pierwszy SYN-ACK jest wolny (slirp potrafi zwlec ~11 s na
+> pierwszym `connect()` do AWS) lub zgubiony, sesja wisi. To pre-istniejący bug, nie regresja —
+> naprawić w tej fazie jako **D0** (najpierw, bo dotyka każdego z poniższych).
+
 Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-impl-pass-commit):
+- [ ] **D0. SYN retransmit (RTO w SYN_SENT/SYN_RCVD):** gdy RTO odpali a `snd_una != snd_nxt` i
+  nie ma danych/FIN, retransmituj SYN (SYN_SENT) lub SYN-ACK (SYN_RCVD), z backoffem i limitem
+  prób (~5, potem `-ETIMEDOUT`/`-ECONNREFUSED` na sockecie). Test: brak SYN-ACK → 2. SYN po RTO,
+  trzeci po 2×RTO; po limicie connect kończy się błędem.
 - [ ] **D1. Window scaling (RFC 7323 §2):** wysyłaj `wscale` w SYN/SYN-ACK (nasz shift: 2 —
   RCVBUF 8 KiB nie potrzebuje więcej, ale opcja MUSI być negocjowana jak w Linuksie), honoruj
   shift peera przy interpretacji jego okna. Test: handshake z wscale=7 od peera → wysyłka

@@ -15,12 +15,13 @@
 #include <string.h>
 
 namespace {
-// The user window is a single 4 MiB PDE (0x400000..0x7FFFFF). The program image loads
-// at the bottom (loadBase = 0x400000); the stack lives at the TOP, giving the image up
+// The user window is a single 4 MiB PDE (0x800000..0xBFFFFF). The program image loads
+// at the bottom (loadBase = 0x800000); the stack lives at the TOP, giving the image up
 // to ~3.5 MiB. The heap is no longer here — sbrk now grows a separate high-VA region via
-// SYS_brk (see mmu_x86.cpp mmuSetUserBrk), so the old 0x480000 fixed heap window is gone.
-const uint32_t USER_STACK_TOP = 0x800000;
-const uint32_t USER_STACK_BOT = 0x780000;   // 512 KiB user stack (top of the user window)
+// SYS_brk (see mmu_x86.cpp mmuSetUserBrk), so the old fixed heap window is gone. The window
+// was raised 0x400000 -> 0x800000 to give the kernel image headroom (must match user/nx.ld).
+const uint32_t USER_STACK_TOP = 0xC00000;
+const uint32_t USER_STACK_BOT = 0xB80000;   // 512 KiB user stack (top of the user window)
 }
 
 namespace arch {

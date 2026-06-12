@@ -37,18 +37,19 @@ static void initBrk(Process* p) {
 	p->brkMax = arch::mmuUserHeapMax();
 }
 
-// The staging window: the reserved 4 MiB at 0x400000 (see mmu_x86.cpp markRangeUsed) — the
+// The staging window: the reserved 4 MiB at 0x800000 (see mmu_x86.cpp markRangeUsed) — the
 // same size as the per-process user window, so any image that fits a process (plus its load-
 // time tables) fits here. The image is read here, bss is zeroed in place, then archLoadUser
 // copies it into the process's private frames. loadImage bounds every access to this capacity,
 // and callers reject an oversize file BEFORE the read, so a large .nxe can never corrupt RAM.
-static const unsigned STAGE_BASE = 0x400000;
+// Base raised 0x400000 -> 0x800000 to give the kernel image headroom (must match user/nx.ld).
+static const unsigned STAGE_BASE = 0x800000;
 static const unsigned STAGE_CAP  = 0x400000;
 
 // Load a .nxe image (already staged at the load base in the kernel identity window),
 // applying relocations + zeroing bss. EXEs load at their preferred base, so the delta is
 // 0 and relocation is a no-op. Returns the entry point, or <0 on error. Caller must be on
-// a directory where the staging window 0x400000 is identity-mapped.
+// a directory where the staging window 0x800000 is identity-mapped.
 static int loadStaged(unsigned* entryOut) {
 	char* image = (char*) STAGE_BASE;
 	return NxeLoader::loadImage(image, STAGE_CAP, 0, 0, entryOut);   // delta 0, no imports
@@ -106,7 +107,7 @@ int execProgram(Vfs* vfs, const char* path) {
 }
 
 // execve(2): replace the current process's image. We run inside a syscall on the
-// process's user CR3; stage + load under the kernel directory (where 0x400000 is
+// process's user CR3; stage + load under the kernel directory (where 0x800000 is
 // identity-mapped), then rewrite the trap frame so the iret enters the new image.
 int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		const char* const* envp, int envc, arch::TrapFrame* tf) {

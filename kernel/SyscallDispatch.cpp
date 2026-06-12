@@ -171,14 +171,14 @@ static int socketOp(Syscalls* g, int sub, const unsigned* A) {
 	case SC_SENDMSG: {
 		const unsigned* m = (const unsigned*) A[1];   // struct msghdr
 		if (!m) return -EINVAL;
-		static char kbuf[4096];
+		static char kbuf[8192];   // restored from 4096 after the user-window move freed kernel BSS
 		int n = iovGather((const unsigned*) m[2], m[3], kbuf, sizeof(kbuf));
 		return g->sockSendto(fd, kbuf, (unsigned) n, (int) A[2], (const void*) m[0], m[1]);
 	}
 	case SC_RECVMSG: {
 		unsigned* m = (unsigned*) A[1];
 		if (!m) return -EINVAL;
-		static char kbuf[4096];
+		static char kbuf[8192];   // restored from 4096 after the user-window move freed kernel BSS
 		int flags = (int) A[2];
 		for (;;) {
 			int n = g->sockRecvfrom(fd, kbuf, sizeof(kbuf), flags, (void*) m[0], (unsigned*) &m[1]);

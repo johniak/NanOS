@@ -14,11 +14,11 @@ namespace kernel {
 
 namespace {
 
-const int SNDBUF = 4096;
-const int RCVBUF = 4096;
+const int SNDBUF = 8192;       // restored from the FAZA 9 trim (4096) — see the user-window move
+const int RCVBUF = 8192;
 const int MSS_MAX = 1460;
 const int OOO_N = 4;            // out-of-order pending segments
-const int TCB_N = 4;           // concurrent TCP connections (sized to the kernel BSS budget)
+const int TCB_N = 16;          // concurrent TCP connections (restored from 4 after 0x800000 move)
 const int ACCEPT_N = 8;        // pending accept queue per listener
 
 // Timer constants (ticks == ms; the net-timer thread calls tcpTick).

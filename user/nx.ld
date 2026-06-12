@@ -1,10 +1,14 @@
-/* Linker script for NanOS user programs (.nx). Fixed base 0x400000; the .nx
+/* Linker script for NanOS user programs (.nx). Fixed base 0x800000; the .nx
  * header must come first so the loader can read it at loadBase. objcopy -O binary
- * of the resulting ELF yields the .nx file directly. */
+ * of the resulting ELF yields the .nx file directly.
+ *
+ * The base was raised 0x400000 -> 0x800000 to give the kernel image room to grow
+ * (the staging window + user window moved up with it; see kernel/Exec.cpp STAGE_BASE,
+ * arch/x86/mm/mmu_x86.cpp markRangeUsed, arch/x86/cpu/usermode_x86.cpp USER_STACK_TOP). */
 ENTRY(_start)
 SECTIONS
 {
-  . = 0x400000;
+  . = 0x800000;
   .nxheader : { *(.nxheader) }
   .text     : { *(.text*) }
   .nximports : { *(.nximports) }
@@ -20,5 +24,5 @@ SECTIONS
   .bss      : { *(.bss*) *(COMMON) }
   __bss_end = .;
   /* Stored image size (everything before bss); used as NxHeader.imageSize. */
-  __nx_image_size = __bss_start - 0x400000;
+  __nx_image_size = __bss_start - 0x800000;
 }
