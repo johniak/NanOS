@@ -13,6 +13,11 @@ int    g_freeNext[POOL_N];   // free-list links (index), -1 = end
 int    g_freeHead = -2;      // -2 = not yet initialised
 int    g_inUse = 0;
 
+NetbufIrqSaveFn    g_save = 0;
+NetbufIrqRestoreFn g_restore = 0;
+inline unsigned long lock()    { return g_save ? g_save() : 0; }
+inline void unlock(unsigned long f) { if (g_restore) g_restore(f); }
+
 void initPool() {
 	for (int i = 0; i < POOL_N; i++)
 		g_freeNext[i] = i + 1;
@@ -22,14 +27,20 @@ void initPool() {
 }
 }  // namespace
 
+void netbufSetIrqGuard(NetbufIrqSaveFn save, NetbufIrqRestoreFn restore) { g_save = save; g_restore = restore; }
+
 NetBuf* netbufAlloc() {
+	unsigned long f = lock();
 	if (g_freeHead == -2)
 		initPool();
-	if (g_freeHead < 0)
+	if (g_freeHead < 0) {
+		unlock(f);
 		return 0;                       // exhausted: caller drops the packet (never blocks)
+	}
 	int idx = g_freeHead;
 	g_freeHead = g_freeNext[idx];
 	g_inUse++;
+	unlock(f);
 	NetBuf* b = &g_pool[idx];
 	b->data = 0; b->len = 0; b->dev = 0; b->protocol = 0; b->l3 = -1; b->l4 = -1;
 	return b;
@@ -41,9 +52,11 @@ void netbufFree(NetBuf* b) {
 	int idx = (int) (b - g_pool);
 	if (idx < 0 || idx >= POOL_N)
 		return;                         // not one of ours (defensive)
+	unsigned long f = lock();
 	g_freeNext[idx] = g_freeHead;
 	g_freeHead = idx;
 	g_inUse--;
+	unlock(f);
 }
 
 int netbufInUse()    { return g_inUse; }

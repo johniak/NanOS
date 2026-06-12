@@ -8,8 +8,8 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 |---|---|---|---|---|---|---|
 | 0 — QEMU net + pcap harness + baseline + strace | **DONE** | n/a | harness ready | fixtures captured | n/a | f094a47 |
 | 1 — PCI bus | **DONE** | Pci.cpp 93.8% | n/a (no wire yet) | n/a | e1000 found @0:3.0 irq11 | — |
-| 2 — e1000.nkext | todo | | | | | |
-| 3 — NetDevice + bottom-half + lo | **MI core done** | Net/NetBuf/NetDevice/Loopback ≥91% | n/a | n/a | (kernel wiring lands with FAZA 2) | — |
+| 2 — e1000.nkext | **DONE** | n/a (MD) | TX frame on wire, correct MAC | n/a | eth0 up, no faults | — |
+| 3 — NetDevice + bottom-half + lo | **DONE** | ≥90% all modules | (via FAZA 2 TX) | n/a | softirq + lo wired | — |
 | 4 — Ethernet + ARP | todo | | | | | |
 | 5 — IPv4 | todo | | | | | |
 | 6 — ICMP | todo | | | | | |
@@ -94,3 +94,30 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   MI objects; `check-arch` clean.
 - The kernel-side bring-up (lo, the softirq kthread, the knx_netif_rx/map_mmio/dma_alloc/
   add_net_dev exports) lands with FAZA 2, where the e1000 driver needs them to be verifiable.
+
+## FAZA 2 — e1000 driver + kernel net glue (2026-06-12)
+
+- `kernel/knx_net.h`: the stable C ABI between a NIC kext and the kernel — `KnxNetDev`
+  descriptor + `knx_map_mmio` / `knx_dma_alloc` / `knx_add_net_dev` / `knx_netif_rx`. A kext
+  never sees NetDevice/NetBuf internals; it exchanges flat frame bytes.
+- `kernel/NetCore.{h,cpp}`: the glue (MI-clean — only `<arch/...>` contracts). Implements the
+  four net exports, the KnxNetDev→NetDevice bridge (kext tx wrapped so the device owns the
+  skb), and `netCoreInit()` which installs the wake + IRQ-guard hooks, creates `lo`, and spawns
+  the `ksoftirqd-net` softirq thread (id 2) that drains the RX backlog outside IRQ. Wired into
+  `Kernel.cpp` (`registerKthread(netCoreInit(), "ksoftirqd-net")`) and `kexports.def`/the export
+  table. DMA: `knx_dma_alloc` hands out single identity-mapped frames (rings 512 B + 2 KiB
+  buffers all fit ≤4 KiB, so contiguity is trivial; phys == virt).
+- `kext/e1000/e1000.cpp` (`e1000.nkext`, the only large MD piece): PCI match 8086:100E, BAR0
+  MMIO map, CTRL.RST reset, MAC from RAL0/RAH0 (EEPROM auto-loaded), legacy 16-byte RX/TX
+  descriptor rings (32 each) in DMA memory, RCTL/TCTL/TIPG, IRQ handler that reads ICR and
+  drains completed RX descriptors to `knx_netif_rx` (copy-out, NO stack in IRQ) + hands
+  descriptors back via RDT; tx copies into the ring, bumps TDT, waits DD. ndo_start_xmit
+  ownership: the device tx always consumes the skb (netTransmit never double-frees).
+- `net/NetBuf`: added an IRQ guard on the pool (alloc runs in the e1000 IRQ, free in the
+  softirq thread) so the free-list can't be corrupted by an IRQ mid-update.
+- Makefile: `KEXTS += e1000`, build/link rules, installed to `/nanos/kext` (KextLoader loads it).
+- **QEMU verification:** boot log `kext: e1000.nkext  e1000: eth0 up`. A diagnostic raw
+  broadcast TX (since removed — ARP is the real first frame) appeared in the pcap exactly:
+  `52:54:00:12:34:56 > ff:ff:ff:ff:ff:ff, ethertype 0x88b5, len 64: NANOS-TX-TEST` — proving
+  the full netTransmit→kext→DMA→wire path and a correctly-read MAC. No `v=08/0d/0e`. RX is
+  exercised end-to-end by the ARP reply in FAZA 4.

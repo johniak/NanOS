@@ -54,13 +54,13 @@ int netTransmit(NetDevice* dev, NetBuf* skb) {
 	if (!dev || !skb) { if (skb) netbufFree(skb); return -1; }
 	if (!dev->tx) { dev->txDropped++; netbufFree(skb); return -1; }
 	int n = skb->len;
+	// dev->tx OWNS the skb from here, success or failure (it frees it, queues it, or — for
+	// loopback — re-injects via netifRx). netTransmit never frees after calling tx. This is
+	// Linux's ndo_start_xmit contract: the driver always consumes the skb. (Only the no-tx
+	// path above frees, since nobody else will.)
 	int rc = dev->tx(dev, skb);
 	if (rc == 0) { dev->txPackets++; dev->txBytes += (uint64_t) n; }
 	else         { dev->txErrors++; }
-	// dev->tx owns the skb lifetime on success (loopback re-queues it; the e1000 copies into the
-	// DMA ring then frees it). On error netTransmit frees to avoid a leak.
-	if (rc != 0)
-		netbufFree(skb);
 	return rc;
 }
 

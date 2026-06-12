@@ -137,8 +137,8 @@ TEST_CASE("backlog overflow drops + bumps rxDropped, never blocks") {
 // ---- transmit paths ---------------------------------------------------------
 
 static int g_txCalls;
-static int dummyTxOk(NetDevice*, NetBuf* skb) { g_txCalls++; netbufFree(skb); return 0; }   // owns skb
-static int dummyTxErr(NetDevice*, NetBuf*) { g_txCalls++; return -5; }                        // leaves skb
+static int dummyTxOk(NetDevice*, NetBuf* skb)  { g_txCalls++; netbufFree(skb); return 0; }   // owns skb
+static int dummyTxErr(NetDevice*, NetBuf* skb) { g_txCalls++; netbufFree(skb); return -5; }  // owns skb (frees even on error)
 
 TEST_CASE("netTransmit: success bumps tx stats; tx owns the skb") {
 	netReset();

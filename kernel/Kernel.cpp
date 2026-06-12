@@ -16,6 +16,7 @@
 #include "KernelExports.h"   // kernel symbols exported to loadable modules (nkext)
 #include "KextLoader.h"      // load /nanos/kext/*.nkext at boot
 #include "Pci.h"             // PCI bus enumeration (finds the NIC for the e1000 kext)
+#include "NetCore.h"         // net stack bring-up: lo + RX softirq thread + driver exports
 #include <arch/pci.h>
 #include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
 #include "Scheduler.h"
@@ -333,6 +334,9 @@ void Kernel::start() {
 	const char* initArgv[] = { "init", 0 };
 	ProcTable::setCommand(p1, initArgv, 1);   // until it execve's nsh
 	registerKthread(Scheduler::idle(), "idle");   // the idle kernel thread, visible in /proc
+	// Net stack: install lo + the RX softirq thread (drains the backlog outside IRQ) + the
+	// driver hooks. Any frames the e1000 already queued during kext load drain on its first run.
+	registerKthread(netCoreInit(), "ksoftirqd-net");
 	arch::archTimerInit(1000);
 	okEnd();
 	Scheduler::start();

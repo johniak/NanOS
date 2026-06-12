@@ -4,6 +4,7 @@
 #include "Console.h"
 #include "Scheduler.h"
 #include "Pci.h"
+#include "knx_net.h"   // knx_map_mmio / knx_dma_alloc / knx_add_net_dev / knx_netif_rx (NetCore.cpp)
 #include "memory_manager.h"
 #include <arch/irq.h>
 #include <arch/input.h>

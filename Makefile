@@ -9,7 +9,7 @@ MI_SOURCES+= Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o
 MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
 MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
 MI_SOURCES+= Pci.o
-MI_SOURCES+= Net.o NetBuf.o NetDevice.o Loopback.o
+MI_SOURCES+= Net.o NetBuf.o NetDevice.o Loopback.o NetCore.o
 MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
@@ -641,6 +641,9 @@ $(BINFOLDER)%.o: kext/mouse/%.cpp
 $(BINFOLDER)%.o: kext/kbd/%.cpp
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: kext/e1000/%.cpp
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
 
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
@@ -653,8 +656,12 @@ $(BINFOLDER)kbd.nkext: $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o $(MKNX) kext/kext.ld
 	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o -lgcc
 	$(MKNX) $(@:.nkext=.elf) $@
+$(BINFOLDER)e1000.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000.o $(MKNX) kext/kext.ld
+	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(BINFOLDER)e1000.o -lgcc
+	$(MKNX) $(@:.nkext=.elf) $@
 
-KEXTS=kbd mouse
+KEXTS=kbd mouse e1000
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which

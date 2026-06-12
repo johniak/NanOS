@@ -59,4 +59,11 @@ void    netbufFree(NetBuf* b);
 int netbufInUse();
 int netbufCapacity();
 
+// IRQ guard: the pool is touched from both the driver IRQ (alloc, in knx_netif_rx) and the
+// softirq thread (free). The kernel installs cpuIrqSave/Restore so the free-list can't be
+// corrupted by an IRQ landing mid-update. Host tests are single-threaded and leave it unset.
+typedef unsigned long (*NetbufIrqSaveFn)();
+typedef void (*NetbufIrqRestoreFn)(unsigned long);
+void netbufSetIrqGuard(NetbufIrqSaveFn save, NetbufIrqRestoreFn restore);
+
 }  // namespace kernel
