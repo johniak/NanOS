@@ -12,7 +12,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 3 — NetDevice + bottom-half + lo | **DONE** | ≥90% all modules | (via FAZA 2 TX) | n/a | softirq + lo wired | — |
 | 4 — Ethernet + ARP | **DONE** | Ether 100% / Arp 93.2% | ARP req/reply byte-exact (tcpdump) | n/a | gw resolved, RX path OK | — |
 | 5 — IPv4 | **DONE** | Ip 97.4% / Route 100% | byte-exact header (host); on wire via ICMP (F6) | n/a | builds, wired | — |
-| 6 — ICMP | todo | | | | | |
+| 6 — ICMP | **DONE** | Icmp 100% | echo req/reply on wire (tcpdump) | n/a | round-trip to gw OK | — |
 | 7 — sockets + UDP + RAW + AF_PACKET | todo | | | | | |
 | 8 — TCP | todo | | | | | |
 | 9 — socket syscall ABI | todo | | | | | |
@@ -167,3 +167,22 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   out-of-order reassembly, fragment expiry, and TX fragmentation (offsets contiguous, MF on all
   but last, each fragment's header checksum valid, fragments cover the whole payload). 446 host
   tests green, check-arch clean. On-wire IP verification lands with ICMP echo in FAZA 6.
+
+## FAZA 6 — ICMP (2026-06-12)
+
+- `net/Icmp.{h,cpp}`: echo request/reply (auto-reply to requests for us, keeping id/seq/data),
+  destination-unreachable + time-exceeded (`icmpSendError` quotes the offending IP header + 8
+  bytes via the preserved `l3`/`l4` offsets, RFC 792), `icmpSendEcho` (kernel-side ping), a raw
+  hook for SOCK_RAW (FAZA 7), and an echo-reply hook. ICMP checksum over the whole message. 100% cov.
+- Wired into `netCoreInit` (icmpInit registers IP proto 1).
+- `tests/test_icmp.cpp` (6 cases): byte-exact echo reply on the wire (src/dst swapped, id/seq/
+  data preserved, both IP and ICMP checksums valid), echo-reply handler, raw precedence,
+  bad-checksum drop, `icmpSendEcho` wire format, `icmpSendError` port-unreachable quoting. 452
+  host tests green, check-arch clean.
+- **QEMU verification (first real round-trip):** a temp boot probe statically addressed eth0,
+  added a default route, and ICMP-echoed the gateway. The pcap shows the full sequence —
+  `ARP who-has 10.0.2.2` → `Reply is-at 52:55:0a:00:02:02` → `IP 10.0.2.15 > 10.0.2.2: ICMP echo
+  request id 4660 seq 1` → `IP 10.0.2.2 > 10.0.2.15: ICMP echo reply` — proving ARP queue→flush,
+  IP TX with routing, and the reply received + parsed (`[icmp] echo reply from 10.0.2.2 ...
+  round-trip OK` on the console). Probe since removed. No faults. The whole RX/TX data path
+  (NIC↔Ethernet↔ARP↔IP↔ICMP) is now proven end to end.

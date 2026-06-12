@@ -10,6 +10,7 @@
 #include "Ether.h"
 #include "Arp.h"
 #include "Ip.h"
+#include "Icmp.h"
 #include "Scheduler.h"
 #include "WaitQueue.h"
 #include "FrameAllocator.h"
@@ -117,6 +118,7 @@ Task* netCoreInit() {
 	ethInit();                                               // ethRx becomes the L2 input handler
 	arpInit();                                               // ARP receives via Ether
 	ipInit();                                                // IP receives via Ether (ethertype 0x0800)
+	icmpInit();                                               // ICMP echo reply + errors (IP proto 1)
 	arpSetClock(netClock);                                   // real ticks for neighbor aging
 	ipReasmSetClock(netClock);                               // real ticks for fragment expiry
 	return Scheduler::create(netSoftirqBody, 2);             // ksoftirqd-net (task id 2)
