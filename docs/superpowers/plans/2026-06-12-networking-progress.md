@@ -10,7 +10,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 1 — PCI bus | **DONE** | Pci.cpp 93.8% | n/a (no wire yet) | n/a | e1000 found @0:3.0 irq11 | — |
 | 2 — e1000.nkext | **DONE** | n/a (MD) | TX frame on wire, correct MAC | n/a | eth0 up, no faults | — |
 | 3 — NetDevice + bottom-half + lo | **DONE** | ≥90% all modules | (via FAZA 2 TX) | n/a | softirq + lo wired | — |
-| 4 — Ethernet + ARP | todo | | | | | |
+| 4 — Ethernet + ARP | **DONE** | Ether 100% / Arp 93.2% | ARP req/reply byte-exact (tcpdump) | n/a | gw resolved, RX path OK | — |
 | 5 — IPv4 | todo | | | | | |
 | 6 — ICMP | todo | | | | | |
 | 7 — sockets + UDP + RAW + AF_PACKET | todo | | | | | |
@@ -121,3 +121,27 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   `52:54:00:12:34:56 > ff:ff:ff:ff:ff:ff, ethertype 0x88b5, len 64: NANOS-TX-TEST` — proving
   the full netTransmit→kext→DMA→wire path and a correctly-read MAC. No `v=08/0d/0e`. RX is
   exercised end-to-end by the ARP reply in FAZA 4.
+
+## FAZA 4 — Ethernet + ARP (2026-06-12)
+
+- `net/Ether.{h,cpp}`: Ethernet II framing. `ethInit()` installs `ethRx` as the net-core input
+  handler; `ethRx` parses the 14-byte header, sets `skb->protocol`, strips it, demuxes to the
+  registered L3 handler (ARP now, IP in FAZA 5). `ethSend` prepends the header (src = dev MAC),
+  pads to the 60-byte minimum exactly like Linux, transmits. 100% line cov.
+- `net/Arp.{h,cpp}`: the neighbor cache (INCOMPLETE/REACHABLE/STALE) + request/reply + a pending
+  packet queue. `arpRx` learns senders Linux-style (update any; create only for ARP-to-us or
+  replies), answers requests for our IP. `arpResolve` returns a cached MAC or fires a request +
+  goes INCOMPLETE; `arpHold` queues an IP packet that `arpRx` flushes (as an IP frame) on reply.
+  `arpTick(now)` ages entries (REACHABLE→STALE @30 s; INCOMPLETE retransmits ≤3 @1 s then drops),
+  driven traffic-wise from the softirq. 93.2% line cov.
+- Wired into `netCoreInit` (ethInit + arpInit + arpSetClock(ticks)); the softirq calls arpTick.
+- `tests/test_arp.cpp` (16 cases): byte-exact reply to a request-for-us, no-reply/no-cache for
+  unrelated requests, reply learning, resolve miss→broadcast request (byte-exact)→no-dup→hit,
+  pending-packet flush as IP, runt-frame hardening, full aging state machine, Ethernet
+  IP-dispatch / unknown-ethertype / null-arg / no-pad paths. 435 host tests green; check-arch clean.
+- **QEMU verification (pcap, the no-shortcuts gate):**
+  `52:54:00:12:34:56 > ff:ff:ff:ff:ff:ff  ARP Request who-has 10.0.2.2 tell 10.0.2.15` (len 60,
+  padded — Linux-identical) then `52:55:0a:00:02:02 > 52:54:00:12:34:56  ARP Reply 10.0.2.2
+  is-at 52:55:0a:00:02:02`. A temp boot probe (since removed) ARPed the gateway and the console
+  printed `[arp] gw 10.0.2.2 is at 52:55:0a:00:02:02  <-- RX path OK`, proving NIC IRQ →
+  bottom-half → ethRx → arpRx → cache end-to-end. No faults.

@@ -7,6 +7,8 @@
 #include "NetDevice.h"
 #include "NetBuf.h"
 #include "Loopback.h"
+#include "Ether.h"
+#include "Arp.h"
 #include "Scheduler.h"
 #include "WaitQueue.h"
 #include "FrameAllocator.h"
@@ -38,10 +40,13 @@ void netWake() { Scheduler::wakeAll(&g_netWq); }
 
 bool netRxReady(void*) { return netRxPending(); }
 
+unsigned netClock() { return Scheduler::ticks(); }
+
 void netSoftirqBody() {
 	for (;;) {
 		Scheduler::sleepOnUntil(&g_netWq, netRxReady, 0);   // sleep until a frame is queued
 		netRxProcess();                                     // drain + demux (never in IRQ)
+		arpTick(Scheduler::ticks());                        // traffic-driven neighbor aging
 	}
 }
 }  // namespace
@@ -106,6 +111,9 @@ Task* netCoreInit() {
 	netbufSetIrqGuard(arch::cpuIrqSave, arch::cpuIrqRestore);  // pool alloc(IRQ)/free(thread) safety
 	netSetWakeFn(netWake);
 	loopbackCreate();                                        // lo, 127.0.0.1/8
+	ethInit();                                               // ethRx becomes the L2 input handler
+	arpInit();                                               // ARP receives via Ether
+	arpSetClock(netClock);                                   // real ticks for neighbor aging
 	return Scheduler::create(netSoftirqBody, 2);             // ksoftirqd-net (task id 2)
 }
 
