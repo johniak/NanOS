@@ -29,6 +29,7 @@ const int SYN_RETRIES_MAX = 5;   // give up a half-open handshake after this man
 // negotiated and we honour a peer that advertises a large scaled window (RFC 7323 §2).
 const int RCV_WSCALE = 0;
 const int DELAY_ACK = 40;        // delayed-ACK timeout (ms), flushed by the 50 ms tcpTick (Linux: ≤40 ms)
+const int PERSIST_INIT = 5000, PERSIST_MAX = 60000;   // zero-window probe backoff bounds (ms)
 const int MSL = 30000;         // 2*MSL = 60 s TIME-WAIT
 
 struct Ooo { uint32_t seq; int len; bool used; unsigned char data[MSS_MAX]; };
@@ -51,6 +52,7 @@ struct Tcb {
 	struct { uint32_t l, r; } sacked[4]; int sackedN;   // sender scoreboard: peer-SACKed ranges
 	bool     ackPending;       // a delayed ACK is owed (flush on the next tick if not piggy-backed)
 	unsigned ackDeadline; int ackSegs;   // delayed-ACK deadline + in-order segments since the last ACK
+	unsigned persistDeadline; int persistBackoff;   // zero-window probe timer (RFC 1122 §4.2.2.17)
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
@@ -244,6 +246,13 @@ void sendData(Tcb* t) {
 		if (!t->rttPending) { t->rttPending = true; t->rttSeq = t->snd_nxt; t->rttStart = now(); }
 	}
 	if (sentAny) armRto(t);
+	// Persist timer (RFC 1122 §4.2.2.17): if data is waiting but the peer's window is shut, arm a
+	// probe; once the window reopens, cancel it (the loop above resumed sending).
+	if (win > 0) { t->persistDeadline = 0; t->persistBackoff = PERSIST_INIT; }
+	else if (sentOff < t->sndLen && !t->persistDeadline) {
+		t->persistBackoff = PERSIST_INIT;
+		t->persistDeadline = now() + PERSIST_INIT;
+	}
 }
 
 // Deliver in-order payload into the recv buffer; returns bytes accepted.
@@ -461,6 +470,9 @@ void tcpRx(NetBuf* skb) {
 
 	// Established-ish states: validate the ACK, accept data, handle FIN.
 	if (flags & TCP_ACK) {
+		// A zero-window probe byte was sent without advancing snd_nxt; if the peer accepted it, let
+		// snd_nxt catch up so the ack falls in range and the buffered byte is treated as delivered.
+		if (seqGt(ack, t->snd_nxt) && seqLeq(ack, t->snd_una + (uint32_t) t->sndLen)) t->snd_nxt = ack;
 		if (t->sackOk && rxSackN) sackRecord(t, rxSack, rxSackN);   // refresh the sender scoreboard
 		if (seqGt(ack, t->snd_una) && seqLeq(ack, t->snd_nxt)) {
 			int acked = (int) (ack - t->snd_una);
@@ -554,6 +566,19 @@ void tcpTick(unsigned t_now) {
 		// Flush an owed delayed ACK once its deadline passes (Linux: the ack the peer is waiting on).
 		if (t->ackPending && (int)(t_now - t->ackDeadline) >= 0)
 			sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);   // clears ackPending in sendSeg
+		// Zero-window persist probe: send one byte (without advancing snd_nxt) to force the peer to
+		// re-advertise its window, backing off 5s -> 60s, until it reopens. Without this a stalled
+		// window would hang the session forever.
+		if (t->persistDeadline && (int)(t_now - t->persistDeadline) >= 0) {
+			int off = (int) (t->snd_nxt - t->snd_una);
+			if (t->snd_wnd == 0 && off < t->sndLen) {
+				sendSeg(t, TCP_ACK, t->snd_nxt, t->sndBuf + off, 1);   // probe byte; peer (re)acks its window
+				t->persistBackoff *= 2; if (t->persistBackoff > PERSIST_MAX) t->persistBackoff = PERSIST_MAX;
+				t->persistDeadline = t_now + t->persistBackoff;
+			} else {
+				t->persistDeadline = 0;   // window opened or nothing to probe
+			}
+		}
 		if (t->state == TCP_TIME_WAIT && t->timeWaitDeadline && (int)(t_now - t->timeWaitDeadline) >= 0) {
 			t->state = TCP_CLOSED; tcbFree(t); continue;
 		}

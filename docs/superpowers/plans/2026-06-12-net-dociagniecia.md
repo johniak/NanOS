@@ -174,7 +174,7 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
 - [x] **D4. Delayed ACK:** ACK opóźniony do 40 ms lub natychmiast przy drugim pełnym MSS /
   pustym oknie / FIN (heurystyka Linuksa). Sterowany z `tcpTick` (50 ms tick wystarcza: jeden
   tick opóźnienia). Test: pojedynczy segment → ACK dopiero po ticku; dwa segmenty → ACK od razu.
-- [ ] **D5. Persist timer (zero-window probe):** gdy okno peera = 0 i mamy dane — probe 1 B
+- [x] **D5. Persist timer (zero-window probe):** gdy okno peera = 0 i mamy dane — probe 1 B
   z backoffem (5 s → max 60 s), aż okno się otworzy. Test: peer ogłasza 0 → probe na drucie →
   okno otwarte → wznowienie. Bez persist sesja wisiałaby wiecznie (to bug, nie feature-gap).
 - [ ] **D6. Keepalive:** `SO_KEEPALIVE` + `TCP_KEEPIDLE/INTVL/CNT` (defaulty Linuksa

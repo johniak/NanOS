@@ -298,3 +298,34 @@ TEST_CASE("delayed ACK: the second in-order segment is acked immediately") {
 	CHECK(ack.ack == base+6);
 	socketClose(s);
 }
+
+TEST_CASE("persist timer: a zero-window stall is probed until the peer reopens its window") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	uint16_t lport; uint32_t base; establishPlain(s, peer, &lport, &base);
+
+	tcpSend(s, "X", 1);
+	OptSeg first; REQUIRE(parseCap(&first));
+	uint32_t U = first.seq;                         // our first data seq
+	clearCap();
+
+	// Peer acks "X" but slams its window shut.
+	feedOpt(peer, 80, lport, base, U+1, TCP_ACK, 0, nullptr, 0, nullptr, 0);
+	tcpSend(s, "ABCDE", 5);                          // cannot go out: window is 0
+	CHECK(g_capCount == 0);
+
+	// Persist timer fires -> a one-byte probe at snd_nxt (U+1); the window is still shut.
+	g_now += 6000; tcpTick(g_now);
+	OptSeg probe; REQUIRE(parseCap(&probe));
+	CHECK(probe.seq == U+1);
+	CHECK(probe.plen == 1);
+	clearCap();
+
+	// Peer reopens the window and acks the probe byte -> the rest of the data flushes.
+	feedOpt(peer, 80, lport, base, U+2, TCP_ACK, 1000, nullptr, 0, nullptr, 0);
+	OptSeg resume; REQUIRE(parseCap(&resume));
+	CHECK(resume.seq == U+2);
+	CHECK(resume.plen == 4);                         // "BCDE"
+	socketClose(s);
+}
