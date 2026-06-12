@@ -68,21 +68,28 @@ void nwui_run(nwui *u)
 	paint(u);                                  /* first frame */
 	struct nw_event ev;
 	for (;;) {
-		int r = nw_next_event(io->d, &ev, -1);
+		int r = nw_next_event(io->d, &ev, -1); /* block until something happens */
 		if (r < 0)
 			break;                             /* compositor gone */
 		if (r == 0)
 			continue;
-		if (ev.type == NW_EV_MENU) {           /* a global-menu item was chosen */
-			nwui_menu_dispatch(u, ev.menu, ev.item);
-			paint(u);
-			continue;
-		}
-		u->now_ms = now_ms();                  /* stamp time so the core can detect double-clicks */
-		if (!nwui_dispatch(u, &ev))            /* CLOSE */
+		/* COALESCE: a scrollbar drag (or fast typing) floods pointer/key events. Process every
+		 * one that is already queued, then paint+commit ONCE — repainting after each event would
+		 * push a full list repaint through the pipe per mouse-move and lag badly. This mirrors the
+		 * compositor's own coalesce-then-render-once loop. */
+		int alive = 1;
+		do {
+			if (ev.type == NW_EV_MENU) {       /* a global-menu item was chosen */
+				nwui_menu_dispatch(u, ev.menu, ev.item);
+			} else {
+				u->now_ms = now_ms();          /* stamp time so the core can detect double-clicks */
+				if (!nwui_dispatch(u, &ev)) { alive = 0; break; }   /* CLOSE */
+				if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }
+				if (u->clip_get) { nw_get_clipboard(io->d); u->clip_get = 0; }
+			}
+		} while (nw_next_event(io->d, &ev, 0) > 0);   /* drain the rest, non-blocking */
+		if (!alive)
 			break;
-		if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }
-		if (u->clip_get) { nw_get_clipboard(io->d); u->clip_get = 0; }
 		paint(u);
 	}
 }
