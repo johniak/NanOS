@@ -53,6 +53,12 @@ struct TcpConnInfo {
 };
 int tcpSnapshot(TcpConnInfo* out, int max);             // fills up to max; returns count written
 
+// Deliver an inbound ICMP error (mapped to a positive errno) to the connection whose 4-tuple
+// matches the quoted segment: (localIp, localPort) = the quote's source, (remoteIp, remotePort) =
+// its destination. In SYN_SENT a hard error aborts the connect (sk_err set, state -> CLOSED, like
+// Linux); in ESTABLISHED soft errors are ignored (Linux does not tear down on a transient ICMP).
+void tcpIcmpError(uint32_t localIp, uint16_t localPort, uint32_t remoteIp, uint16_t remotePort, int err);
+
 // Hook so a new passively-accepted connection can be wrapped in a Socket (Socket.cpp installs it).
 typedef Socket* (*TcpNewSockFn)(int domain, int type, int protocol);
 void tcpSetNewSockHook(TcpNewSockFn fn);

@@ -176,8 +176,12 @@ int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t
 		if (srcPort) *srcPort = s->remotePort;
 		return tcpRecv(s, buf, len, flags);
 	}
-	if (s->rxCount == 0)
+	if (s->rxCount == 0) {
+		// A pending socket error (e.g. an inbound ICMP error matched to this connected socket)
+		// is reported once, read-and-clear, exactly like Linux delivering sk_err on the next recv.
+		if (s->soError) { int e = s->soError; s->soError = 0; return -e; }
 		return -SOCK_EAGAIN;                          // dispatch blocks on socketReadable unless nonblock
+	}
 	Socket::Dgram* d = &s->rxq[s->rxTail];
 	int avail = d->skb->len;
 	int n = (int) len < avail ? (int) len : avail;    // truncate to the buffer (DGRAM semantics)

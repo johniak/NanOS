@@ -442,6 +442,25 @@ int tcpConnect(Socket* s, uint32_t ip, uint16_t port) {
 	return 0;
 }
 
+void tcpIcmpError(uint32_t localIp, uint16_t localPort, uint32_t remoteIp, uint16_t remotePort, int err) {
+	(void) localIp;   // a host has one local IP per route; the 4-tuple ports+peer pin the connection
+	for (int i = 0; i < TCB_N; i++) {
+		Tcb* t = &g_tcbs[i];
+		if (!t->used) continue;
+		if (t->localPort != localPort || t->remotePort != remotePort || t->remoteIp != remoteIp) continue;
+		// SYN_SENT/SYN_RCVD: a hard error aborts the half-open connect (mirror the RST path).
+		// ESTABLISHED and later: ignore soft ICMP errors, exactly as Linux does — a transient
+		// unreachable must not tear down a working connection.
+		if (t->state == TCP_SYN_SENT || t->state == TCP_SYN_RCVD) {
+			if (t->sock) t->sock->soError = err;
+			t->state = TCP_CLOSED;
+			t->rtoDeadline = 0;
+			sockWake(t);
+		}
+		return;
+	}
+}
+
 int tcpSend(Socket* s, const void* buf, unsigned len) {
 	if (!s || !s->tcp) return -SOCK_EINVAL;
 	Tcb* t = (Tcb*) s->tcp;

@@ -123,20 +123,20 @@ widzą komunikat (już działa). Bez tego traceroute (FAZA I) nie ma jak działa
   net-unreach→ENETUNREACH, frag-needed→EMSGSIZE)
 - Test: `tests/test_icmp_err.cpp`
 
-- [ ] **C1.** Test (failing): connected-UDP wysyła datagram → wstrzyknij ICMP port-unreachable
+- [x] **C1.** Test (failing): connected-UDP wysyła datagram → wstrzyknij ICMP port-unreachable
   cytujący ten datagram → `socketRecv` zwraca −ECONNREFUSED (raz — read-and-clear przez
   soError), kolejny recv blokuje normalnie. Drugi case: NIE-connected socket NIE dostaje błędu
   (semantyka Linuksa bez IP_RECVERR). Trzeci: TCP SYN_SENT + ICMP host-unreachable →
   `connect` kończy się −EHOSTUNREACH, stan CLOSED. Czwarty: cytat za krótki (hardening) — drop.
-- [ ] **C2.** Uruchomić: `make test` — nowe case'y FAIL.
-- [ ] **C3.** Implementacja: w `icmpRx` dla typów 3/11/12 zwaliduj cytat (IHL, długość ≥
+- [x] **C2.** Uruchomić: `make test` — nowe case'y FAIL.
+- [x] **C3.** Implementacja: w `icmpRx` dla typów 3/11/12 zwaliduj cytat (IHL, długość ≥
   IP+8B), wyciągnij (proto, src, dst, sport, dport) z cytatu i wywołaj handler transportu.
   Budzenie czytelnika przez istniejący wake hook.
-- [ ] **C4.** `make test` PASS, ≥90% nowych linii; `check-arch` czysty.
-- [ ] **C5.** QEMU: `pingtest`-owy mini-probe UDP na zamknięty port 10.0.2.2 → konsola pokazuje
+- [x] **C4.** `make test` PASS, ≥90% nowych linii; `check-arch` czysty.
+- [x] **C5.** QEMU: `pingtest`-owy mini-probe UDP na zamknięty port 10.0.2.2 → konsola pokazuje
   ECONNREFUSED; pcap pokazuje przychodzący ICMP port-unreachable (pole-po-polu jak Linux,
   maska wg planu bazowego §2).
-- [ ] **C6.** Commit: `net: deliver inbound ICMP errors to matching sockets (Linux semantics)`.
+- [x] **C6.** Commit: `net: deliver inbound ICMP errors to matching sockets (Linux semantics)`.
 
 ### FAZA D — TCP: opcje i timery, których brakuje do „prawdziwego" Linuksa na drucie
 

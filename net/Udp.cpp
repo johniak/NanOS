@@ -44,6 +44,18 @@ void udpRx(NetBuf* skb) {
 		netbufFree(skb);                       // socket buffer full: drop (UDP has no flow control)
 }
 
+void udpIcmpError(uint32_t localIp, uint16_t localPort, uint32_t remoteIp, uint16_t remotePort, int err) {
+	// socketLookupUdp(dstIp, dstPort, srcIp, srcPort) matches s->localPort==dstPort and, for a
+	// connected socket, s->remoteIp/Port==srcIp/Port — so passing (ourIp, ourPort, peerIp, peerPort)
+	// finds exactly our connection. It returns a connected socket only when the peer matches; a bare
+	// wildcard listener comes back as `best` (connected==false), which we then ignore.
+	Socket* s = socketLookupUdp(localIp, localPort, remoteIp, remotePort);
+	if (s && s->connected) {
+		s->soError = err;
+		socketWakeReaders(s);            // unblock a parked recv so it can report the error
+	}
+}
+
 int udpSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t dstPort) {
 	if (!s) return -SOCK_EINVAL;
 	if (len > 65507) return -SOCK_EMSGSIZE;    // max UDP payload
