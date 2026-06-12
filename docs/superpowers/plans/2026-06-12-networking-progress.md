@@ -9,7 +9,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 0 — QEMU net + pcap harness + baseline + strace | **DONE** | n/a | harness ready | fixtures captured | n/a | f094a47 |
 | 1 — PCI bus | **DONE** | Pci.cpp 93.8% | n/a (no wire yet) | n/a | e1000 found @0:3.0 irq11 | — |
 | 2 — e1000.nkext | todo | | | | | |
-| 3 — NetDevice + bottom-half + lo | todo | | | | | |
+| 3 — NetDevice + bottom-half + lo | **MI core done** | Net/NetBuf/NetDevice/Loopback ≥91% | n/a | n/a | (kernel wiring lands with FAZA 2) | — |
 | 4 — Ethernet + ARP | todo | | | | | |
 | 5 — IPv4 | todo | | | | | |
 | 6 — ICMP | todo | | | | | |
@@ -73,3 +73,24 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 - **QEMU verification:** boot log shows `PCI: 6 device(s); e1000 8086:100E @ 0:3.0
   BAR0=0xFEB80000 irq=11` — the NIC the driver phase will bind to is found. No `v=08/0d/0e`.
 - Deferred to FAZA 14: `/proc/bus/pci` (needs a SynthFs generator; bundled with `/proc/net`).
+
+## FAZA 3 — MI core outcomes (2026-06-12)
+
+- `net/Net.{h,cpp}`: byte-order helpers + endianness-independent wire rd/wr + the Internet
+  checksum (RFC 1071, with accumulate/finish for pseudo-header chaining). 100% cov; verified
+  against the canonical IPv4-header vector (0xb861) and carry-folding.
+- `net/NetBuf.{h,cpp}`: the sk_buff — one 2 KiB buffer with reserve/push/pull/put geometry +
+  a 128-buffer static pool (no hot-path malloc; alloc returns null on exhaustion, never blocks).
+- `net/NetDevice.{h,cpp}`: device struct (mac/mtu/flags/ip/stats/tx) + registry + the RX
+  bottom-half — `netifRx` (enqueue from driver IRQ + wake) and `netRxProcess` (drain in a
+  softirq thread, NOT in IRQ) split exactly per deferred-preemption. Backlog (64) < pool (128)
+  so the backlog is the drop point. Wake + IRQ-guard are kernel-installed hooks, so the core
+  is arch/scheduler-free and 100% host-testable.
+- `net/Loopback.{h,cpp}`: `lo` (127.0.0.1/8) whose tx re-injects into netifRx — same demux as
+  the wire, hardware-free stack testing.
+- `tests/test_checksum.cpp` + `tests/test_netdev.cpp`: NetBuf geometry/pool, registry, RX
+  enqueue→drain, backlog overflow→rxDropped, tx success/error/no-fn paths, IRQ-guard pairing,
+  loopback round-trip. **All new modules ≥91% line cov**; 424 tests green; kernel links these
+  MI objects; `check-arch` clean.
+- The kernel-side bring-up (lo, the softirq kthread, the knx_netif_rx/map_mmio/dma_alloc/
+  add_net_dev exports) lands with FAZA 2, where the e1000 driver needs them to be verifiable.

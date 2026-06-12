@@ -9,6 +9,7 @@ MI_SOURCES+= Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o
 MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
 MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
 MI_SOURCES+= Pci.o
+MI_SOURCES+= Net.o NetBuf.o NetDevice.o Loopback.o
 MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
@@ -165,10 +166,10 @@ LD=$(CROSS)gcc
 
 # Sources live in layered directories; let make find them by basename. The MI
 # dirs are fixed; the arch's dirs come from ARCH_VPATH (arch/$(ARCH)/...).
-VPATH=init:kernel:drivers:fs:fs/ext:mm:lib:$(ARCH_VPATH)
+VPATH=init:kernel:drivers:fs:fs/ext:mm:lib:net:$(ARCH_VPATH)
 # Kernel include path: the MI code dirs + the arch contracts (arch/include) + the
 # selected arch's headers (ARCH_INCLUDES) + the freestanding <string.h> in include/.
-KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude -Iuser/term $(ARCH_INCLUDES)
+KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iinclude -Iuser/term $(ARCH_INCLUDES)
 
 # Optimization. -O2 is the single biggest performance win for the target (it was all -O0): pixel
 # loops get inlined and the ~10x interpreter-style overhead disappears. Two safety flags make -O2
@@ -694,7 +695,7 @@ $(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $
 HOST_CXX=g++
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Iarch/x86/boot -Iarch/x86/mm -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iarch/x86/boot -Iarch/x86/mm -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term
 HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage
 TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
@@ -711,8 +712,9 @@ TEST_MODULES+= user/nwm/nwm_core.c user/nwm/nw_compose.c
 TEST_MODULES+= user/libnwui/nwui_core.c   # the pure UI-toolkit core (tree/layout/events)
 TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (shared by nterm/nwterm)
 TEST_MODULES+= kernel/Pci.cpp             # MI PCI enumeration/BAR decode (mock config-space backend)
+TEST_MODULES+= net/Net.cpp net/NetBuf.cpp net/NetDevice.cpp net/Loopback.cpp   # MI net core
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
