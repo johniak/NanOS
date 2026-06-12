@@ -82,9 +82,14 @@ int execProgram(Vfs* vfs, const char* path) {
 	const char* envp[] = {                               // PID 1's baseline environment
 		"TERM=xterm-256color",
 		"TERMINFO=/disks/main/nanos/share/terminfo",
+		"VIMRUNTIME=/disks/main/apps/vim/runtime",       // vim's runtime (minimal defaults.vim)
+		// $VIMINIT is vim's highest-priority init: when set, vim runs it AS the vimrc and does
+		// NOT fall back to sourcing $VIMRUNTIME/defaults.vim — which removes the "E1187: Failed
+		// to source defaults.vim" prompt while still giving sane editor defaults.
+		"VIMINIT=set nocompatible backspace=indent,eol,start hlsearch incsearch ruler showcmd wildmenu",
 		0,
 	};
-	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 2, envp, 2);
+	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, 2, envp, 4);
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
 	ProcTable::setCommand(ProcTable::current(), argv, 1);

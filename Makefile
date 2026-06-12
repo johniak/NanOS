@@ -201,6 +201,8 @@ _image: _all _userland _kext _grub2-image
 	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# bzip2 (optional, external): built by the nanos-sdk port and staged into bin/bzip2.nxe. A
 	# system utility (flat in /nanos/bin) since it is a single self-contained binary. Skipped if
@@ -210,10 +212,16 @@ _image: _all _userland _kext _grub2-image
 	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	# terminfo database: the compiled xterm-256color entry (matches TERM), shipped under
-	# /nanos/share/terminfo so a future ncurses finds it via TERMINFO. Copied from the build
-	# container's ncurses (ncurses-base); the on-disk path is dir/<first-letter>/<name>.
-	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /usr/share/terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# terminfo database: the xterm-256color entry (matches TERM), shipped under /nanos/share/
+	# terminfo. We rewrite setaf/setab to the DIRECT 256-colour form (\E[38;5;Nm / \E[48;5;Nm)
+	# instead of the stock conditional `%?%p1%{8}%<%t...` string: our libtinfo's tparm mis-evals
+	# those arithmetic/conditional operators and leaks junk (e.g. "6}38;5;Nm") onto the screen.
+	# The direct form uses only %p1%d, which tparm handles correctly. Recompiled with tic.
+	infocmp xterm-256color 2>/dev/null \
+	  | sed -E 's@setaf=[^,]*,@setaf=\\E[38;5;%p1%dm,@; s@setab=[^,]*,@setab=\\E[48;5;%p1%dm,@' \
+	  > /tmp/xterm-256color.ti
+	tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null
+	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 
 _iso: _all
 	mkdir -p iso/boot/grub
