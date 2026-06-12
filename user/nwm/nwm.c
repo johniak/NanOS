@@ -355,6 +355,23 @@ static void present(void)
 	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
 
+/* Load the branded wallpaper (flat 32bpp: [u32 w][u32 h][w*h pixels], produced by `make assets`)
+ * into `dst` when it matches the screen size. Returns 1 on success; the caller falls back to the
+ * procedural gradient wallpaper otherwise. */
+static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
+{
+	int fd = open("/disks/main/nanos/share/wallpaper.raw", O_RDONLY);
+	if (fd < 0) return 0;
+	uint32_t hdr[2]; int ok = 0;
+	if (read(fd, hdr, sizeof hdr) == (int) sizeof hdr && hdr[0] == w && hdr[1] == h) {
+		size_t need = (size_t) w * h * 4, got = 0; char *p = (char *) dst;
+		for (;;) { int n = read(fd, p + got, (unsigned) (need - got)); if (n <= 0) break; got += n; if (got >= need) break; }
+		ok = (got == need);
+	}
+	close(fd);
+	return ok;
+}
+
 int main(void)
 {
 	int fbfd = open("/dev/fb0", O_RDWR);
@@ -377,7 +394,8 @@ int main(void)
 	g_scratch_surf.stride = (int) g_xres; nw_surface_noclip(&g_scratch_surf);
 	g_wall_surf.px = g_wall; g_wall_surf.w = (int) g_xres; g_wall_surf.h = (int) g_yres;
 	g_wall_surf.stride = (int) g_xres; nw_surface_noclip(&g_wall_surf);
-	nw_render_wallpaper(&g_wall_surf);            /* the gradient desktop, computed once */
+	if (!load_wallpaper(g_wall, g_xres, g_yres))  /* branded wallpaper if installed... */
+		nw_render_wallpaper(&g_wall_surf);        /* ...else the procedural gradient desktop */
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
 	g_fb_surf.stride = (int) (g_pitch / 4); nw_surface_noclip(&g_fb_surf);
 

@@ -92,6 +92,17 @@ externals:
 	done; \
 	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image' to install them"
 
+# Desktop artwork: convert the branded PNGs (NanOS wallpaper + logo) to NanOS's flat 32bpp surface
+# format on the host (needs python3 + Pillow), staged into bin/ where _image installs them under
+# /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
+# both fall back gracefully if absent. Source PNGs default to .claude/ (override with ART_DIR=).
+ART_DIR ?= $(CURDIR)/.claude
+assets:
+	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
+	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
+	python3 scripts/png2raw.py "$(ART_DIR)/logo.png"      $(BINFOLDER)logo.raw      96x96     --bg 0xf4f8fd
+	@echo "staged $(BINFOLDER)wallpaper.raw + logo.raw — run 'make image' to install them"
+
 run: image
 	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
 
@@ -271,6 +282,14 @@ _image: _all _userland _kext _grub2-image
 	# A system utility (flat in /nanos/bin) — a single self-contained binary. Skipped if absent.
 	if [ -f $(BINFOLDER)grep.nxe ]; then \
 	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
+	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
+	if [ -f $(BINFOLDER)wallpaper.raw ]; then \
+	  printf "rm /nanos/share/wallpaper.raw\nwrite $(BINFOLDER)wallpaper.raw /nanos/share/wallpaper.raw\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	if [ -f $(BINFOLDER)logo.raw ]; then \
+	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
 	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"

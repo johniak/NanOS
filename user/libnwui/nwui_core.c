@@ -124,6 +124,13 @@ nwui_node *nwui_box(nwui *u, nwui_node *child)
 	return n;
 }
 
+nwui_node *nwui_image(nwui *u, const uint32_t *px, int w, int h)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_IMAGE);
+	n->img = px; n->pref_w = w; n->pref_h = h;   /* fixed natural size (the pref clamp in measure) */
+	return n;
+}
+
 nwui_node *nwui_vbox(nwui *u) { return nwui_alloc(u, NWUI_COLUMN); }
 nwui_node *nwui_hbox(nwui *u) { return nwui_alloc(u, NWUI_ROW); }
 

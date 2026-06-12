@@ -25,6 +25,14 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 	case NWUI_LABEL:
 		nw_text(s, n->x, n->y, n->text, n->fg ? n->fg : COL_INK);
 		break;
+	case NWUI_IMAGE:
+		if (n->img) {
+			struct nw_surface src;
+			src.px = (uint32_t *) n->img; src.w = n->w; src.h = n->h; src.stride = n->w;
+			nw_surface_noclip(&src);
+			nw_blit(s, n->x, n->y, &src, 0, 0, n->w, n->h);
+		}
+		break;
 	case NWUI_BUTTON: {
 		int down = n->pressed;
 		uint32_t base = n->has_bg ? n->bg : (down ? COL_BTN_DBOT : COL_BTN_BOT);

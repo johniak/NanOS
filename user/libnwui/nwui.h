@@ -39,6 +39,8 @@ void  nwui_run(nwui *u);
 /* ---- components (allocated from the toolkit's node arena; do not free) ---- */
 nwui_node *nwui_label(nwui *u, const char *text);
 nwui_node *nwui_button(nwui *u, const char *text, nwui_cb on_click, void *user);
+/* A w*h image (px = app-owned 0x00RRGGBB buffer) painted at its natural size. */
+nwui_node *nwui_image(nwui *u, const uint32_t *px, int w, int h);
 /* An editable field over an APP-OWNED buffer (the app reads the typed value straight from it). */
 nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *user);
 

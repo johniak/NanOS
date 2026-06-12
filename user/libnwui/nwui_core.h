@@ -10,7 +10,7 @@
 #include "nwui.h"
 #include "libnw.h"     /* struct nw_event + NW_EV_* / NW_BTN_* — the core only READS events */
 
-enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST };
+enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST, NWUI_IMAGE };
 
 enum { NWUI_ROW_H = 18 };   /* list item row height */
 enum { NWUI_SB_W = 12, NWUI_SB_MIN = 16 };   /* list scrollbar: width, min thumb height */
@@ -45,6 +45,7 @@ struct nwui_node {
 	int        tcap, tlen, caret;
 	int        anchor;               /* selection anchor; selection = [min,max) when != caret */
 
+	const uint32_t *img;             /* image: app-owned w*h pixel buffer (0x00RRGGBB) */
 	const char *const *items;        /* list: app-owned array of item strings */
 	int        count, sel, scroll;   /* list: item count, selected/visible-from index */
 	int        sb_drag, sb_grab;     /* list: scrollbar thumb being dragged + grab offset (px) */
