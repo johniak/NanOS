@@ -199,3 +199,60 @@ TEST_CASE("timestamps: PAWS drops an in-window segment whose timestamp is stale"
 	CHECK(std::memcmp(buf, "abc", 3) == 0);
 	socketClose(s);
 }
+
+TEST_CASE("SACK: SYN offers SACK-permitted; an out-of-order segment makes our ACK carry a SACK block") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	REQUIRE(socketConnect(s, peer, 80) == 0);
+	OptSeg syn; REQUIRE(parseCap(&syn));
+	REQUIRE(capOption(syn, 4, nullptr) == 2);       // SACK-permitted present in our SYN
+	uint16_t lport=syn.sport; uint32_t iss=syn.seq; uint32_t pseq=0x50000;
+	clearCap();
+
+	unsigned char sa[]={2,4,0x05,0xB4, 4,2, 1,1};   // SYN-ACK: MSS + SACK-permitted + 2 NOPs (4-aligned)
+	feedOpt(peer, 80, lport, pseq, iss+1, TCP_SYN|TCP_ACK, 4096, sa, sizeof sa, nullptr, 0);
+	REQUIRE(tcpState(s) == TCP_ESTABLISHED);
+	uint32_t base = pseq + 1;                       // = our rcv_nxt
+	clearCap();
+
+	feedOpt(peer, 80, lport, base,   iss+1, TCP_ACK, 4096, nullptr,0, (const unsigned char*)"AAA",3);   // in-order
+	clearCap();
+	feedOpt(peer, 80, lport, base+6, iss+1, TCP_ACK, 4096, nullptr,0, (const unsigned char*)"CCC",3);   // hole at base+3
+	OptSeg ack; REQUIRE(parseCap(&ack));
+	const unsigned char* sack=nullptr;
+	REQUIRE(capOption(ack, 5, &sack) == 10);        // exactly one SACK block (2 + 8)
+	CHECK(rd32be(sack)   == base+6);                // left edge of the out-of-order range
+	CHECK(rd32be(sack+4) == base+9);                // right edge
+	socketClose(s);
+}
+
+TEST_CASE("SACK: a fast retransmit is bounded at the SACKed edge (only the hole is resent)") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	REQUIRE(socketConnect(s, peer, 80) == 0);
+	OptSeg syn; REQUIRE(parseCap(&syn));
+	uint16_t lport=syn.sport; uint32_t iss=syn.seq; uint32_t pseq=0x50000;
+	clearCap();
+	unsigned char sa[]={2,4,0x05,0xB4, 4,2, 1,1};   // SYN-ACK: MSS 1460 + SACK-permitted (4-aligned)
+	feedOpt(peer, 80, lport, pseq, iss+1, TCP_SYN|TCP_ACK, 4096, sa, sizeof sa, nullptr, 0);
+	REQUIRE(tcpState(s) == TCP_ESTABLISHED);
+	uint32_t U = iss+1;                             // our first data seq
+	clearCap();
+
+	tcpSend(s, "ABCDEFGHI", 9);                     // [U, U+9) on the wire
+	clearCap();
+
+	// Peer keeps the cumulative ACK at U (the head is the hole) but SACKs [U+3, U+9) as received.
+	auto dupack = [&](){
+		unsigned char so[]={1,1, 5,10, 0,0,0,0, 0,0,0,0};
+		wr32be(so+4, U+3); wr32be(so+8, U+9);
+		feedOpt(peer, 80, lport, pseq, U, TCP_ACK, 4096, so, sizeof so, nullptr, 0);
+	};
+	dupack(); dupack(); dupack();                   // three duplicate ACKs -> fast retransmit
+	OptSeg rx; REQUIRE(parseCap(&rx));
+	CHECK(rx.seq == U);                             // retransmit starts at the hole ...
+	CHECK(rx.plen == 3);                            // ... and stops at the SACKed edge (3 B, not 9)
+	socketClose(s);
+}

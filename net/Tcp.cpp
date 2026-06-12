@@ -46,6 +46,8 @@ struct Tcb {
 	bool     wscaleOk;         // window scaling negotiated (both SYNs carried the option)
 	bool     tsOk;             // timestamps negotiated (RFC 7323 §3) — both SYNs carried the option
 	uint32_t tsRecent;         // most recent in-window peer TSval, echoed back in our TSecr
+	bool     sackOk;           // selective ACK negotiated (RFC 2018) — both SYNs carried SACK-permitted
+	struct { uint32_t l, r; } sacked[4]; int sackedN;   // sender scoreboard: peer-SACKed ranges
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
@@ -98,6 +100,63 @@ void tcbFree(Tcb* t) { if (t) t->used = false; }
 
 int rcvFree(Tcb* t) { return RCVBUF - t->rcvCount; }
 
+// --- SACK (RFC 2018) ---------------------------------------------------------------------------
+
+// Receiver: derive SACK blocks (left/right edges) from the out-of-order buffer, merging adjacent or
+// overlapping ranges. Returns the number of blocks (capped at 3 so the option fits beside timestamps).
+int buildSackBlocks(Tcb* t, uint32_t* out) {
+	uint32_t l[OOO_N], r[OOO_N]; int n = 0;
+	for (int i = 0; i < OOO_N; i++)
+		if (t->ooo[i].used) { l[n] = t->ooo[i].seq; r[n] = t->ooo[i].seq + t->ooo[i].len; n++; }
+	bool merged = true;
+	while (merged) {
+		merged = false;
+		for (int i = 0; i < n; i++) for (int j = i + 1; j < n; j++)
+			if (seqLeq(l[j], r[i]) && seqLeq(l[i], r[j])) {        // touch or overlap -> merge j into i
+				if (seqLt(l[j], l[i])) l[i] = l[j];
+				if (seqGt(r[j], r[i])) r[i] = r[j];
+				l[j] = l[n - 1]; r[j] = r[n - 1]; n--; merged = true;
+			}
+	}
+	int nb = n < 3 ? n : 3;
+	for (int i = 0; i < nb; i++) { out[i * 2] = l[i]; out[i * 2 + 1] = r[i]; }
+	return nb;
+}
+
+// Sender: replace the scoreboard with the peer's reported SACK blocks, clipped to the still-unacked
+// window (snd_una, snd_nxt). The peer re-reports its full SACK state in each ACK, so replacing is correct.
+void sackRecord(Tcb* t, const uint32_t* blk, int n) {
+	t->sackedN = 0;
+	for (int i = 0; i < n && t->sackedN < 4; i++) {
+		uint32_t l = blk[i * 2], r = blk[i * 2 + 1];
+		if (seqLeq(r, t->snd_una) || !seqLt(l, t->snd_nxt)) continue;   // wholly acked or beyond what we sent
+		if (seqLt(l, t->snd_una)) l = t->snd_una;
+		if (seqGt(r, t->snd_nxt)) r = t->snd_nxt;
+		if (seqLt(l, r)) { t->sacked[t->sackedN].l = l; t->sacked[t->sackedN].r = r; t->sackedN++; }
+	}
+}
+
+// Sender: pick the next chunk to (re)transmit from snd_una, skipping ranges the peer already SACKed
+// and stopping before the next SACKed edge. Writes the seq into *seqOut; returns the chunk length
+// (0 = nothing left to retransmit). With an empty scoreboard this is just min(mss, sndLen) at snd_una.
+int retxChunk(Tcb* t, uint32_t* seqOut) {
+	uint32_t s = t->snd_una;
+	bool moved = true;
+	while (moved) {                                        // skip past contiguous SACKed ranges
+		moved = false;
+		for (int i = 0; i < t->sackedN; i++)
+			if (seqLeq(t->sacked[i].l, s) && seqLt(s, t->sacked[i].r)) { s = t->sacked[i].r; moved = true; }
+	}
+	int off = (int) (s - t->snd_una);
+	if (off >= t->sndLen) return 0;                        // everything up to snd_nxt is SACKed
+	int maxLen = t->sndLen - off;
+	if (maxLen > t->mss) maxLen = t->mss;
+	for (int i = 0; i < t->sackedN; i++)                  // don't overrun into the next SACKed block
+		if (seqGt(t->sacked[i].l, s)) { int d = (int) (t->sacked[i].l - s); if (d < maxLen) maxLen = d; }
+	*seqOut = s;
+	return maxLen;
+}
+
 // Build + send one TCP segment: flags, `dataOff` bytes of payload from the send buffer (len),
 // optional MSS option on SYN. Updates checksum. Does NOT advance snd_nxt (caller decides).
 void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int len) {
@@ -109,20 +168,33 @@ void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int
 	// Build TCP options. SYN carries [MSS, (sackOK slot), TS, NOP, wscale]; once timestamps are
 	// negotiated every segment carries [NOP, NOP, TS]. Timestamps are offered on the initial SYN
 	// (active open) and mirrored on the SYN-ACK / data only if the peer offered them (tsOk).
-	bool isSyn  = (flags & TCP_SYN) != 0;
-	bool wantTs = t->tsOk || (isSyn && !(flags & TCP_ACK));
+	bool isSyn    = (flags & TCP_SYN) != 0;
+	bool wantTs   = t->tsOk   || (isSyn && !(flags & TCP_ACK));
+	bool wantSack = t->sackOk || (isSyn && !(flags & TCP_ACK));   // offer SACK-permitted on the initial SYN
 	unsigned char opt[40]; int ol = 0;
 	if (isSyn) {
 		opt[ol++] = 2; opt[ol++] = 4; wr16be(opt + ol, MSS_MAX); ol += 2;     // MSS
-		opt[ol++] = 1; opt[ol++] = 1;                                         // sackOK slot (NOPs until D3)
+		if (wantSack) { opt[ol++] = 4; opt[ol++] = 2; }                       // SACK-permitted
+		else { opt[ol++] = 1; opt[ol++] = 1; }                               // (NOPs if not offering)
 		if (wantTs) { opt[ol++] = 8; opt[ol++] = 10; wr32be(opt + ol, now()); ol += 4;
 			wr32be(opt + ol, t->tsRecent); ol += 4; }                        // timestamp
 		opt[ol++] = 1;                                                        // NOP aligning wscale
 		opt[ol++] = 3; opt[ol++] = 3; opt[ol++] = (unsigned char) RCV_WSCALE; // window scale
-	} else if (wantTs) {
-		opt[ol++] = 1; opt[ol++] = 1;                                         // 2 NOPs align the TS option
-		opt[ol++] = 8; opt[ol++] = 10; wr32be(opt + ol, now()); ol += 4;
-		wr32be(opt + ol, t->tsRecent); ol += 4;
+	} else {
+		if (wantTs) {
+			opt[ol++] = 1; opt[ol++] = 1;                                    // 2 NOPs align the TS option
+			opt[ol++] = 8; opt[ol++] = 10; wr32be(opt + ol, now()); ol += 4;
+			wr32be(opt + ol, t->tsRecent); ol += 4;
+		}
+		// Receiver SACK: report our out-of-order ranges so the peer retransmits only the holes.
+		if (t->sackOk) {
+			uint32_t blk[6]; int nb = buildSackBlocks(t, blk);
+			if (nb > 0 && ol + 2 + 2 + 8 * nb <= 40) {
+				opt[ol++] = 1; opt[ol++] = 1;                                // 2 NOPs align the SACK option
+				opt[ol++] = 5; opt[ol++] = (unsigned char) (2 + 8 * nb);     // SACK kind + length
+				for (int i = 0; i < nb; i++) { wr32be(opt + ol, blk[i * 2]); ol += 4; wr32be(opt + ol, blk[i * 2 + 1]); ol += 4; }
+			}
+		}
 	}
 	while (ol & 3) opt[ol++] = 1;                                             // pad to a 4-byte boundary
 	int optLen = ol;
@@ -274,10 +346,12 @@ void tcpRx(NetBuf* skb) {
 	const unsigned char* payload = h + doff;
 	int plen = skb->len - doff;
 
-	// peer options: MSS (kind 2), window scale (kind 3), timestamps (kind 8, TSval+TSecr).
+	// peer options: MSS (2), window scale (3), SACK-permitted (4), SACK blocks (5), timestamps (8).
 	uint16_t peerMss = 0;
 	uint8_t peerWscale = 0; bool peerHasWscale = false;
 	uint32_t peerTsVal = 0, peerTsEcr = 0; bool peerHasTs = false;
+	bool peerSackOk = false;
+	uint32_t rxSack[8]; int rxSackN = 0;
 	for (int i = 20; i + 1 < doff; ) {
 		uint8_t kind = h[i];
 		if (kind == 0) break;
@@ -287,6 +361,15 @@ void tcpRx(NetBuf* skb) {
 		if (kind == 2 && olen == 4) peerMss = rd16be(h + i + 2);
 		else if (kind == 3 && olen == 3) { peerWscale = h[i + 2]; peerHasWscale = true;
 			if (peerWscale > 14) peerWscale = 14; }   // RFC 7323: cap shift at 14
+		else if (kind == 4 && olen == 2) peerSackOk = true;
+		else if (kind == 5 && olen >= 10 && (olen - 2) % 8 == 0) {
+			int nb = (olen - 2) / 8;
+			for (int b = 0; b < nb && rxSackN < 4; b++) {
+				rxSack[rxSackN * 2]     = rd32be(h + i + 2 + b * 8);
+				rxSack[rxSackN * 2 + 1] = rd32be(h + i + 2 + b * 8 + 4);
+				rxSackN++;
+			}
+		}
 		else if (kind == 8 && olen == 10) { peerTsVal = rd32be(h + i + 2); peerTsEcr = rd32be(h + i + 6); peerHasTs = true; }
 		i += olen;
 	}
@@ -332,6 +415,7 @@ void tcpRx(NetBuf* skb) {
 			// window in the SYN-ACK itself is NOT scaled (RFC 7323 §2.2) — scaling starts after.
 			t->wscaleOk = peerHasWscale; t->sndWscale = peerHasWscale ? peerWscale : 0;
 			t->tsOk = peerHasTs; if (peerHasTs) t->tsRecent = peerTsVal;   // RFC 7323 §3 negotiation
+			t->sackOk = peerSackOk;                                        // RFC 2018 negotiation
 			t->snd_una = ack; t->snd_wnd = wnd;
 			if (peerMss) t->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			t->state = TCP_ESTABLISHED;
@@ -357,6 +441,7 @@ void tcpRx(NetBuf* skb) {
 			c->snd_wnd = wnd ? wnd : 4096;
 			c->wscaleOk = peerHasWscale; c->sndWscale = peerHasWscale ? peerWscale : 0;   // our SYN-ACK carries ours
 			c->tsOk = peerHasTs; if (peerHasTs) c->tsRecent = peerTsVal;
+			c->sackOk = peerSackOk;
 			if (peerMss) c->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			c->state = TCP_SYN_RCVD; c->parent = t;
 			g_netStats.tcpPassiveOpens++;
@@ -371,6 +456,7 @@ void tcpRx(NetBuf* skb) {
 
 	// Established-ish states: validate the ACK, accept data, handle FIN.
 	if (flags & TCP_ACK) {
+		if (t->sackOk && rxSackN) sackRecord(t, rxSack, rxSackN);   // refresh the sender scoreboard
 		if (seqGt(ack, t->snd_una) && seqLeq(ack, t->snd_nxt)) {
 			int acked = (int) (ack - t->snd_una);
 			// free acked bytes from the send buffer
@@ -402,7 +488,9 @@ void tcpRx(NetBuf* skb) {
 				t->ssthresh = (t->snd_nxt - t->snd_una) / 2;
 				if (t->ssthresh < (uint32_t) 2 * t->mss) t->ssthresh = 2 * t->mss;
 				t->cwnd = t->ssthresh + 3 * t->mss;
-				sendSeg(t, TCP_ACK, t->snd_una, t->sndBuf, t->sndLen < t->mss ? t->sndLen : t->mss);
+				// Retransmit the first un-SACKed chunk (the hole), not blindly from snd_una.
+				uint32_t rseq; int rlen = retxChunk(t, &rseq);
+				if (rlen > 0) sendSeg(t, TCP_ACK, rseq, t->sndBuf + (rseq - t->snd_una), rlen);
 				armRto(t);
 			}
 		}
@@ -476,8 +564,8 @@ void tcpTick(unsigned t_now) {
 				t->rtoDeadline = t_now + t->rto;
 				continue;
 			}
-			int chunk = t->sndLen < t->mss ? t->sndLen : t->mss;
-			if (chunk > 0) sendSeg(t, TCP_ACK | TCP_PSH, t->snd_una, t->sndBuf, chunk);
+			uint32_t rseq; int chunk = retxChunk(t, &rseq);   // skip SACKed ranges on RTO too
+			if (chunk > 0) sendSeg(t, TCP_ACK | TCP_PSH, rseq, t->sndBuf + (rseq - t->snd_una), chunk);
 			else if (t->finSent) sendSeg(t, TCP_ACK | TCP_FIN, t->finSeq, 0, 0);
 			t->rtoDeadline = t_now + t->rto;
 		}

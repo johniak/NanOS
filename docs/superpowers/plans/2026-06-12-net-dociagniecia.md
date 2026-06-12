@@ -167,7 +167,7 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
 - [x] **D2. Timestamps (RFC 7323 §3) + RTTM:** TS w każdym segmencie po negocjacji, echo TSecr,
   RTT z TS zamiast timera Karna tam, gdzie dostępne; PAWS na odbiorze (odrzuć segment z
   ts < ts_recent dla okna). Test: wektory ts_recent/PAWS + retransmisja mierzy RTT z TS.
-- [ ] **D3. SACK (RFC 2018):** wysyłaj `sackOK` w SYN; GENERUJ bloki SACK przy dziurach w
+- [x] **D3. SACK (RFC 2018):** wysyłaj `sackOK` w SYN; GENERUJ bloki SACK przy dziurach w
   odbiorze (mamy bufor OOO — bloki z niego); na nadawcy parsuj SACK i nie retransmituj
   zSACKowanych segmentów przy fast-retransmit. Test: zguba środkowego segmentu → nasz ACK
   niesie poprawny blok SACK (pole-po-polu); nadawca z SACK retransmituje TYLKO dziurę.
