@@ -156,7 +156,7 @@ bajtowo na drucie i behawioralnie w długich sesjach.
 > naprawić w tej fazie jako **D0** (najpierw, bo dotyka każdego z poniższych).
 
 Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-impl-pass-commit):
-- [ ] **D0. SYN retransmit (RTO w SYN_SENT/SYN_RCVD):** gdy RTO odpali a `snd_una != snd_nxt` i
+- [x] **D0. SYN retransmit (RTO w SYN_SENT/SYN_RCVD):** gdy RTO odpali a `snd_una != snd_nxt` i
   nie ma danych/FIN, retransmituj SYN (SYN_SENT) lub SYN-ACK (SYN_RCVD), z backoffem i limitem
   prób (~5, potem `-ETIMEDOUT`/`-ECONNREFUSED` na sockecie). Test: brak SYN-ACK → 2. SYN po RTO,
   trzeci po 2×RTO; po limicie connect kończy się błędem.

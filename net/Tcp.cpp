@@ -23,6 +23,7 @@ const int ACCEPT_N = 8;        // pending accept queue per listener
 
 // Timer constants (ticks == ms; the net-timer thread calls tcpTick).
 const int RTO_INIT = 1000, RTO_MIN = 200, RTO_MAX = 60000;
+const int SYN_RETRIES_MAX = 5;   // give up a half-open handshake after this many RTO firings (Linux ~6)
 const int MSL = 30000;         // 2*MSL = 60 s TIME-WAIT
 
 struct Ooo { uint32_t seq; int len; bool used; unsigned char data[MSS_MAX]; };
@@ -40,6 +41,7 @@ struct Tcb {
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
+	int rtxCount;              // consecutive RTO firings (handshake give-up + backoff bookkeeping)
 
 	int srtt, rttvar, rto;
 	uint32_t rttSeq; unsigned rttStart; bool rttPending;
@@ -407,6 +409,21 @@ void tcpTick(unsigned t_now) {
 			t->dupacks = 0;
 			t->rttPending = false;                  // Karn: don't sample a retransmitted segment
 			t->rto *= 2; if (t->rto > RTO_MAX) t->rto = RTO_MAX;
+			// A half-open handshake (our SYN / SYN-ACK is the only unacked segment) retransmits the
+			// SYN itself — without this the timer fired but sent nothing, so a slow or lost SYN-ACK
+			// hung the connect forever. Give up after SYN_RETRIES_MAX so connect() returns ETIMEDOUT.
+			if (t->state == TCP_SYN_SENT || t->state == TCP_SYN_RCVD) {
+				if (++t->rtxCount > SYN_RETRIES_MAX) {
+					if (t->sock) t->sock->soError = SOCK_ETIMEDOUT;
+					t->state = TCP_CLOSED;
+					t->rtoDeadline = 0;
+					sockWake(t);
+					continue;
+				}
+				sendSeg(t, t->state == TCP_SYN_SENT ? TCP_SYN : (uint8_t)(TCP_SYN | TCP_ACK), t->iss, 0, 0);
+				t->rtoDeadline = t_now + t->rto;
+				continue;
+			}
 			int chunk = t->sndLen < t->mss ? t->sndLen : t->mss;
 			if (chunk > 0) sendSeg(t, TCP_ACK | TCP_PSH, t->snd_una, t->sndBuf, chunk);
 			else if (t->finSent) sendSeg(t, TCP_ACK | TCP_FIN, t->finSeq, 0, 0);
@@ -436,6 +453,7 @@ int tcpConnect(Socket* s, uint32_t ip, uint16_t port) {
 	t->iss = g_isnCounter; g_isnCounter += 0x4000;
 	t->snd_una = t->iss; t->snd_nxt = t->iss + 1;
 	t->state = TCP_SYN_SENT;
+	t->rtxCount = 0;
 	g_netStats.tcpActiveOpens++;
 	sendSeg(t, TCP_SYN, t->iss, 0, 0);
 	armRto(t);

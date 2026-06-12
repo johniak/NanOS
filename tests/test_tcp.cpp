@@ -203,6 +203,36 @@ TEST_CASE("retransmission: unacked data is resent after RTO") {
 	socketClose(c.s);
 }
 
+TEST_CASE("SYN retransmit: no SYN-ACK -> SYN resent after RTO; gives up with ETIMEDOUT") {
+	setup();
+	uint32_t peer = ipv4(212,77,98,9);
+	Socket* s = socketCreate(AF_INET, SOCK_STREAM, 0, nullptr);
+	REQUIRE(s);
+	CHECK(socketConnect(s, peer, 80) == 0);
+	Seg syn1; REQUIRE(parseCap(&syn1));
+	CHECK((syn1.flags & TCP_SYN) != 0);
+	CHECK((syn1.flags & TCP_ACK) == 0);
+	uint32_t iss = syn1.seq; uint16_t lport = syn1.sport;
+	clearCap();
+
+	// No SYN-ACK. Advancing past the RTO must RETRANSMIT the SYN (same ISS, still SYN_SENT) —
+	// before this fix the RTO timer fired but sent nothing, so a slow/lost SYN-ACK hung forever.
+	g_now += 1500; tcpTick(g_now);
+	Seg syn2; REQUIRE(parseCap(&syn2));
+	CHECK((syn2.flags & TCP_SYN) != 0);
+	CHECK(syn2.seq == iss);
+	CHECK(syn2.sport == lport);
+	CHECK(tcpState(s) == TCP_SYN_SENT);
+	clearCap();
+
+	// Keep timing out: after the retry limit the connect aborts — state leaves SYN_SENT and the
+	// socket reports ETIMEDOUT (so a blocked connect() returns instead of hanging indefinitely).
+	for (int i = 0; i < 10; i++) { g_now += 120000; tcpTick(g_now); }
+	CHECK(tcpState(s) != TCP_SYN_SENT);
+	CHECK(s->soError == SOCK_ETIMEDOUT);
+	socketClose(s);
+}
+
 TEST_CASE("segment to a closed port -> RST") {
 	setup();
 	uint32_t peer=ipv4(212,77,98,9);
