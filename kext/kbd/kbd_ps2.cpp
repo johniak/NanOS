@@ -51,6 +51,13 @@ extern "C" int nkext_init() {
 	waitWrite(); outb(PS2_CMD, 0x60);     // write controller config byte
 	waitWrite(); outb(PS2_DATA, cfg);
 	knx_register_irq(1, kbdIrq);
+	// Flush any byte the firmware/GRUB or a keypress made BEFORE this point left in the 8042
+	// output buffer. IRQ1 is edge-triggered on new data and the controller will not latch a new
+	// byte (nor raise a fresh IRQ) while one is still unread — so a single stale byte from a
+	// pre-boot keypress would wedge the keyboard for the whole session. Drain it now that the
+	// handler is live (bounded loop; the buffer holds at most a couple of bytes).
+	for (int i = 0; i < 32 && (inb(PS2_STATUS) & ST_OUTPUT_FULL); i++)
+		(void) inb(PS2_DATA);
 	knx_log("  kbd: PS/2 ready\n");
 	return 0;
 }
