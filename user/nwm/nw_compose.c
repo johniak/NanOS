@@ -247,18 +247,36 @@ static void draw_menu_dropdown(const struct nw_server *s, const struct nw_surfac
 	}
 }
 
-static void draw_dock(const struct nw_server *s, const struct nw_surface *back)
+/* The taskbar: a full-width bar at the bottom with a Start button (NanoOS mark) and one button
+ * per open window — Windows-style. The focused window's button is highlighted; a minimized
+ * window's button is dimmed. Clicking is handled in nw_pointer (Start menu / minimize-restore). */
+static void draw_taskbar(const struct nw_server *s, const struct nw_surface *back)
 {
-	const uint32_t ic[6] = { 0x1797ff, 0x161b2a, 0xff8500, 0x7139e8, 0x43b548, 0xbcc6d5 };
-	int n = 6, slot = 52, pad = 12;
-	int dw = n * slot + 2 * pad, dh = NW_DOCK_H;
-	int dx = (s->screen_w - dw) / 2, dy = s->screen_h - dh - 10;
-	nw_fill_round(back, dx, dy, dw, dh, 20, COL_DOCK, 150);            /* translucent pill */
-	nw_stroke_round(back, dx, dy, dw, dh, 20, 0xffffff, 180);
+	int W = s->screen_w, y0 = s->screen_h - NW_TASK_H;
+	nw_blend_rect(back, 0, y0, W, NW_TASK_H, COL_DOCK, 235);          /* the bar */
+	nw_blend_rect(back, 0, y0, W, 1, 0x9fb2cc, 170);                  /* top hairline */
+
+	/* Start button: the NanoOS "N" mark + "Start", highlighted while the Start menu is open. */
+	int bx, by, bw, bh;
+	nw_start_rect(s, &bx, &by, &bw, &bh);
+	if (s->menu_open && s->menu_from_start) nw_blend_rect(back, bx, by, bw, bh, 0x12a8f4, 130);
+	draw_nanomark(back, bx + 8, by + (bh - 16) / 2, 16);
+	nw_text(back, bx + 30, by + (bh - NW_FONT_H) / 2, "Start", COL_PANEL_FG);
+
+	/* one button per open window */
+	int n = nw_task_count(s);
 	for (int i = 0; i < n; i++) {
-		int ix = dx + pad + i * slot + 4, iy = dy + (dh - 44) / 2;
-		nw_fill_round(back, ix, iy, 44, 44, 12, ic[i], 245);
-		nw_stroke_round(back, ix, iy, 44, 44, 12, 0xffffff, 60);
+		int idx = nw_task_window(s, i);
+		if (idx < 0) continue;
+		const struct nw_window *w = &s->win[idx];
+		nw_taskbar_button_rect(s, i, &bx, &by, &bw, &bh);
+		int focused = (idx == s->focus) && !w->minimized;
+		nw_fill_round(back, bx + 3, by + 5, bw - 6, bh - 10, 6,
+		              focused ? 0x2b3650 : 0x1b2336, focused ? 255 : (w->minimized ? 120 : 205));
+		const char *title = (w->title[0] == '\x01') ? w->title + 1 : w->title;
+		nw_fill_round(back, bx + 10, by + (bh - 10) / 2, 10, 10, 3, focused ? 0x12a8f4 : 0x9fb2cc, 255);
+		char t[19]; int k = 0; for (; title[k] && k < (int) sizeof t - 1; k++) t[k] = title[k]; t[k] = 0;
+		nw_text(back, bx + 26, by + (bh - NW_FONT_H) / 2, t, focused ? 0xffffff : 0xc6d2e6);
 	}
 }
 
@@ -290,7 +308,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 	for (int z = 0; z < s->zn; z++) {
 		int idx = s->zorder[z];
 		const struct nw_window *w = &s->win[idx];
-		if (!w->used) continue;
+		if (!w->used || w->minimized) continue;       /* minimized windows live only on the taskbar */
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
 		int alpha = (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA;
 		if (w->frame) {                          /* cached frame: composite window-local source */
@@ -308,7 +326,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		}
 	}
 	draw_panel(s, back);
-	draw_dock(s, back);
+	draw_taskbar(s, back);
 	draw_menu_dropdown(s, back);                  /* the open menu, above the windows */
 
 	if (s->run_open) {                            /* Super+R launcher, above everything */

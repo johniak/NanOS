@@ -72,6 +72,8 @@ TEST_CASE("hit test classifies title / content / close / none") {
 	int cbx = 100 + fw - NW_BORDER - NW_CLOSE - 2 + 3;
 	int cby = 100 + (NW_TITLEBAR_H - NW_CLOSE) / 2 + 3;
 	CHECK(nw_hit(&s, cbx, cby, &region) == wi); CHECK(region == NW_HIT_CLOSE);
+	// minimize box: two control slots left of the close box
+	CHECK(nw_hit(&s, cbx - 2 * NW_CLOSE, cby, &region) == wi); CHECK(region == NW_HIT_MIN);
 	// empty desktop
 	CHECK(nw_hit(&s, 700, 500, &region) == -1); CHECK(region == NW_HIT_NONE);
 }
@@ -471,4 +473,48 @@ TEST_CASE("disconnect drops the client's windows") {
 	nw_client_disconnect(&s, 0);
 	CHECK(s.zn == 0);
 	CHECK(s.focus == -1);
+}
+
+TEST_CASE("taskbar: per-window buttons, hit-testing, and minimize/restore") {
+	nw_server s; nw_server_init(&s, 400, 300);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 120, 60, "A"); int a = s.focus; s.win[a].x = 10;  s.win[a].y = 40;
+	create_win(s, 0, 120, 60, "B"); int b = s.focus; s.win[b].x = 150; s.win[b].y = 40;
+	REQUIRE(a != b);
+
+	CHECK(nw_task_count(&s) == 2);
+	CHECK(nw_task_window(&s, 0) == a);                 // stable slot order
+	CHECK(nw_task_window(&s, 1) == b);
+
+	int wi = -1, bx, by, bw, bh;
+	CHECK(nw_taskbar_hit(&s, 5, 299, &wi) == NW_TB_START);          // far-left = Start
+	nw_taskbar_button_rect(&s, 0, &bx, &by, &bw, &bh);
+	CHECK(nw_taskbar_hit(&s, bx + 4, by + 4, &wi) == NW_TB_TASK);   // first button = window a
+	CHECK(wi == a);
+
+	// b is focused (created last). Clicking its taskbar button minimizes it (Windows behaviour).
+	REQUIRE(s.focus == b);
+	nw_taskbar_button_rect(&s, 1, &bx, &by, &bw, &bh);
+	nw_pointer(&s, bx + 4, by + 4, NW_BTN_LEFT);       // press edge
+	CHECK(s.win[b].minimized == 1);
+	CHECK(s.focus == a);                                // focus fell to the visible window
+	CHECK(nw_hit(&s, s.win[b].x + 5, s.win[b].y + 5, 0) != b);   // minimized: off the desktop
+	nw_pointer(&s, bx + 4, by + 4, 0);                 // release
+
+	// Clicking it again restores + focuses it.
+	nw_pointer(&s, bx + 4, by + 4, NW_BTN_LEFT);
+	CHECK(s.win[b].minimized == 0);
+	CHECK(s.focus == b);
+}
+
+TEST_CASE("taskbar: Start button opens the Start menu anchored above the bar") {
+	nw_server s; nw_server_init(&s, 400, 300);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	int wi = -1;
+	CHECK(nw_taskbar_hit(&s, 5, 299, &wi) == NW_TB_START);
+	nw_pointer(&s, 5, 299, NW_BTN_LEFT);
+	CHECK(s.menu_open == 1);
+	CHECK(s.menu_which == NW_MENU_LOGO);               // same items as the top-bar logo menu
+	int x, y, w, h; nw_menu_dropdown_rect(&s, &x, &y, &w, &h);
+	CHECK(y + h <= 300 - NW_TASK_H);                   // opens upward, above the taskbar
 }

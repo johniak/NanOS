@@ -13,6 +13,13 @@ static void close_box(const struct nw_window *w, int *cx, int *cy)
 	*cx = w->x + frame_w(w) - NW_BORDER - NW_CLOSE - 2;
 	*cy = w->y + (NW_TITLEBAR_H - NW_CLOSE) / 2;
 }
+/* The minimize control (the "—" glyph) sits two control slots left of the close box. */
+static void min_box(const struct nw_window *w, int *cx, int *cy)
+{
+	close_box(w, cx, cy);
+	*cx -= 2 * NW_CLOSE;
+}
+static int topmost_visible(const struct nw_server *s);   /* front-most non-minimized window, or -1 */
 
 /* ---- scene damage ----------------------------------------------------------------- */
 static void damage(struct nw_server *s, int x, int y, int w, int h)
@@ -118,8 +125,9 @@ static void set_focus(struct nw_server *s, int idx)
 	}
 	/* The global menu bar shows the focused window's menu (draw_panel reads s->focus), so it
 	 * must be repainted whenever focus changes — otherwise it keeps the old app's menu until
-	 * something else damages the bar. */
+	 * something else damages the bar. The taskbar highlights the focused window's button too. */
 	damage(s, 0, 0, s->screen_w, NW_PANEL_H);
+	damage(s, 0, s->screen_h - NW_TASK_H, s->screen_w, NW_TASK_H);
 }
 
 /* ---- window table ----------------------------------------------------------------- */
@@ -143,10 +151,12 @@ static void destroy_window(struct nw_server *s, int idx)
 	z_remove(s, idx);
 	s->win[idx].used = 0;
 	s->win[idx].buf  = 0;       /* the shell frees the backing buffer it allocated */
+	s->win[idx].minimized = 0;
 	if (s->drag_win == idx)
 		s->drag_win = -1;
 	if (s->focus == idx)
-		s->focus = (s->zn > 0) ? s->zorder[s->zn - 1] : -1;
+		s->focus = topmost_visible(s);          /* skip minimized windows when refocusing */
+	damage(s, 0, s->screen_h - NW_TASK_H, s->screen_w, NW_TASK_H);   /* a taskbar button vanished */
 }
 
 /* ---- lifecycle -------------------------------------------------------------------- */
@@ -194,16 +204,19 @@ int nw_hit(const struct nw_server *s, int sx, int sy, int *region)
 	for (int z = s->zn - 1; z >= 0; z--) {     /* front to back */
 		int idx = s->zorder[z];
 		const struct nw_window *w = &s->win[idx];
-		if (!w->used)
+		if (!w->used || w->minimized)              /* a minimized window is not on the desktop */
 			continue;
 		int fw = frame_w(w), fh = frame_h(w);
 		if (sx < w->x || sy < w->y || sx >= w->x + fw || sy >= w->y + fh)
 			continue;
 		/* inside the frame: classify */
-		int cbx, cby;
+		int cbx, cby, mbx, mby;
 		close_box(w, &cbx, &cby);
+		min_box(w, &mbx, &mby);
 		if (sx >= cbx && sx < cbx + NW_CLOSE && sy >= cby && sy < cby + NW_CLOSE) {
 			if (region) *region = NW_HIT_CLOSE;
+		} else if (sx >= mbx && sx < mbx + NW_CLOSE && sy >= mby && sy < mby + NW_CLOSE) {
+			if (region) *region = NW_HIT_MIN;
 		} else if (sy < w->y + NW_TITLEBAR_H) {
 			if (region) *region = NW_HIT_TITLE;
 		} else {
@@ -218,6 +231,38 @@ int nw_hit(const struct nw_server *s, int sx, int sy, int *region)
 	}
 	if (region) *region = NW_HIT_NONE;
 	return -1;
+}
+
+/* ---- taskbar -------------------------------------------------------------------- */
+int nw_task_count(const struct nw_server *s)
+{
+	int n = 0;
+	for (int i = 0; i < NW_MAX_WINDOWS; i++) if (s->win[i].used) n++;
+	return n;
+}
+/* Map a taskbar button index (0-based, slot order) to its window index, or -1. Slot order keeps
+ * a window's button in a stable position even as others open/close (Windows-taskbar behaviour). */
+int nw_task_window(const struct nw_server *s, int i)
+{
+	for (int k = 0; k < NW_MAX_WINDOWS; k++)
+		if (s->win[k].used && i-- == 0) return k;
+	return -1;
+}
+void nw_start_rect(const struct nw_server *s, int *x, int *y, int *w, int *h)
+{
+	*x = 0; *y = s->screen_h - NW_TASK_H; *w = NW_START_W; *h = NW_TASK_H;
+}
+void nw_taskbar_button_rect(const struct nw_server *s, int i, int *x, int *y, int *w, int *h)
+{
+	*x = NW_START_W + i * NW_TASK_W; *y = s->screen_h - NW_TASK_H; *w = NW_TASK_W; *h = NW_TASK_H;
+}
+int nw_taskbar_hit(const struct nw_server *s, int px, int py, int *winidx)
+{
+	if (py < s->screen_h - NW_TASK_H) return NW_TB_NONE;
+	if (px < NW_START_W) return NW_TB_START;
+	int i = (px - NW_START_W) / NW_TASK_W;
+	if (i >= 0 && i < nw_task_count(s)) { if (winidx) *winidx = nw_task_window(s, i); return NW_TB_TASK; }
+	return NW_TB_NONE;
 }
 
 /* ---- Run dialog (Super+R launcher) ------------------------------------------------ */
@@ -361,12 +406,17 @@ int nw_menu_open_label(const struct nw_server *s, int i, char *out, int cap)
 }
 void nw_menu_dropdown_rect(const struct nw_server *s, int *x, int *y, int *w, int *h)
 {
+	*w = NW_MENU_DROP_W;
+	*h = nw_menu_open_item_count(s) * NW_MENU_ITEM_H;
+	if (s->menu_from_start) {                 /* Start menu: bottom-left, opening upward */
+		*x = 0;
+		*y = s->screen_h - NW_TASK_H - *h - 6;
+		return;
+	}
 	int dx;
 	if (s->menu_which == NW_MENU_LOGO) dx = 4;
 	else { int ww; nw_menubar_top_x(s, s->menu_which, &dx, &ww); }
 	*x = dx; *y = NW_PANEL_H;
-	*w = NW_MENU_DROP_W;
-	*h = nw_menu_open_item_count(s) * NW_MENU_ITEM_H;
 }
 int nw_menu_item_at(const struct nw_server *s, int px, int py)
 {
@@ -383,7 +433,7 @@ static void damage_menu(struct nw_server *s)        /* repaint the whole bar + a
 }
 static void menu_open(struct nw_server *s, int which)
 {
-	s->menu_open = 1; s->menu_which = which; s->menu_hover = -1; damage_menu(s);
+	s->menu_open = 1; s->menu_which = which; s->menu_hover = -1; s->menu_from_start = 0; damage_menu(s);
 }
 static void menu_close(struct nw_server *s)
 {
@@ -392,6 +442,8 @@ static void menu_close(struct nw_server *s)
 	s->menu_open = 0;
 	damage(s, x, y, w + 2, h + 8);                             /* ...before clearing the flag */
 	damage(s, 0, 0, s->screen_w, NW_PANEL_H);
+	damage(s, 0, s->screen_h - NW_TASK_H, s->screen_w, NW_TASK_H);   /* the Start button highlight */
+	s->menu_from_start = 0;
 }
 
 static void menu_activate(struct nw_server *s, int item)   /* an item was chosen */
@@ -407,6 +459,44 @@ static void menu_activate(struct nw_server *s, int item)   /* an item was chosen
 		emit_win(s, s->focus, NW_EVT_MENU, s->menu_which, item, 0, 0, 0, 0);
 	}
 	menu_close(s);
+}
+
+/* Open the Start menu: the same items as the top-bar logo menu, but anchored above the taskbar
+ * (menu_from_start tells nw_menu_dropdown_rect to place it bottom-left, opening upward). */
+static void menu_open_start(struct nw_server *s)
+{
+	s->menu_open = 1; s->menu_which = NW_MENU_LOGO; s->menu_hover = -1; s->menu_from_start = 1;
+	damage_menu(s);
+}
+
+/* Front-most window that is not minimized (the one focus should land on), or -1. */
+static int topmost_visible(const struct nw_server *s)
+{
+	for (int z = s->zn - 1; z >= 0; z--) {
+		int idx = s->zorder[z];
+		if (s->win[idx].used && !s->win[idx].minimized) return idx;
+	}
+	return -1;
+}
+
+/* Minimize a window: hide it from the scene (its taskbar button stays) and move focus to the
+ * next visible window. Restore: unhide, raise to the front and focus it. Both repaint the whole
+ * scene since a window appears/disappears, plus the taskbar (its button highlight changes). */
+static void minimize_win(struct nw_server *s, int idx)
+{
+	if (idx < 0 || !s->win[idx].used || s->win[idx].minimized) return;
+	s->win[idx].minimized = 1;
+	if (s->focus == idx) set_focus(s, topmost_visible(s));
+	damage(s, 0, 0, s->screen_w, s->screen_h);
+}
+static void restore_win(struct nw_server *s, int idx)
+{
+	if (idx < 0 || !s->win[idx].used) return;
+	s->win[idx].minimized = 0;
+	z_raise(s, idx);
+	set_focus(s, idx);
+	s->win[idx].frame_dirty = 1;
+	damage(s, 0, 0, s->screen_w, s->screen_h);
 }
 
 /* ---- pointer ---------------------------------------------------------------------- */
@@ -449,27 +539,41 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 		int which = nw_menubar_hit(s, sx, sy);
 		if (which != NW_MENU_NONE) menu_open(s, which);     /* logo or an app menu -> dropdown */
 		/* bar area: consume, never reaches the windows below */
+	} else if (left_now && !left_was && sy >= s->screen_h - NW_TASK_H) {   /* press on the taskbar */
+		int wi = -1, tb = nw_taskbar_hit(s, sx, sy, &wi);
+		if (tb == NW_TB_START) {
+			menu_open_start(s);                              /* Start button -> Start menu */
+		} else if (tb == NW_TB_TASK && wi >= 0) {
+			/* Windows behaviour: clicking the active app's button minimizes it; clicking any other
+			 * (or a minimized) button restores + focuses it. */
+			if (wi == s->focus && !s->win[wi].minimized) minimize_win(s, wi);
+			else restore_win(s, wi);
+		}
 	} else if (left_now && !left_was) {    /* press edge on the desktop */
 		int region;
 		int widx = nw_hit(s, sx, sy, &region);
 		if (widx >= 0) {
-			z_raise(s, widx);
-			set_focus(s, widx);
-			if (region == NW_HIT_CLOSE) {
-				emit_win(s, widx, NW_EVT_CLOSE, 0, 0, 0, 0, 0, 0);
-			} else if (region == NW_HIT_TITLE) {
-				s->drag_win = widx;
-				s->drag_dx = sx - s->win[widx].x;
-				s->drag_dy = sy - s->win[widx].y;
+			if (region == NW_HIT_MIN) {
+				minimize_win(s, widx);                       /* the title-bar — control */
+			} else {
+				z_raise(s, widx);
+				set_focus(s, widx);
+				if (region == NW_HIT_CLOSE) {
+					emit_win(s, widx, NW_EVT_CLOSE, 0, 0, 0, 0, 0, 0);
+				} else if (region == NW_HIT_TITLE) {
+					s->drag_win = widx;
+					s->drag_dx = sx - s->win[widx].x;
+					s->drag_dy = sy - s->win[widx].y;
+				}
 			}
 		} else {
 			set_focus(s, -1);
 		}
 	}
 
-	/* deliver pointer to the window under the cursor's content area */
+	/* deliver pointer to the window under the cursor's content area (never for the bars) */
 	int region2;
-	int widx2 = nw_hit(s, sx, sy, &region2);
+	int widx2 = (sy < NW_PANEL_H || sy >= s->screen_h - NW_TASK_H) ? -1 : nw_hit(s, sx, sy, &region2);
 	if (widx2 >= 0 && region2 == NW_HIT_CONTENT) {
 		int rx = sx - (s->win[widx2].x + NW_BORDER);
 		int ry = sy - (s->win[widx2].y + NW_TITLEBAR_H);

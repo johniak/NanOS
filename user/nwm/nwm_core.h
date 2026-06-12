@@ -33,7 +33,10 @@ enum {
 	NW_MENU_MAX    = 512,   /* per-window menu spec bytes (NW_REQ_SET_MENU payload)        */
 	NW_MENU_X0     = 30,    /* where the app menu titles start (after the logo mark)       */
 	NW_MENU_ITEM_H = 24,    /* dropdown item row height                                   */
-	NW_MENU_DROP_W = 200    /* dropdown width                                             */
+	NW_MENU_DROP_W = 200,   /* dropdown width                                             */
+	NW_TASK_H      = 40,    /* bottom taskbar height (full width: Start + one button/window) */
+	NW_START_W     = 92,    /* Start button width (NanoOS logo + "Start")                  */
+	NW_TASK_W      = 168    /* per-window task-button width                                */
 };
 
 /* nw_menubar_hit return: a top menu index >=0, or one of these. */
@@ -49,7 +52,10 @@ enum {
 };
 
 /* Hit-test regions. */
-enum { NW_HIT_NONE = 0, NW_HIT_CONTENT = 1, NW_HIT_TITLE = 2, NW_HIT_CLOSE = 3 };
+enum { NW_HIT_NONE = 0, NW_HIT_CONTENT = 1, NW_HIT_TITLE = 2, NW_HIT_CLOSE = 3, NW_HIT_MIN = 4 };
+
+/* Taskbar (bottom bar): the Start button + one button per open window. */
+enum { NW_TB_NONE = 0, NW_TB_START = 1, NW_TB_TASK = 2 };
 
 struct nw_window {
 	int       used;
@@ -62,6 +68,7 @@ struct nw_window {
 	                        * shell allocates it. NULL = render straight to the scene (host path). */
 	int       frame_dirty; /* the cached frame is stale and must be re-rendered. Set on content
 	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
+	int       minimized;   /* hidden from the scene (taskbar button stays); restored from the taskbar */
 	char      title[NW_TITLE_MAX];
 	char      menu[NW_MENU_MAX];   /* app menu spec (NW_REQ_SET_MENU); empty = no app menu */
 	int       menu_len;
@@ -109,6 +116,7 @@ struct nw_server {
 
 	/* global menu bar: an open dropdown (logo or the focused app's), + hovered item */
 	int   menu_open, menu_which, menu_hover;
+	int   menu_from_start;          /* the open menu is the Start menu -> anchor it above the taskbar */
 	char  clock[8];                 /* "HH:MM" shown at the right of the bar (shell sets) */
 
 	int   dirty;                    /* the SCENE changed -> shell recomposes it          */
@@ -167,6 +175,17 @@ int  nw_menu_open_item_count(const struct nw_server *s);
 int  nw_menu_item_at(const struct nw_server *s, int px, int py);   /* item index or -1 */
 /* Label of item `i` in the currently open dropdown (handles the logo menu vs an app menu). */
 int  nw_menu_open_label(const struct nw_server *s, int i, char *out, int cap);
+
+/* ---- taskbar (pure helpers, shared by compositing + hit-testing + tests) ---- */
+/* The taskbar shows one button per open window in stable slot order. nw_task_count is how many;
+ * nw_task_window maps a button index -> window index (or -1). nw_taskbar_button_rect gives a
+ * button's on-screen rect; nw_start_rect the Start button; nw_taskbar_hit classifies a point as
+ * NW_TB_START / NW_TB_TASK (with *winidx set) / NW_TB_NONE. */
+int  nw_task_count(const struct nw_server *s);
+int  nw_task_window(const struct nw_server *s, int i);
+void nw_start_rect(const struct nw_server *s, int *x, int *y, int *w, int *h);
+void nw_taskbar_button_rect(const struct nw_server *s, int i, int *x, int *y, int *w, int *h);
+int  nw_taskbar_hit(const struct nw_server *s, int px, int py, int *winidx);
 
 /* ---- exposed pure helpers (also for tests) ---- */
 int  nw_hit(const struct nw_server *s, int sx, int sy, int *region);  /* topmost window or -1 */
