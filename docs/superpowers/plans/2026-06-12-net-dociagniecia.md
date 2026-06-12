@@ -164,7 +164,7 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
   RCVBUF 8 KiB nie potrzebuje więcej, ale opcja MUSI być negocjowana jak w Linuksie), honoruj
   shift peera przy interpretacji jego okna. Test: handshake z wscale=7 od peera → wysyłka
   respektuje przeskalowane okno; SYN bez wscale → opcja wyłączona obustronnie.
-- [ ] **D2. Timestamps (RFC 7323 §3) + RTTM:** TS w każdym segmencie po negocjacji, echo TSecr,
+- [x] **D2. Timestamps (RFC 7323 §3) + RTTM:** TS w każdym segmencie po negocjacji, echo TSecr,
   RTT z TS zamiast timera Karna tam, gdzie dostępne; PAWS na odbiorze (odrzuć segment z
   ts < ts_recent dla okna). Test: wektory ts_recent/PAWS + retransmisja mierzy RTT z TS.
 - [ ] **D3. SACK (RFC 2018):** wysyłaj `sackOK` w SYN; GENERUJ bloki SACK przy dziurach w

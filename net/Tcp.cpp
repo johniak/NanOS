@@ -44,6 +44,8 @@ struct Tcb {
 	uint16_t mss;
 	uint8_t  sndWscale;        // peer's window-scale shift, applied to its advertised window (RFC 7323)
 	bool     wscaleOk;         // window scaling negotiated (both SYNs carried the option)
+	bool     tsOk;             // timestamps negotiated (RFC 7323 §3) — both SYNs carried the option
+	uint32_t tsRecent;         // most recent in-window peer TSval, echoed back in our TSecr
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
@@ -104,9 +106,26 @@ void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int
 	g_netStats.tcpOutSegs++;
 	if (flags & TCP_RST) g_netStats.tcpOutRsts++;
 	skb->reserve(NET_HEADROOM);
-	// SYN options: MSS (4) + NOP (1) + window-scale (3) = 8 bytes, 4-aligned by the NOP. Other
-	// segments carry no options yet (timestamps/SACK come in later FAZA D sub-steps).
-	int optLen = (flags & TCP_SYN) ? 8 : 0;
+	// Build TCP options. SYN carries [MSS, (sackOK slot), TS, NOP, wscale]; once timestamps are
+	// negotiated every segment carries [NOP, NOP, TS]. Timestamps are offered on the initial SYN
+	// (active open) and mirrored on the SYN-ACK / data only if the peer offered them (tsOk).
+	bool isSyn  = (flags & TCP_SYN) != 0;
+	bool wantTs = t->tsOk || (isSyn && !(flags & TCP_ACK));
+	unsigned char opt[40]; int ol = 0;
+	if (isSyn) {
+		opt[ol++] = 2; opt[ol++] = 4; wr16be(opt + ol, MSS_MAX); ol += 2;     // MSS
+		opt[ol++] = 1; opt[ol++] = 1;                                         // sackOK slot (NOPs until D3)
+		if (wantTs) { opt[ol++] = 8; opt[ol++] = 10; wr32be(opt + ol, now()); ol += 4;
+			wr32be(opt + ol, t->tsRecent); ol += 4; }                        // timestamp
+		opt[ol++] = 1;                                                        // NOP aligning wscale
+		opt[ol++] = 3; opt[ol++] = 3; opt[ol++] = (unsigned char) RCV_WSCALE; // window scale
+	} else if (wantTs) {
+		opt[ol++] = 1; opt[ol++] = 1;                                         // 2 NOPs align the TS option
+		opt[ol++] = 8; opt[ol++] = 10; wr32be(opt + ol, now()); ol += 4;
+		wr32be(opt + ol, t->tsRecent); ol += 4;
+	}
+	while (ol & 3) opt[ol++] = 1;                                             // pad to a 4-byte boundary
+	int optLen = ol;
 	if (len) memcpy(skb->put(len), data, len);
 	unsigned char* h = skb->push(20 + optLen);
 	wr16be(h + 0, t->localPort);
@@ -118,12 +137,7 @@ void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int
 	wr16be(h + 14, (uint16_t) rcvFree(t));                // advertised receive window (shift 0)
 	wr16be(h + 16, 0);                                    // checksum
 	wr16be(h + 18, 0);                                    // urgent ptr
-	if (flags & TCP_SYN) {
-		unsigned char* o = h + 20;
-		o[0] = 2; o[1] = 4; wr16be(o + 2, MSS_MAX);       // MSS
-		o[4] = 1;                                         // NOP (aligns the window-scale option)
-		o[5] = 3; o[6] = 3; o[7] = (unsigned char) RCV_WSCALE;   // window scale
-	}
+	if (optLen) memcpy(h + 20, opt, optLen);
 	uint16_t c = inetPseudoChecksum(t->localIp, t->remoteIp, IPPROTO_TCP, h, 20 + optLen + len);
 	wr16be(h + 16, c);
 	ipOutput(t->remoteIp, IPPROTO_TCP, skb);
@@ -260,9 +274,10 @@ void tcpRx(NetBuf* skb) {
 	const unsigned char* payload = h + doff;
 	int plen = skb->len - doff;
 
-	// peer SYN options: MSS (kind 2, len 4) and window scale (kind 3, len 3).
+	// peer options: MSS (kind 2), window scale (kind 3), timestamps (kind 8, TSval+TSecr).
 	uint16_t peerMss = 0;
 	uint8_t peerWscale = 0; bool peerHasWscale = false;
+	uint32_t peerTsVal = 0, peerTsEcr = 0; bool peerHasTs = false;
 	for (int i = 20; i + 1 < doff; ) {
 		uint8_t kind = h[i];
 		if (kind == 0) break;
@@ -272,6 +287,7 @@ void tcpRx(NetBuf* skb) {
 		if (kind == 2 && olen == 4) peerMss = rd16be(h + i + 2);
 		else if (kind == 3 && olen == 3) { peerWscale = h[i + 2]; peerHasWscale = true;
 			if (peerWscale > 14) peerWscale = 14; }   // RFC 7323: cap shift at 14
+		else if (kind == 8 && olen == 10) { peerTsVal = rd32be(h + i + 2); peerTsEcr = rd32be(h + i + 6); peerHasTs = true; }
 		i += olen;
 	}
 
@@ -296,6 +312,17 @@ void tcpRx(NetBuf* skb) {
 		return;
 	}
 
+	// PAWS (RFC 7323 §5): in a synchronized connection a non-SYN segment whose timestamp predates
+	// ts_recent is a stale duplicate from an earlier incarnation — drop it (modular TS comparison).
+	if (t->tsOk && peerHasTs && !(flags & TCP_SYN) &&
+	    t->state != TCP_SYN_SENT && t->state != TCP_LISTEN && seqLt(peerTsVal, t->tsRecent)) {
+		netbufFree(skb);
+		return;
+	}
+	// ts_recent update (RFC 7323 §4.3): adopt the newest in-window peer timestamp to echo back.
+	if (t->tsOk && peerHasTs && seqLeq(seq, t->rcv_nxt) && seqGeq(peerTsVal, t->tsRecent))
+		t->tsRecent = peerTsVal;
+
 	switch (t->state) {
 	case TCP_SYN_SENT: {
 		if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
@@ -304,6 +331,7 @@ void tcpRx(NetBuf* skb) {
 			// Window scaling is on only if BOTH SYNs carried the option (we always send it). The
 			// window in the SYN-ACK itself is NOT scaled (RFC 7323 §2.2) — scaling starts after.
 			t->wscaleOk = peerHasWscale; t->sndWscale = peerHasWscale ? peerWscale : 0;
+			t->tsOk = peerHasTs; if (peerHasTs) t->tsRecent = peerTsVal;   // RFC 7323 §3 negotiation
 			t->snd_una = ack; t->snd_wnd = wnd;
 			if (peerMss) t->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			t->state = TCP_ESTABLISHED;
@@ -328,6 +356,7 @@ void tcpRx(NetBuf* skb) {
 			c->snd_una = c->iss; c->snd_nxt = c->iss + 1;
 			c->snd_wnd = wnd ? wnd : 4096;
 			c->wscaleOk = peerHasWscale; c->sndWscale = peerHasWscale ? peerWscale : 0;   // our SYN-ACK carries ours
+			c->tsOk = peerHasTs; if (peerHasTs) c->tsRecent = peerTsVal;
 			if (peerMss) c->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			c->state = TCP_SYN_RCVD; c->parent = t;
 			g_netStats.tcpPassiveOpens++;
@@ -356,7 +385,10 @@ void tcpRx(NetBuf* skb) {
 			t->snd_wnd = t->wscaleOk ? ((uint32_t) wnd << t->sndWscale) : wnd;   // RFC 7323: scaled after handshake
 			t->dupacks = 0;
 			onAckCwnd(t, acked);
-			if (t->rttPending && seqGeq(ack, t->rttSeq)) { rttUpdate(t, (int)(now() - t->rttStart)); t->rttPending = false; }
+			// RTT: prefer the RFC 7323 §4.1 timestamp sample (every ack carries the echo) over the
+			// single Karn-timer probe; fall back to the timer when timestamps aren't in use.
+			if (t->tsOk && peerHasTs && peerTsEcr) { int r = (int)(now() - peerTsEcr); if (r >= 0) rttUpdate(t, r); t->rttPending = false; }
+			else if (t->rttPending && seqGeq(ack, t->rttSeq)) { rttUpdate(t, (int)(now() - t->rttStart)); t->rttPending = false; }
 			if (t->snd_una == t->snd_nxt) t->rtoDeadline = 0;          // all acked: stop RTO
 			else armRto(t);
 			// state transitions on our FIN being acked

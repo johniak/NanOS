@@ -144,3 +144,58 @@ TEST_CASE("window scale: peer SYN-ACK without wscale -> scaling disabled both wa
 	CHECK(tcpSndWnd(s) == 4);                       // unscaled: 4, not 4<<anything
 	socketClose(s);
 }
+
+TEST_CASE("timestamps: SYN offers TS; after negotiation our segments echo the peer's TSval") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	REQUIRE(socketConnect(s, peer, 80) == 0);
+	OptSeg syn; REQUIRE(parseCap(&syn));
+	const unsigned char* ts=nullptr;
+	REQUIRE(capOption(syn, 8, &ts) == 10);          // TS option present in our SYN
+	uint32_t ourSynTsVal = rd32be(ts);
+	uint16_t lport=syn.sport; uint32_t iss=syn.seq;
+	clearCap();
+
+	// SYN-ACK carrying TS: peer TSval = 0x1111, TSecr echoes our SYN's TSval.
+	unsigned char opt[]={2,4,0x05,0xB4, 1,1, 8,10, 0,0,0x11,0x11, 0,0,0,0, 1, 3,3,7};
+	wr32be(opt+12, ourSynTsVal);                    // TSecr field
+	feedOpt(peer, 80, lport, 0x50000, iss+1, TCP_SYN|TCP_ACK, 1000, opt, sizeof opt, nullptr, 0);
+	REQUIRE(tcpState(s) == TCP_ESTABLISHED);
+
+	// Our ACK of the SYN-ACK must carry TS, echoing the peer's TSval (0x1111) in TSecr.
+	OptSeg ackseg; REQUIRE(parseCap(&ackseg));
+	const unsigned char* ts2=nullptr;
+	REQUIRE(capOption(ackseg, 8, &ts2) == 10);
+	CHECK(rd32be(ts2+4) == 0x1111u);                // TSecr echoes peer's latest TSval
+	socketClose(s);
+}
+
+TEST_CASE("timestamps: PAWS drops an in-window segment whose timestamp is stale") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	REQUIRE(socketConnect(s, peer, 80) == 0);
+	OptSeg syn; REQUIRE(parseCap(&syn));
+	uint16_t lport=syn.sport; uint32_t iss=syn.seq; uint32_t pseq=0x50000;
+	clearCap();
+	// SYN-ACK with TS, peer TSval = 0x1000 -> becomes ts_recent.
+	unsigned char sa[]={2,4,0x05,0xB4, 1,1, 8,10, 0,0,0x10,0x00, 0,0,0,0, 1, 3,3,7};
+	feedOpt(peer, 80, lport, pseq, iss+1, TCP_SYN|TCP_ACK, 1000, sa, sizeof sa, nullptr, 0);
+	REQUIRE(tcpState(s) == TCP_ESTABLISHED);
+	pseq += 1; clearCap();
+
+	// A data segment with a STALE timestamp (0x0500 < ts_recent 0x1000) must be dropped by PAWS.
+	unsigned char tsOld[]={1,1, 8,10, 0,0,0x05,0x00, 0,0,0,0};
+	feedOpt(peer, 80, lport, pseq, iss+1, TCP_ACK, 1000, tsOld, sizeof tsOld, (const unsigned char*)"abc", 3);
+	char buf[16]; uint32_t si; uint16_t sp;
+	CHECK(socketRecvFrom(s, buf, sizeof buf, &si, &sp, 0) == -SOCK_EAGAIN);   // PAWS dropped it
+
+	// The same data with a FRESH timestamp (0x2000 > ts_recent) is accepted.
+	unsigned char tsNew[]={1,1, 8,10, 0,0,0x20,0x00, 0,0,0,0};
+	feedOpt(peer, 80, lport, pseq, iss+1, TCP_ACK, 1000, tsNew, sizeof tsNew, (const unsigned char*)"abc", 3);
+	int n = socketRecvFrom(s, buf, sizeof buf, &si, &sp, 0);
+	CHECK(n == 3);
+	CHECK(std::memcmp(buf, "abc", 3) == 0);
+	socketClose(s);
+}
