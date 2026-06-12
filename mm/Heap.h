@@ -32,10 +32,24 @@ public:
 	unsigned freeBytes() const;            // total free payload bytes (for tests/stats)
 	unsigned totalBytes() const { return m_end; }   // arena size (for /proc/meminfo)
 
+	// Heap integrity: each block carries a footer mirroring its header (size|used), so a write
+	// that runs past a block — or into a freed block's free-list links — desyncs them. We check
+	// the boundary tags on every alloc/free; on a mismatch we call this hook (the kernel wires it
+	// to a panic that prints the block + halts) instead of corrupting on, turning a silent
+	// heap-smash into a clean, located failure. Null (host tests) = the check is a no-op.
+	typedef void (*CorruptFn)(const char* what, unsigned off, unsigned hdr, unsigned ftr);
+	static void onCorruption(CorruptFn fn) { s_corrupt = fn; }
+
 private:
 	char*    m_base;       // 8-aligned arena start (block offset 0 lives here)
 	unsigned m_end;        // offset one past the last usable byte (blocks tile [0,m_end))
 	unsigned m_freeHead;   // offset of the first free block, or NIL
+
+	static CorruptFn s_corrupt;
+	// Validate a block's boundary tags + range; reports via s_corrupt and returns false if bad.
+	bool      checkBlock(unsigned off) const;
+	void      layCanary(unsigned off, unsigned userSize);   // record size + red-zone on alloc
+	bool      checkCanary(unsigned off) const;              // verify red-zone on free/realloc
 
 	uint32_t* word(unsigned off) const { return (uint32_t*) (m_base + off); }
 	unsigned  blkSize(unsigned off) const { return *word(off) & ~7u; }

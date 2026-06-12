@@ -13,11 +13,13 @@ namespace kernel {
 // stack — is allocated from the heap on create and freed on reap, so the live task count is
 // bounded by RAM, not by a static array (which at this ceiling would be tens of MB).
 static const int MAXTASKS = ProcTable::MAX + 8;
-// 16 KiB per-task kernel stack. The stacks are heap-allocated, so an overflow would scribble
-// over the adjacent heap block's metadata (surfacing later as a wild fault in the allocator or
-// a WaitQueue walk). 8 KiB was too tight once a syscall's call chain got deep — e.g. a console
-// write running the full VT engine + glyph rasterizer with a keyboard IRQ nested on top.
-static const int KSTACK_SIZE = 16384;
+// 32 KiB per-task kernel stack. The stacks are heap-allocated, so an overflow scribbles the
+// adjacent heap block (the heap's boundary-tag/canary check, mm/Heap.cpp, now turns that into a
+// clean panic instead of silent corruption). The deep cost is the ext write + JBD2 journal path:
+// several extent-tree helpers each hold a block-sized scratch buffer (char buf[4096]) and nest a
+// few levels, and a keyboard IRQ can land on top — which overran 8 and even 16 KiB. (The longer-
+// term fix is to take those block buffers off the stack; this sizing + the canary cover it now.)
+static const int KSTACK_SIZE = 32768;
 
 static Task g_tasks[MAXTASKS];
 static int g_ntasks = 0;
