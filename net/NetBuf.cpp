@@ -43,6 +43,7 @@ NetBuf* netbufAlloc() {
 	unlock(f);
 	NetBuf* b = &g_pool[idx];
 	b->data = 0; b->len = 0; b->dev = 0; b->protocol = 0; b->l3 = -1; b->l4 = -1;
+	b->saddr = 0; b->daddr = 0; b->ipproto = 0;
 	return b;
 }
 

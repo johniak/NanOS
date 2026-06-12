@@ -30,6 +30,9 @@ struct NetBuf {
 	uint16_t protocol;    // ethertype in host order, set by the Ethernet demux on RX
 	int      l3;          // offset of the L3 (IP) header, set during RX parse (-1 = unset)
 	int      l4;          // offset of the L4 (TCP/UDP/ICMP) header (-1 = unset)
+	uint32_t saddr;       // IPv4 source (host order), set by the IP demux for the transport layer
+	uint32_t daddr;       // IPv4 destination (host order)
+	uint8_t  ipproto;     // IP protocol number (1 ICMP / 6 TCP / 17 UDP)
 
 	unsigned char* head() { return buf + data; }
 	unsigned char* tail() { return buf + data + len; }

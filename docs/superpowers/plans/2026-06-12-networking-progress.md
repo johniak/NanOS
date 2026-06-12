@@ -11,7 +11,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 2 — e1000.nkext | **DONE** | n/a (MD) | TX frame on wire, correct MAC | n/a | eth0 up, no faults | — |
 | 3 — NetDevice + bottom-half + lo | **DONE** | ≥90% all modules | (via FAZA 2 TX) | n/a | softirq + lo wired | — |
 | 4 — Ethernet + ARP | **DONE** | Ether 100% / Arp 93.2% | ARP req/reply byte-exact (tcpdump) | n/a | gw resolved, RX path OK | — |
-| 5 — IPv4 | todo | | | | | |
+| 5 — IPv4 | **DONE** | Ip 97.4% / Route 100% | byte-exact header (host); on wire via ICMP (F6) | n/a | builds, wired | — |
 | 6 — ICMP | todo | | | | | |
 | 7 — sockets + UDP + RAW + AF_PACKET | todo | | | | | |
 | 8 — TCP | todo | | | | | |
@@ -145,3 +145,25 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   is-at 52:55:0a:00:02:02`. A temp boot probe (since removed) ARPed the gateway and the console
   printed `[arp] gw 10.0.2.2 is at 52:55:0a:00:02:02  <-- RX path OK`, proving NIC IRQ →
   bottom-half → ethRx → arpRx → cache end-to-end. No faults.
+
+## FAZA 5 — IPv4 + routing (2026-06-12)
+
+- `net/Route.{h,cpp}`: the routing table — longest-prefix match + default route + metric
+  tie-break. `routeLookup(dst)` returns the egress device and next-hop IP (gateway off-link,
+  destination on-link). `routeAddDefault(dev, gw)` installs the on-link subnet + default. 100% cov.
+- `net/Ip.{h,cpp}`: `ipRx` (installed as Ether's IP handler) validates version/IHL/length and the
+  header checksum, accepts-for-us (unicast / limited+directed broadcast / loopback / unconfigured),
+  reassembles fragments, and demuxes by protocol to ICMP/UDP/TCP handlers (`ipSetHandler`).
+  `ipOutput(dst, proto, skb)` builds the header (src = egress IP, TTL 64, IP-id counter, valid
+  checksum), routes, **fragments if it exceeds the MTU**, resolves the next-hop MAC via ARP
+  (queuing through arpHold if needed), and transmits. Reassembly is bounded by the 2 KiB NetBuf
+  (a buffer bound, openly stated — target traffic never fragments; MF/offset/ordering/timeout are
+  fully implemented). 97.4% cov.
+- NetBuf gained `saddr/daddr/ipproto` so the transport layer gets the addressing. Wired into
+  `netCoreInit` (ipInit + clock) and the softirq (`ipReasmTick`).
+- `tests/test_ip.cpp` (15 cases): routing (longest-prefix, on-link vs gw, replace, metric,
+  del/iterate), demux with src/dst/proto, bad-checksum/runt/not-for-us drops, broadcast accept,
+  `ipOutput` byte-exact header + valid checksum + routes-via-gateway, no-route drop, in-order &
+  out-of-order reassembly, fragment expiry, and TX fragmentation (offsets contiguous, MF on all
+  but last, each fragment's header checksum valid, fragments cover the whole payload). 446 host
+  tests green, check-arch clean. On-wire IP verification lands with ICMP echo in FAZA 6.
