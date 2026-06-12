@@ -187,7 +187,9 @@ int main(void)
 			if (r < 0) return 0;                        /* compositor gone */
 		}
 		if (pf[1].revents & POLLIN) {                   /* shell output -> VT -> render */
-			unsigned char ob[1024];
+			/* A bigger buffer coalesces a burst (e.g. a full vim redraw) into one vt_feed +
+			 * one render/commit instead of several 1 KiB chunks each triggering a partial commit. */
+			unsigned char ob[16384];
 			int n = read(g_master, ob, sizeof ob);
 			if (n <= 0) return 0;                        /* shell exited */
 			vt_feed(&T, ob, n);
