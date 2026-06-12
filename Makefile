@@ -65,6 +65,33 @@ grep:
 	cp "$(SDK_WORK)/grep-3.11/src/grep.nxe" $(BINFOLDER)grep.nxe
 	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' to install it into /nanos/bin"
 
+# GNU vim + bzip2 (optional, external) — same as grep: the nanos-sdk builds them in its work dir;
+# these targets only copy the finished .nxe into bin/, where _image installs them.
+vim:
+	@test -f "$(SDK_WORK)/vim/src/vim.nxe" || { echo "vim.nxe not found at $(SDK_WORK)/vim/src (build it with the nanos-sdk first)"; exit 1; }
+	cp "$(SDK_WORK)/vim/src/vim.nxe" $(BINFOLDER)vim.nxe
+	@echo "staged $(BINFOLDER)vim.nxe — run 'make image' to install it into /apps/vim"
+bzip2:
+	@test -f "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" || { echo "bzip2.nxe not found at $(SDK_WORK)/bzip2-1.0.8 (build it with the nanos-sdk first)"; exit 1; }
+	cp "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" $(BINFOLDER)bzip2.nxe
+	@echo "staged $(BINFOLDER)bzip2.nxe — run 'make image' to install it into /nanos/bin"
+
+# Stage EVERY already-built external app into bin/ in one go (best-effort: skips any whose artifact
+# is not present, so a partial set still works). The staged .nxe are build artifacts that `make
+# clean` removes, so the workflow after a clean is: `make externals && make image`. This copies
+# prebuilt binaries only — it does NOT rebuild them (use `make bash`/the nanos-sdk for that).
+externals:
+	@n=0; \
+	for spec in "bash:$(BASH_FORK)/nanos/bash.nxe" \
+	            "vim:$(SDK_WORK)/vim/src/vim.nxe" \
+	            "grep:$(SDK_WORK)/grep-3.11/src/grep.nxe" \
+	            "bzip2:$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe"; do \
+	  name=$${spec%%:*}; src=$${spec#*:}; \
+	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
+	  else echo "  skip $$name (not built: $$src)"; fi; \
+	done; \
+	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image' to install them"
+
 run: image
 	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
 
