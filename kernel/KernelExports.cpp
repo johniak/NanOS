@@ -3,9 +3,11 @@
 #include "CharDevice.h"
 #include "Console.h"
 #include "Scheduler.h"
+#include "Pci.h"
 #include "memory_manager.h"
 #include <arch/irq.h>
 #include <arch/input.h>
+#include <stdint.h>
 #include <string.h>
 
 namespace kernel {
@@ -48,6 +50,49 @@ int knx_add_input_dev(CharDevice* dev) {
 	name[i] = 0;
 	g_root->addChar(g_root->dev(), name, dev, 0444);
 	return n;
+}
+
+// ---- PCI access for driver modules (the e1000 NIC kext binds its device through these) ----
+// The (bus,dev,func) triple is the stable handle; a driver finds it once via knx_pci_find then
+// reads BARs / IRQ and flips bus-mastering. Stateless thin wrappers over kernel::Pci.
+
+int knx_pci_find(uint16_t vendor, uint16_t device, uint8_t* bus, uint8_t* dev, uint8_t* func) {
+	PciDevice d;
+	if (!Pci::find(vendor, device, d))
+		return 0;
+	if (bus)  *bus = d.bus;
+	if (dev)  *dev = d.dev;
+	if (func) *func = d.func;
+	return 1;
+}
+uint32_t knx_pci_bar(uint8_t bus, uint8_t dev, uint8_t func, int n) {
+	PciDevice d;
+	if (n < 0 || n > 5 || !Pci::probe(bus, dev, func, d)) return 0;
+	return d.bar[n].addr;
+}
+uint32_t knx_pci_bar_size(uint8_t bus, uint8_t dev, uint8_t func, int n) {
+	PciDevice d;
+	if (n < 0 || n > 5 || !Pci::probe(bus, dev, func, d)) return 0;
+	return d.bar[n].size;
+}
+int knx_pci_bar_is_io(uint8_t bus, uint8_t dev, uint8_t func, int n) {
+	PciDevice d;
+	if (n < 0 || n > 5 || !Pci::probe(bus, dev, func, d)) return 0;
+	return d.bar[n].isIo ? 1 : 0;
+}
+uint8_t knx_pci_irq(uint8_t bus, uint8_t dev, uint8_t func) {
+	return Pci::read8(bus, dev, func, PCI_IRQ_LINE);
+}
+void knx_pci_enable_bus_master(uint8_t bus, uint8_t dev, uint8_t func) {
+	PciDevice d; d.bus = bus; d.dev = dev; d.func = func;
+	Pci::enableBusMaster(d);
+	Pci::enableMemSpace(d);    // memory-mapped NICs need MEM decode too
+}
+uint32_t knx_pci_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off) {
+	return Pci::read32(bus, dev, func, off);
+}
+void knx_pci_cfg_write32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint32_t v) {
+	Pci::write32(bus, dev, func, off, v);
 }
 
 }  // extern "C"

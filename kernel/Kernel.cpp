@@ -15,6 +15,8 @@
 #include "Pty.h"
 #include "KernelExports.h"   // kernel symbols exported to loadable modules (nkext)
 #include "KextLoader.h"      // load /nanos/kext/*.nkext at boot
+#include "Pci.h"             // PCI bus enumeration (finds the NIC for the e1000 kext)
+#include <arch/pci.h>
 #include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
 #include "Scheduler.h"
 #include <arch/sched.h>
@@ -200,6 +202,31 @@ void Kernel::initPaging() {
 	}
 }
 
+// Enumerate the PCI bus and log a one-line summary + the e1000 NIC if present. Purely
+// informational at boot; the e1000 kext does its own Pci::find. Keeps the wire-up honest:
+// if the NIC isn't found here, the driver phase has nothing to bind to.
+static void pciScanReport() {
+	PciDevice devs[32];
+	int n = Pci::enumerate(devs, 32);
+	Console::write("  PCI: ");
+	Console::write(n);
+	Console::write(" device(s); ");
+	PciDevice nic;
+	if (Pci::find(0x8086, 0x100E, nic)) {
+		Console::write("e1000 8086:100E @ ");
+		Console::write((int) nic.bus); Console::write(":");
+		Console::write((int) nic.dev); Console::write(".");
+		Console::write((int) nic.func);
+		Console::write(" BAR0=");
+		Console::writeHex((int) nic.bar[0].addr);
+		Console::write(" irq=");
+		Console::write((int) nic.irqLine);
+		Console::writeLine("");
+	} else {
+		Console::writeLine("no e1000 (run with: make run-net)");
+	}
+}
+
 void Kernel::start() {
 	Console::clearScreen();
 	Console::writeLine("NanoOS initialize...");
@@ -272,6 +299,14 @@ void Kernel::start() {
 	// program (bash) can open("/dev/tty") to reach its terminal without knowing the pts name.
 	root->addChar(root->dev(), "tty", new PtySlave(pty), 0666);
 	okEnd();
+
+	// PCI bus: install the arch config-space backend (0xCF8/0xCFC) and scan. Must run BEFORE
+	// the kexts load, since the e1000 NIC driver finds its device through kernel::Pci / the
+	// knx_pci_* exports.
+	okBegin("PCI bus enumeration");
+	Pci::setBackend(arch::pciConfigRead32, arch::pciConfigWrite32);
+	okEnd();
+	pciScanReport();
 
 	// Load kernel modules (nkext) from /nanos/kext — the PS/2 keyboard + mouse drivers live
 	// here, NOT in the kernel image. Each registers its IRQ + /dev node from its nkext_init().

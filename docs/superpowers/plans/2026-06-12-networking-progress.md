@@ -6,8 +6,8 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 
 | Faza | Status | host-test | pcap | strace | QEMU | commit |
 |---|---|---|---|---|---|---|
-| 0 — QEMU net + pcap harness + baseline + strace | **DONE** | n/a | harness ready | fixtures captured | n/a | — |
-| 1 — PCI bus | todo | | | | | |
+| 0 — QEMU net + pcap harness + baseline + strace | **DONE** | n/a | harness ready | fixtures captured | n/a | f094a47 |
+| 1 — PCI bus | **DONE** | Pci.cpp 93.8% | n/a (no wire yet) | n/a | e1000 found @0:3.0 irq11 | — |
 | 2 — e1000.nkext | todo | | | | | |
 | 3 — NetDevice + bottom-half + lo | todo | | | | | |
 | 4 — Ethernet + ARP | todo | | | | | |
@@ -55,3 +55,21 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 - Apps probe AF_INET6 first and fall back on `EAFNOSUPPORT`/`ENETUNREACH` → FAZA 11 IPv6 semantics.
 - Our SDK resolver must NOT depend on netlink/nscd (glibc uses them but degrades gracefully;
   we ship a musl-style resolver that never needs them).
+
+## FAZA 1 — outcomes (2026-06-12)
+
+- `arch/include/arch/pci.h` (MD contract) + `arch/x86/io/pci_x86.cpp` (config mechanism #1,
+  0xCF8/0xCFC) — the ONLY machine-dependent PCI code. `arch.mk` gains `arch/x86/io` + `pci_x86.o`.
+- `kernel/Pci.{h,cpp}` (MI): config accessors (8/16-bit derived from a 32-bit injectable
+  backend), `probe`/`enumerate`/`find`, BAR decode with write-all-ones/read-back sizing
+  (32 & 64-bit mem + I/O BARs), bus-master/mem/io command bits. Backend is injected
+  (`Pci::setBackend`) so it's 100% host-testable against a mock config space.
+- `kernel/KernelExports.cpp` + `kexports.def`: `knx_pci_find/bar/bar_size/bar_is_io/irq/
+  enable_bus_master/cfg_read32/cfg_write32` — the e1000 kext (FAZA 2) binds its device through these.
+- `kernel/Kernel.cpp`: installs the arch backend + `pciScanReport()` at boot, before kext load.
+- `tests/test_pci.cpp`: 8 cases (empty bus, e1000 probe + BAR decode, find-by-id, multifunction
+  enumerate, single-function skip, 64-bit BAR, bus-master RMW, 8/16-bit accessors). **Pci.cpp
+  93.8% line coverage**; full suite green at 91.5% aggregate; `check-arch` clean.
+- **QEMU verification:** boot log shows `PCI: 6 device(s); e1000 8086:100E @ 0:3.0
+  BAR0=0xFEB80000 irq=11` — the NIC the driver phase will bind to is found. No `v=08/0d/0e`.
+- Deferred to FAZA 14: `/proc/bus/pci` (needs a SynthFs generator; bundled with `/proc/net`).
