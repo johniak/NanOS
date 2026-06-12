@@ -121,10 +121,18 @@ static int spawn_shell(void)
 		dup2(s, 0); dup2(s, 1); dup2(s, 2);
 		if (s > 2) close(s);
 		close(master); close(3); close(4);             /* drop the compositor pipes in the shell */
+		/* Keep this in step with PID 1's baseline env (kernel/Exec.cpp): the windowed terminal
+		 * must give programs the same environment as the boot console, or they behave differently
+		 * here. In particular VIMRUNTIME + VIMINIT stop vim sourcing its missing defaults.vim
+		 * ("E1187: Failed to source defaults.vim"). nwm only forwards NW_DISPLAY to its clients,
+		 * so these are set explicitly rather than inherited. */
 		char *envp[] = { (char *) "TERM=xterm-256color",
 		                 (char *) "TERMINFO=/disks/main/nanos/share/terminfo",
 		                 (char *) "PATH=/disks/main/nanos/bin:/disks/main/bin",
-		                 (char *) "HOME=/disks/main", 0 };
+		                 (char *) "HOME=/disks/main",
+		                 (char *) "VIMRUNTIME=/disks/main/apps/vim/runtime",
+		                 (char *) "VIMINIT=set nocompatible backspace=indent,eol,start hlsearch incsearch ruler showcmd wildmenu",
+		                 0 };
 		/* the login shell from the account database (pw_shell, e.g. bash); nsh if absent */
 		struct passwd *pw = getpwuid(getuid());
 		const char *shell = (pw && pw->pw_shell && pw->pw_shell[0]) ? pw->pw_shell
