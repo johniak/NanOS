@@ -5,6 +5,7 @@
 #include "SignalDispatch.h"
 #include "Scheduler.h"
 #include <arch/syscall.h>
+#include <arch/console.h>
 #include <arch/cpu.h>
 #include <arch/input.h>
 #include <arch/mmu.h>
@@ -399,6 +400,19 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			if (!a2) { ret = -EINVAL; break; }
 			if (a1 == IOCTL_TIOCGPGRP) { *(int*) a2 = consoleGetPgrp(); ret = 0; }
 			else                       { consoleSetPgrp(*(int*) a2);    ret = 0; }
+			break;
+		}
+		// TIOCGWINSZ on the console reports the framebuffer/VGA grid, so a full-screen TUI (vim)
+		// uses the whole screen instead of falling back to terminfo's 80x24 default.
+		if (g_sys->isConsoleFd((int) a0) && a1 == IOCTL_TIOCGWINSZ) {
+			if (!a2) { ret = -EINVAL; break; }
+			unsigned cols = 80, rows = 25;
+			arch::consoleSize(&cols, &rows);
+			Winsize* ws = (Winsize*) a2;
+			ws->ws_row = (unsigned short) rows;
+			ws->ws_col = (unsigned short) cols;
+			ws->ws_xpixel = ws->ws_ypixel = 0;
+			ret = 0;
 			break;
 		}
 		ret = g_sys->ioctl((int) a0, a1, (void*) a2);

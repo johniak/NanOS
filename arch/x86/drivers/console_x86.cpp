@@ -145,4 +145,14 @@ void consoleActivateFramebuffer() {
 	g_useFb = true;
 }
 
+void consoleSize(unsigned* cols, unsigned* rows) {
+	if (g_useFb) {
+		if (cols) *cols = g_fb.cols();
+		if (rows) *rows = g_fb.rows();
+	} else {
+		if (cols) *cols = 80;   // VGA text mode
+		if (rows) *rows = 25;
+	}
+}
+
 }  // namespace arch

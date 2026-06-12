@@ -19,4 +19,8 @@ void consoleSetCursor(unsigned x, unsigned y);
 // Must be called after the framebuffer MMIO is mapped; a no-op when there is none.
 void consoleActivateFramebuffer();
 
+// The console's character-cell dimensions, so a tty can answer TIOCGWINSZ (full-screen TUIs
+// like vim size themselves off this). Reflects the framebuffer grid when active, else VGA text.
+void consoleSize(unsigned* cols, unsigned* rows);
+
 }
