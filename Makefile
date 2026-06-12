@@ -115,7 +115,26 @@ VPATH=init:kernel:drivers:fs:fs/ext:mm:lib:$(ARCH_VPATH)
 # selected arch's headers (ARCH_INCLUDES) + the freestanding <string.h> in include/.
 KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Iinclude -Iuser/term $(ARCH_INCLUDES)
 
-CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore
+# Optimization. -O2 is the single biggest performance win for the target (it was all -O0): pixel
+# loops get inlined and the ~10x interpreter-style overhead disappears. Two safety flags make -O2
+# sound here:
+#   -fno-strict-aliasing            code casts pointers freely (Registers*, page tables, pixel
+#                                   buffers, NXE headers); type-based aliasing would miscompile it.
+#   -fno-delete-null-pointer-checks don't assume a dereferenced pointer is non-null (low/identity-
+#                                   mapped addresses are real here).
+# Not -O3: keeps NXE/kernel size + behaviour predictable (i686-elf gcc has no SSE to vectorise into).
+# Host tests build with their own flags (HOST_CXXFLAGS), unaffected.
+#
+# USERLAND gets -O2 now: the compositor's hot pixel loops (nw_gfx/nw_compose blit, blend, glyphs)
+# all run in userland writing the mmapped framebuffer directly, so this captures the drag-perf win.
+UOPTFLAGS=-O2 -fno-strict-aliasing -fno-delete-null-pointer-checks
+# KERNEL is held at -O0 for now: at -O2 a latent undefined behaviour in the ext path-resolution
+# string scan (a basename/dirname loop reads past a non-NUL-terminated String buffer) runs off into
+# unmapped memory and triple-faults during the boot-time root mount. That UB needs fixing in the FS
+# layer before the kernel can take -O2; it is independent of the GUI work, where no kernel code is hot.
+KOPTFLAGS=
+
+CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KOPTFLAGS)
 LDFLAGS=-T$(ARCH_LINKER) -nostdlib -nostartfiles -lgcc
 ASFLAGS=
 
@@ -264,7 +283,7 @@ SBASE=user/third_party/sbase
 # kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
 # new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
 # bind mount (kernel/Signal.h == <signal.h> under -I, which broke the userland build).
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector $(UOPTFLAGS)
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
 # the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
@@ -534,7 +553,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # /src. (See docs/filesystem.md: /nanos/kext.)
 KEXT_CFLAGS=-ffreestanding -nostdlib -nostdinc++ --no-exceptions --no-rtti \
   -fno-sized-deallocation -fno-leading-underscore -fno-pic -fno-stack-protector \
-  -Iarch/include -Ikernel -Idrivers -Iinclude
+  -Iarch/include -Ikernel -Idrivers -Iinclude $(KOPTFLAGS)
 
 # Kernel import library for kexts, GENERATED from kexports.def (single source of truth): a
 # module links these thunks/slots (__imp_knx_* in section .nxlib.kernel), which mknx turns
@@ -578,7 +597,7 @@ _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 # code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
 # replaces the shipped backends. Built as the `doom` program in USER_PROGS.
 DOOM_DIR=user/third_party/doomgeneric
-DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector
+DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector $(UOPTFLAGS)
 DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
 
 # Per-object rules (with -MMD header tracking) so only CHANGED Doom sources recompile
