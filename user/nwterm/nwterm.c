@@ -19,7 +19,9 @@
 int setsid(void);
 int getpid(void);
 int ioctl(int fd, unsigned long request, ...);
-#define NWT_TIOCSPGRP 0x5410
+#define NWT_TIOCSPGRP   0x5410
+#define NWT_TIOCSWINSZ  0x5414           /* tell the pty its size so vim/bash size their screen */
+struct nwt_winsize { unsigned short row, col, xpixel, ypixel; };
 #include "nw_gfx.h"
 #include "vt.h"
 
@@ -27,6 +29,15 @@ int ioctl(int fd, unsigned long request, ...);
 #define CH NW_FONT_H
 
 static vt        T;
+
+/* Push the current grid geometry to the pty (TIOCSWINSZ), so a program reading TIOCGWINSZ on
+ * pts0 sees the real terminal size instead of the kernel's 80x24 default — otherwise vim renders
+ * at 80 columns inside our narrower grid and the text wraps/overflows the window. */
+static void set_pty_winsize(int fd)
+{
+	struct nwt_winsize ws = { (unsigned short) T.rows, (unsigned short) T.cols, 0, 0 };
+	ioctl(fd, NWT_TIOCSWINSZ, &ws);
+}
 static nw_win   *g_win;
 static int       g_master;
 static int       g_ctrl;
@@ -94,6 +105,7 @@ static void resize_to(int win_w, int win_h)
 	int cols = win_w / CW, rows = win_h / CH;
 	if (cols < 1) cols = 1; if (rows < 1) rows = 1;
 	vt_resize(&T, cols, rows);
+	if (g_master >= 0) set_pty_winsize(g_master);   /* keep the pty's size in step with the window */
 	struct nw_surface s; nw_win_surface(g_win, &s);
 	nw_fill_rect(&s, 0, 0, s.w, s.h, vt_pal(0));        /* repaint background, then all rows */
 	render();
@@ -104,6 +116,7 @@ static int spawn_shell(void)
 {
 	int master = open("/dev/ptmx", O_RDWR);
 	if (master < 0) return -1;
+	set_pty_winsize(master);             /* size the pty to our grid BEFORE the shell/vim starts */
 	/* Leave the pty in the kernel's default COOKED mode (ICANON|ECHO|ISIG, ICRNL, OPOST|ONLCR):
 	 * a terminal emulator must NOT force raw — that is the shell's job. With cooked+echo the kernel
 	 * line discipline echoes each typed character immediately (so input shows as you type) and the
