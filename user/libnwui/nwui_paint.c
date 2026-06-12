@@ -27,10 +27,14 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		break;
 	case NWUI_IMAGE:
 		if (n->img) {
+			/* Blit at the image's NATURAL size (pref_w/pref_h), not n->w/n->h — the column/row
+			 * layout may have stretched the node, and the pixel buffer is only pref_w*pref_h, so
+			 * using n->w as the stride/extent would read far past it (a crash). */
+			int iw = n->pref_w, ih = n->pref_h;
 			struct nw_surface src;
-			src.px = (uint32_t *) n->img; src.w = n->w; src.h = n->h; src.stride = n->w;
+			src.px = (uint32_t *) n->img; src.w = iw; src.h = ih; src.stride = iw;
 			nw_surface_noclip(&src);
-			nw_blit(s, n->x, n->y, &src, 0, 0, n->w, n->h);
+			nw_blit(s, n->x, n->y, &src, 0, 0, iw, ih);
 		}
 		break;
 	case NWUI_BUTTON: {
