@@ -95,8 +95,8 @@ externals:
 # Desktop artwork: convert the branded PNGs (NanOS wallpaper + logo) to NanOS's flat 32bpp surface
 # format on the host (needs python3 + Pillow), staged into bin/ where _image installs them under
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
-# both fall back gracefully if absent. Source PNGs default to .claude/ (override with ART_DIR=).
-ART_DIR ?= $(CURDIR)/.claude
+# both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
+ART_DIR ?= $(CURDIR)/assets
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
