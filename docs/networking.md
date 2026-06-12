@@ -208,7 +208,9 @@ Configuration is done by the **kernel at boot** — `Kernel.cpp` → `netBringUp
 - `lo`: 127.0.0.1/8.
 
 > A DHCP client was scoped (plan FAZA 10) but the static address is what actually runs — slirp
-> hands out a known range, so static is simplest. Real DHCP is a follow-up.
+> hands out a known range, so static is simplest. Real DHCP is a follow-up — **in progress** in
+> `docs/superpowers/plans/2026-06-12-net-dociagniecia.md` (FAZA F): busybox `udhcpc` over AF_PACKET,
+> with the static address kept as a loud fallback.
 
 Network config files live under `/etc` (a writable tmpfs the kernel populates at boot from
 `/disks/main/nanos/config/etc/`): `resolv.conf` (`nameserver 10.0.2.3`), `hosts`, `nsswitch.conf`,
@@ -295,7 +297,7 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 | Firewall/NAT | netfilter/iptables/nftables | **none** |
 | Routing | multiple tables, policy | one 16-entry longest-prefix table |
 | Namespaces/veth/bridge | yes | **none** (single namespace) |
-| AF_UNIX / AF_PACKET | full | AF_UNIX declared (ENOSYS), AF_PACKET partial |
+| AF_UNIX / AF_PACKET | full | both: constants in headers only — `socket()` returns `EAFNOSUPPORT` (`socketpair`: `ENOSYS`) |
 | Config | netlink, iproute2, DHCP client | static, set by the kernel at boot |
 | Resolver | glibc + nscd + netlink | musl-style stub in libc, IPv4-only |
 | `/proc/net` | full + writable sysctls | read-only, subset, format-compatible |
@@ -337,8 +339,9 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
   `netbufInUse()` back to baseline, i.e. no NetBuf leak and the pool is never exhausted). 499 tests,
   ~91% coverage; new net modules ≥90%.
 - **`make check-arch`**: fails if any x86 internal leaks into the MI `net/` code.
-- **pcap byte-compare** (`scripts/net-capture.sh`, `scripts/ping-qemu.sh`): headless QEMU with an
-  e1000 on slirp NAT + `filter-dump`; ARP/IP/ICMP/DNS/TCP frames are byte-compared against what a
+- **pcap field-compare** (`scripts/net-capture.sh`, `scripts/ping-qemu.sh`): headless QEMU with an
+  e1000 on slirp NAT + `filter-dump`; ARP/IP/ICMP/DNS/TCP frames are field-compared (with an explicit
+  mask of legitimately random fields — IP ID, ISN, ephemeral ports, DNS ID) against what a
   reference Linux emits for the same operation, and `cat /proc/net/*` is screendumped. The CPU
   interrupt log is grepped for fault vectors (`v=08` triple / `v=0d` #GP / `v=0e` #PF) — every gate
   requires zero.
@@ -349,6 +352,10 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 
 ## 13. Out of scope (future work)
 
-TLS/HTTPS (needs an OpenSSL/GnuTLS port), IPv6, TCP window scaling/SACK/timestamps, a real DHCP
-client, netfilter/firewalling, AF_UNIX/AF_PACKET completion, hardware offload, and more than 4
-concurrent TCP connections.
+TLS/HTTPS (needs an OpenSSL/GnuTLS port), IPv6, netfilter/firewalling, and hardware offload.
+
+> **Follow-up in progress** (`docs/superpowers/plans/2026-06-12-net-dociagniecia.md`): TCP window
+> scaling/SACK/timestamps, a real DHCP client, AF_UNIX/AF_PACKET, listening services
+> (inetd/telnetd/httpd), ICMP-error delivery to sockets, a fuller resolver (`/etc/services`,
+> search/ndots, PTR), and a larger TCB pool are all being implemented. This list will shrink as
+> those phases land.
