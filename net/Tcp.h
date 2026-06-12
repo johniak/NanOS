@@ -36,6 +36,7 @@ int  tcpConnect(Socket* s, uint32_t ip, uint16_t port); // active open (sends SY
 int  tcpSend(Socket* s, const void* buf, unsigned len); // queue bytes; returns accepted or -errno
 int  tcpRecv(Socket* s, void* buf, unsigned len, int flags);
 void tcpClose(Socket* s);                               // active close (FIN); orphans the TCB
+void tcpShutdown(Socket* s, int how);                   // shutdown(2): SHUT_WR sends FIN, keeps reading
 int  tcpListen(Socket* s, int backlog);
 Socket* tcpAccept(Socket* s, int* err);                 // dequeue a completed connection, or 0
 bool tcpReadable(Socket* s);                            // data available or peer closed

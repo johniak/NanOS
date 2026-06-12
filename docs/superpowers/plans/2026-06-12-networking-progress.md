@@ -15,7 +15,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 6 — ICMP | **DONE** | Icmp 100% | echo req/reply on wire (tcpdump) | n/a | round-trip to gw OK | — |
 | 7 — sockets + UDP + RAW (AF_PACKET→F10) | **DONE** | Socket/Udp/Raw ≥92% | UDP/ICMP byte-exact (host) | n/a | builds, wired | — |
 | 8 — TCP | **DONE** | Tcp 92.2% | full session w/ 1.1.1.1 (tcpdump) | n/a | clean boot, no faults | — |
-| 9 — socket syscall ABI | todo | | | | | |
+| 9 — socket syscall ABI | **DONE** | Syscall.cpp socket paths tested | ring-3 TCP session w/ 1.1.1.1 (tcpdump) | ABI matches strace | socktest from ring 3, no faults | — |
 | 10 — DHCP + iface bring-up | todo | | | | | |
 | 11 — DNS resolver (libc) | todo | | | | | |
 | 12 — SDK net headers | todo | | | | | |
@@ -245,3 +245,42 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   busy-wait) triggered a kernel-stack issue in *that task's* context (the production kthreads are
   fault-free). When socket syscalls run the net path on a process's syscall stack in FAZA 9,
   verify the kernel stack depth is sufficient for connect→ipOutput→ethSend→e1000-tx chains.
+
+## FAZA 9 — socket syscall ABI + fd integration (2026-06-12)
+
+- `kernel/Syscall.{h,cpp}`: a socket is now an fd-table backing (`Fd.sock`), so read→recv,
+  write→send, close→socketClose, poll→socketPoll, dup→socketRef and fork→socketRef all route to
+  it (Pipe-style refcount). New methods marshal the Linux i686 `sockaddr_in` ABI (family LE,
+  port+addr network order) and forward to the MI core: `sockSocket/Bind/Connect/ConnectResult/
+  Listen/Accept/Getsockopt/Setsockopt/Getsockname/Getpeername/Sendto/Recvfrom/Shutdown` + net
+  ioctls (`SIOCGIFADDR/SIOCSIFADDR/SIOCGIF{NETMASK,BRDADDR,FLAGS,HWADDR,MTU}`).
+- `kernel/SyscallDispatch.cpp`: a unified `socketOp` handles BOTH the `socketcall(2)` demux
+  (sub-calls 1..18, args read from the user array) AND the direct i386 syscalls (socket=359 …
+  shutdown=373), with event-driven blocking for connect/accept/recv (and `MSG_DONTWAIT`). Added
+  `_newselect(142)` via a poll-scan over the fd_sets, and routed `SIOC*` ioctls to the net layer.
+- Arch contract widened: `kernelSyscall` gains a 6th arg `a5` (x86: `ebp`) so direct
+  `sendto`/`recvfrom` (6-arg i386 syscalls) get their address-length — not a shortcut, the proper
+  ABI. `tcpShutdown` added for a real half-close (`shutdown(SHUT_WR)` sends FIN, keeps reading).
+- `net/Socket.cpp`: SOCK_STREAM now attaches a TCB and connect/send/recv/close/readable/writable
+  dispatch to TCP; `accept()` mints a new socket via a hook.
+- `tests/test_socketsys.cpp` (8 cases): socket/bind/getsockopt, UDP recvfrom via read() + source
+  sockaddr, UDP connect+write to the wire, TCP connect→EINPROGRESS→SYN-ACK→ESTABLISHED, dup
+  refcount, SIOCGIFADDR/HWADDR/MTU, EAFNOSUPPORT/ENOTSOCK paths. 488 host tests green, 91.0%
+  aggregate, check-arch clean.
+- **Kernel-layout root-cause fix (the watch-item from FAZA 8):** the net BSS (NetBuf + TCB pools)
+  had grown the kernel image to 3.22 MB, ending at 0x412f98 — **past the user window base
+  0x400000** — so a ring-3 program's pages collided with kernel globals (`g_useFb` @0x412cd0),
+  faulting on the first console write. Right-sized the pools to the <3 MiB low-memory budget
+  (NetBuf 128→96, TCP buffers 8K→4K, TCBs 8→4, msg kbuf 8K→4K): kernel now 3.03 MB, ends at
+  0x3e2f98 with ~120 KiB headroom. Functionality is unchanged for the target workload (ping/wget/
+  DNS use a few connections). **Note:** as the kernel grows in FAZY 10–14, raise the user window
+  base (0x400000→higher) for durable headroom rather than trimming further.
+- `netBringUp()` (static fallback: eth0 = 10.0.2.15, default via 10.0.2.2) wired at boot; FAZA 10
+  runs DHCP and only falls back here. `user/socktest.c` kept as a permanent ring-3 net diagnostic.
+- **QEMU verification (the no-shortcuts gate — ring 3 over the real ABI):** `socktest` (raw int
+  0x80 `socketcall`) ran as a process and TCP-connected to **1.1.1.1:80** over slirp; the pcap
+  shows the full session — `[S] mss 1460` → `[S.]` → `[.]` → `[P.] GET / HTTP/1.0` → server
+  `[.] ack 42` → `[P.] HTTP/1.1 301` → `[F.]` ↔ our `[F.]` — a complete handshake, HTTP exchange
+  and clean four-way close, **all driven from userland through the socket syscall ABI**. Zero
+  `v=08/0d/0e`. The strace-parity gate holds: socket→connect→send→recv→close matches the
+  inetutils/wget syscall shape captured in FAZA 0.

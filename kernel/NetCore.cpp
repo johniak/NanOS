@@ -15,6 +15,8 @@
 #include "Udp.h"
 #include "Raw.h"
 #include "Tcp.h"
+#include "Route.h"
+#include "Net.h"
 #include "WaitQueue.h"
 #include "Scheduler.h"
 #include "WaitQueue.h"
@@ -147,6 +149,18 @@ Task* netCoreInit() {
 
 // The periodic timer thread (id 3); the caller registers it as a kthread for /proc visibility.
 Task* netTimerThread() { return Scheduler::create(netTimerBody, 3); }
+
+// Interface bring-up: configure the primary NIC + default route. This is the STATIC fallback
+// (QEMU user-net's well-known addresses); FAZA 10 runs DHCP and only falls back here. Safe to
+// call once eth0 is registered (after the e1000 kext loads).
+void netBringUp() {
+	NetDevice* dev = netPrimary();
+	if (!dev) return;
+	dev->ip = ipv4(10, 0, 2, 15);
+	dev->netmask = ipv4(255, 255, 255, 0);
+	dev->broadcast = ipv4(10, 0, 2, 255);
+	routeAddDefault(dev, ipv4(10, 0, 2, 2));   // on-link 10.0.2.0/24 + default via the gateway
+}
 
 
 }  // namespace kernel

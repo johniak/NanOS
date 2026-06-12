@@ -26,7 +26,7 @@ void syscallTrap(kernel::Registers* r) {
 	arch::cpuEnableInterrupts();
 	unsigned origEax = r->eax;   // syscall number, saved before dispatch (for restart)
 	r->eax = (unsigned) kernel::kernelSyscall(r->eax, r->ebx, r->ecx, r->edx, r->esi, r->edi,
-			(arch::TrapFrame*) r);
+			r->ebp, (arch::TrapFrame*) r);
 	// If the process exited (SYS_exit set the flag), tear it down and schedule away.
 	// procExit does not return.
 	if (kernel::kernelSyscalls()->hasExited())

@@ -121,15 +121,15 @@ TEST_CASE("backlog overflow drops + bumps rxDropped, never blocks") {
 	// Pool (128) > backlog (64), so enqueue past the backlog depth must DROP (rxDropped++),
 	// not wedge — and the pool must not be exhausted first.
 	int queued = 0, dropped = 0;
-	for (int i = 0; i < 100; i++) {
+	for (int i = 0; i < 74; i++) {          // > backlog (64), < pool (96): backlog is the drop point
 		NetBuf* b = netbufAlloc();
-		REQUIRE(b);                         // pool is larger than backlog: alloc must succeed
+		REQUIRE(b);                         // pool is larger than the backlog: alloc must succeed
 		b->reserve(0); b->put(4); b->dev = &eth;
 		if (netifRx(b) == 0) queued++; else dropped++;
 	}
 	CHECK(queued == 64);                    // exactly the backlog depth
-	CHECK(dropped == 36);
-	CHECK(eth.rxDropped == 36);
+	CHECK(dropped == 10);
+	CHECK(eth.rxDropped == 10);
 	netReset();                             // drains the 64 queued buffers (covers reset-drain)
 	CHECK(netbufInUse() == 0);
 }

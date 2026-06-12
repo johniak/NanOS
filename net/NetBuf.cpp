@@ -2,12 +2,12 @@
 
 namespace kernel {
 
-// A fixed pool of packet buffers. 128 * 2 KiB = 256 KiB of static BSS — enough for the e1000
+// A fixed pool of packet buffers. 96 * 2 KiB = 192 KiB of static BSS — enough for the e1000
 // RX ring (a few dozen descriptors) plus in-flight TX/queued packets, with no heap churn on
 // the hot path. A singly-linked free list threads through the pool via a side index array
 // (we can't union the link into buf[] without risking aliasing the packet data).
 namespace {
-const int POOL_N = 128;
+const int POOL_N = 96;   // > backlog (64); sized to the kernel's <3 MiB low-memory budget
 NetBuf g_pool[POOL_N];
 int    g_freeNext[POOL_N];   // free-list links (index), -1 = end
 int    g_freeHead = -2;      // -2 = not yet initialised

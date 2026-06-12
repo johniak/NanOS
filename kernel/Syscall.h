@@ -27,6 +27,21 @@ namespace kernel {
 #define EPIPE 32
 #define ENOTDIR 20
 #define ERANGE 34
+// socket errnos (Linux i686 values)
+#define EACCES 13
+#define EMSGSIZE 90
+#define EPROTONOSUPPORT 93
+#define EOPNOTSUPP 95
+#define EAFNOSUPPORT 97
+#define EADDRINUSE 98
+#define ENETUNREACH 101
+#define ENOBUFS 105
+#define EISCONN 106
+#define ENOTCONN 107
+#define ECONNREFUSED 111
+#define EINPROGRESS 115
+#define ENOTSOCK 88
+#define ENXIO 6
 
 // poll(2) event/revent bits live in CharDevice.h (included above) — single source.
 struct PollFd { int fd; short events; short revents; };
@@ -51,6 +66,8 @@ struct PollFd { int fd; short events; short revents; };
 #define O_APPEND 0x400
 #define O_NONBLOCK 0x4000
 #define O_CLOEXEC 0x40000
+
+struct Socket;   // net/Socket.h — a socket fd's backing (FAZA 9)
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
@@ -84,6 +101,7 @@ class Syscalls {
 		bool cloexec;       // FD_CLOEXEC: close this fd on execve (fcntl F_SETFD / O_CLOEXEC)
 		Pipe* pipe;         // non-null => this fd is one end of a pipe
 		bool pipeWrite;     // which end (write end if true, read end otherwise)
+		Socket* sock;       // non-null => this fd is a socket (read/write/poll/close route to it)
 	};
 	static const int MAXFD = 128;   // per-process fd table (was an artificial 32; heap-backed)
 	Fd fds[MAXFD];
@@ -210,6 +228,24 @@ public:
 	// blocks inside arch::inputRead). Lets the dispatch sleep event-driven, not per tick.
 	WaitQueue* fdWaitQueue(int fd);
 	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
+
+	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
+	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).
+	int sockSocket(int domain, int type, int protocol);                 // new fd, or -errno
+	int sockBind(int fd, const void* sa, unsigned salen);
+	int sockConnect(int fd, const void* sa, unsigned salen);            // 0 / -EINPROGRESS (TCP) / -errno
+	int sockConnectResult(int fd);                                      // 0 done / -EINPROGRESS / -errno
+	int sockListen(int fd, int backlog);
+	int sockAccept(int fd, void* sa, unsigned* salen);                  // new fd, or -EAGAIN/-errno
+	int sockGetsockopt(int fd, int level, int name, void* val, unsigned* len);
+	int sockSetsockopt(int fd, int level, int name, const void* val, unsigned len);
+	int sockGetsockname(int fd, void* sa, unsigned* salen);
+	int sockGetpeername(int fd, void* sa, unsigned* salen);
+	int sockSendto(int fd, const void* buf, unsigned len, int flags, const void* sa, unsigned salen);
+	int sockRecvfrom(int fd, void* buf, unsigned len, int flags, void* sa, unsigned* salen);
+	int sockShutdown(int fd, int how);
+	bool isSocketFd(int fd) { return valid(fd) && fds[fd].sock != 0; }
+	int netIoctl(int fd, unsigned cmd, void* arg);                      // SIOCGIF*/SIOCADDRT/...
 	// Time. clockGettime fills `out` from a monotonic tick count (1000 Hz => ms); the
 	// dispatch supplies Scheduler::ticks(). nanosleepMs converts a requested timespec to
 	// the number of whole milliseconds to block (rounding up); the actual blocking loop

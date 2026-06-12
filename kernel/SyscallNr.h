@@ -96,6 +96,44 @@
 #define SYS_getsid 147
 #define SYS_poll 168
 #define SYS_reboot 88      /* power the machine off (arch::powerOff); does not return */
+#define SYS__newselect 142 /* select(2) on i386 (the "new" 5-arg form) */
+/* Sockets: the legacy socketcall(2) multiplexer + the modern direct calls (Linux >=4.3 i386).
+ * send/recv exist ONLY as socketcall sub-calls (9/10), never as direct i386 syscalls. */
+#define SYS_socketcall 102
+#define SYS_socket 359
+#define SYS_socketpair 360
+#define SYS_bind 361
+#define SYS_connect 362
+#define SYS_listen 363
+#define SYS_accept4 364
+#define SYS_getsockopt 365
+#define SYS_setsockopt 366
+#define SYS_getsockname 367
+#define SYS_getpeername 368
+#define SYS_sendto 369
+#define SYS_sendmsg 370
+#define SYS_recvfrom 371
+#define SYS_recvmsg 372
+#define SYS_shutdown 373
+/* socketcall sub-call numbers (the index in the (call, args*) pair). */
+#define SC_SOCKET 1
+#define SC_BIND 2
+#define SC_CONNECT 3
+#define SC_LISTEN 4
+#define SC_ACCEPT 5
+#define SC_GETSOCKNAME 6
+#define SC_GETPEERNAME 7
+#define SC_SOCKETPAIR 8
+#define SC_SEND 9
+#define SC_RECV 10
+#define SC_SENDTO 11
+#define SC_RECVFROM 12
+#define SC_SHUTDOWN 13
+#define SC_SETSOCKOPT 14
+#define SC_GETSOCKOPT 15
+#define SC_SENDMSG 16
+#define SC_RECVMSG 17
+#define SC_ACCEPT4 18
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with
  * a Linux number we might add later). */

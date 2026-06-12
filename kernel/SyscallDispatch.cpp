@@ -78,10 +78,166 @@ static int pollScanConsoleAware(Syscalls* g_sys, PollFd* pfds, int nfds) {
 	return n;
 }
 
+// ---- Sockets (FAZA 9) -------------------------------------------------------------------
+// One unified handler for both the socketcall(2) demux and the direct socket syscalls. A[0..5]
+// are the already-extracted arguments. Blocking (connect/accept/recv/send) is handled here,
+// event-driven on the socket's wait queue, exactly like the pipe read/write loops.
+
+static bool sockBlock(Syscalls* g, int fd, int* err) {
+	if (hasPendingSignalCurrent()) { *err = -ERESTARTSYS; return false; }
+	WaitQueue* wq = g->fdWaitQueue(fd);
+	if (wq) Scheduler::sleepOn(wq); else Scheduler::ioWait();
+	if (hasPendingSignalCurrent()) { *err = -ERESTARTSYS; return false; }
+	return true;
+}
+
+// Gather a user iovec[] into kdst (cap), or scatter from ksrc into it. Returns total bytes
+// moved. Bounded — fine for our datagram/stream uses (DNS/HTTP); larger is truncated honestly.
+static int iovGather(const unsigned* iov, unsigned iovlen, char* kdst, int cap) {
+	int total = 0;
+	for (unsigned i = 0; i < iovlen && total < cap; i++) {
+		const char* base = (const char*) iov[i * 2];
+		int len = (int) iov[i * 2 + 1];
+		for (int k = 0; k < len && total < cap; k++) kdst[total++] = base[k];
+	}
+	return total;
+}
+static void iovScatter(const unsigned* iov, unsigned iovlen, const char* ksrc, int n) {
+	int off = 0;
+	for (unsigned i = 0; i < iovlen && off < n; i++) {
+		char* base = (char*) iov[i * 2];
+		int len = (int) iov[i * 2 + 1];
+		for (int k = 0; k < len && off < n; k++) base[k] = ksrc[off++];
+	}
+}
+
+static int socketOp(Syscalls* g, int sub, const unsigned* A) {
+	int fd = (int) A[0];
+	switch (sub) {
+	case SC_SOCKET:
+		return g->sockSocket((int) A[0], (int) A[1], (int) A[2]);
+	case SC_BIND:
+		return g->sockBind(fd, (const void*) A[1], A[2]);
+	case SC_LISTEN:
+		return g->sockListen(fd, (int) A[1]);
+	case SC_SETSOCKOPT:
+		return g->sockSetsockopt(fd, (int) A[1], (int) A[2], (const void*) A[3], A[4]);
+	case SC_GETSOCKOPT:
+		return g->sockGetsockopt(fd, (int) A[1], (int) A[2], (void*) A[3], (unsigned*) A[4]);
+	case SC_GETSOCKNAME:
+		return g->sockGetsockname(fd, (void*) A[1], (unsigned*) A[2]);
+	case SC_GETPEERNAME:
+		return g->sockGetpeername(fd, (void*) A[1], (unsigned*) A[2]);
+	case SC_SHUTDOWN:
+		return g->sockShutdown(fd, (int) A[1]);
+	case SC_SOCKETPAIR:
+		return -38;   // -ENOSYS: AF_INET socketpair isn't meaningful; apps fall back
+	case SC_CONNECT: {
+		int r = g->sockConnect(fd, (const void*) A[1], A[2]);
+		if (r != -EINPROGRESS) return r;
+		if (g->nonblock(fd)) return -EINPROGRESS;
+		for (;;) {                                   // blocking connect: wait for the handshake
+			int cr = g->sockConnectResult(fd);
+			if (cr != -EINPROGRESS) return cr;
+			int e; if (!sockBlock(g, fd, &e)) return e;
+		}
+	}
+	case SC_ACCEPT:
+	case SC_ACCEPT4: {
+		for (;;) {
+			int r = g->sockAccept(fd, (void*) A[1], (unsigned*) A[2]);
+			if (r != -EAGAIN) return r;
+			if (g->nonblock(fd)) return -EAGAIN;
+			int e; if (!sockBlock(g, fd, &e)) return e;
+		}
+	}
+	case SC_SEND:
+		return g->sockSendto(fd, (const void*) A[1], A[2], (int) A[3], 0, 0);
+	case SC_SENDTO:
+		return g->sockSendto(fd, (const void*) A[1], A[2], (int) A[3], (const void*) A[4], A[5]);
+	case SC_RECV:
+	case SC_RECVFROM: {
+		void* sa = (sub == SC_RECVFROM) ? (void*) A[4] : 0;
+		unsigned* sl = (sub == SC_RECVFROM) ? (unsigned*) A[5] : 0;
+		int flags = (int) A[3];
+		for (;;) {
+			int r = g->sockRecvfrom(fd, (void*) A[1], A[2], flags, sa, sl);
+			if (r != -EAGAIN) return r;
+			if (g->nonblock(fd) || (flags & 0x40 /*MSG_DONTWAIT*/)) return -EAGAIN;
+			int e; if (!sockBlock(g, fd, &e)) return e;
+		}
+	}
+	case SC_SENDMSG: {
+		const unsigned* m = (const unsigned*) A[1];   // struct msghdr
+		if (!m) return -EINVAL;
+		static char kbuf[4096];
+		int n = iovGather((const unsigned*) m[2], m[3], kbuf, sizeof(kbuf));
+		return g->sockSendto(fd, kbuf, (unsigned) n, (int) A[2], (const void*) m[0], m[1]);
+	}
+	case SC_RECVMSG: {
+		unsigned* m = (unsigned*) A[1];
+		if (!m) return -EINVAL;
+		static char kbuf[4096];
+		int flags = (int) A[2];
+		for (;;) {
+			int n = g->sockRecvfrom(fd, kbuf, sizeof(kbuf), flags, (void*) m[0], (unsigned*) &m[1]);
+			if (n == -EAGAIN && !g->nonblock(fd) && !(flags & 0x40)) { int e; if (!sockBlock(g, fd, &e)) return e; continue; }
+			if (n < 0) return n;
+			iovScatter((const unsigned*) m[2], m[3], kbuf, n);
+			m[6] = 0;   // msg_flags
+			return n;
+		}
+	}
+	default:
+		return -38;   // -ENOSYS
+	}
+}
+
+// select(2) (i386 _newselect): convert the fd_sets to a poll scan, block with the timeout.
+static int doSelect(Syscalls* g, int nfds, unsigned* rfds, unsigned* wfds, unsigned* efds, unsigned* tv) {
+	if (nfds < 0) return -EINVAL;
+	if (nfds > 128) nfds = 128;     // our fd table is 128 wide
+	auto isset = [](unsigned* s, int fd) { return s && (s[fd / 32] & (1u << (fd % 32))); };
+	// Build a pollfd array from the requested sets.
+	PollFd pf[128]; int np = 0;
+	for (int fd = 0; fd < nfds; fd++) {
+		short ev = 0;
+		if (isset(rfds, fd)) ev |= POLLIN;
+		if (isset(wfds, fd)) ev |= POLLOUT;
+		if (isset(efds, fd)) ev |= POLLERR;
+		if (ev) { pf[np].fd = fd; pf[np].events = ev; pf[np].revents = 0; np++; }
+	}
+	// timeout (struct timeval{sec,usec} i386) in ms; null = block forever.
+	int timeoutMs = -1;
+	if (tv) timeoutMs = (int) (tv[0] * 1000u + (tv[1] + 999u) / 1000u);
+	unsigned start = Scheduler::ticks();
+	for (;;) {
+		int ready = pollScanConsoleAware(g, pf, np);
+		if (ready > 0 || timeoutMs == 0) {
+			// Rewrite the fd_sets to only the ready fds.
+			int words = (nfds + 31) / 32;
+			for (int w = 0; w < words; w++) { if (rfds) rfds[w] = 0; if (wfds) wfds[w] = 0; if (efds) efds[w] = 0; }
+			int count = 0;
+			for (int i = 0; i < np; i++) {
+				short re = pf[i].revents; int fd = pf[i].fd;
+				bool any = false;
+				if (rfds && (re & POLLIN))  { rfds[fd/32] |= 1u << (fd%32); any = true; }
+				if (wfds && (re & POLLOUT)) { wfds[fd/32] |= 1u << (fd%32); any = true; }
+				if (efds && (re & (POLLERR|POLLHUP))) { efds[fd/32] |= 1u << (fd%32); any = true; }
+				if (any) count++;
+			}
+			return count;
+		}
+		if (hasPendingSignalCurrent()) return -ERESTARTSYS;
+		if (timeoutMs > 0 && Scheduler::ticks() - start >= (unsigned) timeoutMs) return 0;
+		Scheduler::ioWait();
+	}
+}
+
 // MI syscall dispatch: map a syscall number + args to the Syscalls core. The
 // arch trap (int 0x80 on x86) decodes registers and calls this.
 int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, unsigned a4,
-		arch::TrapFrame* tf) {
+		unsigned a5, arch::TrapFrame* tf) {
 	int ret = -38;   // -ENOSYS
 	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
 	switch (nr) {
@@ -222,6 +378,35 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		}
 		break;
 	}
+	case SYS__newselect:
+		// a0=nfds, a1=readfds*, a2=writefds*, a3=exceptfds*, a4=timeval* (NULL = block forever).
+		ret = doSelect(g_sys, (int) a0, (unsigned*) a1, (unsigned*) a2, (unsigned*) a3, (unsigned*) a4);
+		break;
+	case SYS_socketcall: {
+		// a0 = sub-call number, a1 = pointer to its argument array (each entry is 4 bytes).
+		const unsigned* uargs = (const unsigned*) a1;
+		if (!uargs) { ret = -EINVAL; break; }
+		unsigned A[6] = {0,0,0,0,0,0};
+		for (int i = 0; i < 6; i++) A[i] = uargs[i];   // over-reads are harmless (page-resident args)
+		ret = socketOp(g_sys, (int) a0, A);
+		break;
+	}
+	// Direct socket syscalls (Linux >=4.3 i386). a5 (ebp) carries the 6th arg for sendto/recvfrom.
+	case SYS_socket:      { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_SOCKET, A); break; }
+	case SYS_bind:        { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_BIND, A); break; }
+	case SYS_connect:     { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_CONNECT, A); break; }
+	case SYS_listen:      { unsigned A[6] = {a0,a1,0,0,0,0};       ret = socketOp(g_sys, SC_LISTEN, A); break; }
+	case SYS_accept4:     { unsigned A[6] = {a0,a1,a2,a3,0,0};     ret = socketOp(g_sys, SC_ACCEPT4, A); break; }
+	case SYS_getsockname: { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_GETSOCKNAME, A); break; }
+	case SYS_getpeername: { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_GETPEERNAME, A); break; }
+	case SYS_socketpair:  { unsigned A[6] = {a0,a1,a2,a3,0,0};     ret = socketOp(g_sys, SC_SOCKETPAIR, A); break; }
+	case SYS_setsockopt:  { unsigned A[6] = {a0,a1,a2,a3,a4,0};    ret = socketOp(g_sys, SC_SETSOCKOPT, A); break; }
+	case SYS_getsockopt:  { unsigned A[6] = {a0,a1,a2,a3,a4,0};    ret = socketOp(g_sys, SC_GETSOCKOPT, A); break; }
+	case SYS_sendto:      { unsigned A[6] = {a0,a1,a2,a3,a4,a5};   ret = socketOp(g_sys, SC_SENDTO, A); break; }
+	case SYS_recvfrom:    { unsigned A[6] = {a0,a1,a2,a3,a4,a5};   ret = socketOp(g_sys, SC_RECVFROM, A); break; }
+	case SYS_sendmsg:     { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_SENDMSG, A); break; }
+	case SYS_recvmsg:     { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_RECVMSG, A); break; }
+	case SYS_shutdown:    { unsigned A[6] = {a0,a1,0,0,0,0};       ret = socketOp(g_sys, SC_SHUTDOWN, A); break; }
 	case SYS_open:
 		ret = g_sys->open(String((char*) a0), a1);
 		break;
@@ -391,6 +576,11 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->getdents64(a0, (void*) a1, a2);
 		break;
 	case SYS_ioctl:
+		// Network interface ioctls (SIOC*, 0x89xx) on a socket fd -> the net layer (ifconfig/DHCP).
+		if (a1 >= 0x8900 && a1 <= 0x89ff && g_sys->isSocketFd((int) a0)) {
+			ret = g_sys->netIoctl((int) a0, a1, (void*) a2);
+			break;
+		}
 		// The console's foreground-process-group ioctls (tcgetpgrp/tcsetpgrp) are job-control
 		// state of the physical terminal, not of any one fd-table -> handled here against the
 		// kernel singleton (Syscalls::ioctl would only -EINVAL them). This makes the console a

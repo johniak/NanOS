@@ -4,6 +4,11 @@
 #include "Termios.h"
 #include "Clock.h"
 #include "Scheduler.h"
+#include "Socket.h"     // FAZA 9: socket fd backing + the socket API
+#include "Tcp.h"        // tcpListen/tcpAccept/tcpState for listen()/accept()
+#include "Net.h"        // hton/ntoh + ipv4() for sockaddr marshalling
+#include "NetDevice.h"  // net ioctls (SIOCGIF*)
+#include "Route.h"      // SIOCADDRT
 #include <arch/input.h>
 
 namespace kernel {
@@ -51,6 +56,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].cloexec = false;
 		fds[i].pipe = 0;
 		fds[i].pipeWrite = false;
+		fds[i].sock = 0;
 	}
 	// fd 0,1,2 = stdin/stdout/stderr -> console.
 	for (int i = 0; i < 3; i++) {
@@ -78,6 +84,8 @@ Syscalls::Syscalls(const Syscalls& o) {
 			if (fds[i].pipeWrite) fds[i].pipe->addWriter();
 			else fds[i].pipe->addReader();
 		}
+		if (fds[i].used && fds[i].sock)      // fork shares the socket (refcount, like a pipe end)
+			socketRef(fds[i].sock);
 	}
 }
 
@@ -85,7 +93,7 @@ Syscalls::Syscalls(const Syscalls& o) {
 // zero) — this is what lets a reader see EOF once the last writing process is gone.
 Syscalls::~Syscalls() {
 	for (int i = 0; i < MAXFD; i++)
-		if (fds[i].used && fds[i].pipe)
+		if (fds[i].used && (fds[i].pipe || fds[i].sock))
 			close(i);
 }
 
@@ -155,6 +163,10 @@ int Syscalls::close(int fd, bool* freedShared) {
 		fds[fd].pipe = 0;
 		fds[fd].pipeWrite = false;
 	}
+	if (fds[fd].sock) {                       // drop this socket reference (frees at the last close)
+		socketClose(fds[fd].sock);
+		fds[fd].sock = 0;
+	}
 	fds[fd].used = false;
 	fds[fd].isConsole = false;
 	fds[fd].cloexec = false;
@@ -191,10 +203,13 @@ void Syscalls::shareInto(int dst, int src) {
 	fds[dst].cloexec = false;   // a dup'd fd never inherits FD_CLOEXEC (POSIX); F_DUPFD_CLOEXEC sets it after
 	fds[dst].pipe = fds[src].pipe;
 	fds[dst].pipeWrite = fds[src].pipeWrite;
+	fds[dst].sock = fds[src].sock;
 	if (fds[dst].pipe) {
 		if (fds[dst].pipeWrite) fds[dst].pipe->addWriter();
 		else fds[dst].pipe->addReader();
 	}
+	if (fds[dst].sock)               // dup shares the socket (refcount)
+		socketRef(fds[dst].sock);
 }
 
 int Syscalls::pipe(int out[2]) {
@@ -247,6 +262,7 @@ bool Syscalls::fdReadable(int fd) {
 
 WaitQueue* Syscalls::fdWaitQueue(int fd) {
 	if (!valid(fd)) return 0;
+	if (fds[fd].sock) return &fds[fd].sock->rxWait;   // blocked recv/accept/connect park here
 	if (fds[fd].pipe) return fds[fd].pipe->waitQueue();
 	if (fds[fd].isConsole) return 0;          // console blocks inside arch::inputRead, not here
 	return vfs->waitQueueAt(fds[fd].path);    // a char device (pty) exposes its queue; else 0
@@ -272,6 +288,10 @@ int Syscalls::pollScan(PollFd* pfds, int nfds) {
 		}
 		if (!valid(fd)) {
 			re = POLLNVAL;
+		} else if (fds[fd].sock) {
+			int se = socketPoll(fds[fd].sock);   // POLLIN/POLLOUT/POLLERR (CharDevice.h values match)
+			re |= (short) (se & ev);
+			if (se & POLLERR) re |= POLLERR;
 		} else if (fds[fd].pipe) {
 			Pipe* p = fds[fd].pipe;
 			if (!fds[fd].pipeWrite) {
@@ -298,6 +318,8 @@ int Syscalls::pollScan(PollFd* pfds, int nfds) {
 int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].sock)                         // recv on a socket (TCP byte stream / UDP datagram)
+		return socketRecvFrom(fds[fd].sock, buf, n, 0, 0, 0);
 	if (fds[fd].pipe) {                       // read end of a pipe
 		if (fds[fd].pipeWrite)
 			return -EBADF;                    // can't read the write end
@@ -320,6 +342,8 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 int Syscalls::write(int fd, const void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].sock)                         // send on a socket (must be connected, like write(2))
+		return socketSendTo(fds[fd].sock, buf, n, 0, 0);
 	if (fds[fd].pipe) {                       // write end of a pipe
 		if (!fds[fd].pipeWrite)
 			return -EBADF;
@@ -930,6 +954,192 @@ unsigned Syscalls::nanosleepMs(const KTimespec* req) {
 	// Round the sub-millisecond remainder up: a request for <1 ms still sleeps a tick.
 	unsigned ms = (unsigned) sec * 1000u + (unsigned) ((nsec + 999999) / 1000000);
 	return ms;
+}
+
+// ============================================================================
+// Sockets (FAZA 9). The socket lives in the fd table; these marshal the Linux i686 sockaddr_in
+// ABI (family LE, port + addr network order) and forward to the MI socket/UDP/RAW/TCP core.
+// ============================================================================
+namespace {
+const int SA_AF_INET = 2;
+// Parse a sockaddr_in -> host-order ip/port. Returns the family, or -1 if too short.
+int parseSockaddr(const void* sa, unsigned salen, uint32_t* ip, uint16_t* port) {
+	if (!sa || salen < 8) return -1;
+	const unsigned char* p = (const unsigned char*) sa;
+	int fam = p[0] | (p[1] << 8);
+	if (port) *port = rd16be(p + 2);
+	if (ip)   *ip   = rd32be(p + 4);
+	return fam;
+}
+// Write a sockaddr_in (16 bytes) into sa, capped to *salen, and report the full size back.
+void writeSockaddr(void* sa, unsigned* salen, uint32_t ip, uint16_t port) {
+	if (!sa) { if (salen) *salen = 16; return; }
+	unsigned char tmp[16];
+	memset(tmp, 0, sizeof(tmp));
+	tmp[0] = SA_AF_INET; tmp[1] = 0;
+	wr16be(tmp + 2, port);
+	wr32be(tmp + 4, ip);
+	unsigned cap = salen ? *salen : 16;
+	unsigned n = cap < 16 ? cap : 16;
+	memcpy(sa, tmp, n);
+	if (salen) *salen = 16;   // Linux reports the untruncated length
+}
+}  // namespace
+
+// Install socket `s` into a fresh fd, honoring SOCK_CLOEXEC(0x80000)/SOCK_NONBLOCK(0x800).
+
+int Syscalls::sockSocket(int domain, int type, int protocol) {
+	int base = type & 0xff;                       // strip SOCK_CLOEXEC/SOCK_NONBLOCK
+	int err = 0;
+	Socket* s = socketCreate(domain, base, protocol, &err);
+	if (!s) return err;
+	int fd = allocFd(0);
+	if (fd < 0) { socketClose(s); return fd; }
+	fds[fd].used = true; fds[fd].isConsole = false; fds[fd].pipe = 0; fds[fd].pipeWrite = false;
+	fds[fd].sock = s; fds[fd].path = String(); fds[fd].offset = 0; fds[fd].size = 0;
+	fds[fd].flags = 0; fds[fd].cloexec = (type & 0x80000) != 0;
+	if (type & 0x800) fds[fd].flags |= O_NONBLOCK;
+	return fd;
+}
+
+int Syscalls::sockBind(int fd, const void* sa, unsigned salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	uint32_t ip; uint16_t port;
+	if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT;
+	return socketBind(fds[fd].sock, ip, port);
+}
+
+int Syscalls::sockConnect(int fd, const void* sa, unsigned salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	uint32_t ip; uint16_t port;
+	if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT;
+	int r = socketConnect(fds[fd].sock, ip, port);
+	if (r < 0) return r;
+	if (fds[fd].sock->type == SOCK_STREAM) return -EINPROGRESS;   // handshake started; dispatch blocks
+	return 0;                                                     // UDP/RAW connect is immediate
+}
+
+int Syscalls::sockConnectResult(int fd) {
+	if (!isSocketFd(fd)) return -EBADF;
+	Socket* s = fds[fd].sock;
+	if (s->type != SOCK_STREAM) return 0;
+	int st = tcpState(s);
+	if (st == TCP_ESTABLISHED) return 0;
+	if (st == TCP_CLOSED) return s->soError ? -s->soError : -ECONNREFUSED;
+	return -EINPROGRESS;
+}
+
+int Syscalls::sockListen(int fd, int backlog) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	if (fds[fd].sock->type != SOCK_STREAM) return -EOPNOTSUPP;
+	return tcpListen(fds[fd].sock, backlog);
+}
+
+int Syscalls::sockAccept(int fd, void* sa, unsigned* salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	int err = 0;
+	Socket* ns = tcpAccept(fds[fd].sock, &err);
+	if (!ns) return err;                          // -EAGAIN if none waiting (dispatch blocks)
+	int nfd = allocFd(0);
+	if (nfd < 0) { socketClose(ns); return nfd; }
+	fds[nfd].used = true; fds[nfd].isConsole = false; fds[nfd].pipe = 0; fds[nfd].pipeWrite = false;
+	fds[nfd].sock = ns; fds[nfd].path = String(); fds[nfd].offset = 0; fds[nfd].size = 0;
+	fds[nfd].flags = 0; fds[nfd].cloexec = false;
+	if (sa) { uint32_t ip; uint16_t port; socketGetPeerName(ns, &ip, &port); writeSockaddr(sa, salen, ip, port); }
+	return nfd;
+}
+
+int Syscalls::sockGetsockopt(int fd, int level, int name, void* val, unsigned* len) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	return socketGetOpt(fds[fd].sock, level, name, val, len);
+}
+int Syscalls::sockSetsockopt(int fd, int level, int name, const void* val, unsigned len) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	return socketSetOpt(fds[fd].sock, level, name, val, len);
+}
+int Syscalls::sockGetsockname(int fd, void* sa, unsigned* salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	uint32_t ip; uint16_t port; socketGetSockName(fds[fd].sock, &ip, &port);
+	writeSockaddr(sa, salen, ip, port);
+	return 0;
+}
+int Syscalls::sockGetpeername(int fd, void* sa, unsigned* salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	uint32_t ip; uint16_t port;
+	int r = socketGetPeerName(fds[fd].sock, &ip, &port);
+	if (r < 0) return r;
+	writeSockaddr(sa, salen, ip, port);
+	return 0;
+}
+
+int Syscalls::sockSendto(int fd, const void* buf, unsigned len, int /*flags*/, const void* sa, unsigned salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	uint32_t ip = 0; uint16_t port = 0;
+	if (sa) { if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT; }
+	return socketSendTo(fds[fd].sock, buf, len, ip, port);
+}
+
+int Syscalls::sockRecvfrom(int fd, void* buf, unsigned len, int flags, void* sa, unsigned* salen) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	uint32_t ip = 0; uint16_t port = 0;
+	int n = socketRecvFrom(fds[fd].sock, buf, len, &ip, &port, flags);
+	if (n >= 0 && sa) writeSockaddr(sa, salen, ip, port);
+	return n;
+}
+
+int Syscalls::sockShutdown(int fd, int how) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	if (fds[fd].sock->type == SOCK_STREAM) tcpShutdown(fds[fd].sock, how);
+	return 0;
+}
+
+// Network ioctls on a socket fd (Linux SIOC*). `arg` is a struct ifreq: char name[16] then a
+// union at offset 16 (sockaddr_in / short flags / int mtu / sockaddr hwaddr).
+int Syscalls::netIoctl(int fd, unsigned cmd, void* arg) {
+	if (!isSocketFd(fd)) return -ENOTSOCK;
+	if (!arg) return -EINVAL;
+	unsigned char* ifr = (unsigned char*) arg;
+	char name[16]; for (int i = 0; i < 16; i++) name[i] = (char) ifr[i];
+	name[15] = 0;
+	NetDevice* dev = netByName(name);
+	unsigned char* u = ifr + 16;   // the union
+	switch (cmd) {
+	case 0x8915:  // SIOCGIFADDR
+		if (!dev) return -ENXIO;
+		{ unsigned l = 16; writeSockaddr(u, &l, dev->ip, 0); } return 0;
+	case 0x8916:  // SIOCSIFADDR
+		if (!dev) return -ENXIO;
+		{ uint32_t ip; uint16_t p; if (parseSockaddr(u, 16, &ip, &p) != SA_AF_INET) return -EAFNOSUPPORT;
+		  dev->ip = ip; if (!dev->broadcast) dev->broadcast = (ip & dev->netmask) | ~dev->netmask; } return 0;
+	case 0x891b:  // SIOCSIFNETMASK
+		if (!dev) return -ENXIO;
+		{ uint32_t m; uint16_t p; if (parseSockaddr(u, 16, &m, &p) != SA_AF_INET) return -EAFNOSUPPORT;
+		  dev->netmask = m; dev->broadcast = (dev->ip & m) | ~m; } return 0;
+	case 0x891a:  // SIOCGIFNETMASK
+		if (!dev) return -ENXIO;
+		{ unsigned l = 16; writeSockaddr(u, &l, dev->netmask, 0); } return 0;
+	case 0x8919:  // SIOCGIFBRDADDR
+		if (!dev) return -ENXIO;
+		{ unsigned l = 16; writeSockaddr(u, &l, dev->broadcast, 0); } return 0;
+	case 0x8913:  // SIOCGIFFLAGS
+		if (!dev) return -ENXIO;
+		{ unsigned short fl = 0;
+		  if (dev->flags & NETIF_UP) fl |= 0x1;            // IFF_UP
+		  if (dev->flags & NETIF_BROADCAST) fl |= 0x2;     // IFF_BROADCAST
+		  if (dev->flags & NETIF_LOOPBACK) fl |= 0x8;      // IFF_LOOPBACK
+		  if (dev->flags & NETIF_RUNNING) fl |= 0x40;      // IFF_RUNNING
+		  u[0] = (unsigned char) fl; u[1] = (unsigned char) (fl >> 8); } return 0;
+	case 0x8927:  // SIOCGIFHWADDR -> sa_family ARPHRD_ETHER(1) + 6 MAC bytes
+		if (!dev) return -ENXIO;
+		u[0] = 1; u[1] = 0; for (int i = 0; i < 6; i++) u[2 + i] = dev->mac[i]; return 0;
+	case 0x8921:  // SIOCGIFMTU
+		if (!dev) return -ENXIO;
+		{ int m = dev->mtu; u[0]=m&0xff; u[1]=(m>>8)&0xff; u[2]=(m>>16)&0xff; u[3]=(m>>24)&0xff; } return 0;
+	case 0x890b:  // SIOCADDRT (add route) — ifr is actually struct rtentry; handled minimally
+		return 0;
+	default:
+		return -EINVAL;
+	}
 }
 
 } /* namespace kernel */

@@ -13,11 +13,11 @@ namespace kernel {
 
 namespace {
 
-const int SNDBUF = 8192;
-const int RCVBUF = 8192;
+const int SNDBUF = 4096;
+const int RCVBUF = 4096;
 const int MSS_MAX = 1460;
 const int OOO_N = 4;            // out-of-order pending segments
-const int TCB_N = 8;
+const int TCB_N = 4;           // concurrent TCP connections (sized to the kernel BSS budget)
 const int ACCEPT_N = 8;        // pending accept queue per listener
 
 // Timer constants (ticks == ms; the net-timer thread calls tcpTick).
@@ -485,6 +485,23 @@ void tcpClose(Socket* s) {
 	default:
 		t->state = TCP_CLOSED; tcbFree(t);
 		break;
+	}
+}
+
+// shutdown(2): SHUT_WR (1) / SHUT_RDWR (2) send our FIN but — unlike close() — keep the TCB
+// attached so the app can still read. SHUT_RD (0) is a no-op (we just stop being a reader).
+void tcpShutdown(Socket* s, int how) {
+	if (!s || !s->tcp || how == 0) return;
+	Tcb* t = (Tcb*) s->tcp;
+	if (t->finSent) return;
+	if (t->state == TCP_ESTABLISHED) {
+		t->finSeq = t->snd_nxt;
+		sendSeg(t, TCP_ACK | TCP_FIN, t->snd_nxt, 0, 0);
+		t->snd_nxt += 1; t->finSent = true; t->state = TCP_FIN_WAIT_1; armRto(t);
+	} else if (t->state == TCP_CLOSE_WAIT) {
+		t->finSeq = t->snd_nxt;
+		sendSeg(t, TCP_ACK | TCP_FIN, t->snd_nxt, 0, 0);
+		t->snd_nxt += 1; t->finSent = true; t->state = TCP_LAST_ACK; armRto(t);
 	}
 }
 

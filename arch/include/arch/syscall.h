@@ -17,7 +17,7 @@ namespace kernel {
 // syscalls that rewrite the caller's frame (execve) or fork it. Defined in
 // kernel/SyscallDispatch.cpp.
 int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, unsigned a4,
-		arch::TrapFrame* tf);
+		unsigned a5, arch::TrapFrame* tf);   // a5 (x86: ebp) is the 6th arg for sendto/recvfrom
 }
 
 namespace arch {

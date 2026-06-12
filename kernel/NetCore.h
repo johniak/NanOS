@@ -17,4 +17,7 @@ Task* netCoreInit();
 // The periodic protocol-timer thread (TCP RTO/TIME-WAIT, ARP/IP-reasm aging). Register as a kthread.
 Task* netTimerThread();
 
+// Configure the primary interface + default route (static fallback; FAZA 10 adds DHCP).
+void netBringUp();
+
 }  // namespace kernel

@@ -338,6 +338,7 @@ void Kernel::start() {
 	// driver hooks. Any frames the e1000 already queued during kext load drain on its first run.
 	registerKthread(netCoreInit(), "ksoftirqd-net");
 	registerKthread(netTimerThread(), "net-timer");
+	netBringUp();   // configure eth0 + default route (static fallback; DHCP in FAZA 10)
 	arch::archTimerInit(1000);
 	okEnd();
 	Scheduler::start();
