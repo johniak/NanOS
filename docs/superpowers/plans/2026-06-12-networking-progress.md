@@ -17,8 +17,8 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 8 — TCP | **DONE** | Tcp 92.2% | full session w/ 1.1.1.1 (tcpdump) | n/a | clean boot, no faults | — |
 | 9 — socket syscall ABI | **DONE** | Syscall.cpp socket paths tested | ring-3 TCP session w/ 1.1.1.1 (tcpdump) | ABI matches strace | socktest from ring 3, no faults | — |
 | 10 — iface bring-up + /etc (DHCP→follow-up) | **DONE** | n/a (boot/image) | **ping wp.pl on the wire** (tcpdump) | n/a | DNS+ICMP to wp.pl OK, no faults | — |
-| 11 — DNS resolver (libc) | todo | | | | | |
-| 12 — SDK net headers | todo | | | | | |
+| 11 — DNS resolver (libc) | **DONE** | n/a (userland) | getaddrinfo(wp.pl) on the wire | matches glibc stub | nettest resolves wp.pl | — |
+| 12 — net headers + libc socket glue | **DONE** | n/a (userland) | TCP to wp.pl via POSIX API | n/a | nettest: getaddrinfo+BSD OK | — |
 | 13 — ping + wget | todo | | | | | |
 | 14 — /proc/net + hardening | todo | | | | | |
 
@@ -322,3 +322,31 @@ networking, so this needs the sysroot net headers (`<sys/socket.h>`, `<netinet/*
 (`getaddrinfo`) — then `inetutils` ping is a configure+make port (like grep/vim). The kernel +
 syscall ABI are complete and internet-proven; FAZA 11–13 is SDK/userland packaging of the same
 syscalls `pingtest` already drives.
+
+## FAZA 11 + 12 — libc networking surface (DNS resolver + headers + socket glue) (2026-06-12)
+
+The SDK uses picolibc, which ships NO networking — so this adds the whole network library to
+libc.ndl + the sysroot headers, the foundation precompiled-style Linux net apps link against.
+
+- **Headers (`user/libc-glue/include/`, Linux i686 layouts):** `sys/socket.h` (sockaddr/
+  sockaddr_storage/iovec/msghdr/cmsghdr, AF_*/SOCK_*/SOL_SOCKET/SO_*/MSG_*/SHUT_*, the call
+  decls), `netinet/in.h` (sockaddr_in 16 B, in_addr, INADDR_*/IPPROTO_*, htons/htonl), `arpa/inet.h`
+  (inet_pton/ntop/aton/addr/ntoa — augments picolibc's macro-only one), `netdb.h` (addrinfo/
+  hostent glibc layout, getaddrinfo/gethostbyname, EAI_*/AI_*), `netinet/tcp.h`.
+- **Socket glue (`user/libc-glue/sockets.c` → libc.ndl):** every BSD call (socket/bind/connect/
+  listen/accept[4]/get{sock,peer}name/get/setsockopt/send/recv/sendto/recvfrom/sendmsg/recvmsg/
+  shutdown) over the socketcall(2) int-0x80 ABI, plus inet_pton/ntop/aton/addr/ntoa. (select is
+  in syscalls.c.) Renamed off `net.c` to dodge the macOS case-insensitive `bin/net.o`↔`bin/Net.o`
+  collision with the kernel's `net/Net.cpp`.
+- **Stub resolver (`user/libc-glue/resolv.c` → libc.ndl, FAZA 11):** getaddrinfo / gethostbyname /
+  getnameinfo / freeaddrinfo / gai_strerror. Numeric → `/etc/hosts` → DNS over UDP/53 (nameserver
+  from `/etc/resolv.conf`, fallback 10.0.2.3), with DNS name-compression handling in the answer —
+  the glibc stub path minus netlink/nscd. IPv4-only: `getaddrinfo(AF_INET6)` → EAI_NODATA.
+- **QEMU verification — through the REAL POSIX API on the real internet (pcap + console):**
+  `nettest.nxe` calls `getaddrinfo("wp.pl","80")` then `socket()/connect()/send()/recv()`. pcap:
+  `A? wp.pl → A 212.77.98.9` then a full TCP fetch (`GET / HTTP/1.0` → `HTTP/1.1 301`); console:
+  `getaddrinfo(wp.pl) -> 212.77.98.9:80` / `connected` / `HTTP reply: HTTP/1.1 301 Moved
+  Permanently  <-- getaddrinfo + BSD sockets OK`. Zero `v=08/0d/0e`. 488 host tests still green.
+- **FAZA 13 (real GNU ping/wget) is now a port, not new code:** sync these headers + the updated
+  `libc.ndl.a` into the nanos-sdk sysroot, then `configure && make` inetutils — the API surface
+  (`getaddrinfo` + BSD sockets, verified above) is exactly what they expect.
