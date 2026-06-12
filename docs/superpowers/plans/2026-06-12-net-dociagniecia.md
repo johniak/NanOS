@@ -171,7 +171,7 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
   odbiorze (mamy bufor OOO — bloki z niego); na nadawcy parsuj SACK i nie retransmituj
   zSACKowanych segmentów przy fast-retransmit. Test: zguba środkowego segmentu → nasz ACK
   niesie poprawny blok SACK (pole-po-polu); nadawca z SACK retransmituje TYLKO dziurę.
-- [ ] **D4. Delayed ACK:** ACK opóźniony do 40 ms lub natychmiast przy drugim pełnym MSS /
+- [x] **D4. Delayed ACK:** ACK opóźniony do 40 ms lub natychmiast przy drugim pełnym MSS /
   pustym oknie / FIN (heurystyka Linuksa). Sterowany z `tcpTick` (50 ms tick wystarcza: jeden
   tick opóźnienia). Test: pojedynczy segment → ACK dopiero po ticku; dwa segmenty → ACK od razu.
 - [ ] **D5. Persist timer (zero-window probe):** gdy okno peera = 0 i mamy dane — probe 1 B

@@ -256,3 +256,45 @@ TEST_CASE("SACK: a fast retransmit is bounded at the SACKed edge (only the hole 
 	CHECK(rx.plen == 3);                            // ... and stops at the SACKed edge (3 B, not 9)
 	socketClose(s);
 }
+
+// Establish a plain connection (MSS only, no TS/SACK) and return (lport, our snd seq, rcv base).
+static void establishPlain(Socket* s, uint32_t peer, uint16_t* lport, uint32_t* rcvBase) {
+	REQUIRE(socketConnect(s, peer, 80) == 0);
+	OptSeg syn; REQUIRE(parseCap(&syn));
+	*lport = syn.sport; uint32_t iss = syn.seq; uint32_t pseq = 0x60000;
+	clearCap();
+	unsigned char sa[]={2,4,0x05,0xB4};             // MSS only (4 bytes, 4-aligned)
+	feedOpt(peer, 80, *lport, pseq, iss+1, TCP_SYN|TCP_ACK, 4096, sa, sizeof sa, nullptr, 0);
+	REQUIRE(tcpState(s) == TCP_ESTABLISHED);
+	*rcvBase = pseq + 1;
+	clearCap();
+}
+
+TEST_CASE("delayed ACK: a lone in-order segment is acked by the timer, not immediately") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	uint16_t lport; uint32_t base; establishPlain(s, peer, &lport, &base);
+
+	feedOpt(peer, 80, lport, base, 0, TCP_ACK, 4096, nullptr, 0, (const unsigned char*)"AAA", 3);
+	CHECK(g_capCount == 0);                         // no immediate ACK for a single segment
+	g_now += 50; tcpTick(g_now);                    // timer fires -> delayed ACK
+	OptSeg ack; REQUIRE(parseCap(&ack));
+	CHECK((ack.flags & TCP_ACK) != 0);
+	CHECK(ack.ack == base+3);
+	socketClose(s);
+}
+
+TEST_CASE("delayed ACK: the second in-order segment is acked immediately") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	uint16_t lport; uint32_t base; establishPlain(s, peer, &lport, &base);
+
+	feedOpt(peer, 80, lport, base,   0, TCP_ACK, 4096, nullptr, 0, (const unsigned char*)"AAA", 3);
+	CHECK(g_capCount == 0);                         // first segment: delayed
+	feedOpt(peer, 80, lport, base+3, 0, TCP_ACK, 4096, nullptr, 0, (const unsigned char*)"BBB", 3);
+	OptSeg ack; REQUIRE(parseCap(&ack));            // second segment: immediate ACK
+	CHECK(ack.ack == base+6);
+	socketClose(s);
+}

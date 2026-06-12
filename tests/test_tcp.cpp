@@ -140,6 +140,9 @@ TEST_CASE("data receive: in-order segment delivered + ACKed") {
 	Conn c=establish(peer, 80);
 	const char* resp="HTTP/1.0 200 OK\r\n";
 	feedTcp(peer, 80, c.lport, c.peerSeq, c.iss+1, TCP_ACK|TCP_PSH, (const unsigned char*)resp, 17);
+	// Delayed ACK: a lone in-order segment is acknowledged by the timer (via tcpTick), not at once.
+	CHECK(g_capCount == 0);
+	g_now += 50; tcpTick(g_now);
 	Seg ack; REQUIRE(parseCap(&ack));
 	CHECK((ack.flags & TCP_ACK) != 0);
 	CHECK(ack.ack == c.peerSeq+17);            // acked the received bytes

@@ -28,6 +28,7 @@ const int SYN_RETRIES_MAX = 5;   // give up a half-open handshake after this man
 // advertise shift 0 (no quantization of our own window) — but we ALWAYS send the option so scaling is
 // negotiated and we honour a peer that advertises a large scaled window (RFC 7323 §2).
 const int RCV_WSCALE = 0;
+const int DELAY_ACK = 40;        // delayed-ACK timeout (ms), flushed by the 50 ms tcpTick (Linux: ≤40 ms)
 const int MSL = 30000;         // 2*MSL = 60 s TIME-WAIT
 
 struct Ooo { uint32_t seq; int len; bool used; unsigned char data[MSS_MAX]; };
@@ -48,6 +49,8 @@ struct Tcb {
 	uint32_t tsRecent;         // most recent in-window peer TSval, echoed back in our TSecr
 	bool     sackOk;           // selective ACK negotiated (RFC 2018) — both SYNs carried SACK-permitted
 	struct { uint32_t l, r; } sacked[4]; int sackedN;   // sender scoreboard: peer-SACKed ranges
+	bool     ackPending;       // a delayed ACK is owed (flush on the next tick if not piggy-backed)
+	unsigned ackDeadline; int ackSegs;   // delayed-ACK deadline + in-order segments since the last ACK
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
@@ -213,6 +216,8 @@ void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int
 	uint16_t c = inetPseudoChecksum(t->localIp, t->remoteIp, IPPROTO_TCP, h, 20 + optLen + len);
 	wr16be(h + 16, c);
 	ipOutput(t->remoteIp, IPPROTO_TCP, skb);
+	// Any segment we send carries the current rcv_nxt as its ACK, so it satisfies a delayed ACK.
+	if (flags & TCP_ACK) { t->ackPending = false; t->ackSegs = 0; }
 }
 
 void armRto(Tcb* t) { t->rtoDeadline = now() + t->rto; }
@@ -505,7 +510,8 @@ void tcpRx(NetBuf* skb) {
 
 	// data
 	if (plen > 0 && (t->state == TCP_ESTABLISHED || t->state == TCP_FIN_WAIT_1 || t->state == TCP_FIN_WAIT_2)) {
-		if (seq == t->rcv_nxt) {
+		bool inOrder = (seq == t->rcv_nxt);
+		if (inOrder) {
 			int got = rcvAppend(t, payload, plen);
 			t->rcv_nxt += got;
 			drainOoo(t);
@@ -513,7 +519,14 @@ void tcpRx(NetBuf* skb) {
 		} else if (seqGt(seq, t->rcv_nxt) && seqLt(seq, t->rcv_nxt + RCVBUF)) {
 			queueOoo(t, seq, payload, plen);
 		}
-		sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);                        // ack (immediate)
+		bool hole = false;
+		for (int i = 0; i < OOO_N; i++) if (t->ooo[i].used) { hole = true; break; }
+		// Delayed ACK (Linux): hold an in-order ack up to DELAY_ACK, but ack IMMEDIATELY on an
+		// out-of-order/hole-filling segment (the peer needs the dup-ack to fast-retransmit) or on
+		// every second full segment; otherwise arm the timer so tcpTick flushes it.
+		if (!inOrder || hole || ++t->ackSegs >= 2)
+			sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);
+		else { t->ackPending = true; t->ackDeadline = now() + DELAY_ACK; }
 	}
 
 	// FIN
@@ -538,6 +551,9 @@ void tcpTick(unsigned t_now) {
 	for (int i = 0; i < TCB_N; i++) {
 		Tcb* t = &g_tcbs[i];
 		if (!t->used) continue;
+		// Flush an owed delayed ACK once its deadline passes (Linux: the ack the peer is waiting on).
+		if (t->ackPending && (int)(t_now - t->ackDeadline) >= 0)
+			sendSeg(t, TCP_ACK, t->snd_nxt, 0, 0);   // clears ackPending in sendSeg
 		if (t->state == TCP_TIME_WAIT && t->timeWaitDeadline && (int)(t_now - t->timeWaitDeadline) >= 0) {
 			t->state = TCP_CLOSED; tcbFree(t); continue;
 		}
