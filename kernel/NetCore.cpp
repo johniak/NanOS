@@ -11,6 +11,10 @@
 #include "Arp.h"
 #include "Ip.h"
 #include "Icmp.h"
+#include "Socket.h"
+#include "Udp.h"
+#include "Raw.h"
+#include "WaitQueue.h"
 #include "Scheduler.h"
 #include "WaitQueue.h"
 #include "FrameAllocator.h"
@@ -39,6 +43,7 @@ int kextNetTx(NetDevice* dev, NetBuf* skb) {
 }
 
 void netWake() { Scheduler::wakeAll(&g_netWq); }
+void netSocketWake(WaitQueue* wq) { Scheduler::wakeAll(wq); }   // wake a blocked socket reader
 
 bool netRxReady(void*) { return netRxPending(); }
 
@@ -119,6 +124,9 @@ Task* netCoreInit() {
 	arpInit();                                               // ARP receives via Ether
 	ipInit();                                                // IP receives via Ether (ethertype 0x0800)
 	icmpInit();                                               // ICMP echo reply + errors (IP proto 1)
+	udpInit();                                                // UDP (IP proto 17) -> sockets
+	rawInit();                                                // SOCK_RAW ICMP (ping)
+	socketSetWakeFn(netSocketWake);                           // wake blocked socket readers
 	arpSetClock(netClock);                                   // real ticks for neighbor aging
 	ipReasmSetClock(netClock);                               // real ticks for fragment expiry
 	return Scheduler::create(netSoftirqBody, 2);             // ksoftirqd-net (task id 2)

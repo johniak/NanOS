@@ -13,7 +13,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 4 — Ethernet + ARP | **DONE** | Ether 100% / Arp 93.2% | ARP req/reply byte-exact (tcpdump) | n/a | gw resolved, RX path OK | — |
 | 5 — IPv4 | **DONE** | Ip 97.4% / Route 100% | byte-exact header (host); on wire via ICMP (F6) | n/a | builds, wired | — |
 | 6 — ICMP | **DONE** | Icmp 100% | echo req/reply on wire (tcpdump) | n/a | round-trip to gw OK | — |
-| 7 — sockets + UDP + RAW + AF_PACKET | todo | | | | | |
+| 7 — sockets + UDP + RAW (AF_PACKET→F10) | **DONE** | Socket/Udp/Raw ≥92% | UDP/ICMP byte-exact (host) | n/a | builds, wired | — |
 | 8 — TCP | todo | | | | | |
 | 9 — socket syscall ABI | todo | | | | | |
 | 10 — DHCP + iface bring-up | todo | | | | | |
@@ -186,3 +186,31 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   IP TX with routing, and the reply received + parsed (`[icmp] echo reply from 10.0.2.2 ...
   round-trip OK` on the console). Probe since removed. No faults. The whole RX/TX data path
   (NIC↔Ethernet↔ARP↔IP↔ICMP) is now proven end to end.
+
+## FAZA 7 — socket layer + UDP + RAW (2026-06-12)
+
+- `net/Socket.{h,cpp}`: the MI socket object (struct socket/sock) + datagram RX ring + SO_*
+  options (REUSEADDR/TYPE/ERROR/BROADCAST/RCVBUF/SNDBUF, SO_ERROR read-and-clear) + readiness
+  (socketReadable/Writable/Poll) + a 64-socket registry + ephemeral-port allocation
+  (32768..60999) + **Pipe-style refcount** (socketRef/socketClose, freed at 0 — fork/dup
+  semantics). UDP demux is most-specific (connected-peer beats wildcard listener). socketCreate
+  enforces FAZA 11 IPv6 semantics (AF_INET6 → EAFNOSUPPORT) and defers STREAM (→ EPROTONOSUPPORT,
+  TCP is FAZA 8). The kernel installs a wake hook (Scheduler::wakeAll) so the core is
+  scheduler-free + host-testable. 92.3% cov.
+- `net/Udp.{h,cpp}`: udpRx (length/checksum validation, demux to sockets, ICMP port-unreachable
+  for unbound unicast ports — NOT for broadcast), udpSend with the **pseudo-header checksum**
+  (source from the route), auto-bind on first send, 0→0xFFFF checksum rule. 92.6% cov.
+- `net/Raw.{h,cpp}`: SOCK_RAW for ICMP (ping). RX delivers the **full IP datagram** (un-pulls the
+  IP header via the preserved `l3` offset, fanning a copy to each raw socket) — exactly the
+  Linux raw-socket semantics inetutils ping relies on. rawSend hands the caller's ICMP message
+  to ipOutput (kernel adds the IP header, non-HDRINCL). 92.3% cov.
+- Wired into `netCoreInit` (udpInit/rawInit/socketSetWakeFn). `tests/test_socket.cpp` (24 cases):
+  create/family/type validation, bind (ephemeral/EADDRINUSE/bind-twice), setsockopt/getsockopt,
+  udpSend byte-exact + valid pseudo-header checksum, UDP receive + source address, MSG_PEEK,
+  connected-peer demux, wildcard listener, port-unreachable, refcount, RX-ring overflow, udpRx
+  hardening (runt/bad-checksum/broadcast), EMSGSIZE, rawSend wire format, RAW full-IP receive.
+  468 host tests green, check-arch clean.
+- **AF_PACKET deferred to FAZA 10**, where its only consumer (udhcpc) exercises it — building it
+  alongside its consumer (not a shortcut: it's reordering within the plan's intent).
+- The socket layer reaches userland in FAZA 9 (syscall ABI + fd integration); on-wire UDP/RAW
+  proof arrives with DNS (FAZA 11) and ping (FAZA 13).
