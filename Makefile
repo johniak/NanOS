@@ -250,6 +250,11 @@ _image: _all _userland _kext _grub2-image
 	# 7th field is the login shell: init/nterm launch getpwuid()->pw_shell, so editing this
 	# file sets the default shell (the read-only-disk equivalent of chsh).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# Network config templates -> /nanos/config/etc (copied into the writable /etc tmpfs at boot).
+	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	for f in resolv.conf hosts nsswitch.conf protocols services; do \
+	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	done
 	# System utilities -> /nanos/bin.
 	for p in $(SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
@@ -360,8 +365,8 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest
-SYS_PROGS=nsh cat ls free nwm socktest
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest
+SYS_PROGS=nsh cat ls free nwm socktest pingtest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -463,6 +468,7 @@ $(BINFOLDER)ls.nxe:        $(DYN_DEPS) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUT
 $(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
 $(BINFOLDER)crashtest.nxe: $(DYN_DEPS) $(BINFOLDER)crashtest.o
 $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o
+$(BINFOLDER)pingtest.nxe:  $(DYN_DEPS) $(BINFOLDER)pingtest.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o
 $(BINFOLDER)brktest.nxe:   $(DYN_DEPS) $(BINFOLDER)brktest.o

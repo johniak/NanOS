@@ -121,6 +121,23 @@ static void extRwSelftest(Vfs* vfs) {
 	Console::writeLine(persisted ? " (marker persisted from last boot)" : " (first write to this image)");
 }
 
+// Populate the writable /etc (RamFs) from the on-disk template /disks/main/nanos/config/etc/.
+// Linux apps expect /etc/{resolv.conf,hosts,nsswitch.conf,protocols,services}; the disk is
+// read-only, so we copy the templates into the tmpfs at boot (DHCP later rewrites resolv.conf).
+static void populateEtc(Vfs* vfs) {
+	static const char* files[] = { "resolv.conf", "hosts", "nsswitch.conf", "protocols", "services", 0 };
+	char buf[512];
+	for (int i = 0; files[i]; i++) {
+		String src = String("/disks/main/nanos/config/etc/") + String(files[i]);
+		String dst = String("/etc/") + String(files[i]);
+		int n = vfs->read(src, sizeof(buf), 0, buf);
+		if (n <= 0)
+			continue;
+		if (vfs->create(dst, 0644) == 0)
+			vfs->write(dst, (unsigned) n, 0, buf);
+	}
+}
+
 // Scheduler task bodies. Task 1 (init/nsh) enters ring 3 via execProgram; task 2 is
 // a background kernel thread (demonstrates that several tasks coexist) — it sleeps and
 // counts, so cat /proc/uptime advancing while the shell is idle proves the scheduler
@@ -266,6 +283,14 @@ void Kernel::start() {
 	// place to write transient files (e.g. Doom's config + savegames). Cleared on reboot.
 	okBegin("Mounting tmpfs at /tmp");
 	vfs->mount("/tmp", new RamFs());
+	okEnd();
+
+	// Writable /etc (RamFs), populated from the read-only on-disk template, so Linux network
+	// apps find /etc/{resolv.conf,hosts,nsswitch.conf,...} at the canonical path (DHCP rewrites
+	// resolv.conf in FAZA 10). The disk driver is read-only, so /etc lives in a tmpfs like /tmp.
+	okBegin("Mounting /etc (tmpfs) + config");
+	vfs->mount("/etc", new RamFs());
+	populateEtc(vfs);
 	okEnd();
 
 	// Expose the framebuffer as Linux /dev/fb0 (fbdev ioctls + mmap + read/write) so

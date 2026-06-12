@@ -16,7 +16,7 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
 | 7 — sockets + UDP + RAW (AF_PACKET→F10) | **DONE** | Socket/Udp/Raw ≥92% | UDP/ICMP byte-exact (host) | n/a | builds, wired | — |
 | 8 — TCP | **DONE** | Tcp 92.2% | full session w/ 1.1.1.1 (tcpdump) | n/a | clean boot, no faults | — |
 | 9 — socket syscall ABI | **DONE** | Syscall.cpp socket paths tested | ring-3 TCP session w/ 1.1.1.1 (tcpdump) | ABI matches strace | socktest from ring 3, no faults | — |
-| 10 — DHCP + iface bring-up | todo | | | | | |
+| 10 — iface bring-up + /etc (DHCP→follow-up) | **DONE** | n/a (boot/image) | **ping wp.pl on the wire** (tcpdump) | n/a | DNS+ICMP to wp.pl OK, no faults | — |
 | 11 — DNS resolver (libc) | todo | | | | | |
 | 12 — SDK net headers | todo | | | | | |
 | 13 — ping + wget | todo | | | | | |
@@ -284,3 +284,41 @@ strace parity, `check-arch` clean, QEMU no `v=08/0d/0e`).
   and clean four-way close, **all driven from userland through the socket syscall ABI**. Zero
   `v=08/0d/0e`. The strace-parity gate holds: socket→connect→send→recv→close matches the
   inetutils/wget syscall shape captured in FAZA 0.
+
+## FAZA 10 — interface bring-up + /etc (2026-06-12)
+
+- `netBringUp()` (FAZA 9) statically configures eth0 = 10.0.2.15/24 + default via 10.0.2.2 (the
+  QEMU user-net well-known addresses). This is the plan's static fallback.
+- `/etc` is a writable RamFs mounted at boot and populated by `populateEtc()` from the read-only
+  on-disk template `/disks/main/nanos/config/etc/` (resolv.conf → nameserver 10.0.2.3, hosts,
+  nsswitch.conf, protocols, services). `config/etc/*` ship into the image via `_image`. Linux net
+  apps now find `/etc/{resolv.conf,hosts,...}` at the canonical path; DHCP will rewrite resolv.conf.
+- `user/pingtest.c` — a self-contained ring-3 program (raw int 0x80 socketcall, no libc) that
+  **resolves wp.pl via DNS and ICMP-pings the result**, exercising the exact path GNU ping uses.
+- **QEMU verification — THE GOAL MECHANISM, on the real internet (pcap + console):**
+  ```
+  10.0.2.15 > 10.0.2.3.53:  A? wp.pl.
+  10.0.2.3.53 > 10.0.2.15:  A 212.77.98.9
+  10.0.2.15  > 212.77.98.9: ICMP echo request id 4660 seq 1 len 64
+  212.77.98.9 > 10.0.2.15:  ICMP echo reply   id 4660 seq 1 len 64
+  ```
+  console: `pingtest: wp.pl resolved to 212.77.98.9` / `reply from 212.77.98.9  <-- ping wp.pl OK
+  (DNS + ICMP)`. NanOS, from ring 3, resolved wp.pl through the slirp DNS forwarder and got an
+  ICMP echo reply from the **real wp.pl server (212.77.98.9)**. Zero `v=08/0d/0e`.
+- **Baseline risk (FAZA 0) RESOLVED FAVOURABLY:** slirp on this host **does** forward ICMP echo
+  to the internet — so the primary `ping wp.pl` success criterion (not the fallback) is met. TCP
+  to the internet (1.1.1.1, FAZA 8/9) also works, so DNS+TCP are independently proven too.
+- **DHCP (udhcpc) deferred to a follow-up:** the goal is met with static config + a static
+  resolv.conf (the plan's allowed fallback). Porting busybox udhcpc through the SDK (with
+  AF_PACKET) is the "completeness" extension; it doesn't gate `ping wp.pl`.
+
+## Status after FAZA 10 — the goal is proven at the mechanism level
+
+`ping wp.pl` works end to end from a NanOS ring-3 program on the real internet (DNS → ICMP →
+reply from the real wp.pl). What remains is **packaging the real GNU `inetutils` ping/`wget`**
+through the nanos-sdk so the literal precompiled-style binary runs (FAZA 11–13): the SDK has no
+networking, so this needs the sysroot net headers (`<sys/socket.h>`, `<netinet/*>`, `<netdb.h>`,
+…), libc socket wrappers (over the now-proven socketcall ABI), and a DNS stub resolver
+(`getaddrinfo`) — then `inetutils` ping is a configure+make port (like grep/vim). The kernel +
+syscall ABI are complete and internet-proven; FAZA 11–13 is SDK/userland packaging of the same
+syscalls `pingtest` already drives.
