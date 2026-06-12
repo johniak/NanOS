@@ -24,6 +24,10 @@ const int ACCEPT_N = 8;        // pending accept queue per listener
 // Timer constants (ticks == ms; the net-timer thread calls tcpTick).
 const int RTO_INIT = 1000, RTO_MIN = 200, RTO_MAX = 60000;
 const int SYN_RETRIES_MAX = 5;   // give up a half-open handshake after this many RTO firings (Linux ~6)
+// Our advertised window-scale shift. RCVBUF (8 KiB) fits unscaled in the 16-bit window field, so we
+// advertise shift 0 (no quantization of our own window) — but we ALWAYS send the option so scaling is
+// negotiated and we honour a peer that advertises a large scaled window (RFC 7323 §2).
+const int RCV_WSCALE = 0;
 const int MSL = 30000;         // 2*MSL = 60 s TIME-WAIT
 
 struct Ooo { uint32_t seq; int len; bool used; unsigned char data[MSS_MAX]; };
@@ -38,6 +42,8 @@ struct Tcb {
 	uint32_t iss, snd_una, snd_nxt, snd_wnd;
 	uint32_t irs, rcv_nxt;
 	uint16_t mss;
+	uint8_t  sndWscale;        // peer's window-scale shift, applied to its advertised window (RFC 7323)
+	bool     wscaleOk;         // window scaling negotiated (both SYNs carried the option)
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
@@ -98,7 +104,9 @@ void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int
 	g_netStats.tcpOutSegs++;
 	if (flags & TCP_RST) g_netStats.tcpOutRsts++;
 	skb->reserve(NET_HEADROOM);
-	int optLen = (flags & TCP_SYN) ? 4 : 0;            // MSS option on SYN
+	// SYN options: MSS (4) + NOP (1) + window-scale (3) = 8 bytes, 4-aligned by the NOP. Other
+	// segments carry no options yet (timestamps/SACK come in later FAZA D sub-steps).
+	int optLen = (flags & TCP_SYN) ? 8 : 0;
 	if (len) memcpy(skb->put(len), data, len);
 	unsigned char* h = skb->push(20 + optLen);
 	wr16be(h + 0, t->localPort);
@@ -107,10 +115,15 @@ void sendSeg(Tcb* t, uint8_t flags, uint32_t seq, const unsigned char* data, int
 	wr32be(h + 8, (flags & TCP_ACK) ? t->rcv_nxt : 0);
 	h[12] = (unsigned char) (((20 + optLen) / 4) << 4);   // data offset
 	h[13] = flags;
-	wr16be(h + 14, (uint16_t) rcvFree(t));                // advertised receive window
+	wr16be(h + 14, (uint16_t) rcvFree(t));                // advertised receive window (shift 0)
 	wr16be(h + 16, 0);                                    // checksum
 	wr16be(h + 18, 0);                                    // urgent ptr
-	if (optLen) { h[20] = 2; h[21] = 4; wr16be(h + 22, MSS_MAX); }   // MSS option
+	if (flags & TCP_SYN) {
+		unsigned char* o = h + 20;
+		o[0] = 2; o[1] = 4; wr16be(o + 2, MSS_MAX);       // MSS
+		o[4] = 1;                                         // NOP (aligns the window-scale option)
+		o[5] = 3; o[6] = 3; o[7] = (unsigned char) RCV_WSCALE;   // window scale
+	}
 	uint16_t c = inetPseudoChecksum(t->localIp, t->remoteIp, IPPROTO_TCP, h, 20 + optLen + len);
 	wr16be(h + 16, c);
 	ipOutput(t->remoteIp, IPPROTO_TCP, skb);
@@ -247,8 +260,9 @@ void tcpRx(NetBuf* skb) {
 	const unsigned char* payload = h + doff;
 	int plen = skb->len - doff;
 
-	// peer MSS option (kind 2, len 4) on a SYN.
+	// peer SYN options: MSS (kind 2, len 4) and window scale (kind 3, len 3).
 	uint16_t peerMss = 0;
+	uint8_t peerWscale = 0; bool peerHasWscale = false;
 	for (int i = 20; i + 1 < doff; ) {
 		uint8_t kind = h[i];
 		if (kind == 0) break;
@@ -256,6 +270,8 @@ void tcpRx(NetBuf* skb) {
 		uint8_t olen = h[i + 1];
 		if (olen < 2 || i + olen > doff) break;
 		if (kind == 2 && olen == 4) peerMss = rd16be(h + i + 2);
+		else if (kind == 3 && olen == 3) { peerWscale = h[i + 2]; peerHasWscale = true;
+			if (peerWscale > 14) peerWscale = 14; }   // RFC 7323: cap shift at 14
 		i += olen;
 	}
 
@@ -285,6 +301,9 @@ void tcpRx(NetBuf* skb) {
 		if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
 			if (ack != t->snd_nxt) { netbufFree(skb); return; }      // wrong ACK -> drop (would RST in full impl)
 			t->irs = seq; t->rcv_nxt = seq + 1;
+			// Window scaling is on only if BOTH SYNs carried the option (we always send it). The
+			// window in the SYN-ACK itself is NOT scaled (RFC 7323 §2.2) — scaling starts after.
+			t->wscaleOk = peerHasWscale; t->sndWscale = peerHasWscale ? peerWscale : 0;
 			t->snd_una = ack; t->snd_wnd = wnd;
 			if (peerMss) t->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			t->state = TCP_ESTABLISHED;
@@ -308,6 +327,7 @@ void tcpRx(NetBuf* skb) {
 			c->iss = g_isnCounter; g_isnCounter += 0x4000;
 			c->snd_una = c->iss; c->snd_nxt = c->iss + 1;
 			c->snd_wnd = wnd ? wnd : 4096;
+			c->wscaleOk = peerHasWscale; c->sndWscale = peerHasWscale ? peerWscale : 0;   // our SYN-ACK carries ours
 			if (peerMss) c->mss = peerMss < MSS_MAX ? peerMss : MSS_MAX;
 			c->state = TCP_SYN_RCVD; c->parent = t;
 			g_netStats.tcpPassiveOpens++;
@@ -333,7 +353,7 @@ void tcpRx(NetBuf* skb) {
 				t->sndLen -= move;
 			}
 			t->snd_una = ack;
-			t->snd_wnd = wnd;
+			t->snd_wnd = t->wscaleOk ? ((uint32_t) wnd << t->sndWscale) : wnd;   // RFC 7323: scaled after handshake
 			t->dupacks = 0;
 			onAckCwnd(t, acked);
 			if (t->rttPending && seqGeq(ack, t->rttSeq)) { rttUpdate(t, (int)(now() - t->rttStart)); t->rttPending = false; }
@@ -586,6 +606,7 @@ bool tcpWritable(Socket* s) {
 	return (t->state == TCP_ESTABLISHED || t->state == TCP_CLOSE_WAIT) && t->sndLen < SNDBUF;
 }
 int tcpState(Socket* s) { return (s && s->tcp) ? ((Tcb*) s->tcp)->state : TCP_CLOSED; }
+uint32_t tcpSndWnd(Socket* s) { return (s && s->tcp) ? ((Tcb*) s->tcp)->snd_wnd : 0; }
 
 int tcpSnapshot(TcpConnInfo* out, int max) {
 	int n = 0;

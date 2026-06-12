@@ -42,6 +42,7 @@ Socket* tcpAccept(Socket* s, int* err);                 // dequeue a completed c
 bool tcpReadable(Socket* s);                            // data available or peer closed
 bool tcpWritable(Socket* s);                            // ESTABLISHED with send-buffer room
 int  tcpState(Socket* s);                               // for poll/tests
+uint32_t tcpSndWnd(Socket* s);                          // peer's send window (post-scale) — tests
 
 // Snapshot of active TCBs for /proc/net/tcp (keeps the private Tcb struct encapsulated). All
 // addresses/ports are host order. txQueue = unsent bytes, rxQueue = unread received bytes.

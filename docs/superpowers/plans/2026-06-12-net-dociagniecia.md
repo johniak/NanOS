@@ -160,7 +160,7 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
   nie ma danych/FIN, retransmituj SYN (SYN_SENT) lub SYN-ACK (SYN_RCVD), z backoffem i limitem
   prób (~5, potem `-ETIMEDOUT`/`-ECONNREFUSED` na sockecie). Test: brak SYN-ACK → 2. SYN po RTO,
   trzeci po 2×RTO; po limicie connect kończy się błędem.
-- [ ] **D1. Window scaling (RFC 7323 §2):** wysyłaj `wscale` w SYN/SYN-ACK (nasz shift: 2 —
+- [x] **D1. Window scaling (RFC 7323 §2):** wysyłaj `wscale` w SYN/SYN-ACK (nasz shift: 2 —
   RCVBUF 8 KiB nie potrzebuje więcej, ale opcja MUSI być negocjowana jak w Linuksie), honoruj
   shift peera przy interpretacji jego okna. Test: handshake z wscale=7 od peera → wysyłka
   respektuje przeskalowane okno; SYN bez wscale → opcja wyłączona obustronnie.
