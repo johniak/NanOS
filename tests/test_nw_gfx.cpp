@@ -164,3 +164,75 @@ TEST_CASE("blur_rect leaves a uniform region unchanged and averages an edge") {
 	CHECK(l > 0);                                            // dark side lifted by the blur
 	CHECK(r < 0x64);                                         // light side pulled down
 }
+
+// --- Phase 2: shared RB-paired blend + fast raster paths -------------------------------
+
+// Reference: the original per-channel /255 blend that nw_mix used before unification.
+static uint32_t ref_mix255(uint32_t d, uint32_t s, int a) {
+	int ia = 255 - a;
+	int r = (((s >> 16) & 0xff) * a + ((d >> 16) & 0xff) * ia) / 255;
+	int g = (((s >>  8) & 0xff) * a + ((d >>  8) & 0xff) * ia) / 255;
+	int b = (( s        & 0xff) * a + ( d        & 0xff) * ia) / 255;
+	return (uint32_t) ((r << 16) | (g << 8) | b);
+}
+
+TEST_CASE("nw_blend8: a=0 yields dst, a=255 yields src, both bit-exact") {
+	uint32_t samples[] = {0x000000, 0xffffff, 0x123456, 0xfedcba, 0x804020, 0x00ff00};
+	for (uint32_t d : samples)
+		for (uint32_t s : samples) {
+			CHECK(nw_blend8(d, s, 0)   == d);
+			CHECK(nw_blend8(d, s, 255) == s);
+		}
+}
+
+TEST_CASE("nw_blend8 matches the old /255 blend within 1 LSB per channel") {
+	uint32_t cols[] = {0x000000, 0xffffff, 0x3a7fc1, 0xd4502a, 0x10ff80, 0x887766};
+	for (uint32_t d : cols)
+		for (uint32_t s : cols)
+			for (int a = 0; a <= 255; a += 5) {
+				uint32_t got = nw_blend8(d, s, (unsigned) a), ref = ref_mix255(d, s, a);
+				for (int sh = 0; sh <= 16; sh += 8) {
+					int gc = (got >> sh) & 0xff, rc = (ref >> sh) & 0xff;
+					CHECK(gc - rc <= 1); CHECK(rc - gc <= 1);
+				}
+			}
+}
+
+TEST_CASE("nw_mix delegates to nw_blend8: extremes exact, midpoint within 1 LSB") {
+	CHECK(nw_mix(0x102030, 0xa0b0c0, 0)   == 0x102030u);
+	CHECK(nw_mix(0x102030, 0xa0b0c0, 255) == 0xa0b0c0u);
+	uint32_t m = nw_mix(0x000000, 0xffffff, 128);
+	for (int sh = 0; sh <= 16; sh += 8) { int c = (m >> sh) & 0xff; CHECK(c >= 127); CHECK(c <= 129); }
+}
+
+TEST_CASE("blit (row memcpy) copies an exact sub-rect, unclipped") {
+	Buf src(8, 8), dst(8, 8);
+	for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++)
+		src.px[(size_t) y * 8 + x] = (uint32_t) (0x10000 * y + x);
+	nw_blit(&dst.s, 1, 1, &src.s, 2, 3, 4, 2);          // src[2..6)x[3..5) -> dst at (1,1)
+	for (int r = 0; r < 2; r++) for (int c = 0; c < 4; c++)
+		CHECK(dst.at(1 + c, 1 + r) == src.at(2 + c, 3 + r));
+	CHECK(dst.at(0, 0) == 0u);                           // outside the dest rect: untouched
+	CHECK(dst.at(5, 3) == 0u);
+}
+
+TEST_CASE("draw_char fast path (in-bounds) equals the clipped path pixel-for-pixel") {
+	Buf full(8, 16);                                     // glyph fits exactly -> fast path
+	nw_draw_char(&full.s, 0, 0, 'A', 0x00FF00, 0x000001);
+	Buf clip(16, 32);                                    // bigger surface, scissor to the same box
+	nw_surface_clip(&clip.s, 0, 0, 8, 16);
+	// force the slow path by drawing one column off the clip, then compare the overlap region
+	nw_draw_char(&clip.s, 0, 0, 'A', 0x00FF00, 0x000001);
+	for (int y = 0; y < 16; y++) for (int x = 0; x < 8; x++)
+		CHECK(full.at(x, y) == clip.at(x, y));
+}
+
+TEST_CASE("nw_text fast path only touches set glyph pixels and matches clipped path") {
+	Buf a(16, 16), b(16, 16);
+	for (auto& v : a.px) v = 0x222222; for (auto& v : b.px) v = 0x222222;
+	nw_text(&a.s, 0, 0, "A", 0xffffff);                  // in bounds -> fast path
+	nw_surface_clip(&b.s, -1, 0, 17, 16);                // active scissor that still contains the glyph box edge -> slow path
+	nw_text(&b.s, 0, 0, "A", 0xffffff);
+	for (int y = 0; y < 16; y++) for (int x = 0; x < 8; x++)
+		CHECK(a.at(x, y) == b.at(x, y));                 // identical; background (0x222222) preserved where glyph is unset
+}

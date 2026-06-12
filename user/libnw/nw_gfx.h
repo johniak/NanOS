@@ -49,6 +49,21 @@ void nw_blit(const struct nw_surface *dst, int dx, int dy,
 
 /* ---- modern compositing: alpha, gradients, rounded rects, blur (all clipped + scissored) ---- */
 
+/* src over dst at coverage a (0..255), the per-pixel blend used by every translucent path
+ * (window glass, rounded corners, dock). RB-paired: the R and B channels (mask 0x00FF00FF) blend
+ * in one multiply, G in another — 2 multiplies per pixel instead of 6 channel-at-a-time. `a` is
+ * remapped to 0..256 with `a += a>>7` so the divide is a cheap >>8 yet a==255 yields exactly src
+ * and a==0 exactly dst (no ±1 drift at the extremes). Inlined in the header so the compositor's
+ * hot loop has no cross-TU call. Result is within ±1 LSB/channel of the old /255 form. */
+static inline uint32_t nw_blend8(uint32_t d, uint32_t s, unsigned a)
+{
+	a += a >> 7;                                  /* 0..255 -> 0..256 (255 -> 256 == exact src) */
+	unsigned ia = 256u - a;
+	uint32_t rb = (((s & 0x00FF00FFu) * a + (d & 0x00FF00FFu) * ia) >> 8) & 0x00FF00FFu;
+	uint32_t g  = (((s & 0x0000FF00u) * a + (d & 0x0000FF00u) * ia) >> 8) & 0x0000FF00u;
+	return rb | g;
+}
+
 /* Colour math (0x00RRGGBB): src over dst at coverage a (0..255); linear a..b as t/n. */
 uint32_t nw_mix(uint32_t dst, uint32_t src, int a);
 uint32_t nw_lerp(uint32_t a, uint32_t b, int t, int n);

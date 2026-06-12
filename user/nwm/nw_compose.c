@@ -122,14 +122,11 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	}
 }
 
-/* src over dst at coverage a — inlined here so the per-pixel hot loop has no cross-TU call. */
+/* src over dst at coverage a. Uses the shared RB-paired blend (nw_gfx.h, inlined), so the
+ * per-pixel hot loop has no cross-TU call and the compositor and rasterizer blend identically. */
 static inline uint32_t cmix(uint32_t d, uint32_t s, int a)
 {
-	int ia = 255 - a;
-	int r = (((s >> 16) & 0xff) * a + ((d >> 16) & 0xff) * ia) >> 8;
-	int g = (((s >>  8) & 0xff) * a + ((d >>  8) & 0xff) * ia) >> 8;
-	int b = (( s        & 0xff) * a + ( d        & 0xff) * ia) >> 8;
-	return (uint32_t) ((r << 16) | (g << 8) | b);
+	return nw_blend8(d, s, (unsigned) a);
 }
 
 /* Composite scratch[winrect] onto `back` with rounded corners (AA) + per-window alpha. Fast:

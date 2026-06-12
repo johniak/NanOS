@@ -5,6 +5,7 @@
  * (user/term/vtfont.c), the public-domain IBM VGA 8x16 set.
  */
 #include "nw_gfx.h"
+#include <string.h>   /* memcpy for the row blit */
 
 /* The shared userland console font: 256 glyphs, 16 bytes each, MSB = leftmost pixel. */
 extern const unsigned char nx_font8x16[256][16];
@@ -64,7 +65,19 @@ void nw_draw_char(const struct nw_surface *s, int x, int y, unsigned char ch,
                   uint32_t fg, uint32_t bg)
 {
 	const unsigned char *glyph = nx_font8x16[ch];
-	for (int row = 0; row < NW_FONT_H; row++) {
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
+	if (x >= bx0 && y >= by0 && x + NW_FONT_W <= bx1 && y + NW_FONT_H <= by1) {
+		/* fast path: whole glyph is inside the clip — write rows directly, no per-pixel clip */
+		for (int row = 0; row < NW_FONT_H; row++) {
+			unsigned char bits = glyph[row];
+			uint32_t *p = s->px + (long) (y + row) * s->stride + x;
+			for (int col = 0; col < NW_FONT_W; col++)
+				p[col] = (bits & (0x80u >> col)) ? fg : bg;
+		}
+		return;
+	}
+	for (int row = 0; row < NW_FONT_H; row++) {   /* edge case: clip per pixel */
 		unsigned char bits = glyph[row];
 		for (int col = 0; col < NW_FONT_W; col++)
 			nw_put_pixel(s, x + col, y + row, (bits & (0x80u >> col)) ? fg : bg);
@@ -85,12 +98,21 @@ int nw_draw_text(const struct nw_surface *s, int x, int y, const char *str,
  * backdrop intact — for titles/labels over gradients or translucent material. Returns end x. */
 int nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t fg)
 {
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
 	for (; *str; str++) {
 		const unsigned char *glyph = nx_font8x16[(unsigned char) *str];
-		for (int row = 0; row < NW_FONT_H; row++) {
-			unsigned char bits = glyph[row];
-			for (int col = 0; col < NW_FONT_W; col++)
-				if (bits & (0x80u >> col)) nw_put_pixel(s, x + col, y + row, fg);
+		if (x >= bx0 && y >= by0 && x + NW_FONT_W <= bx1 && y + NW_FONT_H <= by1) {
+			for (int row = 0; row < NW_FONT_H; row++) {   /* fast path: glyph wholly in bounds */
+				unsigned char bits = glyph[row];
+				uint32_t *p = s->px + (long) (y + row) * s->stride + x;
+				for (int col = 0; col < NW_FONT_W; col++)
+					if (bits & (0x80u >> col)) p[col] = fg;
+			}
+		} else {
+			for (int row = 0; row < NW_FONT_H; row++)     /* edge case: clip per pixel */
+				for (int col = 0; col < NW_FONT_W; col++)
+					if (glyph[row] & (0x80u >> col)) nw_put_pixel(s, x + col, y + row, fg);
 		}
 		x += NW_FONT_W;
 	}
@@ -117,8 +139,7 @@ void nw_blit(const struct nw_surface *dst, int dx, int dy,
 	for (int r = 0; r < h; r++) {
 		const uint32_t *srow = src->px + (long) (sy + r) * src->stride + sx;
 		uint32_t       *drow = dst->px + (long) (dy + r) * dst->stride + dx;
-		for (int c = 0; c < w; c++)
-			drow[c] = srow[c];
+		memcpy(drow, srow, (size_t) w * sizeof(uint32_t));   /* row at a time, not per pixel */
 	}
 }
 
@@ -128,11 +149,7 @@ uint32_t nw_mix(uint32_t dst, uint32_t src, int a)   /* src over dst at coverage
 {
 	if (a <= 0)   return dst;
 	if (a >= 255) return src;
-	int ia = 255 - a;
-	int r = (((src >> 16) & 0xff) * a + ((dst >> 16) & 0xff) * ia) / 255;
-	int g = (((src >>  8) & 0xff) * a + ((dst >>  8) & 0xff) * ia) / 255;
-	int b = (( src        & 0xff) * a + ( dst        & 0xff) * ia) / 255;
-	return (uint32_t) ((r << 16) | (g << 8) | b);
+	return nw_blend8(dst, src, (unsigned) a);        /* shared RB-paired blend (see nw_gfx.h) */
 }
 uint32_t nw_lerp(uint32_t a, uint32_t b, int t, int n)   /* a..b as t/n (0..n) */
 {
