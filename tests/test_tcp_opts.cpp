@@ -329,3 +329,29 @@ TEST_CASE("persist timer: a zero-window stall is probed until the peer reopens i
 	CHECK(resume.plen == 4);                         // "BCDE"
 	socketClose(s);
 }
+
+TEST_CASE("keepalive: an idle connection is probed, then declared dead after keepCnt probes") {
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Socket* s=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	uint16_t lport; uint32_t base; establishPlain(s, peer, &lport, &base);
+	int idle=1, intvl=1, cnt=3, on=1;                // 1s idle / 1s interval / 3 probes (shortened)
+	socketSetOpt(s, SOL_TCP, TCP_KEEPIDLE,  &idle,  sizeof idle);
+	socketSetOpt(s, SOL_TCP, TCP_KEEPINTVL, &intvl, sizeof intvl);
+	socketSetOpt(s, SOL_TCP, TCP_KEEPCNT,   &cnt,   sizeof cnt);
+	socketSetOpt(s, SOL_SOCKET, SO_KEEPALIVE, &on,  sizeof on);
+
+	// After the idle period a probe goes out (an old-seq, zero-length ACK).
+	g_now += 1100; tcpTick(g_now);
+	OptSeg probe; REQUIRE(parseCap(&probe));
+	CHECK((probe.flags & TCP_ACK) != 0);
+	CHECK(probe.plen == 0);
+
+	g_now += 1100; tcpTick(g_now);                   // probe 2
+	g_now += 1100; tcpTick(g_now);                   // probe 3
+	CHECK(tcpState(s) == TCP_ESTABLISHED);           // 3 probes sent, not yet given up
+	g_now += 1100; tcpTick(g_now);                   // no answer -> peer declared dead
+	CHECK(tcpState(s) == TCP_CLOSED);
+	CHECK(s->soError == SOCK_ETIMEDOUT);
+	socketClose(s);
+}

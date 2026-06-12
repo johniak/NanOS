@@ -53,6 +53,9 @@ struct Tcb {
 	bool     ackPending;       // a delayed ACK is owed (flush on the next tick if not piggy-backed)
 	unsigned ackDeadline; int ackSegs;   // delayed-ACK deadline + in-order segments since the last ACK
 	unsigned persistDeadline; int persistBackoff;   // zero-window probe timer (RFC 1122 §4.2.2.17)
+	bool     keepalive;        // SO_KEEPALIVE
+	unsigned keepIdle, keepIntvl; int keepCnt;      // TCP_KEEPIDLE/INTVL/CNT (ms, ms, count)
+	unsigned keepDeadline; int keepProbes;          // next keepalive event + unanswered probe count
 
 	uint32_t cwnd, ssthresh;
 	int dupacks;
@@ -97,6 +100,7 @@ Tcb* tcbAlloc() {
 			t->cwnd = 1 * 1460; t->ssthresh = 65535;
 			t->srtt = 0; t->rttvar = 0; t->rto = RTO_INIT;
 			t->snd_wnd = 4096;
+			t->keepIdle = 7200000; t->keepIntvl = 75000; t->keepCnt = 9;   // Linux defaults (2h / 75s / 9)
 			return t;
 		}
 	return 0;
@@ -419,6 +423,8 @@ void tcpRx(NetBuf* skb) {
 	// ts_recent update (RFC 7323 §4.3): adopt the newest in-window peer timestamp to echo back.
 	if (t->tsOk && peerHasTs && seqLeq(seq, t->rcv_nxt) && seqGeq(peerTsVal, t->tsRecent))
 		t->tsRecent = peerTsVal;
+	// Any segment from the peer is activity — restart the keepalive idle timer.
+	if (t->keepalive) { t->keepProbes = 0; t->keepDeadline = now() + t->keepIdle; }
 
 	switch (t->state) {
 	case TCP_SYN_SENT: {
@@ -578,6 +584,18 @@ void tcpTick(unsigned t_now) {
 			} else {
 				t->persistDeadline = 0;   // window opened or nothing to probe
 			}
+		}
+		// Keepalive (RFC 1122 §4.2.3.6): after keepIdle of silence, probe with an old-seq ACK every
+		// keepIntvl; after keepCnt unanswered probes declare the peer dead (ETIMEDOUT).
+		if (t->keepalive && t->state == TCP_ESTABLISHED && t->keepDeadline && (int)(t_now - t->keepDeadline) >= 0) {
+			if (t->keepProbes >= t->keepCnt) {
+				if (t->sock) t->sock->soError = SOCK_ETIMEDOUT;
+				t->state = TCP_CLOSED; t->keepDeadline = 0; sockWake(t);
+				continue;
+			}
+			sendSeg(t, TCP_ACK, t->snd_una - 1, 0, 0);   // probe: stale seq -> the peer must ACK
+			t->keepProbes++;
+			t->keepDeadline = t_now + t->keepIntvl;
 		}
 		if (t->state == TCP_TIME_WAIT && t->timeWaitDeadline && (int)(t_now - t->timeWaitDeadline) >= 0) {
 			t->state = TCP_CLOSED; tcbFree(t); continue;
@@ -768,6 +786,21 @@ bool tcpWritable(Socket* s) {
 }
 int tcpState(Socket* s) { return (s && s->tcp) ? ((Tcb*) s->tcp)->state : TCP_CLOSED; }
 uint32_t tcpSndWnd(Socket* s) { return (s && s->tcp) ? ((Tcb*) s->tcp)->snd_wnd : 0; }
+
+void tcpKeepalive(Socket* s, bool on) {
+	if (!s || !s->tcp) return;
+	Tcb* t = (Tcb*) s->tcp;
+	t->keepalive = on; t->keepProbes = 0;
+	t->keepDeadline = on ? now() + t->keepIdle : 0;
+}
+void tcpKeepParam(Socket* s, int name, int seconds) {
+	if (!s || !s->tcp || seconds <= 0) return;
+	Tcb* t = (Tcb*) s->tcp;
+	if (name == TCP_KEEPIDLE)       { t->keepIdle = (unsigned) seconds * 1000;
+		if (t->keepalive) t->keepDeadline = now() + t->keepIdle; }   // re-arm if already enabled
+	else if (name == TCP_KEEPINTVL) t->keepIntvl = (unsigned) seconds * 1000;
+	else if (name == TCP_KEEPCNT)   t->keepCnt   = seconds;        // a count, not seconds
+}
 
 int tcpSnapshot(TcpConnInfo* out, int max) {
 	int n = 0;

@@ -177,7 +177,7 @@ Zakres (wszystko, bez skrótów — kolejno, każde z własnym cyklem test-fail-
 - [x] **D5. Persist timer (zero-window probe):** gdy okno peera = 0 i mamy dane — probe 1 B
   z backoffem (5 s → max 60 s), aż okno się otworzy. Test: peer ogłasza 0 → probe na drucie →
   okno otwarte → wznowienie. Bez persist sesja wisiałaby wiecznie (to bug, nie feature-gap).
-- [ ] **D6. Keepalive:** `SO_KEEPALIVE` + `TCP_KEEPIDLE/INTVL/CNT` (defaulty Linuksa
+- [x] **D6. Keepalive:** `SO_KEEPALIVE` + `TCP_KEEPIDLE/INTVL/CNT` (defaulty Linuksa
   7200 s/75 s/9 — w testach skracane opcjami); sonda = ACK z seq−1; po CNT bez odpowiedzi →
   ETIMEDOUT na sockecie. Test: symulowany czas przez `tcpTick`.
 - [ ] **D7.** Bramka drutu: w QEMU sesja do 1.1.1.1:80 — nasz SYN niesie

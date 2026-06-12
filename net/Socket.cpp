@@ -134,13 +134,21 @@ int socketGetPeerName(Socket* s, uint32_t* ip, uint16_t* port) {
 }
 
 int socketSetOpt(Socket* s, int level, int name, const void* val, unsigned len) {
-	if (!s || level != SOL_SOCKET || !val || len < sizeof(int)) return -SOCK_EINVAL;
+	if (!s || !val || len < sizeof(int)) return -SOCK_EINVAL;
 	int v = *(const int*) val;
+	if (level == SOL_TCP) {               // keepalive tuning (TCP_KEEPIDLE/INTVL/CNT)
+		switch (name) {
+		case TCP_KEEPIDLE: case TCP_KEEPINTVL: case TCP_KEEPCNT: tcpKeepParam(s, name, v); return 0;
+		default: return -SOCK_EINVAL;
+		}
+	}
+	if (level != SOL_SOCKET) return -SOCK_EINVAL;
 	switch (name) {
 	case SO_BROADCAST: s->broadcast = v != 0; return 0;
 	case SO_RCVBUF: s->rcvbuf = v > 0 ? v : s->rcvbuf; return 0;
 	case SO_SNDBUF: s->sndbuf = v > 0 ? v : s->sndbuf; return 0;
 	case SO_REUSEADDR: return 0;          // accepted; our bind already allows quick reuse
+	case SO_KEEPALIVE: tcpKeepalive(s, v != 0); return 0;
 	default: return -SOCK_EINVAL;
 	}
 }
