@@ -588,6 +588,14 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->getdents64(a0, (void*) a1, a2);
 		break;
 	case SYS_ioctl:
+		// FIONBIO (0x5421): the BSD/Windows way to set/clear non-blocking mode on a descriptor
+		// (OpenSSL's BIO uses it on sockets). Map it to the same O_NONBLOCK status bit fcntl(F_SETFL)
+		// toggles, so a later connect/recv on the fd honours it. Works on any fd, like Linux.
+		if (a1 == 0x5421) {
+			if (!a2) { ret = -EFAULT; break; }
+			ret = g_sys->fcntl((int) a0, F_SETFL, *(int*) a2 ? O_NONBLOCK : 0);
+			break;
+		}
 		// Network interface ioctls (SIOC*, 0x89xx) on a socket fd -> the net layer (ifconfig/DHCP).
 		if (a1 >= 0x8900 && a1 <= 0x89ff && g_sys->isSocketFd((int) a0)) {
 			ret = g_sys->netIoctl((int) a0, a1, (void*) a2);
