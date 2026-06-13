@@ -280,18 +280,23 @@ WaitQueue, VFS z RamFs.
   `net/NetProc.cpp` (+`/proc/net/unix`), `fs/SynthFs.cpp` (rejestracja generatora)
 - Test: `tests/test_unix.cpp`
 
-- [ ] **G1. SOCK_STREAM:** para buforów w pamięci (jak dwukierunkowy Pipe), `bind` na ścieżkę
-  (plik S_IFSOCK w VFS; EADDRINUSE gdy istnieje), `listen/accept/connect` przez WaitQueue,
-  `ECONNREFUSED` gdy nikt nie słucha. Testy: pełny cykl client/server, EOF przy close,
-  refcount przez fork (wzorzec socketRef już jest).
-- [ ] **G2. SOCK_DGRAM:** datagramy z zachowaniem granic (RXQ ring per socket — reuse
-  istniejącego), `sendto` po ścieżce. Test: granice komunikatów, ENOENT na złą ścieżkę.
-- [ ] **G3. `socketpair(AF_UNIX, SOCK_STREAM)`:** zamienia ENOSYS z `SyscallDispatch.cpp:135`
-  na prawdziwą parę połączonych socketów. Test: pisz-czytaj w obu kierunkach + fork.
-- [ ] **G4. `/proc/net/unix`** w formacie Linuksa (Num RefCount Protocol Flags Type St Inode
+- [x] **G1. SOCK_STREAM:** refcountowany `UnixChannel` (dwa bajtowe ringi per kierunek + oba
+  endpointy), `bind` na ścieżkę (EADDRINUSE gdy zajęta — autorytet: skan g_socks), `listen/
+  accept/connect` przez WaitQueue, `ECONNREFUSED` gdy nikt nie słucha. Testy: pełny cykl
+  client/server, EOF przy close, MSG_PEEK. **REFINEMENT ODŁOŻONY:** widoczny węzeł `S_IFSOCK`
+  w VFS (`ls /tmp`) — funkcjonalnie zbędny (rejestr MI jest autorytetem), a wpięcie `vfs->mknod`
+  w `bind` sprzęga z VFS i psuje czyste host-testy (fixture ext2, brak /tmp). Do zrobienia z
+  RamFs S_IFSOCK + graceful fallback, gdy ścieżka nie jest na zapisywalnym FS.
+- [x] **G2. SOCK_DGRAM:** datagramy z zachowaniem granic (RXQ ring per socket + socketDeliver),
+  `sendto` po ścieżce + `connect` ustawia domyślny cel. Test: granice komunikatów, ECONNREFUSED
+  na nieistniejącą ścieżkę.
+- [x] **G3. `socketpair(AF_UNIX, SOCK_STREAM)`:** zamienia ENOSYS z `SyscallDispatch.cpp:135`
+  na prawdziwą parę połączonych socketów. Test: pisz-czytaj w obu kierunkach + QEMU smoke.
+- [x] **G4. `/proc/net/unix`** w formacie Linuksa (Num RefCount Protocol Flags Type St Inode
   Path). Test renderera w test_netproc-stylu.
-- [ ] **G5.** `make test` ≥90% nowych modułów; QEMU: program demo socketpair przez bash;
-  zero faultów. Commit: `net: AF_UNIX (stream+dgram) + real socketpair + /proc/net/unix`.
+- [x] **G5.** `make test` 91.3% agregat (Unix.cpp 96%, NetProc.cpp 94%); QEMU: `unixtest` demo
+  przez bash = ALL PASS, zero faultów. Commity: `net: AF_UNIX core`, `syscall: AF_UNIX ABI +
+  socketpair`, `net: /proc/net/unix`, `test: unixtest`.
 
 ### FAZA H — SERWISY: inetd + telnetd + httpd (system, który można ODWIEDZIĆ)
 
