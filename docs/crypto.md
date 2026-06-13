@@ -61,8 +61,12 @@ Auth supports both **password** and **public key**:
   `ssh -i key -p 2222 root@localhost`.
 
 Either way you get a bash session over the kernel PTY: SSH-2 banner, KEX, ed25519 host key, auth,
-shell — all on the guest. (Start the server first: `dropbearkey -t ed25519 -f /tmp/hk` then
-`dropbear -r /tmp/hk -p 22`; the host reaches it via the `make run` hostfwd 2222->22.)
+shell — all on the guest.
+
+**sshd is a boot service:** `init` starts dropbear alongside inetd (`start_sshd()` in `user/init.c`),
+generating a persistent ed25519 host key on the read-write disk on first boot. So after `make run`
+(which maps host 2222 -> guest 22) you just `ssh -p 2222 root@localhost` from the host — no manual
+start. (To run it by hand instead: `dropbearkey -t ed25519 -f /tmp/hk && dropbear -r /tmp/hk -p 22`.)
 
 **Known limitation:** a non-interactive `ssh host cmd` (and a `-t` pty session) returns the command
 output correctly but the client lingers at the end instead of closing cleanly — Dropbear's
