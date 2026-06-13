@@ -147,18 +147,18 @@ Dropbear jako udokumentowanym planem B.
 
 ### FAZA 5 — SSH klient + sweep końcowy
 
-- [ ] **5.1** Klient `ssh` (z tego samego buildu OpenSSH): pętla loopback `ssh root@127.0.0.1`
+- [x] **5.1** Klient `ssh` (z tego samego buildu OpenSSH): pętla loopback `ssh root@127.0.0.1`
   do naszego `sshd` — 100% na NanOS, zero hosta (jak telnet-klient w FAZIE I; wymaga trasy
   127/8→lo, którą już mamy).
-- [ ] **5.2** Hardening: `tests/test_csprng` + złośliwy TLS (obcięty ClientHello → drop, nie crash
+- [x] **5.2** Hardening: `tests/test_csprng` + złośliwy TLS (obcięty ClientHello → drop, nie crash
   — to userland OpenSSL, ale jądrowy CSPRNG/getrandom pod obciążeniem nie może się zaciąć).
   `/proc/net/tcp` pokazuje sshd/s_server w `0A`.
-- [ ] **5.3** `docs/networking.md` (§9 + §13) i ew. nowy `docs/crypto.md`: CSPRNG, OpenSSL, HTTPS,
+- [x] **5.3** `docs/networking.md` (§9 + §13) i ew. nowy `docs/crypto.md`: CSPRNG, OpenSSL, HTTPS,
   SSH; zaktualizuj „out of scope" (TLS/SSH wychodzą z listy).
-- [ ] **5.4** Pełny sweep: `make test` ≥90%, `check-arch` czysty, QEMU pełny scenariusz
+- [x] **5.4** Pełny sweep: `make test` ≥90%, `check-arch` czysty, QEMU pełny scenariusz
   (boot→DHCP→`wget https`→`curl -k https` z hosta→`ssh` z hosta→`/proc/net/*`) bez faultów;
   `e2fsck -fn` clean. Progress-log `2026-06-13-tls-ssl-ssh-openssl-progress.md`.
-- [ ] **5.5** Commit: `docs+test: TLS/SSH complete`.
+- [x] **5.5** Commit: `docs+test: TLS/SSH complete`.
 
 ---
 
