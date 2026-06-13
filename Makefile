@@ -218,7 +218,7 @@ assets:
 	@echo "staged $(BINFOLDER)wallpaper.raw + logo.raw — run 'make image' to install them"
 
 run: image
-	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw
+	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
 
 run-iso: iso
 	qemu-system-i386 -cdrom nanos.iso
@@ -234,9 +234,11 @@ run-iso: iso
 PCAP ?= /tmp/nanos.pcap
 # hostfwd map (host port -> guest service): 5555->80 (httpd), 2323->23 (telnetd), 5007->7 (echo),
 # 5013->13 (daytime) — the inetd built-ins + services let a host client reach the guest servers.
-NIC_OPTS=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=tcp::5007-:7,hostfwd=tcp::5013-:13 \
-         -device e1000,netdev=n0 \
-         -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
+# NIC_NET = the NIC + NAT + host port-forwards. `make run` uses it so a host `telnet localhost 2323`
+# reaches the guest's telnetd out of the box (no extra flags). run-net adds a filter-dump pcap.
+NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=tcp::5007-:7,hostfwd=tcp::5013-:13 \
+        -device e1000,netdev=n0
+NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
 run-net: image
 	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
