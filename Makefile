@@ -121,6 +121,25 @@ wget: bin/libc.ndl bin/libc.ndl.a
 	cp "$(WGET_PORT)/wget.nxe" $(BINFOLDER)wget.nxe
 	@echo "staged $(BINFOLDER)wget.nxe — run 'make image' to install it into /nanos/bin"
 
+# GNU inetutils SERVICES build (FAZA H): the internet super-server inetd (and, as the build
+# grows, telnetd + the telnet/ifconfig/traceroute clients) from the SAME inetutils source as
+# `make ping`, but configured with servers enabled. Manifest at $(SERVICES_PORT)/nxport.toml;
+# hooks/post_build.sh mknx's the extra binaries. Same reproducible flow as ping/wget.
+SERVICES_PORT := $(SDK_WORK)/inetutils-services-port
+inetd: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(SERVICES_PORT)/nxport.toml"  || { echo "inetutils services port not found at $(SERVICES_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(SERVICES_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(SERVICES_PORT)/inetd.nxe" $(BINFOLDER)inetd.nxe
+	@echo "staged $(BINFOLDER)inetd.nxe — run 'make image' to install it into /nanos/bin"
+
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
 # busybox tree) and mknx it. No busybox source patches — sysroot headers + EXTRA_CFLAGS only.
@@ -153,6 +172,7 @@ externals:
 	            "bzip2:$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" \
 	            "ping:$(SDK_WORK)/inetutils-port/ping.nxe" \
 	            "wget:$(SDK_WORK)/wget-port/wget.nxe" \
+	            "inetd:$(SDK_WORK)/inetutils-services-port/inetd.nxe" \
 	            "udhcpc:$(BB_DIR)/udhcpc.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
@@ -165,7 +185,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget udhcpc   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget inetd udhcpc   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -187,7 +207,10 @@ run-iso: iso
 # the "no-shortcuts" gate: we byte-compare our ARP/IP/ICMP/DNS/TCP against real Linux. hostfwd
 # (host:5555 -> guest:80) lets a host client reach a guest server for loopback-free tests.
 PCAP ?= /tmp/nanos.pcap
-NIC_OPTS=-netdev user,id=n0,hostfwd=tcp::5555-:80 -device e1000,netdev=n0 \
+# hostfwd map (host port -> guest service): 5555->80 (httpd), 2323->23 (telnetd), 5007->7 (echo),
+# 5013->13 (daytime) — the inetd built-ins + services let a host client reach the guest servers.
+NIC_OPTS=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=tcp::5007-:7,hostfwd=tcp::5013-:13 \
+         -device e1000,netdev=n0 \
          -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
 run-net: image
@@ -317,7 +340,7 @@ _image: _all _userland _kext _grub2-image
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# Network config templates -> /nanos/config/etc (copied into the writable /etc tmpfs at boot).
 	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
-	for f in resolv.conf hosts nsswitch.conf protocols services; do \
+	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf; do \
 	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# DHCP: the udhcpc action helper (compiled .nxe; udhcpc exec()s it) -> /nanos/config/udhcpc.script,
@@ -387,6 +410,11 @@ _image: _all _userland _kext _grub2-image
 	if [ -f $(BINFOLDER)wget.nxe ]; then \
 	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
+	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
+	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	if [ -f $(BINFOLDER)inetd.nxe ]; then \
+	  printf "rm /nanos/bin/inetd.nxe\nwrite $(BINFOLDER)inetd.nxe /nanos/bin/inetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
 	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
 	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
 	if [ -f $(BINFOLDER)wallpaper.raw ]; then \
@@ -445,8 +473,8 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest dhcpcfg
-SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv dhcpcfg
+SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -551,6 +579,7 @@ $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o
 $(BINFOLDER)pingtest.nxe:  $(DYN_DEPS) $(BINFOLDER)pingtest.o
 $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
+$(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o
