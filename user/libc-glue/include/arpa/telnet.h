@@ -1,7 +1,7 @@
 /*
- * arpa/telnet.h — TELNET protocol definitions (RFC 854 + options), classic BSD layout. NanOS
- * ships no telnet client/server, but inetutils' shared libtelnet references these at compile
- * time. Standard, self-contained definitions; nothing here is linked by ping.
+ * arpa/telnet.h — TELNET protocol definitions (RFC 854 + options + LINEMODE/SLC), classic BSD
+ * layout. inetutils' libtelnet, the telnet client and telnetd (FAZA H) all reference these.
+ * Standard, self-contained definitions.
  */
 #ifndef _ARPA_TELNET_H
 #define _ARPA_TELNET_H
@@ -122,5 +122,106 @@ extern const char *telopts[NTELOPTS+1];
 #define LFLOW_ON        1   /* Enable remote flow control */
 #define LFLOW_RESTART_ANY    2   /* Restart output on any char */
 #define LFLOW_RESTART_XON    3   /* Restart output only on XON */
+
+/*
+ * LINEMODE suboptions (RFC 1184)
+ */
+#define LM_MODE         1
+#define LM_FORWARDMASK  2
+#define LM_SLC          3
+
+#define MODE_EDIT       0x01
+#define MODE_TRAPSIG    0x02
+#define MODE_ACK        0x04
+#define MODE_SOFT_TAB   0x08
+#define MODE_LIT_ECHO   0x10
+
+#define MODE_MASK       0x1f
+
+/* Not part of protocol, but needed to simplify things... */
+#define MODE_FLOW       0x0100
+#define MODE_ECHO       0x0200
+#define MODE_INBIN      0x0400
+#define MODE_OUTBIN     0x0800
+#define MODE_FORCE      0x1000
+
+/*
+ * Set-Local-Character (SLC) function codes
+ */
+#define SLC_SYNCH       1
+#define SLC_BRK         2
+#define SLC_IP          3
+#define SLC_AO          4
+#define SLC_AYT         5
+#define SLC_EOR         6
+#define SLC_ABORT       7
+#define SLC_EOF         8
+#define SLC_SUSP        9
+#define SLC_EC          10
+#define SLC_EL          11
+#define SLC_EW          12
+#define SLC_RP          13
+#define SLC_LNEXT       14
+#define SLC_XON         15
+#define SLC_XOFF        16
+#define SLC_FORW1       17
+#define SLC_FORW2       18
+
+#define SLC_MCL         19
+#define SLC_MCR         20
+#define SLC_MCWL        21
+#define SLC_MCWR        22
+#define SLC_MCBOL       23
+#define SLC_MCEOL       24
+#define SLC_INSRT       25
+#define SLC_OVER        26
+#define SLC_ECR         27
+#define SLC_EWR         28
+#define SLC_EBOL        29
+#define SLC_EEOL        30
+
+#define NSLC            30
+
+/*
+ * For backwards compatibility, we define SLC_NAMES to be the
+ * list of names if SLC_NAMES is not defined.
+ */
+#define SLC_NAMELIST    "0", "FORW1", "FORW2", "EOF", "SUSP", "ABORT", "EOR", \
+                        "SYNCH", "BRK", "IP", "AO", "AYT", "EC", "EL", "EW", \
+                        "RP", "LNEXT", "XON", "XOFF", "FORW1", "FORW2", \
+                        "MCL", "MCR", "MCWL", "MCWR", "MCBOL", "MCEOL", \
+                        "INSRT", "OVER", "ECR", "EWR", "EBOL", "EEOL", 0,
+#ifdef SLC_NAMES
+char *slc_names[] = {
+        SLC_NAMELIST
+};
+#else
+extern char *slc_names[];
+#define SLC_NAMES SLC_NAMELIST
+#endif
+
+#define SLC_NAME_OK(x)  ((unsigned int)(x) <= NSLC)
+#define SLC_NAME(x)     slc_names[x]
+
+#define SLC_NOSUPPORT   0
+#define SLC_CANTCHANGE  1
+#define SLC_VARIABLE    2
+#define SLC_DEFAULT     3
+#define SLC_LEVELBITS   0x03
+
+#define SLC_FUNC        0
+#define SLC_FLAGS       1
+#define SLC_VALUE       2
+
+#define SLC_ACK         0x80
+#define SLC_FLUSHIN     0x40
+#define SLC_FLUSHOUT    0x20
+
+#define OLD_ENV_VAR         1   /* (historical: OLD env swaps VAR/VALUE vs NEW) */
+#define OLD_ENV_VALUE       0
+#define NEW_ENV_VAR         0
+#define NEW_ENV_VALUE       1
+#define ENV_ESC             2
+#define ENV_USERVAR         3
 
 #endif /* _ARPA_TELNET_H */

@@ -138,7 +138,8 @@ inetd: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(SERVICES_PORT)/inetd.nxe" $(BINFOLDER)inetd.nxe
-	@echo "staged $(BINFOLDER)inetd.nxe — run 'make image' to install it into /nanos/bin"
+	@test -f "$(SERVICES_PORT)/telnetd.nxe" && cp "$(SERVICES_PORT)/telnetd.nxe" $(BINFOLDER)telnetd.nxe || true
+	@echo "staged $(BINFOLDER)inetd.nxe (+ telnetd.nxe) — run 'make image' to install into /nanos/bin"
 
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
@@ -173,6 +174,7 @@ externals:
 	            "ping:$(SDK_WORK)/inetutils-port/ping.nxe" \
 	            "wget:$(SDK_WORK)/wget-port/wget.nxe" \
 	            "inetd:$(SDK_WORK)/inetutils-services-port/inetd.nxe" \
+	            "telnetd:$(SDK_WORK)/inetutils-services-port/telnetd.nxe" \
 	            "udhcpc:$(BB_DIR)/udhcpc.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
@@ -415,6 +417,11 @@ _image: _all _userland _kext _grub2-image
 	if [ -f $(BINFOLDER)inetd.nxe ]; then \
 	  printf "rm /nanos/bin/inetd.nxe\nwrite $(BINFOLDER)inetd.nxe /nanos/bin/inetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
+	# telnetd (optional, external): GNU inetutils telnetd from the same services build. Remote bash
+	# login over a kernel pty (launched by inetd; execs nanologin -> the user's shell).
+	if [ -f $(BINFOLDER)telnetd.nxe ]; then \
+	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
 	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
 	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
 	if [ -f $(BINFOLDER)wallpaper.raw ]; then \
@@ -473,8 +480,8 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv dhcpcfg
-SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg
+SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv nanologin
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -580,6 +587,7 @@ $(BINFOLDER)pingtest.nxe:  $(DYN_DEPS) $(BINFOLDER)pingtest.o
 $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
+$(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o

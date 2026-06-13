@@ -19,6 +19,24 @@
 #ifndef FIONREAD
 #define FIONREAD   0x541B
 #endif
+#ifndef FIONBIO
+#define FIONBIO    0x5421   /* set/clear non-blocking I/O (arg: int*) */
+#endif
+/* Pseudo-terminal packet mode (telnetd turns it on to learn about tty flushes). The kernel pty
+ * may treat TIOCPKT as a no-op; telnetd ignores the ioctl's return value, so these only need to
+ * exist for it to compile + run. The status byte the master reads in packet mode carries these
+ * bits. */
+#ifndef TIOCPKT
+#define TIOCPKT             0x5420
+#define TIOCPKT_DATA        0x00
+#define TIOCPKT_FLUSHREAD   0x01
+#define TIOCPKT_FLUSHWRITE  0x02
+#define TIOCPKT_STOP        0x04
+#define TIOCPKT_START       0x08
+#define TIOCPKT_NOSTOP      0x10
+#define TIOCPKT_DOSTOP      0x20
+#define TIOCPKT_IOCTL       0x40
+#endif
 
 /* Socket ioctls (Linux SIOC*) used by ifconfig/udhcpc; handled in kernel/Syscall.cpp netIoctl. */
 #define SIOCGIFCONF    0x8912
