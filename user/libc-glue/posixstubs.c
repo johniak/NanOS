@@ -18,17 +18,8 @@
 
 extern char** environ;
 
-/* Pseudo-terminal helpers: NanOS userland doesn't expose these yet — honest ENOSYS. Present so
- * inetutils' shared (telnet/login) sources link; ping never calls them. */
-struct termios;
-struct winsize;
-int openpty(int* a, int* b, char* n, const struct termios* t, const struct winsize* w) {
-	(void) a; (void) b; (void) n; (void) t; (void) w; errno = ENOSYS; return -1;
-}
-int forkpty(int* a, char* n, const struct termios* t, const struct winsize* w) {
-	(void) a; (void) n; (void) t; (void) w; errno = ENOSYS; return -1;
-}
-int login_tty(int fd) { (void) fd; errno = ENOSYS; return -1; }
+/* Pseudo-terminal helpers (openpty/forkpty/login_tty) now have a real implementation in pty.c,
+ * backed by the kernel /dev/ptmx + /dev/pts0 pair. */
 
 /* pathconf/fpathconf: report fixed POSIX limits (NanOS has no per-path configuration). Values
  * match <limits.h> (PATH_MAX 4096, NAME_MAX 255). Without this, gnulib/wget fall back to a
