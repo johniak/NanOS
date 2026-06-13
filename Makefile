@@ -482,6 +482,10 @@ _image: _all _userland _kext _grub2-image
 	  > /tmp/xterm-256color.ti
 	tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null
 	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	# Reconcile the ext block/inode bitmaps after the debugfs writes: `debugfs write` can leave the
+	# free-counts/bitmaps slightly off, so a final `e2fsck -fy` makes every built image e2fsck-clean
+	# (exit 1 = "fixed", which is expected here, so don't fail the build on it).
+	e2fsck -fy "$(IMAGE_GRUB2_PART)" || true
 
 _iso: _all
 	mkdir -p iso/boot/grub
