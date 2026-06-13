@@ -84,18 +84,18 @@ OpenSSL **bez łatek źródeł**, zredukowana konfiguracja pod i686-nanos.
 - Modify: `user/libc-glue/*` + nagłówki sysroota — domknięcie symboli, których OpenSSL wymaga,
   a libc.ndl nie ma (iteracyjnie, ściana symboli; bez łatek OpenSSL)
 
-- [ ] **1.1** Manifest: `Configure no-asm no-threads no-shared no-dso no-engine no-tests no-docs
+- [x] **1.1** Manifest: `Configure no-asm no-threads no-shared no-dso no-engine no-tests no-docs
   no-deprecated` + wytnij nieużywane (`no-ssl3 no-weak-ssl-ciphers` …); `--with-rand-seed=getrandom`
   (z FAZY 0). Target = własny `nanos` w `Configurations/` **lub** generyczny `gcc` z naszym CC
   (preferuj generyczny, by nie łatać OpenSSL — to plik konfiguracyjny portu, nie źródło).
-- [ ] **1.2** Zbuduj `libcrypto.a` + `libssl.a`; mknx apkę `apps/openssl`. Domknij ścianę symboli
+- [x] **1.2** Zbuduj `libcrypto.a` + `libssl.a`; mknx apkę `apps/openssl`. Domknij ścianę symboli
   w libc-glue/nagłówkach (spodziewane: `getrandom`, `socket`/`poll` (są), `gmtime_r`/`timegm`,
   operacje plikowe, `getenv`/`secure_getenv`, `sysconf`, brak `fork` w niektórych ścieżkach).
   **Budżet pamięci:** zmierz rozmiar; jeśli przekracza 32 MiB sterty/okno usera — podnieś
   `NX_BRK_MAX` (i ew. okno) analogicznie do FAZY B planu sieciowego (jedna stała, udokumentowana).
-- [ ] **1.3** QEMU smoke: `openssl version`; `openssl rand -hex 16` (różne co wywołanie, z CSPRNG);
+- [x] **1.3** QEMU smoke: `openssl version`; `openssl rand -hex 16` (różne co wywołanie, z CSPRNG);
   `openssl dgst -sha256` pliku == znana suma; `openssl genrsa 2048` w rozsądnym czasie. Zero faultów.
-- [ ] **1.4** Commit: `ports: OpenSSL (libcrypto+libssl, no-asm/no-threads), /nanos/bin/openssl`.
+- [x] **1.4** Commit: `ports: OpenSSL (libcrypto+libssl, no-asm/no-threads), /nanos/bin/openssl`.
 
 ### FAZA 2 — TLS klient (HTTPS wychodzące)
 
