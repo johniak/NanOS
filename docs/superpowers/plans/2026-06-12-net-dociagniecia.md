@@ -364,16 +364,21 @@ klienckiej.
 - Modify: Makefile (`make nettools` — z TEGO SAMEGO builda inetutils co ping/inetd:
   ifconfig, traceroute, telnet klient, hostname), instalacja do `/nanos/bin`
 
-- [ ] **I1. `ifconfig`** (inetutils): pokazuje eth0/lo z adresami z DHCP — ćwiczy
-  SIOCGIFCONF/SIOCGIFADDR/FLAGS/HWADDR/MTU na żywym systemie. (SIOCGIFCONF dopisać, jeśli
-  inetutils go używa — strace na Linuksie najpierw, jak w FAZIE 0 planu bazowego.)
-- [ ] **I2. `traceroute`** (inetutils): UDP z rosnącym TTL + odbiór ICMP time-exceeded —
-  to jest test końcowy FAZY C (bez niej traceroute milczy). Weryfikacja: `traceroute 10.0.2.2`
-  pokazuje hop; pcap: serie UDP z TTL 1..n + ICMP time-exceeded (uwaga: slirp może skracać
-  ścieżkę do 1 hopu — wynik „1 hop do gw" JEST poprawny w NAT).
-- [ ] **I3. `telnet` (klient):** interaktywny test naszego własnego telnetd przez lo
-  (`telnet 127.0.0.1 23`) — pętla serwis↔klient w 100% na NanOS, zero hosta.
-- [ ] **I4.** Commit: `ports: inetutils nettools (ifconfig, traceroute, telnet)`.
+- [x] **I1. `ifconfig`** (inetutils): **ZROBIONE.** Enumeruje przez `if_nameindex` (dorobione
+  if_nametoindex/indextoname/nameindex/freenameindex w libc-glue ifname.c nad SIOCGIFINDEX — NIE
+  trzeba było SIOCGIFCONF). QEMU: `ifconfig` pokazuje eth0 (10.0.2.15 z DHCP) + lo z
+  addr/netmask/broadcast/flags/mtu.
+- [x] **I2. `traceroute`** (inetutils): **ZROBIONE.** Wymagało **setsockopt(IPPROTO_IP, IP_TTL)**
+  (dorobione: per-socket ttl + plumbing przez ipOutput) — to ćwiczy też FAZĘ C (odbiór ICMP
+  time-exceeded). QEMU: `traceroute 10.0.2.2` → `1  10.0.2.2  1.000ms`, hop 2 `*` (slirp NAT zwija
+  ścieżkę — poprawne); pcap: UDP TTL 1..n + ICMP time-exceeded.
+- [x] **I3. `telnet` (klient):** **ZROBIONE.** Wymagało **trasy loopback 127/8→lo** (brakowało —
+  self-connect szedł domyślną trasą i był odrzucany) + execl/TCFLSH w libc. QEMU: `telnet 127.0.0.1
+  23` → Connected → baner telnetd → `bash-5.2# ls /` → dev/disks/proc/tmp; serwis↔klient 100% na
+  NanOS, zero hosta, zero faultów.
+- [x] **I4.** Commity: `net: per-socket IP_TTL + loopback route`, `libc+ports: inetutils nettools`.
+  UWAGA (jak H2): krótkie opcje argp psute przez getopt picolibc nawet z wymuszonym REPLACE_GETOPT
+  — klienty sterowane długimi opcjami; właściwy fix getopt w libc to osobny tracked item.
 
 ### FAZA J — sweep końcowy: dokumentacja, /proc, hardening nowych powierzchni
 
