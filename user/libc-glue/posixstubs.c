@@ -76,6 +76,18 @@ int fchown(int fd, uid_t u, gid_t g)        { (void) fd; (void) u; (void) g; ret
 int chmod(const char* p, mode_t m)          { (void) p; (void) m; return 0; }
 int fchmod(int fd, mode_t m)                { (void) fd; (void) m; return 0; }
 
+/* chroot: NanOS has no per-process root. Reported as unsupported; callers (darkhttpd) only invoke
+ * it when explicitly asked to (--chroot), which we never do — the symbol just needs to resolve. */
+int chroot(const char* path) { (void) path; errno = ENOSYS; return -1; }
+
+/* getrusage: no per-process resource accounting. Zero the struct and succeed (servers query it for
+ * optional stats logging; zeros are an honest "not measured"). */
+int getrusage(int who, struct rusage* usage) {
+	(void) who;
+	if (usage) memset(usage, 0, sizeof *usage);
+	return 0;
+}
+
 /* umask: track the value so callers round-trip it (the kernel does not apply it yet). */
 static mode_t g_umask = 022;
 mode_t umask(mode_t m) { mode_t o = g_umask; g_umask = m & 0777; return o; }

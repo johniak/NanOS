@@ -99,6 +99,29 @@ int fcntl(int fd, int cmd, ...) {
 	return reterr(sys3(SYS_fcntl, fd, cmd, arg));
 }
 int lseek(int fd, int off, int wh)      { return reterr(sys3(SYS_lseek, fd, off, wh)); }
+
+/* pread/pwrite: read/write at an explicit offset without a separate lseek visible to the caller.
+ * NanOS has no positioned-I/O syscall, so we save the current offset, seek, transfer, and restore
+ * it. Not atomic against a concurrent lseek on the same fd, but every NanOS consumer (e.g.
+ * darkhttpd, which forks one process per connection) owns its fd exclusively. */
+int pread(int fd, void* buf, unsigned n, int off) {
+	int cur = sys3(SYS_lseek, fd, 0, 1);                 /* SEEK_CUR */
+	if (cur < 0) { errno = -cur; return -1; }
+	if (sys3(SYS_lseek, fd, off, 0) < 0) { errno = ESPIPE; return -1; }   /* SEEK_SET */
+	int r = sys3(SYS_read, fd, (int) buf, (int) n);
+	sys3(SYS_lseek, fd, cur, 0);                         /* restore */
+	if (r < 0) { errno = -r; return -1; }
+	return r;
+}
+int pwrite(int fd, const void* buf, unsigned n, int off) {
+	int cur = sys3(SYS_lseek, fd, 0, 1);
+	if (cur < 0) { errno = -cur; return -1; }
+	if (sys3(SYS_lseek, fd, off, 0) < 0) { errno = ESPIPE; return -1; }
+	int r = sys3(SYS_write, fd, (int) buf, (int) n);
+	sys3(SYS_lseek, fd, cur, 0);
+	if (r < 0) { errno = -r; return -1; }
+	return r;
+}
 int unlink(const char* p) {
 	return reterr(sys3(SYS_unlink, (int) p, 0, 0));
 }
