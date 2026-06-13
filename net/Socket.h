@@ -16,8 +16,8 @@ namespace kernel {
 struct NetBuf;
 
 // Linux i686 address-family / type / option constants (the wire+ABI values).
-enum { AF_INET = 2, AF_PACKET = 17 };
-enum { SOCK_STREAM = 1, SOCK_DGRAM = 2, SOCK_RAW = 3 };
+enum { AF_UNIX = 1, AF_INET = 2, AF_PACKET = 17 };
+enum { SOCK_STREAM = 1, SOCK_DGRAM = 2, SOCK_RAW = 3, SOCK_SEQPACKET = 5 };
 enum {                              // setsockopt levels/names we honor
 	SOL_SOCKET = 1,
 	SO_REUSEADDR = 2, SO_TYPE = 3, SO_ERROR = 4, SO_BROADCAST = 6,
@@ -34,6 +34,8 @@ enum {
 	SOCK_EISCONN = 106, SOCK_ENOTCONN = 107, SOCK_EADDRINUSE = 98, SOCK_EMSGSIZE = 90,
 	SOCK_EPROTONOSUPPORT = 93, SOCK_EACCES = 13, SOCK_ENOBUFS = 105,
 	SOCK_ENETUNREACH = 101, SOCK_EHOSTUNREACH = 113, SOCK_ETIMEDOUT = 110,
+	SOCK_ENOENT = 2, SOCK_EPIPE = 32, SOCK_ECONNRESET = 104, SOCK_EOPNOTSUPP = 95,
+	SOCK_ENOTSOCK = 88, SOCK_EDESTADDRREQ = 89,
 };
 
 struct Socket {
@@ -58,6 +60,10 @@ struct Socket {
 
 	// TCP attaches its control block here (FAZA 8); 0 for UDP/RAW.
 	void* tcp;
+
+	// AF_UNIX attaches its per-socket state here (net/Unix.cpp: channel/dir, listen backlog,
+	// bound path, connected peer); 0 for every other domain. Mirrors the `tcp` seam.
+	void* un;
 };
 
 // Lifecycle. socketCreate validates the family/type (AF_INET + DGRAM/RAW now; STREAM in FAZA 8;

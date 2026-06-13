@@ -2,6 +2,7 @@
 #include "NetBuf.h"
 #include "Ip.h"       // IPPROTO_* for RAW protocol validation
 #include "Tcp.h"      // SOCK_STREAM dispatch
+#include "Unix.h"     // AF_UNIX dispatch
 #include <string.h>
 
 namespace kernel {
@@ -37,6 +38,12 @@ Socket* socketCreate(int domain, int type, int protocol, int* err) {
 			if (err) *err = -SOCK_EPROTONOSUPPORT;
 			return 0;
 		}
+	} else if (domain == AF_UNIX) {
+		// Local sockets (FAZA G): STREAM (byte channel) or DGRAM (message ring).
+		if (type != SOCK_STREAM && type != SOCK_DGRAM) {
+			if (err) *err = -SOCK_EPROTONOSUPPORT;
+			return 0;
+		}
 	} else {
 		// AF_INET6 -> EAFNOSUPPORT (IPv4-only stack, FAZA 11 semantics).
 		if (err) *err = -SOCK_EAFNOSUPPORT;
@@ -50,8 +57,12 @@ Socket* socketCreate(int domain, int type, int protocol, int* err) {
 			s->domain = domain; s->type = type; s->protocol = protocol;
 			s->rcvbuf = DEFAULT_BUF; s->sndbuf = DEFAULT_BUF;
 			s->rxHead = s->rxTail = s->rxCount = s->rxBytes = 0;
-			if (type == SOCK_STREAM) {
+			if (type == SOCK_STREAM && domain == AF_INET) {
 				int rc = tcpAttach(s);                  // give it a TCB
+				if (rc < 0) { s->used = false; if (err) *err = rc; return 0; }
+			}
+			if (domain == AF_UNIX) {
+				int rc = unixAttach(s);                 // give it per-socket AF_UNIX state
 				if (rc < 0) { s->used = false; if (err) *err = rc; return 0; }
 			}
 			if (err) *err = 0;
@@ -71,6 +82,8 @@ void socketClose(Socket* s) {
 	if (--s->refs > 0) return;
 	if (s->type == SOCK_STREAM && s->tcp)    // begin the TCP close handshake (orphans the TCB)
 		tcpClose(s);
+	if (s->domain == AF_UNIX)                // wake peer (EOF), drop channel ref, unbind, free state
+		unixDetach(s);
 	while (s->rxCount > 0) {                 // free any queued datagrams
 		netbufFree(s->rxq[s->rxTail].skb);
 		s->rxTail = (s->rxTail + 1) % Socket::RXQ;
@@ -175,6 +188,7 @@ int socketGetOpt(Socket* s, int level, int name, void* val, unsigned* len) {
 
 int socketSendTo(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t dstPort) {
 	if (!s) return -SOCK_EINVAL;
+	if (s->domain == AF_UNIX) return unixSend(s, buf, len, 0, 0);   // write()/connected send (no addr)
 	if (s->type == SOCK_STREAM) return tcpSend(s, buf, len);    // stream: ignore dst, use the connection
 	if (s->connected) { dstIp = s->remoteIp; dstPort = s->remotePort; }
 	else if (dstIp == 0) return -SOCK_ENOTCONN;       // unconnected send needs a destination
@@ -185,6 +199,11 @@ int socketSendTo(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint1
 
 int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t* srcPort, int flags) {
 	if (!s) return -SOCK_EINVAL;
+	if (s->domain == AF_UNIX) {              // read()/recv (no from-addr): stream channel or dgram ring
+		if (srcIp) *srcIp = 0;
+		if (srcPort) *srcPort = 0;
+		return unixRecv(s, buf, len, flags, 0, 0);
+	}
 	if (s->type == SOCK_STREAM) {            // stream: byte recv from the connection
 		if (srcIp) *srcIp = s->remoteIp;
 		if (srcPort) *srcPort = s->remotePort;
@@ -213,10 +232,12 @@ int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t
 
 bool socketReadable(const Socket* s) {
 	if (!s) return false;
+	if (s->domain == AF_UNIX) return unixReadable(s);
 	if (s->type == SOCK_STREAM) return tcpReadable((Socket*) s);
 	return s->rxCount > 0 || s->soError != 0;
 }
 bool socketWritable(const Socket* s) {
+	if (s && s->domain == AF_UNIX) return unixWritable(s);
 	if (s && s->type == SOCK_STREAM) return tcpWritable((Socket*) s);
 	return s != 0;   // datagram sockets are always writable
 }
