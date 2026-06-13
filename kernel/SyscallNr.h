@@ -79,6 +79,7 @@
                              * 32-bit word; the legacy i386 history slots are unused) */
 #define SYS_nanosleep 162
 #define SYS_clock_gettime 265
+#define SYS_getrandom 355
 #define SYS_ioctl 54
 #define SYS_fcntl 55
 #define SYS_mmap2 192

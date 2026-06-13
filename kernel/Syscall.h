@@ -21,6 +21,7 @@ namespace kernel {
 #define E2BIG 7
 #define EBADF 9
 #define EAGAIN 11
+#define EFAULT 14
 #define EINVAL 22
 #define EROFS 30
 #define EMFILE 24

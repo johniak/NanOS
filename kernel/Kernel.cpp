@@ -19,6 +19,7 @@
 #include "NetCore.h"         // net stack bring-up: lo + RX softirq thread + driver exports
 #include <arch/pci.h>
 #include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
+#include "Csprng.h"           // csprngKernelSeed: seed the kernel CSPRNG at boot
 #include "Scheduler.h"
 #include <arch/sched.h>
 #include "Syscall.h"
@@ -252,6 +253,7 @@ void Kernel::start() {
 	// Bring up the CPU descriptor tables, interrupt vectors and legacy input (arch).
 	arch::cpuInit();
 	setBootEpoch(arch::rtcEpoch());   // seed the wall clock from the RTC (file timestamps)
+	csprngKernelSeed();               // seed the kernel CSPRNG (RDRAND+jitter+RTC) before any RNG use
 	Console::writeLine("");
 
 	// Enable paging (identity-mapped) before the storage stack / userspace.

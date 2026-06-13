@@ -7,7 +7,7 @@ include arch/$(ARCH)/arch.mk
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamFs.o RamBlockDevice.o DeviceManager.o Vfs.o
 MI_SOURCES+= Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o
 MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
-MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o
+MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o Csprng.o
 MI_SOURCES+= Pci.o
 MI_SOURCES+= Net.o NetBuf.o NetDevice.o Loopback.o NetCore.o Ether.o Arp.o Ip.o Route.o Icmp.o
 MI_SOURCES+= Socket.o Udp.o Raw.o Tcp.o Packet.o Unix.o NetProc.o NetStats.o
@@ -217,8 +217,12 @@ assets:
 	python3 scripts/png2raw.py "$(ART_DIR)/logo.png"      $(BINFOLDER)logo.raw      96x96     --bg 0xf4f8fd
 	@echo "staged $(BINFOLDER)wallpaper.raw + logo.raw — run 'make image' to install them"
 
+# -cpu Nehalem: expose RDRAND so the kernel CSPRNG seeds from a hardware RNG (the default qemu32
+# CPU lacks it — without this flag archHwRandom returns false and the seed is RDTSC-jitter+RTC only).
+QEMU_CPU=-cpu Nehalem
+
 run: image
-	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
+	qemu-system-i386 $(QEMU_CPU) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
 
 run-iso: iso
 	qemu-system-i386 -cdrom nanos.iso
@@ -241,7 +245,7 @@ NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=t
 NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
 run-net: image
-	qemu-system-i386 -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
+	qemu-system-i386 $(QEMU_CPU) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
@@ -522,8 +526,8 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg
-SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv nanologin
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex
+SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -631,6 +635,7 @@ $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
 $(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
+$(BINFOLDER)randhex.nxe:   $(DYN_DEPS) $(BINFOLDER)randhex.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o
 $(BINFOLDER)brktest.nxe:   $(DYN_DEPS) $(BINFOLDER)brktest.o
@@ -879,7 +884,7 @@ TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
-TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp fs/ext/Crc32c.cpp fs/ext/BlockCache.cpp fs/ext/ExtCsum.cpp fs/ext/ExtAllocator.cpp fs/ext/Journal.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp lib/String.cpp
+TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp fs/ext/Crc32c.cpp fs/ext/BlockCache.cpp fs/ext/ExtCsum.cpp fs/ext/ExtAllocator.cpp fs/ext/Journal.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp kernel/Csprng.cpp lib/String.cpp
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp arch/x86/mm/AddressSpace.cpp
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
 TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
@@ -896,7 +901,7 @@ TEST_MODULES+= net/Socket.cpp net/Udp.cpp net/Raw.cpp net/Tcp.cpp net/Packet.cpp
 TEST_MODULES+= net/NetProc.cpp net/NetStats.cpp   # /proc/net renderers + SNMP counters (FAZA 14)
 TEST_MODULES+= user/libc-glue/resolv_parse.c   # pure resolver parsers (resolv.conf/services/protocols/DNS, FAZA E)
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes

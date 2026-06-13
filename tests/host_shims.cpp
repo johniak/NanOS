@@ -66,6 +66,12 @@ void cpuIdentify(CpuInfo* out) {
 // No RTC under the host harness; a fixed plausible 2026 epoch keeps /proc/stat's btime
 // renderable in tests.
 unsigned rtcEpoch() { return 1781000000u; }
+
+// Hardware entropy contract (<arch/random.h>). The host harness has no RDRAND/RDTSC: report "no
+// hardware RNG" and a fixed tick. The Csprng tests seed the class directly with known vectors and
+// never call csprngKernelSeed(), so these only need to link — they need not be random.
+bool archHwRandom(unsigned*) { return false; }
+unsigned archEntropyTick() { return 0; }
 }
 extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)
 

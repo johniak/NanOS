@@ -5,6 +5,7 @@
 #include "SignalDispatch.h"
 #include "Scheduler.h"
 #include "Clock.h"
+#include "Csprng.h"
 #include <arch/syscall.h>
 #include <arch/console.h>
 #include <arch/cpu.h>
@@ -710,6 +711,15 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		arch::powerOff();          // does not return
 		ret = 0;
 		break;
+	case SYS_getrandom: {
+		// getrandom(buf, count, flags). a0=buf, a1=count, a2=flags. Our CSPRNG never blocks and is
+		// always seeded, so GRND_NONBLOCK/GRND_RANDOM are safely ignored — we always return the full
+		// count of CSPRNG bytes (the kernel ran csprngKernelSeed() before userspace started).
+		if (a0 == 0) { ret = -EFAULT; break; }
+		csprngBytes((void*) a0, a1);
+		ret = (int) a1;
+		break;
+	}
 	case SYS_clock_gettime:
 		// a0 = clk_id, a1 = user struct timespec*. Pass the BOOT epoch (RTC sampled once at
 		// boot), not the live RTC: clockGettime derives both seconds and sub-seconds from the

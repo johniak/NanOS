@@ -4,6 +4,7 @@
 #include "Process.h"
 #include "NetProc.h"          // /proc/net/{dev,route,arp,tcp,udp,raw,snmp} renderers
 #include "Pci.h"              // /proc/bus/pci/devices enumeration
+#include "Csprng.h"           // /dev/{u}random draw from the shared kernel CSPRNG
 #include "memory_manager.h"   // malloc/free: /proc snapshots go on the heap, not the kernel stack
 #include <string.h>
 
@@ -241,15 +242,12 @@ static int gen_zero(unsigned, void* buf, unsigned n) {
 	return (int) n;
 }
 
+// /dev/random and /dev/urandom both draw from the one kernel CSPRNG (kernel/Csprng.*), seeded at
+// boot from RDRAND + RDTSC jitter + the RTC. They are identical here: our CSPRNG never blocks and
+// is always seeded by the time userspace runs, so there is no random/urandom distinction to make
+// (the same stance Linux took in 5.6+ — getrandom never blocks once the pool is initialised).
 static int gen_random(unsigned, void* buf, unsigned n) {
-	static unsigned state = 2463534242u;   // xorshift32, advances across reads
-	unsigned char* p = (unsigned char*) buf;
-	for (unsigned i = 0; i < n; i++) {
-		state ^= state << 13;
-		state ^= state >> 17;
-		state ^= state << 5;
-		p[i] = (unsigned char) state;
-	}
+	csprngBytes(buf, n);
 	return (int) n;
 }
 
@@ -403,6 +401,7 @@ SynthFs::SynthFs() {
 	addGen(m_dev, "null", gen_null, 0666);
 	addGen(m_dev, "zero", gen_zero, 0666);
 	addGen(m_dev, "random", gen_random, 0444);
+	addGen(m_dev, "urandom", gen_random, 0444);   // same CSPRNG source as /dev/random
 	addGen(m_proc, "uptime", gen_uptime, 0444);
 	addGen(m_proc, "meminfo", gen_meminfo, 0444);
 	addGen(m_proc, "stat", gen_stat, 0444);

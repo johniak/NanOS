@@ -246,13 +246,22 @@ int sigsuspend(const sigset_t* mask) {
 	return reterr(sys3(SYS_sigsuspend, mask ? (int) (unsigned) *mask : 0, 0, 0));
 }
 
-/* getentropy(3): no hardware RNG; fill the buffer from a weak LCG seeded once. NOT
- * cryptographically secure — just enough for picolibc's arc4random seeding to run. */
+/* getrandom(2): fill buf with CSPRNG bytes from the kernel (kernel/Csprng.*, seeded at boot from
+ * RDRAND+RDTSC-jitter+RTC). The kernel never blocks and ignores the flags (always seeded), so it
+ * returns the full count; we surface that count like Linux. This is the seam OpenSSL/picolibc use
+ * for real entropy. */
+ssize_t getrandom(void* buf, size_t n, unsigned flags) {
+	return (ssize_t) reterr(sys3(SYS_getrandom, (int) buf, (int) n, (int) flags));
+}
+
+/* getentropy(3): the cryptographic entropy primitive (picolibc's arc4random + any ported crypto
+ * library seed from it). Backed by the real kernel CSPRNG via getrandom — NO fixed-seed fallback,
+ * so the bytes differ every boot. Caps at 256 bytes and is all-or-nothing, per POSIX. */
 int getentropy(void* buf, size_t n) {
-	static unsigned seed = 0x9e3779b9u;
-	unsigned char* p = (unsigned char*) buf;
 	if (n > 256) { errno = EIO; return -1; }   /* getentropy caps at 256 bytes */
-	for (size_t i = 0; i < n; i++) { seed = seed * 1103515245u + 12345u; p[i] = (unsigned char) (seed >> 16); }
+	ssize_t r = getrandom(buf, n, 0);
+	if (r < 0) return -1;                       /* errno set by getrandom */
+	if ((size_t) r != n) { errno = EIO; return -1; }
 	return 0;
 }
 /* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the
