@@ -91,20 +91,29 @@ inline bool seqLeq(uint32_t a, uint32_t b) { return (int32_t)(a - b) <= 0; }
 inline bool seqGt(uint32_t a, uint32_t b)  { return (int32_t)(a - b) > 0; }
 inline bool seqGeq(uint32_t a, uint32_t b) { return (int32_t)(a - b) >= 0; }
 
+static void tcbInit(Tcb* t) {
+	memset(t, 0, sizeof(*t));
+	t->used = true; t->state = TCP_CLOSED;
+	t->mss = 536;                  // default until the peer's MSS option is seen
+	t->cwnd = 1 * 1460; t->ssthresh = 65535;
+	t->srtt = 0; t->rttvar = 0; t->rto = RTO_INIT;
+	t->snd_wnd = 4096;
+	t->keepIdle = 7200000; t->keepIntvl = 75000; t->keepCnt = 9;   // Linux defaults (2h / 75s / 9)
+	t->nodelay = false;
+}
 Tcb* tcbAlloc() {
 	for (int i = 0; i < TCB_N; i++)
-		if (!g_tcbs[i].used) {
-			Tcb* t = &g_tcbs[i];
-			memset(t, 0, sizeof(*t));
-			t->used = true; t->state = TCP_CLOSED;
-			t->mss = 536;                  // default until the peer's MSS option is seen
-			t->cwnd = 1 * 1460; t->ssthresh = 65535;
-			t->srtt = 0; t->rttvar = 0; t->rto = RTO_INIT;
-			t->snd_wnd = 4096;
-			t->keepIdle = 7200000; t->keepIntvl = 75000; t->keepCnt = 9;   // Linux defaults (2h / 75s / 9)
-			t->nodelay = false;
-			return t;
-		}
+		if (!g_tcbs[i].used) { tcbInit(&g_tcbs[i]); return &g_tcbs[i]; }
+	// Table full: reclaim the oldest TIME_WAIT slot. A TIME_WAIT TCB is only idling out 2*MSL to
+	// absorb stray retransmits; recycling one under allocation pressure is safe and is what Linux
+	// does (tcp_tw_reuse), so a burst of short connections to a server that actively closes (e.g.
+	// HTTP/1.0 Connection: close) does not exhaust the small TCB table and stall new accepts.
+	Tcb* victim = 0;
+	for (int i = 0; i < TCB_N; i++)
+		if (g_tcbs[i].used && g_tcbs[i].state == TCP_TIME_WAIT)
+			if (!victim || (int) (g_tcbs[i].timeWaitDeadline - victim->timeWaitDeadline) < 0)
+				victim = &g_tcbs[i];
+	if (victim) { tcbInit(victim); return victim; }
 	return 0;
 }
 void tcbFree(Tcb* t) { if (t) t->used = false; }
