@@ -210,6 +210,27 @@ int RamFs::create(String path, unsigned mode) {
 	return 0;
 }
 
+// Create a typed node (used for AF_UNIX S_IFSOCK bind names). Unlike create(), an existing path is
+// EEXIST (not make-or-truncate) — a bound socket name must be unlinked before it can be rebound,
+// exactly like Linux. The format bits of `mode` select the type (0xC000 => socket).
+int RamFs::mknod(String path, unsigned mode) {
+	const char* leaf;
+	int len;
+	RamNode* parent = walkParent((char*) path, leaf, len);
+	if (!parent)
+		return E_NOENT;
+	if (dirChild(parent, leaf, len))
+		return E_EXIST;
+	RamNode* node = mk(false);
+	if (!node || !addChild(parent, leaf, len, node)) {
+		if (node) free(node);
+		return E_NOSPC;
+	}
+	node->isSocket = ((mode & 0xF000u) == 0xC000u);
+	node->mode = mode & 0777;
+	return 0;
+}
+
 int RamFs::mkdir(String path, unsigned mode) {
 	const char* leaf;
 	int len;
@@ -260,9 +281,9 @@ int RamFs::unlink(String path) {
 
 // Fill a FileStat from a node (shared by stat/lstat).
 static void fillStat(FileStat& out, RamNode* n) {
-	out.type = n->isSymlink ? NODE_SYMLINK : n->isDir ? NODE_DIR : NODE_FILE;
-	out.size = n->isSymlink ? (n->link ? (unsigned) strlen(n->link) : 0) : (n->isDir ? 0 : n->size);
-	unsigned fmt = n->isSymlink ? 0xA000u : n->isDir ? 0x4000u : 0x8000u;
+	out.type = n->isSymlink ? NODE_SYMLINK : n->isDir ? NODE_DIR : n->isSocket ? NODE_OTHER : NODE_FILE;
+	out.size = n->isSymlink ? (n->link ? (unsigned) strlen(n->link) : 0) : (n->isDir || n->isSocket ? 0 : n->size);
+	unsigned fmt = n->isSymlink ? 0xA000u : n->isDir ? 0x4000u : n->isSocket ? 0xC000u : 0x8000u;
 	out.mode = fmt | (n->mode & 0777);
 	out.nlink = (unsigned) (n->nlink < 1 ? 1 : n->nlink);
 	out.uid = n->uid;

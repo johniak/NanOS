@@ -209,6 +209,14 @@ int Vfs::mkdir(String path, unsigned mode) {
 	return fs->mkdir(rel, mode);
 }
 
+int Vfs::mknod(String path, unsigned mode) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->mknod(rel, mode);
+}
+
 int Vfs::rmdir(String path) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);

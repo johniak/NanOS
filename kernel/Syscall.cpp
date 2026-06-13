@@ -1076,6 +1076,14 @@ int Syscalls::sockBind(int fd, const void* sa, unsigned salen) {
 	if (s->domain == AF_UNIX) {
 		char path[UNIX_PATH_MAX]; unsigned plen = 0;
 		if (!parseSockaddrUn(sa, salen, path, &plen)) return -EINVAL;
+		// Plant a visible S_IFSOCK node for a named (non-abstract) path on a writable fs. EEXIST
+		// means the name is taken (the file persists until unlink, like Linux) -> EADDRINUSE. A
+		// read-only / absent fs (e.g. /tmp not mounted in a host-test fixture) returns EROFS/ENOENT,
+		// in which case the in-kernel registry alone is authoritative for the binding.
+		if (plen > 0 && path[0] != 0 && vfs) {
+			int mk = vfs->mknod(String(path), 0xC000 | 0777);
+			if (mk == -17) return -EADDRINUSE;             // -EEXIST
+		}
 		return unixBind(s, path, plen);
 	}
 	uint32_t ip; uint16_t port;

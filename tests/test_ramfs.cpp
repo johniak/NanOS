@@ -54,6 +54,19 @@ TEST_CASE("RamFs create truncates an existing file") {
 	CHECK(st.size == 0);
 }
 
+TEST_CASE("RamFs mknod: AF_UNIX socket node (S_IFSOCK), EEXIST on rebind") {
+	RamFs fs;
+	CHECK(fs.mknod(String("/s.sock"), 0xC000 | 0777) == 0);
+	FileStat st;
+	REQUIRE(fs.stat(String("/s.sock"), st) == 0);
+	CHECK((st.mode & 0xF000u) == 0xC000u);            // S_IFSOCK
+	CHECK(st.type == NODE_OTHER);
+	CHECK(st.size == 0);
+	CHECK(fs.mknod(String("/s.sock"), 0xC000 | 0777) == -17);   // EEXIST: must unlink to rebind
+	CHECK(fs.unlink(String("/s.sock")) == 0);
+	CHECK(fs.mknod(String("/s.sock"), 0xC000 | 0777) == 0);     // rebind after unlink
+}
+
 TEST_CASE("RamFs mkdir + nested files, readdir lists . .. and children") {
 	RamFs fs;
 	CHECK(fs.mkdir(String("/sub"), 0755) == 0);

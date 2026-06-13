@@ -23,6 +23,7 @@ struct RamDirent {
 struct RamNode {
 	bool isDir;
 	bool isSymlink;            // a symbolic link: `link` holds the target, no data/children
+	bool isSocket;             // an AF_UNIX socket node (S_IFSOCK): a name in the namespace, no data
 	char* link;                // symlink target (malloc'd), or 0
 	RamDirent* ent;            // directory entries (malloc/realloc'd, grows on demand)
 	int nchild;                // number of entries
@@ -59,6 +60,7 @@ public:
 	int readdir(String path, List<DirEntry>& out);
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int create(String path, unsigned mode);   // make-or-truncate a regular file
+	int mknod(String path, unsigned mode);    // create a typed node (AF_UNIX S_IFSOCK); EEXIST if present
 	int unlink(String path);
 	int mkdir(String path, unsigned mode);
 	int rmdir(String path);

@@ -66,6 +66,7 @@ public:
 	// Write extensions. Default to read-only (-EROFS); a writable fs (RamFs/tmpfs)
 	// overrides them. create() makes-or-truncates a regular file.
 	virtual int create(String, unsigned) { return -30; }                        // -EROFS
+	virtual int mknod(String, unsigned) { return -30; }                         // -EROFS (typed node; AF_UNIX S_IFSOCK)
 	virtual int unlink(String) { return -30; }                                  // -EROFS
 	virtual int mkdir(String, unsigned) { return -30; }                         // -EROFS
 	// Namespace + size mutations (Phase 3). Defaults read-only; ext + RamFs override.
@@ -127,6 +128,7 @@ public:
 	short pollReady(String path, short events);
 	WaitQueue* waitQueueAt(String path);   // the char device's block wait list for `path`, or 0
 	int create(String path, unsigned mode);
+	int mknod(String path, unsigned mode);
 	int unlink(String path);
 	int mkdir(String path, unsigned mode);
 	int rmdir(String path);
