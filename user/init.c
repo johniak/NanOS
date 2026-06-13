@@ -74,16 +74,15 @@ static void start_service(const char* path, char* const argv[]) {
 		waitpid(pid, 0, 0);            // reap the launcher; daemon() already backgrounded the server
 }
 
-/* Bring up the listening services after the network is configured: inetd (the super-server:
- * echo/daytime/... + telnet -> telnetd login) and darkhttpd (HTTP on :80 serving /apps/www).
- * Both daemonize themselves; their grandchildren reparent to init. */
+/* Bring up the listening services after the network is configured: just inetd (the super-server:
+ * echo/daytime/... + telnet -> telnetd login). It daemonizes itself; its grandchildren reparent
+ * to init. darkhttpd is NOT started by default — start it by hand when wanted:
+ *   darkhttpd /disks/main/apps/www --port 80 --daemon
+ * (its binary still ships in /nanos/bin; only the boot-time autostart is gone). */
 static void start_services(void) {
 	char* inetd_argv[] = { (char*) "inetd", (char*) "--pidfile=/tmp/inetd.pid",
 	                       (char*) INETD_CONF, 0 };
 	start_service(INETD, inetd_argv);
-	char* httpd_argv[] = { (char*) "darkhttpd", (char*) WWWROOT,
-	                       (char*) "--port", (char*) "80", (char*) "--daemon", 0 };
-	start_service(HTTPD, httpd_argv);
 }
 
 /* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell
