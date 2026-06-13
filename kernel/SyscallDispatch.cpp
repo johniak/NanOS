@@ -301,6 +301,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_sigprocmask:
 		ret = signalMask((int) a0, a1, (unsigned*) a2);
 		break;
+	case SYS_pause:
+		ret = signalPause();           // block until a signal -> -EINTR
+		break;
+	case SYS_sigsuspend:
+		ret = signalSuspend(a0);       // a0 = wait-mask (NanOS single-word sigset)
+		break;
 	case SYS_sigreturn:
 		ret = signalReturn(tf);   // restores the trap frame; ret = the saved eax
 		break;

@@ -466,6 +466,35 @@ int signalMask(int how, unsigned set, unsigned* oldset) {
 	return 0;
 }
 
+// pause(2): block until a signal is delivered, then always return -EINTR (pause never
+// restarts, even under SA_RESTART — so we hand back -EINTR directly rather than the
+// -ERESTARTSYS sentinel). Scheduler::block() returns at once if a signal is already
+// pending, and signalSend wakes a BLOCKED target, so the loop unblocks exactly on a
+// deliverable signal.
+int signalPause() {
+	while (!hasPendingSignalCurrent())
+		Scheduler::block();
+	return -4;   // -EINTR
+}
+
+// sigsuspend(2): atomically install `mask` as the blocked set, wait for a signal that mask
+// leaves deliverable, then restore the previous mask and return -EINTR. NOTE: we restore the
+// old mask before the handler runs at the return-to-user point (not after, as Linux does via
+// the saved-mask sigreturn path). With NanOS's single-word sigset and the simplified handler
+// model this is behaviourally identical for the sigsuspend idiom (wait-for-one-signal-then-
+// loop, e.g. inetd's reconfigure pause) — the handler runs once and the caller re-tests its
+// condition either way. Documented here as a known, bounded simplification, consistent with
+// the kernel's existing signal fidelity (see signalAction's sa_mask note).
+int signalSuspend(unsigned mask) {
+	Process* p = ProcTable::current();
+	unsigned old = p->sig.blocked;
+	p->sig.blocked = mask & ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	while (!hasPendingSignalCurrent())
+		Scheduler::block();
+	p->sig.blocked = old;
+	return -4;   // -EINTR
+}
+
 bool hasPendingSignalCurrent() {
 	Process* p = ProcTable::current();
 	return p && sigHasInterrupt(p->sig);   // ignored signals (SIGCHLD) must not cause EINTR

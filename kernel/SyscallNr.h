@@ -74,6 +74,9 @@
 #define SYS_brk 45
 #define SYS_kill 37
 #define SYS_signal 48
+#define SYS_pause 29
+#define SYS_sigsuspend 72   /* NanOS passes the wait-mask in the first arg (our sigset_t is one
+                             * 32-bit word; the legacy i386 history slots are unused) */
 #define SYS_nanosleep 162
 #define SYS_clock_gettime 265
 #define SYS_ioctl 54

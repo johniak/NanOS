@@ -20,6 +20,8 @@ static const int ERESTARTSYS = 512;
 int  signalSend(int pid, int sig);                                  // kill(2)
 int  signalAction(int sig, unsigned handler, unsigned restorer);    // signal(2)
 int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocmask(2)
+int  signalPause();                                                 // pause(2)
+int  signalSuspend(unsigned mask);                                  // sigsuspend(2)
 // Deliver pending signals at a return to ring 3. `origEax` is the syscall number when
 // coming from the syscall path (`inSyscall` true) so an interrupted, restartable syscall
 // can be restarted; on the IRQ path pass (0, false).

@@ -210,6 +210,19 @@ int sigprocmask(int how, const sigset_t* set, sigset_t* old) {
 	return 0;
 }
 
+/* pause(2): block until a signal handler runs. Always returns -1 with errno == EINTR (the
+ * kernel never restarts pause). */
+int pause(void) {
+	return reterr(sys3(SYS_pause, 0, 0, 0));
+}
+
+/* sigsuspend(2): install *mask as the blocked set, wait for a deliverable signal, restore the
+ * previous mask. sigset_t is one 32-bit word here (same bit layout as the kernel's mask), so
+ * the value passes straight through in the first arg. Always returns -1 with errno == EINTR. */
+int sigsuspend(const sigset_t* mask) {
+	return reterr(sys3(SYS_sigsuspend, mask ? (int) (unsigned) *mask : 0, 0, 0));
+}
+
 /* getentropy(3): no hardware RNG; fill the buffer from a weak LCG seeded once. NOT
  * cryptographically secure — just enough for picolibc's arc4random seeding to run. */
 int getentropy(void* buf, size_t n) {
@@ -271,6 +284,12 @@ int vfork(void) {
 /* waitpid(2): block for a child to exit; *status gets a WEXITSTATUS-style code. */
 int waitpid(int pid, int* status, int options) {
 	return reterr(sys3(SYS_waitpid, pid, (int) status, options));
+}
+
+/* wait(2): reap any child (waitpid(-1, ...) without options). inetd's SIGCHLD reaper and
+ * libinetutils' ttymsg use this. */
+int wait(int* status) {
+	return waitpid(-1, status, 0);
 }
 
 /* The process environment. getenv() (picolibc) reads `environ` directly — both live here
@@ -370,6 +389,12 @@ int putenv(char* str) {
 int execve(const char* path, char* const argv[], char* const envp[]) {
 	if (!envp) envp = environ;
 	return reterr(sys3(SYS_execve, (int) path, (int) argv, (int) envp));
+}
+
+/* execv(3): exec with the caller's current environment (picolibc ships only execve). inetd's
+ * service launcher (execv(se_server, se_argv)) goes through here. */
+int execv(const char* path, char* const argv[]) {
+	return execve(path, argv, environ);
 }
 
 /* Console input mode: 0 = cooked (line-edited), 1 = raw (per-key). The shell uses
