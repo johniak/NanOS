@@ -65,9 +65,14 @@ static void run_dhcp(void) {
  * exits once the real daemon — reparented to us, PID 1 — is running). Skipped silently if the
  * binary is absent (an image built without the optional services still boots). A one-line
  * console note records which services came up, like the DHCP path (no silent magic). */
+static void note(const char* s) { write(1, s, (int) strlen(s)); }
+
 static void start_service(const char* path, char* const argv[]) {
-	if (access(path, X_OK) != 0)
+	if (access(path, X_OK) != 0) {
+		note("  [init] skip "); note(argv[0] ? argv[0] : path); note(" (not installed)\n");
 		return;
+	}
+	note("  [init] starting "); note(argv[0] ? argv[0] : path); note("\n");
 	int pid = fork();
 	if (pid == 0) {
 		execve(path, argv, environ);
@@ -86,6 +91,7 @@ static void start_sshd(void) {
 	if (access(DROPBEAR, X_OK) != 0)
 		return;
 	if (access(SSH_HOSTKEY, F_OK) != 0) {        // first boot: make the host key (ed25519 is fast)
+		note("  [init] generating SSH host key...\n");
 		int pid = fork();
 		if (pid == 0) {
 			char* a[] = { (char*) "dropbearkey", (char*) "-t", (char*) "ed25519",
@@ -106,10 +112,12 @@ static void start_sshd(void) {
  *   darkhttpd /disks/main/apps/www --port 80 --daemon
  * (its binary still ships in /nanos/bin; only the boot-time autostart is gone). */
 static void start_services(void) {
+	note("[init] bringing up services\n");
 	char* inetd_argv[] = { (char*) "inetd", (char*) "--pidfile=/tmp/inetd.pid",
 	                       (char*) INETD_CONF, 0 };
 	start_service(INETD, inetd_argv);
 	start_sshd();
+	note("[init] services up (telnet :23, ssh :22 if installed)\n");
 }
 
 /* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell

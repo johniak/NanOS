@@ -352,7 +352,7 @@ void Kernel::start() {
 	// background clock thread (task 2). The 1000 Hz timer preempts; init launches the
 	// shell. Control never returns from start().
 	g_vfs = vfs;
-	okBegin("Scheduler + tasks; starting shell");
+	okBegin("Scheduler + init task + idle thread");
 	Scheduler::init();
 	Task* initTask = Scheduler::create(initTaskBody, 1);
 	Process* p1 = ProcTable::byPid(1);
@@ -361,11 +361,19 @@ void Kernel::start() {
 	const char* initArgv[] = { "init", 0 };
 	ProcTable::setCommand(p1, initArgv, 1);   // until it execve's nsh
 	registerKthread(Scheduler::idle(), "idle");   // the idle kernel thread, visible in /proc
-	// Net stack: install lo + the RX softirq thread (drains the backlog outside IRQ) + the
-	// driver hooks. Any frames the e1000 already queued during kext load drain on its first run.
+	okEnd();
+
+	// Net stack: lo + the RX softirq thread (drains the backlog outside IRQ) + the periodic timer
+	// thread + the driver hooks; then configure eth0 + the default route. Any frames the e1000
+	// queued during kext load drain on the softirq's first run. udhcpc (run by init) refines this.
+	okBegin("Networking: lo + eth0 + RX softirq + net-timer");
 	registerKthread(netCoreInit(), "ksoftirqd-net");
 	registerKthread(netTimerThread(), "net-timer");
-	netBringUp();   // configure eth0 + default route (static fallback; DHCP in FAZA 10)
+	netBringUp();
+	okEnd();
+	Console::writeLine("       eth0 10.0.2.15/24 gw 10.0.2.2 (static; udhcpc refines it at init)");
+
+	okBegin("Timer 1000 Hz + starting shell/services");
 	arch::archTimerInit(1000);
 	okEnd();
 	Scheduler::start();
