@@ -132,18 +132,18 @@ single-user-root NanOS bez seccomp trzeba `UsePrivilegeSeparation`/sandbox wył�
 ciężki):** **Dropbear** — jeden mały binarek; minimalny serwer SSH. Plan celuje w OpenSSH, z
 Dropbear jako udokumentowanym planem B.
 
-- [ ] **4.1** Port OpenSSH (linkuje libcrypto z FAZY 1; `--without-pam`, `--disable-strip`,
+- [x] **4.1** Port OpenSSH (linkuje libcrypto z FAZY 1; `--without-pam`, `--disable-strip`,
   `Privilege Separation`/sandbox off w `sshd_config`). Domknij symbole (utmp, `getrandom`,
   `openpty`/`forkpty` — mamy z FAZY H, `crypt` — dorobić, `setgroups`/`initgroups` — stuby).
-- [ ] **4.2** Klucze hosta on-device: `ssh-keygen -A` (z CSPRNG); `sshd_config` z PermitRootLogin,
+- [x] **4.2** Klucze hosta on-device: `ssh-keygen -A` (z CSPRNG); `sshd_config` z PermitRootLogin,
   login shell przez `getpwuid`→`pw_shell` (mechanizm jak telnetd/nanologin z FAZY H).
-- [ ] **4.3** `init`/rc (opcjonalnie) lub ręcznie: `sshd`; z hosta `ssh -p 2222 root@localhost`
+- [x] **4.3** `init`/rc (opcjonalnie) lub ręcznie: `sshd`; z hosta `ssh -p 2222 root@localhost`
   → `bash-5.2#`; `ls /` działa; `exit` zamyka czysto; brak wycieku pty/socketów (liczniki).
   hostfwd `tcp::2222-:22`. Hasło/klucz: NanOS single-user — `PermitEmptyPasswords`/klucz dorzucony
   do `authorized_keys` (udokumentuj wybrany model auth).
-- [ ] **4.4** Bramka drutu: pcap SSH-2 banner + KEXINIT + DH/ECDH + newkeys (pole-po-polu jak
+- [x] **4.4** Bramka drutu: pcap SSH-2 banner + KEXINIT + DH/ECDH + newkeys (pole-po-polu jak
   OpenSSH na Linuksie, maska: cookies, klucze efemeryczne). Zero faultów.
-- [ ] **4.5** Commit: `ports: OpenSSH sshd — remote root login over SSH-2`.
+- [x] **4.5** Commit: `ports: OpenSSH sshd — remote root login over SSH-2`.
 
 ### FAZA 5 — SSH klient + sweep końcowy
 
