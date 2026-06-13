@@ -9,7 +9,7 @@ ENTRY(_start)
 SECTIONS
 {
   . = 0x800000;
-  .nxheader : { *(.nxheader) }
+  .nxheader : { KEEP(*(.nxheader)) }
   .text     : { *(.text*) }
   .nximports : { *(.nximports) }
   .rodata   : { *(.rodata*) }

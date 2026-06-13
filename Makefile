@@ -121,6 +121,26 @@ wget: bin/libc.ndl bin/libc.ndl.a
 	cp "$(WGET_PORT)/wget.nxe" $(BINFOLDER)wget.nxe
 	@echo "staged $(BINFOLDER)wget.nxe — run 'make image' to install it into /nanos/bin"
 
+# busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
+# this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
+# busybox tree) and mknx it. No busybox source patches — sysroot headers + EXTRA_CFLAGS only.
+# The action helper (dhcpcfg.nxe) ships separately as /nanos/config/udhcpc.script via _image.
+BB_DIR := $(SDK_WORK)/busybox-1.36.1
+udhcpc: bin/libc.ndl bin/libc.ndl.a
+	@test -f "$(BB_DIR)/nanos-build.sh" || { echo "busybox not set up at $(BB_DIR) (extract busybox-1.36.1 + nanos-build.sh)"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm -v "$(SDK_WORK)":/work \
+	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/busybox-1.36.1 nanos-sdk-dev:latest bash -c '\
+	    test -f /work/toolchain/i686-nanos/lib/libm.a || i686-nanos-ar rcs /work/toolchain/i686-nanos/lib/libm.a; \
+	    rm -f busybox busybox_unstripped networking/udhcp/built-in.o; \
+	    bash nanos-build.sh && i686-nanos-mknx busybox_unstripped udhcpc.nxe --need libc.ndl'
+	cp "$(BB_DIR)/udhcpc.nxe" $(BINFOLDER)udhcpc.nxe
+	@echo "staged $(BINFOLDER)udhcpc.nxe — run 'make image' to install it into /nanos/bin"
+
 # Stage EVERY already-built external app into bin/ in one go (best-effort: skips any whose artifact
 # is not present, so a partial set still works). The staged .nxe are build artifacts that `make
 # clean` removes, so the workflow after a clean is: `make externals && make image`. This copies
@@ -132,7 +152,8 @@ externals:
 	            "grep:$(SDK_WORK)/grep-3.11/src/grep.nxe" \
 	            "bzip2:$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" \
 	            "ping:$(SDK_WORK)/inetutils-port/ping.nxe" \
-	            "wget:$(SDK_WORK)/wget-port/wget.nxe"; do \
+	            "wget:$(SDK_WORK)/wget-port/wget.nxe" \
+	            "udhcpc:$(BB_DIR)/udhcpc.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
 	  else echo "  skip $$name (not built: $$src)"; fi; \
@@ -144,7 +165,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget udhcpc   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -299,6 +320,11 @@ _image: _all _userland _kext _grub2-image
 	for f in resolv.conf hosts nsswitch.conf protocols services; do \
 	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
+	# DHCP: the udhcpc action helper (compiled .nxe; udhcpc exec()s it) -> /nanos/config/udhcpc.script,
+	# plus the busybox udhcpc client itself -> /nanos/bin (only if `make udhcpc` staged it).
+	printf "rm /nanos/config/udhcpc.script\nwrite $(BINFOLDER)dhcpcfg.nxe /nanos/config/udhcpc.script\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	if [ -f $(BINFOLDER)udhcpc.nxe ]; then \
+	  printf "rm /nanos/bin/udhcpc.nxe\nwrite $(BINFOLDER)udhcpc.nxe /nanos/bin/udhcpc.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; fi
 	# System utilities -> /nanos/bin.
 	for p in $(SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
@@ -419,7 +445,7 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest dhcpcfg
 SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
@@ -524,6 +550,7 @@ $(BINFOLDER)crashtest.nxe: $(DYN_DEPS) $(BINFOLDER)crashtest.o
 $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o
 $(BINFOLDER)pingtest.nxe:  $(DYN_DEPS) $(BINFOLDER)pingtest.o
 $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
+$(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
 $(BINFOLDER)timetest.nxe:  $(DYN_DEPS) $(BINFOLDER)timetest.o
 $(BINFOLDER)brktest.nxe:   $(DYN_DEPS) $(BINFOLDER)brktest.o

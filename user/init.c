@@ -12,12 +12,32 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <string.h>
+#include <sys/wait.h>
 
 int execve(const char* path, char* const argv[], char* const envp[]);
 /* `environ` (the kernel-provided environment, TERM=…) comes from nx-dllimport.h, which is
  * force-included for program objects; it maps to libc.ndl's environ via the import slot. */
 
 #define FALLBACK_SHELL "/disks/main/nanos/bin/nsh.nxe"
+#define UDHCPC "/disks/main/nanos/bin/udhcpc.nxe"
+
+/* Configure networking via DHCP before starting the shell: run the real busybox udhcpc, which
+ * acquires a lease over AF_PACKET and exec()s /nanos/config/udhcpc.script to set the address,
+ * route and resolv.conf. -f -q -t 4 -n keeps it in the foreground and bounded — it exits after a
+ * lease (or 4 failed tries), so init never hangs. If udhcpc is absent, the kernel's static
+ * configuration stays in place as the (loud) fallback. */
+static void run_dhcp(void) {
+	if (access(UDHCPC, F_OK) != 0)
+		return;
+	int pid = fork();
+	if (pid == 0) {
+		char* a[] = { (char*) "udhcpc", (char*) "-i", (char*) "eth0",
+		              (char*) "-f", (char*) "-q", (char*) "-t", (char*) "4", (char*) "-n", 0 };
+		execve(UDHCPC, a, environ);
+		_exit(127);
+	}
+	if (pid > 0) { int st; waitpid(pid, &st, 0); }
+}
 
 /* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell
  * presents itself as "bash"/"nsh", not "bash.nxe". Written into `out`. */
@@ -33,6 +53,7 @@ static const char* shell_argv0(const char* path, char* out, int cap) {
 }
 
 int main(void) {
+	run_dhcp();   /* bring up eth0 via DHCP before the shell (kernel static = fallback) */
 	struct passwd* pw = getpwuid(getuid());
 	const char* shell = (pw && pw->pw_shell && pw->pw_shell[0]) ? pw->pw_shell : FALLBACK_SHELL;
 
