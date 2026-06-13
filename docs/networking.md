@@ -200,24 +200,24 @@ port/address in network order); errors are negative errno (`-ENOTSOCK`, `-EINPRO
 
 ## 5. Interface configuration & `/etc`
 
-Configuration is done by the **kernel at boot** — `Kernel.cpp` → `netBringUp()` in
-`kernel/NetCore.cpp`:
-
-- `eth0`: static **10.0.2.15/24**, broadcast 10.0.2.255, default route via **10.0.2.2** (QEMU's
-  slirp NAT gateway).
-- `lo`: 127.0.0.1/8.
-
-> A DHCP client was scoped (plan FAZA 10) but the static address is what actually runs — slirp
-> hands out a known range, so static is simplest. Real DHCP is a follow-up — **in progress** in
-> `docs/superpowers/plans/2026-06-12-net-dociagniecia.md` (FAZA F): busybox `udhcpc` over AF_PACKET,
-> with the static address kept as a loud fallback.
+`eth0` is configured by **real DHCP at boot**: `init` runs the unmodified busybox **`udhcpc`**
+over an **AF_PACKET** socket (it must work before the interface has an address), which exec's
+`/disks/main/nanos/config/udhcpc.script` to apply the lease via `SIOCSIFADDR`/`SIOCSIFNETMASK` +
+a default route (`SIOCADDRT`) and to rewrite `/etc/resolv.conf`. The full DISCOVER→OFFER→
+REQUEST→ACK exchange is on the wire (byte-faithful to a Linux `udhcpc`). The kernel's old static
+**10.0.2.15/24** config remains only as a **loud fallback** — `netBringUp()` in
+`kernel/NetCore.cpp` runs it (and logs that it did) if `udhcpc` is absent or fails to configure
+within 10 s. `lo` is **127.0.0.1/8** with a `127.0.0.0/8 → lo` route, so guest-local connections
+(`telnet 127.0.0.1 23`) loop back instead of leaking to the gateway.
 
 Network config files live under `/etc` (a writable tmpfs the kernel populates at boot from
-`/disks/main/nanos/config/etc/`): `resolv.conf` (`nameserver 10.0.2.3`), `hosts`, `nsswitch.conf`,
-`protocols`, `services`. The resolver reads them musl-style.
+`/disks/main/nanos/config/etc/`): `resolv.conf`, `hosts`, `nsswitch.conf`, `protocols`,
+`services`, `inetd.conf`. The resolver and `getservbyname`/`getprotobyname` **read these files**
+(the built-in tables are only a fallback when a file is absent).
 
-**No listening services are shipped** (no sshd/httpd), **but the stack supports them** —
-`tcpListen`/`tcpAccept` work, so a server could be written.
+**Listening services run at boot** (started by `init` after DHCP, see §9): the inetd
+super-server, telnetd, and darkhttpd. The server path (`tcpListen`/`tcpAccept`) is exercised
+end to end — the system is reachable from outside.
 
 ---
 
@@ -273,14 +273,31 @@ Everything except the brief IRQ runs in kernel threads; socket blocking goes thr
 
 ## 9. Applications
 
-- **GNU inetutils `ping`** and **GNU `wget`** — *unmodified upstream*, cross-built with the
-  nanos-sdk (config.cache + sysroot headers only, no source patches), installed at
-  `/nanos/bin/{ping,wget}.nxe`. `ping wp.pl` (DNS → ICMP echo); `wget http://…` (DNS → TCP → HTTP
-  200, file saved). Built via `make ping` / `make wget`.
-- **Diagnostics** (kept in the image): `nettest` (getaddrinfo + BSD sockets fetch), `pingtest`
-  (programmatic DNS + ICMP), `socktest` (ring-3 socketcall TCP).
+All ports are *unmodified upstream*, cross-built with the nanos-sdk (config.cache + sysroot
+headers only, **no source patches**), installed in `/nanos/bin`.
 
-HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
+**Clients** (`make ping` / `make wget`):
+- **GNU inetutils `ping`** and **GNU `wget`** — `ping wp.pl` (DNS → ICMP echo); `wget http://…`
+  (DNS → TCP → HTTP 200, file saved).
+
+**Servers — the system is reachable from outside** (`make inetd` / `make httpd`; `init` starts
+them after DHCP):
+- **inetutils `inetd`** — the internet super-server. Built-in `echo`/`discard`/`daytime`/
+  `chargen` + launches `telnet → telnetd`. Config: `/etc/inetd.conf`.
+- **inetutils `telnetd`** — remote login over a kernel pty. From a host, `telnet localhost 2323`
+  (hostfwd) → a real `bash` login (telnetd → `nanologin` → the account's shell). Uses pty packet
+  mode (TIOCPKT) + `login_tty` controlling-terminal so job control works.
+- **`darkhttpd`** — single-file HTTP/1.1 server on `:80`, serving `/apps/www`. `curl
+  http://localhost:5555/` → 200; handles concurrent connections (TCB_N=16).
+
+**Diagnostic tools** (`make inetd` builds them from the same inetutils tree):
+- **`ifconfig`** (eth0/lo with the live DHCP address), **`traceroute`** (UDP TTL + ICMP
+  time-exceeded), **`telnet`** client (loopback test of our own telnetd).
+- In-image: `nettest`, `pingtest`, `socktest`, `tcpsrv` (a libc TCP echo server), `unixtest`.
+
+> **Known port quirk:** inetutils' argp **short** options break against picolibc's getopt, so the
+> tools are driven with **long** options (`--tries`, `--max-hop`, …) or positionals; a proper libc
+> getopt fix is tracked separately. HTTPS stays out of scope until a TLS library is ported.
 
 ---
 
@@ -292,13 +309,13 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 | sk_buff | nonlinear (frags/scatter) | one linear 2 KiB buffer |
 | Memory | slab, dynamic | static pools (128/64/16/16) |
 | TCP options | window scaling, SACK, timestamps, delayed/persist/keepalive | MSS, window scaling, SACK, timestamps+PAWS; delayed ACK, persist & keepalive timers |
-| Concurrent TCP | thousands | **16** |
+| Concurrent TCP | thousands | **16** (TIME-WAIT recycled under pressure) |
 | IP version | v4 + v6 | **IPv4 only** |
 | Firewall/NAT | netfilter/iptables/nftables | **none** |
-| Routing | multiple tables, policy | one 16-entry longest-prefix table |
+| Routing | multiple tables, policy | one 16-entry longest-prefix table (incl. `127/8 → lo`) |
 | Namespaces/veth/bridge | yes | **none** (single namespace) |
-| AF_UNIX / AF_PACKET | full | both: constants in headers only — `socket()` returns `EAFNOSUPPORT` (`socketpair`: `ENOSYS`) |
-| Config | netlink, iproute2, DHCP client | static, set by the kernel at boot |
+| AF_UNIX / AF_PACKET | full | both real: AF_UNIX stream+dgram+`socketpair`, AF_PACKET cooked+raw (used by `udhcpc`) |
+| Config | netlink, iproute2 | **DHCP** (busybox `udhcpc` over AF_PACKET); ioctl-based (`SIOC*`), no netlink; static = loud fallback |
 | Resolver | glibc + nscd + netlink | musl-style stub in libc, IPv4-only |
 | `/proc/net` | full + writable sysctls | read-only, subset, format-compatible |
 | Offload (csum/TSO/GRO) | yes | **none** (all software) |
@@ -352,10 +369,15 @@ HTTPS is **out of scope** until a TLS library is ported — `wget` is HTTP-only.
 
 ## 13. Out of scope (future work)
 
-TLS/HTTPS (needs an OpenSSL/GnuTLS port), IPv6, netfilter/firewalling, and hardware offload.
+TLS/HTTPS (needs an OpenSSL/GnuTLS port), IPv6, netfilter/firewalling, hardware offload
+(csum/TSO/GRO), writable `/proc/sys/net` sysctls, and `sshd` (TLS-class crypto — telnetd is the
+honest equivalent for now). A proper **libc getopt** (so inetutils short options parse) is a
+tracked libc fix. Concurrent telnet logins need **dynamic pty allocation** (the kernel has one
+pty pair today — enough for a single session).
 
-> **Follow-up in progress** (`docs/superpowers/plans/2026-06-12-net-dociagniecia.md`): TCP window
-> scaling/SACK/timestamps, a real DHCP client, AF_UNIX/AF_PACKET, listening services
-> (inetd/telnetd/httpd), ICMP-error delivery to sockets, a fuller resolver (`/etc/services`,
-> search/ndots, PTR), and a larger TCB pool are all being implemented. This list will shrink as
-> those phases land.
+> The 2026-06-12 networking follow-up (`docs/superpowers/plans/2026-06-12-net-dociagniecia.md`)
+> is **complete**: TCP window scaling/SACK/timestamps/delayed-ACK/persist/keepalive, a real DHCP
+> client, AF_UNIX + AF_PACKET + `socketpair`, ICMP-error delivery to sockets, a fuller resolver
+> (`/etc/services`, search/ndots, multi-ns, PTR), listening services (inetd/telnetd/darkhttpd)
+> reachable from outside, the nettools (ifconfig/traceroute/telnet), and a right-sized window/pool
+> all landed. The differences in §10 are the standing, intentional ones.
