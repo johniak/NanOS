@@ -162,6 +162,14 @@ int socketSetOpt(Socket* s, int level, int name, const void* val, unsigned len) 
 		default: return -SOCK_EINVAL;
 		}
 	}
+	if (level == SOL_IP) {                // IP-level options (traceroute varies IP_TTL per probe)
+		switch (name) {
+		case IP_TTL: s->ttl = (v > 0 && v < 256) ? v : 0; return 0;   // 0 falls back to the IP default
+		case IP_TOS: return 0;            // accepted, not differentiated (no DSCP in our IP stack)
+		case IP_OPTIONS: return 0;        // accepted, ignored (no IP options / source routing)
+		default: return -SOCK_EINVAL;
+		}
+	}
 	if (level != SOL_SOCKET) return -SOCK_EINVAL;
 	switch (name) {
 	case SO_BROADCAST: s->broadcast = v != 0; return 0;

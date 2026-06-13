@@ -44,7 +44,7 @@ int rawSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t /
 	if (!skb) return -SOCK_ENOBUFS;
 	skb->reserve(NET_HEADROOM);
 	if (len) memcpy(skb->put(len), buf, len);     // caller (ping) supplies the full ICMP message
-	if (ipOutput(dstIp, proto, skb) < 0)
+	if (ipOutput(dstIp, proto, skb, false, s->ttl) < 0)
 		return -SOCK_ENOBUFS;
 	return (int) len;
 }

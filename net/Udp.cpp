@@ -79,7 +79,7 @@ int udpSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t d
 	wr16be(u + 6, 0);
 	uint16_t c = inetPseudoChecksum(src, dstIp, IPPROTO_UDP, u, UDP_HLEN + len);
 	wr16be(u + 6, c ? c : 0xFFFF);             // 0 checksum is transmitted as 0xFFFF (RFC 768)
-	if (ipOutput(dstIp, IPPROTO_UDP, skb) < 0)
+	if (ipOutput(dstIp, IPPROTO_UDP, skb, false, s ? s->ttl : 0) < 0)
 		return -SOCK_ENOBUFS;
 	g_netStats.udpOutDatagrams++;
 	return (int) len;

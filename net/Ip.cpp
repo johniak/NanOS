@@ -177,7 +177,7 @@ void ipRx(NetBuf* skb) {
 	deliver(skb, src, dst, proto, ihl);
 }
 
-int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df) {
+int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df, int ttl) {
 	if (!skb) return -1;
 	g_netStats.ipOutRequests++;
 	NetDevice* dev = 0;
@@ -185,10 +185,11 @@ int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df) {
 	if (!routeLookup(dst, &dev, &nexthop) || !dev) { g_netStats.ipOutNoRoutes++; netbufFree(skb); return -1; }
 	uint32_t src = dev->ip;
 	uint16_t id = g_ipId++;
+	int hopLimit = (ttl > 0 && ttl < 256) ? ttl : IP_DEFAULT_TTL;   // per-socket TTL (traceroute) or default
 
 	int payload = skb->len;
 	if (IP_HLEN_MIN + payload <= dev->mtu) {
-		buildHeader(skb, src, dst, proto, id, df ? IP_FLAG_DF : 0, IP_DEFAULT_TTL);
+		buildHeader(skb, src, dst, proto, id, df ? IP_FLAG_DF : 0, hopLimit);
 		sendOne(dev, nexthop, skb);
 		return 0;
 	}
@@ -207,7 +208,7 @@ int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df) {
 		memcpy(frag->put(chunk), p + off, chunk);
 		uint16_t flagsFrag = (uint16_t) ((off / 8) & IP_FRAG_MASK);
 		if (!last) flagsFrag |= IP_FLAG_MF;
-		buildHeader(frag, src, dst, proto, id, flagsFrag, IP_DEFAULT_TTL);
+		buildHeader(frag, src, dst, proto, id, flagsFrag, hopLimit);
 		sendOne(dev, nexthop, frag);
 		off += chunk;
 	}

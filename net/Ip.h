@@ -40,8 +40,9 @@ void ipRx(NetBuf* skb);
 // Send an IPv4 datagram: skb holds the transport payload at head(). Builds the header (src =
 // egress device IP, given dst + proto), routes to a next hop, fragments if it exceeds the MTU,
 // resolves the next-hop MAC via ARP (queuing if needed) and transmits. Consumes the skb.
-// Returns 0 on success/queued, <0 on no-route. `df` sets the Don't-Fragment flag.
-int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df = false);
+// Returns 0 on success/queued, <0 on no-route. `df` sets the Don't-Fragment flag. `ttl` overrides
+// the IP TTL when >0 (per-socket IP_TTL, e.g. traceroute); 0 uses IP_DEFAULT_TTL.
+int ipOutput(uint32_t dst, uint8_t proto, NetBuf* skb, bool df = false, int ttl = 0);
 
 // Reassembly aging (drop incomplete datagrams past the timeout). Called from the softirq tick.
 void ipReasmTick(unsigned now);

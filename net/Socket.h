@@ -24,6 +24,8 @@ enum {                              // setsockopt levels/names we honor
 	SO_SNDBUF = 7, SO_RCVBUF = 8, SO_KEEPALIVE = 9,
 	SOL_TCP = 6,                    // == IPPROTO_TCP: keepalive tuning lives at this level
 	TCP_NODELAY = 1, TCP_KEEPIDLE = 4, TCP_KEEPINTVL = 5, TCP_KEEPCNT = 6,
+	SOL_IP = 0,                     // == IPPROTO_IP: IP-level options (traceroute varies IP_TTL)
+	IP_TOS = 1, IP_TTL = 2, IP_OPTIONS = 4,
 };
 // recv/send flags
 enum { MSG_PEEK = 0x02, MSG_DONTWAIT = 0x40 };
@@ -45,6 +47,7 @@ struct Socket {
 	bool bound, connected;
 	bool nonblock;
 	bool broadcast;                   // SO_BROADCAST
+	int  ttl;                         // IP_TTL: per-socket outgoing TTL (0 = IP default; traceroute sets it)
 	int  rcvbuf, sndbuf;              // SO_RCVBUF/SO_SNDBUF (advertised; cap enforced by the ring)
 	int  soError;                     // pending SO_ERROR (e.g. async connect result, ICMP errors)
 	int  refs;                        // open-fd references (fork/dup); freed at 0

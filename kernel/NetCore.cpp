@@ -131,7 +131,10 @@ Task* netCoreInit() {
 	netSetIrqGuard(arch::cpuIrqSave, arch::cpuIrqRestore);     // short backlog critical sections
 	netbufSetIrqGuard(arch::cpuIrqSave, arch::cpuIrqRestore);  // pool alloc(IRQ)/free(thread) safety
 	netSetWakeFn(netWake);
-	loopbackCreate();                                        // lo, 127.0.0.1/8
+	NetDevice* lo = loopbackCreate();                        // lo, 127.0.0.1/8
+	routeAdd(ipv4(127, 0, 0, 0), ipv4(255, 0, 0, 0), 0, lo, 0);  // 127/8 -> lo, else 127.0.0.1
+	                                                         // falls through to the default route
+	                                                         // (eth0/gw) and a self-connect is refused
 	ethInit();                                               // ethRx becomes the L2 input handler
 	arpInit();                                               // ARP receives via Ether
 	ipInit();                                                // IP receives via Ether (ethertype 0x0800)
