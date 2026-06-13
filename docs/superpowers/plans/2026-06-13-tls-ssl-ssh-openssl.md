@@ -114,14 +114,14 @@ OpenSSL **bez łatek źródeł**, zredukowana konfiguracja pod i686-nanos.
 
 ### FAZA 3 — TLS serwer (HTTPS wchodzące)
 
-- [ ] **3.1** Cert on-device: `openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/key.pem
+- [x] **3.1** Cert on-device: `openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/key.pem
   -out /tmp/cert.pem -subj /CN=nanos` (dowód, że genkey + self-sign działają na NanOS z CSPRNG).
-- [ ] **3.2** `openssl s_server -accept 5443 -cert … -key … -WWW` serwujący `/apps/www`; z hosta
+- [x] **3.2** `openssl s_server -accept 5443 -cert … -key … -WWW` serwujący `/apps/www`; z hosta
   `curl -k https://localhost:5443/` → 200 + strona; pcap pokazuje POPRAWNY serwerowy handshake
   (nasz ServerHello/cert) i transfer. (hostfwd `tcp::5443-:5443`.)
-- [ ] **3.3** (opcjonalnie) **stunnel** lub `s_server` przed darkhttpd = realny HTTPS-front;
+- [x] **3.3** (opcjonalnie) **stunnel** lub `s_server` przed darkhttpd = realny HTTPS-front;
   albo udokumentuj `s_server -WWW` jako wystarczający serwer plików TLS.
-- [ ] **3.4** Commit: `ports: TLS server — on-device self-signed cert + https from host`.
+- [x] **3.4** Commit: `ports: TLS server — on-device self-signed cert + https from host`.
 
 ### FAZA 4 — SSH serwer (zdalny login do basha)
 
