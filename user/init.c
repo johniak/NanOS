@@ -13,6 +13,8 @@
 #include <pwd.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <time.h>
 
 int execve(const char* path, char* const argv[], char* const envp[]);
 /* `environ` (the kernel-provided environment, TERM=…) comes from nx-dllimport.h, which is
@@ -36,7 +38,19 @@ static void run_dhcp(void) {
 		execve(UDHCPC, a, environ);
 		_exit(127);
 	}
-	if (pid > 0) { int st; waitpid(pid, &st, 0); }
+	if (pid <= 0)
+		return;
+	/* Bound the lease attempt to ~10s: poll for udhcpc to finish, then kill it and fall back to
+	 * the kernel's static config — boot must never hang on DHCP (the plan's loud fallback). */
+	for (int i = 0; i < 100; i++) {
+		int st;
+		if (waitpid(pid, &st, WNOHANG) == pid)
+			return;                                  // udhcpc got a lease (or gave up) — done
+		struct timespec ts = { 0, 100 * 1000 * 1000 };   // 100 ms
+		nanosleep(&ts, 0);
+	}
+	kill(pid, SIGKILL);
+	waitpid(pid, 0, 0);
 }
 
 /* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell

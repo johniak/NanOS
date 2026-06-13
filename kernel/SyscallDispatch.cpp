@@ -185,6 +185,10 @@ static int socketOp(Syscalls* g, int sub, const unsigned* A) {
 			if (n == -EAGAIN && !g->nonblock(fd) && !(flags & 0x40)) { int e; if (!sockBlock(g, fd, &e)) return e; continue; }
 			if (n < 0) return n;
 			iovScatter((const unsigned*) m[2], m[3], kbuf, n);
+			m[5] = 0;   // msg_controllen: we produce no ancillary data, so report 0 control bytes
+			            // (Linux overwrites the caller's input length). Leaving it non-zero makes
+			            // CMSG_FIRSTHDR walk the caller's uninitialised cmsg buffer — a garbage
+			            // cmsg_len can spin CMSG_NXTHDR forever (e.g. busybox udhcpc's auxdata loop).
 			m[6] = 0;   // msg_flags
 			return n;
 		}

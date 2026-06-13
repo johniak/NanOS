@@ -320,8 +320,12 @@ int Syscalls::pollScan(PollFd* pfds, int nfds) {
 int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
-	if (fds[fd].sock)                         // recv on a socket (TCP byte stream / UDP datagram)
-		return socketRecvFrom(fds[fd].sock, buf, n, 0, 0, 0);
+	if (fds[fd].sock) {                       // recv on a socket (TCP byte stream / UDP datagram)
+		Socket* s = fds[fd].sock;
+		if (s->domain == AF_PACKET)           // AF_PACKET read() must strip L2 (cooked) — busybox
+			return packetRecv(s, buf, n, 0, 0, 0, 0, 0);   // udhcpc reads the OFFER via read(), not recvfrom
+		return socketRecvFrom(s, buf, n, 0, 0, 0);
+	}
 	if (fds[fd].pipe) {                       // read end of a pipe
 		if (fds[fd].pipeWrite)
 			return -EBADF;                    // can't read the write end

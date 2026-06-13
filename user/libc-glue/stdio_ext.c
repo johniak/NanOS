@@ -9,6 +9,15 @@
 
 /* `FILE` is `struct __file` (tinystdio); flags/unget are in the base struct. */
 
+/* fflush: picolibc's tinystdio fflush dereferences the stream with NO null guard, so the standard
+ * fflush(NULL) ("flush every output stream") crashes — and busybox calls it. Override it: on NULL
+ * flush stdout + stderr (the streams that matter here); otherwise mirror tinystdio exactly by
+ * calling the stream's own flush hook. Overrides the picolibc symbol via the libc.ndl glue. */
+int fflush(FILE* fp) {
+	if (!fp) { fflush(stdout); fflush(stderr); return 0; }
+	return fp->flush ? fp->flush(fp) : 0;
+}
+
 int __freading(FILE* fp)  { return (fp->flags & __SRD) != 0; }
 int __fwriting(FILE* fp)  { return (fp->flags & __SWR) != 0; }
 int __freadable(FILE* fp) { return (fp->flags & __SRD) != 0; }
