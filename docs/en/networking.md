@@ -6,8 +6,8 @@ DNS resolver on top. The whole stack runs **unmodified GNU `ping` and `wget`** a
 internet, and exposes Linux-format `/proc/net`.
 
 This document describes the runtime architecture. The phase-by-phase build log and per-phase
-verification live in `docs/superpowers/plans/2026-06-12-networking.md` (the spec) and
-`…-networking-progress.md` (outcomes). For the filesystem/VFS side see `docs/filesystem.md`.
+verification live in `../superpowers/plans/2026-06-12-networking.md` (the spec) and
+`…-networking-progress.md` (outcomes). For the filesystem/VFS side see `filesystem.md`.
 
 ---
 
@@ -46,16 +46,16 @@ Every table is a fixed-size array in `.bss` (zeroed by the multiboot loader, so 
 
 | Pool | Size | File |
 |---|---|---|
-| `NetBuf` (sk_buff) | **96** (`POOL_N`) | `net/NetBuf.cpp` |
+| `NetBuf` (sk_buff) | **128** (`POOL_N`) | `net/NetBuf.cpp` |
 | RX backlog | **64** (`BACKLOG`) | `net/NetDevice.cpp` |
 | Net devices | **8** (`MAX_DEV`) | `net/NetDevice.cpp` |
 | ARP cache | **16** (`CACHE_N`) | `net/Arp.cpp` |
 | Routing table | **16** (`ROUTE_N`) | `net/Route.cpp` |
 | Sockets | **64** (`SOCK_N`) | `net/Socket.cpp` |
-| TCP control blocks | **4** (`TCB_N`) | `net/Tcp.cpp` |
+| TCP control blocks | **16** (`TCB_N`) | `net/Tcp.cpp` |
 
 Allocation that fails (pool exhausted, backlog full) **drops the packet** and returns null/error —
-it never blocks and never panics. The backlog (64) is smaller than the pool (96) on purpose, so the
+it never blocks and never panics. The backlog (64) is smaller than the pool (128) on purpose, so the
 backlog is the drop point and the pool can't be exhausted by a receive flood.
 
 > Contrast with Linux: slab-backed, dynamic. NanOS is a <3 MiB kernel with a bump allocator and no
@@ -98,7 +98,7 @@ exercised with no hardware.
 ### 2.3 NetBuf — the sk_buff
 `net/NetBuf.cpp`: one **linear** 2 KiB buffer with headroom and the `skb_*`-style geometry
 `reserve / push / pull / put` (+ `trim`). Default headroom `NET_HEADROOM = 144` leaves room for
-every header a packet grows on the way down (Ethernet + IP + TCP + options). 96-buffer pool.
+every header a packet grows on the way down (Ethernet + IP + TCP + options). 128-buffer pool.
 
 > Contrast with Linux: no nonlinear skb (no page frags, no `frag_list`, no scatter-gather). One
 > contiguous buffer, so the maximum packet is bounded by the buffer CAP. Simpler, smaller, enough.
@@ -149,16 +149,23 @@ port-unreachable). All ICMP also goes to any `SOCK_RAW` socket.
   `RTO_MAX=60000` ms), retransmission on loss.
 - **Reno congestion control**: slow start, congestion avoidance, fast retransmit + fast recovery
   (`cwnd`/`ssthresh`/`dupacks`).
+- **TCP options (RFC 7323/2018)**: **window scaling**, **SACK** (receiver builds blocks from the
+  out-of-order buffer; sender keeps a scoreboard and skips SACKed ranges on retransmit), and
+  **timestamps + PAWS** — all negotiated on the SYN, matching the Linux SYN option layout
+  `[MSS, SACK-permitted, TS, NOP, wscale]`. Plus a **delayed-ACK** timer (`DELAY_ACK=40` ms,
+  flushed by the 50 ms tick), a **zero-window persist** probe (`PERSIST_INIT=5000`…`PERSIST_MAX=
+  60000` ms), and **`SO_KEEPALIVE`** probes.
 - **Out-of-order reassembly** (`OOO_N=4` pending segments), MSS negotiated on SYN (`MSS_MAX=1460`).
 - Proper close with **TIME-WAIT (2·MSL = 60 s)** and `shutdown(2)` half-close. The TCB lives in
   this module's pool and can outlive its `Socket` (an orphaned TIME-WAIT, like Linux).
-- Send/recv buffers are **4 KiB** each (`SNDBUF`/`RCVBUF`); accept queue 8 deep; **4 concurrent
-  connections** (`TCB_N`).
+- Send/recv buffers are **8 KiB** each (`SNDBUF`/`RCVBUF`); accept queue 8 deep (`ACCEPT_N`); **16
+  concurrent connections** (`TCB_N`), TIME-WAIT recycled under pressure.
 - Socket integration: `tcpAttach/Connect/Send/Recv/Close/Shutdown/Listen/Accept`,
   `tcpReadable/Writable/State`, `tcpSnapshot` (for `/proc/net/tcp`).
 
-> Contrast with Linux: **no window scaling, no SACK, no TCP timestamps** — only the MSS option. It
-> works correctly, but on a fast/long link it is window-limited (≤64 KiB). 4 connections max.
+> Contrast with Linux: same headline TCP options (window scaling, SACK, timestamps/PAWS, delayed
+> ACK, persist, keepalive), but **no TCP fast open, no ECN, no pluggable congestion control** (Reno
+> only), and a fixed **16-connection** ceiling.
 
 ---
 
@@ -375,7 +382,7 @@ honest equivalent for now). A proper **libc getopt** (so inetutils short options
 tracked libc fix. Concurrent telnet logins need **dynamic pty allocation** (the kernel has one
 pty pair today — enough for a single session).
 
-> The 2026-06-12 networking follow-up (`docs/superpowers/plans/2026-06-12-net-dociagniecia.md`)
+> The 2026-06-12 networking follow-up (`../superpowers/plans/2026-06-12-net-dociagniecia.md`)
 > is **complete**: TCP window scaling/SACK/timestamps/delayed-ACK/persist/keepalive, a real DHCP
 > client, AF_UNIX + AF_PACKET + `socketpair`, ICMP-error delivery to sockets, a fuller resolver
 > (`/etc/services`, search/ndots, multi-ns, PTR), listening services (inetd/telnetd/darkhttpd)
