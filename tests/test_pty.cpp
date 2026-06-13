@@ -118,3 +118,25 @@ TEST_CASE("Pty winsize ioctl round-trips") {
 	CHECK(r.ws_row == 40);
 	CHECK(r.ws_col == 100);
 }
+
+TEST_CASE("Pty TIOCPKT packet mode prefixes a status byte on master reads") {
+	Pty p;
+	int on = 1;
+	CHECK(p.ioctl(IOCTL_TIOCPKT, &on) == 0);
+	// Slave writes "hi"; in packet mode the master read is [TIOCPKT_DATA][h][i].
+	CHECK(p.slaveWrite("hi", 2) == 2);
+	unsigned char out[8] = {0};
+	int r = p.masterRead(out, sizeof out);
+	CHECK(r == 3);
+	CHECK(out[0] == (unsigned char) TIOCPKT_DATA);   // 0 = ordinary data, no flush
+	CHECK(out[1] == 'h');
+	CHECK(out[2] == 'i');
+	// Turning packet mode off restores the raw stream (no preamble).
+	int off = 0;
+	CHECK(p.ioctl(IOCTL_TIOCPKT, &off) == 0);
+	CHECK(p.slaveWrite("ok", 2) == 2);
+	r = p.masterRead(out, sizeof out);
+	CHECK(r == 2);
+	CHECK(out[0] == 'o');
+	CHECK(out[1] == 'k');
+}

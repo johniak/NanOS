@@ -40,6 +40,15 @@ enum {
 	IOCTL_TCGETS = 0x5401, IOCTL_TCSETS = 0x5402, IOCTL_TCSETSW = 0x5403, IOCTL_TCSETSF = 0x5404,
 	IOCTL_TIOCGWINSZ = 0x5413, IOCTL_TIOCSWINSZ = 0x5414,
 	IOCTL_TIOCGPGRP = 0x540F, IOCTL_TIOCSPGRP = 0x5410,
+	IOCTL_TIOCPKT = 0x5420,    // pty packet mode (telnetd): master reads gain a status preamble
+};
+
+// TIOCPKT status-byte bits (the preamble of each packet-mode master read). We only generate
+// TIOCPKT_DATA(0) for ordinary data; the flush/flow bits exist for callers that test them.
+enum {
+	TIOCPKT_DATA = 0x00, TIOCPKT_FLUSHREAD = 0x01, TIOCPKT_FLUSHWRITE = 0x02,
+	TIOCPKT_STOP = 0x04, TIOCPKT_START = 0x08, TIOCPKT_NOSTOP = 0x10,
+	TIOCPKT_DOSTOP = 0x20, TIOCPKT_IOCTL = 0x40,
 };
 
 }  // namespace kernel

@@ -18,11 +18,18 @@
 #include <sys/ioctl.h>
 
 int login_tty(int fd) {
-	setsid();                         /* new session; the slave becomes our controlling terminal */
+	setsid();                         /* new session; this process becomes its leader */
+	ioctl(fd, TIOCSCTTY, (void*) 0);  /* acquire the slave as the controlling terminal (no-op if
+	                                   * the kernel pty does not track a ctty; harmless) */
 	dup2(fd, 0);
 	dup2(fd, 1);
 	dup2(fd, 2);
 	if (fd > 2) close(fd);
+	/* Make our (new session leader's) process group the terminal's foreground group, so a
+	 * job-control shell (bash) sees tcgetpgrp() == its own pgrp and does not SIGTTIN-stop itself
+	 * on startup. Without this the pty's foreground pgrp stays 0 and bash hangs silently; a
+	 * non-job-control shell (nsh) is unaffected. */
+	tcsetpgrp(0, getpgrp());
 	return 0;
 }
 

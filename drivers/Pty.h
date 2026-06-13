@@ -55,6 +55,7 @@ private:
 	Termios m_tio;
 	Winsize m_win;
 	int m_fgPgrp;
+	bool m_packet;   // TIOCPKT packet mode: master reads carry a leading status byte (telnetd)
 	PtySignalFn m_sigFn;
 	void* m_sigCtx;
 	WaitQueue m_wq;

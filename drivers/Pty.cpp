@@ -8,6 +8,7 @@ Pty::Pty() {
 	m_m2sHead = m_m2sTail = m_m2sCount = 0;
 	m_lineLen = 0;
 	m_fgPgrp = 0;
+	m_packet = false;
 	m_sigFn = 0;
 	m_sigCtx = 0;
 	for (int i = 0; i < NCCS; i++)
@@ -121,6 +122,13 @@ int Pty::masterRead(void* buf, unsigned n) {
 		return -EAGAIN;
 	unsigned char* d = (unsigned char*) buf;
 	unsigned r = 0;
+	// Packet mode (TIOCPKT, set by telnetd): every master read is prefixed with a one-byte
+	// status preamble. We never flush/flow from here, so the byte is always TIOCPKT_DATA(0);
+	// the consumer (telnetd) tests its bits, then discards it before relaying the real data.
+	if (m_packet) {
+		if (n == 0) return 0;
+		d[r++] = (unsigned char) TIOCPKT_DATA;
+	}
 	while (r < n && m_s2mCount > 0) {
 		d[r++] = m_s2m[m_s2mTail];
 		m_s2mTail = (m_s2mTail + 1) % CAP;
@@ -186,6 +194,9 @@ int Pty::ioctl(unsigned cmd, void* arg) {
 		return 0;
 	case IOCTL_TIOCSPGRP:
 		m_fgPgrp = *(int*) arg;
+		return 0;
+	case IOCTL_TIOCPKT:
+		m_packet = arg ? (*(int*) arg != 0) : false;
 		return 0;
 	}
 	return -EINVAL;
