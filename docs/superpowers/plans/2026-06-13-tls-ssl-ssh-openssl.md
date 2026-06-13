@@ -99,9 +99,9 @@ OpenSSL **bez łatek źródeł**, zredukowana konfiguracja pod i686-nanos.
 
 ### FAZA 2 — TLS klient (HTTPS wychodzące)
 
-- [ ] **2.1** CA bundle: zaszyp `/etc/ssl/certs/ca-certificates.crt` (Mozilla bundle) do obrazu;
+- [x] **2.1** CA bundle: zaszyp `/etc/ssl/certs/ca-certificates.crt` (Mozilla bundle) do obrazu;
   `SSL_CTX` ładuje go domyślnie (`SSL_CTX_set_default_verify_paths` → `OPENSSLDIR`).
-- [ ] **2.2** `openssl s_client -connect <host>:443 -servername <host>` przez slirp do prawdziwego
+- [x] **2.2** `openssl s_client -connect <host>:443 -servername <host>` przez slirp do prawdziwego
   hosta HTTPS: pełny handshake + weryfikacja łańcucha (Verify return code: 0 ok) + `GET /` → 200.
 - [ ] **2.3** **Bramka drutu:** pcap ClientHello→ServerHello→Certificate→…→Finished pole-po-polu
   jak `openssl s_client` na Linuksie (maska pól losowych: client/server random, session id, klucze
