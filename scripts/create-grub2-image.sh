@@ -1,5 +1,5 @@
 #!/bin/bash
-# Creates a 32MB HDD image with GRUB2 and an ext2 partition starting at LBA 2048.
+# Creates a 256MB HDD image with GRUB2 and an ext2 partition starting at LBA 2048.
 # Runs INSIDE the nanos-build container (Linux); no Docker, no mount, no loop device.
 # Uses mke2fs -E offset and grub-mkimage + dd so it works without privileges.
 
@@ -7,7 +7,7 @@ set -e
 
 IMAGE_PATH="disk/image-grub2.img"
 OFFSET=1048576   # 2048 sectors * 512 bytes = 1MiB
-SECTORS=63488    # (32MB - 1MB) / 512
+SECTORS=522240   # (256MB - 1MB) / 512  — grown from 32MB to fit large apps (NetSurf ~7MB + res)
 
 # Skeleton is built once; the kernel is (re)written separately each build.
 if [ -f "$IMAGE_PATH" ]; then
@@ -30,9 +30,9 @@ terminal_output console
 normal
 GRUBCFG
 
-# 32MB disk image.
-dd if=/dev/zero of="$IMAGE_PATH" bs=1M count=32 status=none
-echo "Created 32MB disk image"
+# 256MB disk image.
+dd if=/dev/zero of="$IMAGE_PATH" bs=1M count=256 status=none
+echo "Created 256MB disk image"
 
 # MBR partition table, single bootable ext2 partition at 1MiB.
 parted -s "$IMAGE_PATH" mklabel msdos

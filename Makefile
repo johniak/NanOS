@@ -222,6 +222,22 @@ udhcpc: bin/libc.ndl bin/libc.ndl.a
 	cp "$(BB_DIR)/udhcpc.nxe" $(BINFOLDER)udhcpc.nxe
 	@echo "staged $(BINFOLDER)udhcpc.nxe — run 'make image' to install it into /nanos/bin"
 
+# NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
+# libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke NanWM
+# libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
+# sysroot from this checkout, then runs that repo's ordered build-all (each port cross-builds in the
+# nanos-sdk-dev container — build-all runs on the HOST and shells into Docker per port, so it is NOT
+# run inside a container here), and stages netsurf.nxe + its res/ tree into bin/. `make image`
+# installs the /apps/netsurf bundle. Launch it inside NanWM with `-f nanwm`.
+NETSURF_REPO ?= $(HOME)/Projects/netsurf-nanos
+netsurf: bin/libc.ndl bin/libc.ndl.a bin/libnw.ndl bin/libnw.ndl.a
+	@test -f "$(NETSURF_REPO)/scripts/build-all.sh" || { echo "netsurf-nanos repo not found at $(NETSURF_REPO)"; exit 1; }
+	sh "$(NETSURF_REPO)/scripts/sync-sysroot.sh"
+	sh "$(NETSURF_REPO)/scripts/build-all.sh"
+	cp "$(NETSURF_REPO)/ports/netsurf/netsurf.nxe" $(BINFOLDER)netsurf.nxe
+	rm -rf $(BINFOLDER)netsurf-res && cp -R "$(NETSURF_REPO)/ports/netsurf/res" $(BINFOLDER)netsurf-res
+	@echo "staged $(BINFOLDER)netsurf.nxe + res — run 'make image' to install /apps/netsurf"
+
 # Stage EVERY already-built external app into bin/ in one go (best-effort: skips any whose artifact
 # is not present, so a partial set still works). The staged .nxe are build artifacts that `make
 # clean` removes, so the workflow after a clean is: `make externals && make image`. This copies
@@ -501,6 +517,26 @@ _image: _all _userland _kext _grub2-image
 	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
+	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
+	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
+	# res/ is installed recursively (dirs first top-down, then files) so arbitrary nesting works.
+	# Launch inside NanWM with `-f nanwm` (selects the NanWM libnsfb surface). Skipped if absent.
+	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
+	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  if [ -d $(BINFOLDER)netsurf-res ]; then \
+	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
+	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	    done; \
+	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
+	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	    done; \
+	  fi; \
 	fi
 	# Dropbear SSH (optional, external): server + keygen + client -> /nanos/bin. Also create root's
 	# home (/disks/main/root, set in passwd) + a .ssh dir + /etc/dropbear (runtime host keys), so
