@@ -141,6 +141,23 @@ inetd: bin/libc.ndl bin/libc.ndl.a
 	@test -f "$(SERVICES_PORT)/telnetd.nxe" && cp "$(SERVICES_PORT)/telnetd.nxe" $(BINFOLDER)telnetd.nxe || true
 	@echo "staged $(BINFOLDER)inetd.nxe (+ telnetd.nxe) — run 'make image' to install into /nanos/bin"
 
+# darkhttpd (optional, external): single-file HTTP/1.1 static server (FAZA H4). Built by the
+# nanos-sdk from $(HTTPD_PORT)/nxport.toml (build=make, -DNO_IPV6). Same reproducible flow.
+HTTPD_PORT := $(SDK_WORK)/darkhttpd-port
+httpd: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(HTTPD_PORT)/nxport.toml"     || { echo "darkhttpd port not found at $(HTTPD_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(HTTPD_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(HTTPD_PORT)/darkhttpd.nxe" $(BINFOLDER)darkhttpd.nxe
+	@echo "staged $(BINFOLDER)darkhttpd.nxe — run 'make image' to install it into /nanos/bin"
+
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
 # busybox tree) and mknx it. No busybox source patches — sysroot headers + EXTRA_CFLAGS only.
@@ -175,6 +192,7 @@ externals:
 	            "wget:$(SDK_WORK)/wget-port/wget.nxe" \
 	            "inetd:$(SDK_WORK)/inetutils-services-port/inetd.nxe" \
 	            "telnetd:$(SDK_WORK)/inetutils-services-port/telnetd.nxe" \
+	            "darkhttpd:$(SDK_WORK)/darkhttpd-port/darkhttpd.nxe" \
 	            "udhcpc:$(BB_DIR)/udhcpc.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
@@ -187,7 +205,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget inetd udhcpc   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget inetd httpd udhcpc   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -421,6 +439,13 @@ _image: _all _userland _kext _grub2-image
 	# login over a kernel pty (launched by inetd; execs nanologin -> the user's shell).
 	if [ -f $(BINFOLDER)telnetd.nxe ]; then \
 	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# darkhttpd (optional, external): single-file HTTP server -> /nanos/bin, plus its document
+	# root /apps/www (the served site: index.html). Skipped if the binary is absent.
+	if [ -f $(BINFOLDER)darkhttpd.nxe ]; then \
+	  printf "rm /nanos/bin/darkhttpd.nxe\nwrite $(BINFOLDER)darkhttpd.nxe /nanos/bin/darkhttpd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
 	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
