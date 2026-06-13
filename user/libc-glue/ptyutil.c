@@ -1,5 +1,7 @@
 /*
- * pty.c — openpty/forkpty/login_tty over the NanOS kernel pseudo-terminal. The kernel exposes one
+ * ptyutil.c — openpty/forkpty/login_tty over the NanOS kernel pseudo-terminal. (Named ptyutil, NOT
+ * pty, so its object bin/ptyutil.o never collides with the kernel driver's bin/Pty.o on the
+ * case-insensitive macOS bind-mount — the classic NanOS Pty.o/pty.o trap.) The kernel exposes one
  * pty pair: /dev/ptmx (master) + /dev/pts0 (slave) (see drivers/Pty.h, kernel/Kernel.cpp). These
  * wrap it the BSD way so inetutils telnetd (and future sshd/script) get a real controlling tty for
  * the login shell.
