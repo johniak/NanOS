@@ -467,6 +467,13 @@ _image: _all _userland _kext _grub2-image
 	if [ -f $(BINFOLDER)openssl.nxe ]; then \
 	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
+	# CA trust store (Mozilla bundle): the TLS clients (openssl s_client, wget https) verify server
+	# certificate chains against /nanos/ssl/cert.pem = OpenSSL's compiled OPENSSLDIR. Shipped so a
+	# guest TLS connection can return "Verify return code: 0 (ok)" without a per-command -CAfile.
+	if [ -f disk-content/ssl/cert.pem ]; then \
+	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
 	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
 	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)inetd.nxe ]; then \
