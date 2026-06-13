@@ -58,20 +58,20 @@ go przez wszystkie kanały, z których OpenSSL korzysta.
   `user/libc-glue/syscalls.c` (`getrandom` wrapper; `getentropy` → `getrandom`), Makefile
   (`-cpu` w `run`/`run-net`, `TEST_MODULES`/`COV_PATTERNS` += Csprng)
 
-- [ ] **0.1** `archHwRandom`: wykryj RDRAND przez CPUID (leaf 1, ECX bit 30); jeśli jest — `rdrand`
+- [x] **0.1** `archHwRandom`: wykryj RDRAND przez CPUID (leaf 1, ECX bit 30); jeśli jest — `rdrand`
   z retry; zwróć `false` gdy brak. Dodaj `-cpu Nehalem` (lub `max`) do `qemu-system-i386` w
   `run`/`run-net`, żeby QEMU eksponował RDRAND (udokumentuj: bez tego flaga = software-only).
-- [ ] **0.2** `Csprng` (MI, host-testowalny): stan ChaCha20 (lub AES-CTR-DRBG); `seed(buf,len)`,
+- [x] **0.2** `Csprng` (MI, host-testowalny): stan ChaCha20 (lub AES-CTR-DRBG); `seed(buf,len)`,
   `reseed`, `bytes(out,n)`. Zasiew przy boocie z: RDRAND (jeśli jest) **+** zebrany jitter RDTSC
   **+** czas RTC + losowe zdarzenia (xid DHCP, timingi IRQ). Reseed okresowy. **Nigdy** stały seed.
-- [ ] **0.3** Wepnij: `/dev/random` i nowy `/dev/urandom` czytają z `Csprng`; `SYS_getrandom`
+- [x] **0.3** Wepnij: `/dev/random` i nowy `/dev/urandom` czytają z `Csprng`; `SYS_getrandom`
   (flagi GRND_NONBLOCK/GRND_RANDOM zignorowane bezpiecznie — zawsze CSPRNG); libc `getrandom` +
   `getentropy` → przez niego. Usuń oba stałe ziarna.
-- [ ] **0.4** Host-test `test_csprng`: znane wektory ChaCha20/DRBG; różne ziarno → różny strumień;
+- [x] **0.4** Host-test `test_csprng`: znane wektory ChaCha20/DRBG; różne ziarno → różny strumień;
   monobit/odstępy sanity. ≥90% pokrycia nowego MI. `check-arch` czysty (RDRAND tylko w `arch/x86`).
-- [ ] **0.5** QEMU: `head -c16 /dev/urandom | od -An -tx1` **różni się między dwoma bootami**
+- [x] **0.5** QEMU: `head -c16 /dev/urandom | od -An -tx1` **różni się między dwoma bootami**
   (dowód niedeterminizmu); z `-cpu` bez RDRAND fallback-jitter też daje różne ciągi. Zero faultów.
-- [ ] **0.6** Commit: `crypto: real kernel CSPRNG (RDRAND+jitter seed) behind /dev/{u}random,
+- [x] **0.6** Commit: `crypto: real kernel CSPRNG (RDRAND+jitter seed) behind /dev/{u}random,
   getrandom, getentropy`.
 
 ### FAZA 1 — port OpenSSL (libcrypto + libssl + apka `openssl`)
