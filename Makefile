@@ -793,7 +793,8 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 # picolibc via the generated --undefined list below (see the libc.elf rule).
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
   $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
-  $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o
+  $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o \
+  $(BINFOLDER)crypt.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not
@@ -970,8 +971,9 @@ TEST_MODULES+= net/Ether.cpp net/Arp.cpp net/Ip.cpp net/Route.cpp net/Icmp.cpp  
 TEST_MODULES+= net/Socket.cpp net/Udp.cpp net/Raw.cpp net/Tcp.cpp net/Packet.cpp net/Unix.cpp   # socket layer + UDP + RAW + TCP + AF_PACKET + AF_UNIX
 TEST_MODULES+= net/NetProc.cpp net/NetStats.cpp   # /proc/net renderers + SNMP counters (FAZA 14)
 TEST_MODULES+= user/libc-glue/resolv_parse.c   # pure resolver parsers (resolv.conf/services/protocols/DNS, FAZA E)
+TEST_MODULES+= user/libc-glue/crypt.c          # crypt(3) SHA-512 ($6$) — known-answer vs openssl
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
