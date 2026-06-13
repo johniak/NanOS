@@ -262,6 +262,12 @@ int fork(void) {
 	return reterr(sys3(SYS_fork, 0, 0, 0));
 }
 
+/* vfork(2): NanOS has no copy-on-write vfork; a full fork is a correct (if heavier) substitute —
+ * the child fork()s and immediately exec()s or _exit()s, exactly the vfork contract. */
+int vfork(void) {
+	return reterr(sys3(SYS_fork, 0, 0, 0));
+}
+
 /* waitpid(2): block for a child to exit; *status gets a WEXITSTATUS-style code. */
 int waitpid(int pid, int* status, int options) {
 	return reterr(sys3(SYS_waitpid, pid, (int) status, options));

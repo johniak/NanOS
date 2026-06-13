@@ -34,6 +34,8 @@ typedef unsigned short sa_family_t;
 #define SOCK_STREAM    1
 #define SOCK_DGRAM     2
 #define SOCK_RAW       3
+#define SOCK_RDM       4
+#define SOCK_PACKET    10
 #define SOCK_SEQPACKET 5
 #define SOCK_CLOEXEC   02000000   /* = 0x80000 */
 #define SOCK_NONBLOCK  04000      /* = 0x800 */
@@ -98,6 +100,19 @@ struct cmsghdr {
 	int    cmsg_level;
 	int    cmsg_type;
 };
+
+/* Ancillary-data accessors (ports like busybox udhcpc walk recvmsg control buffers). NanOS recvmsg
+ * returns no control messages today, so CMSG_FIRSTHDR yields NULL and callers take the no-cmsg path. */
+#define CMSG_ALIGN(len)   (((len) + sizeof(size_t) - 1) & (size_t) ~(sizeof(size_t) - 1))
+#define CMSG_DATA(cmsg)   ((unsigned char*)((struct cmsghdr*)(cmsg) + 1))
+#define CMSG_LEN(len)     (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_SPACE(len)   (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+#define CMSG_FIRSTHDR(m)  ((size_t)(m)->msg_controllen >= sizeof(struct cmsghdr) \
+                            ? (struct cmsghdr*)(m)->msg_control : (struct cmsghdr*)0)
+#define CMSG_NXTHDR(m, c) ((char*)(c) + CMSG_ALIGN((c)->cmsg_len) + sizeof(struct cmsghdr) \
+                            > (char*)(m)->msg_control + (m)->msg_controllen ? (struct cmsghdr*)0 \
+                            : (struct cmsghdr*)((char*)(c) + CMSG_ALIGN((c)->cmsg_len)))
+#define SCM_RIGHTS 0x01
 
 int socket(int domain, int type, int protocol);
 int socketpair(int domain, int type, int protocol, int sv[2]);

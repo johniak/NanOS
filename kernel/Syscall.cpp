@@ -1162,11 +1162,11 @@ int Syscalls::netIoctl(int fd, unsigned cmd, void* arg) {
 		if (!dev) return -ENXIO;
 		{ uint32_t ip; uint16_t p; if (parseSockaddr(u, 16, &ip, &p) != SA_AF_INET) return -EAFNOSUPPORT;
 		  dev->ip = ip; if (!dev->broadcast) dev->broadcast = (ip & dev->netmask) | ~dev->netmask; } return 0;
-	case 0x891b:  // SIOCSIFNETMASK
+	case 0x891c:  // SIOCSIFNETMASK (real Linux value; was mis-numbered 0x891b)
 		if (!dev) return -ENXIO;
 		{ uint32_t m; uint16_t p; if (parseSockaddr(u, 16, &m, &p) != SA_AF_INET) return -EAFNOSUPPORT;
 		  dev->netmask = m; dev->broadcast = (dev->ip & m) | ~m; } return 0;
-	case 0x891a:  // SIOCGIFNETMASK
+	case 0x891b:  // SIOCGIFNETMASK (real Linux value; was mis-numbered 0x891a)
 		if (!dev) return -ENXIO;
 		{ unsigned l = 16; writeSockaddr(u, &l, dev->netmask, 0); } return 0;
 	case 0x8919:  // SIOCGIFBRDADDR

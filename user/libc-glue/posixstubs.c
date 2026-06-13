@@ -231,3 +231,21 @@ long sysconf(int name) {
 	default: return -1;
 	}
 }
+
+/* ---- syslog: route to stderr (NanOS has no syslogd; ports like busybox udhcp expect it) ---- */
+#include <stdio.h>
+#include <stdarg.h>
+static int g_logmask = 0xff;
+void openlog(const char* ident, int option, int facility) { (void)ident; (void)option; (void)facility; }
+void closelog(void) {}
+int  setlogmask(int mask) { int o = g_logmask; if (mask) g_logmask = mask; return o; }
+void vsyslog(int priority, const char* fmt, va_list ap) {
+	if (!((1 << (priority & 7)) & g_logmask)) return;
+	vfprintf(stderr, fmt, ap); fputc('\n', stderr);
+}
+void syslog(int priority, const char* fmt, ...) {
+	va_list ap; va_start(ap, fmt); vsyslog(priority, fmt, ap); va_end(ap);
+}
+
+/* clearenv — empty the environment (busybox setup_environment). */
+int clearenv(void) { if (environ) environ[0] = 0; return 0; }

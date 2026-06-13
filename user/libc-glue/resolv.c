@@ -24,6 +24,18 @@
 
 int h_errno;
 
+const char* hstrerror(int err) {
+	switch (err) {
+	case 0: return "Resolver Error 0 (no error)";
+	case HOST_NOT_FOUND: return "Unknown host";
+	case TRY_AGAIN: return "Host name lookup failure";
+	case NO_RECOVERY: return "Unknown server error";
+	case NO_DATA: return "No address associated with name";
+	default: return "Unknown resolver error";
+	}
+}
+void herror(const char* s) { if (s && *s) fprintf(stderr, "%s: ", s); fprintf(stderr, "%s\n", hstrerror(h_errno)); }
+
 /* Read a whole small text file into buf (NUL-terminated). Returns bytes read, or 0. */
 static int read_file(const char* path, char* buf, int max) {
 	int fd = open(path, O_RDONLY);

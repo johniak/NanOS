@@ -96,6 +96,8 @@ extern int h_errno;
 #define TRY_AGAIN      2
 #define NO_RECOVERY    3
 #define NO_DATA        4
+const char* hstrerror(int err);
+void herror(const char* s);
 
 #ifdef __cplusplus
 }
