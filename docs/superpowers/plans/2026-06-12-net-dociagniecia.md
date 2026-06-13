@@ -198,26 +198,26 @@ TCP-fallbacku, search domains i PTR.
   (wejście: bufor pliku / pakiet DNS) i testowana hostowo w `tests/test_resolv.cpp` przez
   kompilację `resolv.c` z `-DRESOLV_HOST_TEST` (bez syscalli; pattern jak NxeLoader)
 
-- [ ] **E1. `/etc/services` + `/etc/protocols`:** `getservbyname/byport`, `getprotobyname/
+- [x] **E1. `/etc/services` + `/etc/protocols`:** `getservbyname/byport`, `getprotobyname/
   bynumber` parsują pliki (format Linuksa: nazwa, port/proto, aliasy, komentarze `#`);
   wbudowane tabele zostają WYŁĄCZNIE jako fallback, gdy pliku nie ma (i to jest
   udokumentowane w kodzie). Test: wektor pliku z aliasami/komentarzami/tabami.
-- [ ] **E2. TCP/53 fallback:** odpowiedź z bitem TC → ponów zapytanie po TCP (2-bajtowy
+- [x] **E2. TCP/53 fallback:** odpowiedź z bitem TC → ponów zapytanie po TCP (2-bajtowy
   prefiks długości, RFC 1035 §4.2.2). Test: parser ścieżki TC + ramkowanie TCP.
-- [ ] **E3. `search`/`domain` + `ndots` z resolv.conf:** nazwa bez kropki (lub < ndots) →
+- [x] **E3. `search`/`domain` + `ndots` z resolv.conf:** nazwa bez kropki (lub < ndots) →
   próby z sufiksami search listy, potem literal; nazwa z kropką → najpierw literal. Dokładny
   algorytm glibc/musl. Test: macierz nazwa×search×ndots.
-- [ ] **E4. Wiele nameserverów + retry/timeout:** wszystkie wpisy `nameserver` (max 3, jak
+- [x] **E4. Wiele nameserverów + retry/timeout:** wszystkie wpisy `nameserver` (max 3, jak
   MAXNS), timeout 5 s, 2 próby, rotacja przy braku odpowiedzi (`options timeout:/attempts:`
   honorowane). Test: symulacja braku odpowiedzi pierwszego ns.
-- [ ] **E5. Reverse DNS (PTR):** `gethostbyaddr`/`getnameinfo` budują `d.c.b.a.in-addr.arpa`,
+- [x] **E5. Reverse DNS (PTR):** `gethostbyaddr`/`getnameinfo` budują `d.c.b.a.in-addr.arpa`,
   pytają o PTR, parsują (kompresja już jest); brak odpowiedzi → numeryczne (jak teraz, ale
   jako FALLBACK, nie jedyna ścieżka). Usuwa komentarz „does no reverse DNS" z `resolv.c:207`.
   Test: wektor odpowiedzi PTR z kompresją.
-- [ ] **E6.** QEMU: `ping -a`/`getnameinfo` przez slirp DNS — pcap pokazuje zapytanie PTR
+- [x] **E6.** QEMU: `ping -a`/`getnameinfo` przez slirp DNS — pcap pokazuje zapytanie PTR
   (pole-po-polu jak `dig -x`); `getservbyname("http","tcp")` czyta plik z dysku (usunąć wpis
   testowo → fallback działa).
-- [ ] **E7.** Commit per podpunkt (`resolv: read /etc/services|protocols`, `resolv: TCP
+- [x] **E7.** Commit per podpunkt (`resolv: read /etc/services|protocols`, `resolv: TCP
   fallback`, `resolv: search+ndots`, `resolv: multi-ns retry`, `resolv: PTR`).
 
 ### FAZA F — AF_PACKET + prawdziwy DHCP (domknięcie FAZY 10 planu bazowego)
