@@ -237,14 +237,14 @@ odroczył; static-fallback działa, ale konfiguracja sieci wpisana w kernel to d
   minimal: tylko udhcpc)
 - Test: `tests/test_packet.cpp`
 
-- [ ] **F1. AF_PACKET (MI core):** `SOCK_DGRAM` (cooked: kernel zdejmuje/dokłada nagłówek
+- [x] **F1. AF_PACKET (MI core):** `SOCK_DGRAM` (cooked: kernel zdejmuje/dokłada nagłówek
   Ethernet, adresacja przez `sockaddr_ll`) i `SOCK_RAW` (pełna ramka), filtr po `sll_protocol`
   (ETH_P_IP/ETH_P_ALL, network order), `bind` po `sll_ifindex`. RX-tap w `ethRx` (kopia do
   pasujących packet socketów zanim ramka pójdzie do ARP/IP), TX przez `dev->tx` z pominięciem
   routingu. **Dostarczanie działa też, gdy interfejs nie ma adresu IP** — to jest cały sens
   (DHCP DISCOVER z 0.0.0.0). Testy: bind+filter, cooked TX (ramka na drucie pole-po-polu),
   RX ramki broadcast na nieskonfigurowanym dev, ETH_P_ALL widzi i ARP i IP.
-- [ ] **F2. Syscall ABI:** `sockaddr_ll` (układ Linux i686: family/protocol/ifindex/hatype/
+- [x] **F2. Syscall ABI:** `sockaddr_ll` (układ Linux i686: family/protocol/ifindex/hatype/
   pkttype/halen/addr[8]) w sendto/recvfrom/bind; `SIOCGIFINDEX`. Test ABI: offsetof/sizeof.
 - [ ] **F3. Port busybox udhcpc** przez nanos-port (manifest jak inne porty; busybox skonfiguro-
   wany WYŁĄCZNIE z apletem udhcpc) — **bez łatek źródeł**; cache'ujemy detekcje gnulib-style
@@ -252,7 +252,7 @@ odroczył; static-fallback działa, ale konfiguracja sieci wpisana w kernel to d
   router/dns) → woła `ifconfig`-owe ioctl-e przez mały helper LUB zapisuje pliki + sygnał;
   wybrać wariant Linuksa: skrypt ustawia adres ioctl-ami (SIOCSIFADDR/SIOCSIFNETMASK),
   trasę (SIOCADDRT — dociągnięty w F4) i przepisuje `/etc/resolv.conf`.
-- [ ] **F4. `SIOCADDRT` naprawdę** (prowizorka #5): parsować pełny `struct rtentry` Linuksa
+- [x] **F4. `SIOCADDRT` naprawdę** (prowizorka #5): parsować pełny `struct rtentry` Linuksa
   (rt_dst/rt_gateway/rt_genmask jako sockaddr_in, RTF_GATEWAY/RTF_UP) zamiast „minimally";
   + `SIOCDELRT`. Test: rtentry z gateway → wpis w tablicy tras zgodny z routeLookup.
 - [ ] **F5. Bring-up:** init odpala `udhcpc -i eth0 -q` przy boocie (przez istniejący

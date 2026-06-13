@@ -9,6 +9,7 @@
 #include "Net.h"        // hton/ntoh + ipv4() for sockaddr marshalling
 #include "NetDevice.h"  // net ioctls (SIOCGIF*)
 #include "Route.h"      // SIOCADDRT
+#include "Packet.h"     // AF_PACKET (sockaddr_ll marshalling, ifindex)
 #include <arch/input.h>
 
 namespace kernel {
@@ -988,6 +989,33 @@ void writeSockaddr(void* sa, unsigned* salen, uint32_t ip, uint16_t port) {
 	memcpy(sa, tmp, n);
 	if (salen) *salen = 16;   // Linux reports the untruncated length
 }
+
+// struct sockaddr_ll (Linux i686, 20 bytes): family(2) protocol(2,net order) ifindex(4) hatype(2)
+// pkttype(1) halen(1) addr[8]. protocol is kept network-order verbatim (the value the app passed).
+const int SA_AF_PACKET = 17;
+bool parseSockaddrLl(const void* sa, unsigned salen, int* ifx, uint16_t* proto, unsigned char* dmac) {
+	if (!sa || salen < 8) return false;
+	const unsigned char* p = (const unsigned char*) sa;
+	if ((p[0] | (p[1] << 8)) != SA_AF_PACKET) return false;
+	if (proto) *proto = (uint16_t) (p[2] | (p[3] << 8));
+	if (ifx)   *ifx   = p[4] | (p[5] << 8) | (p[6] << 16) | (p[7] << 24);
+	if (dmac && salen >= 18) memcpy(dmac, p + 12, 6);
+	return true;
+}
+void writeSockaddrLl(void* sa, unsigned* salen, uint16_t proto, int ifx, int pkttype, const unsigned char* mac) {
+	if (!sa) { if (salen) *salen = 20; return; }
+	unsigned char t[20]; memset(t, 0, sizeof t);
+	t[0] = SA_AF_PACKET;
+	t[2] = proto & 0xff; t[3] = (proto >> 8) & 0xff;
+	t[4] = ifx & 0xff; t[5] = (ifx >> 8) & 0xff; t[6] = (ifx >> 16) & 0xff; t[7] = (ifx >> 24) & 0xff;
+	t[8] = 1;                       // hatype ARPHRD_ETHER
+	t[10] = (unsigned char) pkttype;
+	t[11] = 6;                      // halen
+	if (mac) memcpy(t + 12, mac, 6);
+	unsigned cap = salen ? *salen : 20; unsigned n = cap < 20 ? cap : 20;
+	memcpy(sa, t, n);
+	if (salen) *salen = 20;
+}
 }  // namespace
 
 // Install socket `s` into a fresh fd, honoring SOCK_CLOEXEC(0x80000)/SOCK_NONBLOCK(0x800).
@@ -1008,9 +1036,15 @@ int Syscalls::sockSocket(int domain, int type, int protocol) {
 
 int Syscalls::sockBind(int fd, const void* sa, unsigned salen) {
 	if (!isSocketFd(fd)) return -ENOTSOCK;
+	Socket* s = fds[fd].sock;
+	if (s->domain == AF_PACKET) {
+		int ifx; uint16_t proto;
+		if (!parseSockaddrLl(sa, salen, &ifx, &proto, 0)) return -EINVAL;
+		return packetBind(s, ifx, proto);
+	}
 	uint32_t ip; uint16_t port;
 	if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT;
-	return socketBind(fds[fd].sock, ip, port);
+	return socketBind(s, ip, port);
 }
 
 int Syscalls::sockConnect(int fd, const void* sa, unsigned salen) {
@@ -1078,15 +1112,28 @@ int Syscalls::sockGetpeername(int fd, void* sa, unsigned* salen) {
 
 int Syscalls::sockSendto(int fd, const void* buf, unsigned len, int /*flags*/, const void* sa, unsigned salen) {
 	if (!isSocketFd(fd)) return -ENOTSOCK;
+	Socket* s = fds[fd].sock;
+	if (s->domain == AF_PACKET) {
+		int ifx = 0; uint16_t proto = (uint16_t) s->protocol; unsigned char dmac[6] = {0};
+		bool have = sa && parseSockaddrLl(sa, salen, &ifx, &proto, dmac);
+		return packetSend(s, buf, len, ifx, proto, have ? dmac : 0);
+	}
 	uint32_t ip = 0; uint16_t port = 0;
 	if (sa) { if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT; }
-	return socketSendTo(fds[fd].sock, buf, len, ip, port);
+	return socketSendTo(s, buf, len, ip, port);
 }
 
 int Syscalls::sockRecvfrom(int fd, void* buf, unsigned len, int flags, void* sa, unsigned* salen) {
 	if (!isSocketFd(fd)) return -ENOTSOCK;
+	Socket* s = fds[fd].sock;
+	if (s->domain == AF_PACKET) {
+		int ifx, pkttype; uint16_t proto; unsigned char mac[8];
+		int n = packetRecv(s, buf, len, flags, &ifx, &proto, &pkttype, mac);
+		if (n >= 0 && sa) writeSockaddrLl(sa, salen, proto, ifx, pkttype, mac);
+		return n;
+	}
 	uint32_t ip = 0; uint16_t port = 0;
-	int n = socketRecvFrom(fds[fd].sock, buf, len, &ip, &port, flags);
+	int n = socketRecvFrom(s, buf, len, &ip, &port, flags);
 	if (n >= 0 && sa) writeSockaddr(sa, salen, ip, port);
 	return n;
 }
@@ -1139,8 +1186,23 @@ int Syscalls::netIoctl(int fd, unsigned cmd, void* arg) {
 	case 0x8921:  // SIOCGIFMTU
 		if (!dev) return -ENXIO;
 		{ int m = dev->mtu; u[0]=m&0xff; u[1]=(m>>8)&0xff; u[2]=(m>>16)&0xff; u[3]=(m>>24)&0xff; } return 0;
-	case 0x890b:  // SIOCADDRT (add route) — ifr is actually struct rtentry; handled minimally
+	case 0x8933:  // SIOCGIFINDEX -> ifr_ifindex (int at the union offset)
+		if (!dev) return -ENXIO;
+		{ int idx = netIfIndexOf(dev); u[0]=idx&0xff; u[1]=(idx>>8)&0xff; u[2]=(idx>>16)&0xff; u[3]=(idx>>24)&0xff; } return 0;
+	case 0x890b:    // SIOCADDRT — `arg` is a struct rtentry, not an ifreq
+	case 0x890c: {  // SIOCDELRT
+		// rtentry (i686): rt_pad1(4) rt_dst(16) rt_gateway(16) rt_genmask(16) rt_flags(u16@52).
+		// Each sockaddr_in carries sin_addr at +4, so dst@8 gateway@24 genmask@40 (network order).
+		const unsigned char* rt = (const unsigned char*) arg;
+		uint32_t dst = rd32be(rt + 8), gw = rd32be(rt + 24), mask = rd32be(rt + 40);
+		unsigned flags = rt[52] | (rt[53] << 8);            // RTF_UP=0x1, RTF_GATEWAY=0x2
+		NetDevice* egress = netPrimary();                   // single-NIC: the route's device
+		if (!egress) return -ENXIO;
+		if (cmd == 0x890c) { routeDel(dst, mask); return 0; }
+		if (dst == 0 && mask == 0 && (flags & 0x2)) routeAddDefault(egress, gw);
+		else routeAdd(dst, mask, (flags & 0x2) ? gw : 0, egress, 0);
 		return 0;
+	}
 	default:
 		return -EINVAL;
 	}

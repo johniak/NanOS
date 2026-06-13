@@ -18,6 +18,7 @@ enum {
 	ETH_MIN  = 60,          // minimum Ethernet frame (excl. FCS); shorter frames are zero-padded
 	ETH_P_IP  = 0x0800,
 	ETH_P_ARP = 0x0806,
+	ETH_P_ALL = 0x0003,    // AF_PACKET "capture everything" protocol selector (host order)
 };
 
 // Standard TX headroom every builder reserves so lower layers can push() their headers without

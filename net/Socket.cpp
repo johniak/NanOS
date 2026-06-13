@@ -31,8 +31,14 @@ Socket* socketCreate(int domain, int type, int protocol, int* err) {
 			if (err) *err = -SOCK_EPROTONOSUPPORT;
 			return 0;
 		}
+	} else if (domain == AF_PACKET) {
+		// Link-layer sockets (FAZA F): raw frames or "cooked" (kernel (de)frames the L2 header).
+		if (type != SOCK_DGRAM && type != SOCK_RAW) {
+			if (err) *err = -SOCK_EPROTONOSUPPORT;
+			return 0;
+		}
 	} else {
-		// AF_INET6 -> EAFNOSUPPORT (IPv4-only stack, FAZA 11 semantics); AF_PACKET -> FAZA 10.
+		// AF_INET6 -> EAFNOSUPPORT (IPv4-only stack, FAZA 11 semantics).
 		if (err) *err = -SOCK_EAFNOSUPPORT;
 		return 0;
 	}

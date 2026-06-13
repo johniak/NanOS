@@ -208,3 +208,69 @@ TEST_CASE("EAFNOSUPPORT / ENOTSOCK error paths") {
 	CHECK(sc.sockBind(fd, sa, 16) == -EAFNOSUPPORT);
 	sc.close(fd);
 }
+
+// FAZA F — AF_PACKET over the fd table: sockaddr_ll bind/recvfrom/sendto + SIOCGIFINDEX.
+TEST_CASE("AF_PACKET fd: SIOCGIFINDEX, sockaddr_ll bind/recvfrom/sendto") {
+	netSetup();
+	Syscalls sc(mountFixture2(), sysSink);
+	int fd = sc.sockSocket(AF_PACKET, SOCK_DGRAM, hton16(ETH_P_IP));
+	REQUIRE(fd >= 0);
+
+	unsigned char ifr[40]; std::memset(ifr, 0, sizeof ifr); std::memcpy(ifr, "eth0", 4);
+	CHECK(sc.netIoctl(fd, 0x8933, ifr) == 0);                       // SIOCGIFINDEX
+	int ifx = ifr[16] | (ifr[17] << 8) | (ifr[18] << 16) | (ifr[19] << 24);
+	CHECK(ifx == 1);
+
+	unsigned char sll[20]; std::memset(sll, 0, sizeof sll);
+	sll[0] = 17; sll[2] = hton16(ETH_P_IP) & 0xff; sll[3] = hton16(ETH_P_IP) >> 8; sll[4] = (unsigned char) ifx;
+	CHECK(sc.sockBind(fd, sll, 20) == 0);
+
+	// Feed an IP frame on the wire; recvfrom returns the L3 payload + a filled sockaddr_ll.
+	unsigned char ip[20] = { 0x45 };
+	NetBuf* skb = netbufAlloc(); skb->reserve(0);
+	unsigned char* e = skb->put(ETH_HLEN + 20);
+	std::memcpy(e, OUR_MAC, 6); std::memcpy(e + 6, GW_MAC, 6); wr16be(e + 12, ETH_P_IP);
+	std::memcpy(e + ETH_HLEN, ip, 20); skb->dev = &g_dev; ethRx(skb);
+
+	char buf[64]; unsigned char from[20]; unsigned fl = 20;
+	int n = sc.sockRecvfrom(fd, buf, sizeof buf, 0, from, &fl);
+	CHECK(n == 20);
+	CHECK(from[0] == 17);                                           // AF_PACKET
+	CHECK((from[4] | (from[5] << 8)) == 1);                         // sll_ifindex
+	CHECK(std::memcmp(from + 12, GW_MAC, 6) == 0);                  // sll_addr = source MAC
+
+	// sendto (cooked) builds the Ethernet header from the sockaddr_ll.
+	unsigned char dst[20]; std::memset(dst, 0, sizeof dst);
+	dst[0] = 17; dst[2] = hton16(ETH_P_IP) & 0xff; dst[3] = hton16(ETH_P_IP) >> 8; dst[4] = 1;
+	std::memcpy(dst + 12, GW_MAC, 6);
+	g_capCount = 0;
+	CHECK(sc.sockSendto(fd, "HELLO", 5, 0, dst, 20) == 5);
+	REQUIRE(g_capCount == 1);
+	CHECK(std::memcmp(g_cap, GW_MAC, 6) == 0);
+	CHECK(rd16be(g_cap + 12) == ETH_P_IP);
+	CHECK(std::memcmp(g_cap + ETH_HLEN, "HELLO", 5) == 0);
+	sc.close(fd);
+}
+
+// FAZA F — SIOCADDRT/SIOCDELRT parse a real struct rtentry.
+TEST_CASE("SIOCADDRT installs a default route from rtentry; SIOCDELRT removes it") {
+	netSetup();
+	routeReset();                                                  // start with no routes
+	Syscalls sc(mountFixture2(), sysSink);
+	int fd = sc.sockSocket(AF_INET, SOCK_DGRAM, 0);
+
+	unsigned char rt[128]; std::memset(rt, 0, sizeof rt);
+	rt[4] = 2;                                                     // rt_dst family (addr@8 = 0.0.0.0)
+	rt[20] = 2; wr32be(rt + 24, ipv4(10,0,2,2));                   // rt_gateway = 10.0.2.2
+	rt[36] = 2;                                                    // rt_genmask (addr@40 = 0.0.0.0)
+	rt[52] = 0x03;                                                 // RTF_UP | RTF_GATEWAY
+
+	CHECK(sc.netIoctl(fd, 0x890b, rt) == 0);                       // SIOCADDRT
+	NetDevice* od = 0; uint32_t nh = 0;
+	REQUIRE(routeLookup(ipv4(8,8,8,8), &od, &nh));
+	CHECK(nh == ipv4(10,0,2,2));                                   // default via the gateway
+
+	CHECK(sc.netIoctl(fd, 0x890c, rt) == 0);                       // SIOCDELRT
+	CHECK(routeLookup(ipv4(8,8,8,8), &od, &nh) == false);
+	sc.close(fd);
+}

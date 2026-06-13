@@ -1,6 +1,7 @@
 #include "Ether.h"
 #include "NetDevice.h"
 #include "Net.h"
+#include "Packet.h"   // packetRxTap (AF_PACKET RX tap)
 #include <string.h>
 
 namespace kernel {
@@ -22,6 +23,7 @@ bool ethIsBroadcast(const uint8_t mac[6]) {
 void ethRx(NetBuf* skb) {
 	if (!skb) return;
 	if (skb->len < ETH_HLEN) { netbufFree(skb); return; }   // runt: drop (hardening)
+	packetRxTap(skb);             // AF_PACKET tap on the full frame, before the L2 header is stripped
 	const unsigned char* h = skb->head();
 	// h[0..5] dst, h[6..11] src, h[12..13] ethertype.
 	uint16_t type = rd16be(h + 12);
