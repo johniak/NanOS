@@ -330,10 +330,16 @@ klienckiej.
   (scripts/services-qemu.sh). Pierwszy realny konsument listen/accept; tcpsrv.c + tcpsrv-diag.sh
   izolują i dowodzą ścieżkę passive-open. UWAGA: krótkie opcje argp psute przez getopt picolibc —
   inetd startuje z długimi opcjami + pozycyjną ścieżką configu (`/disks/main/nanos/config/etc/`).
-- [ ] **H3. Port telnetd (inetutils):** przez inetd; negocjacja opcji telnet, pty przez H1,
-  exec login-shella (`getpwuid`→`pw_shell` — mechanizm logowania już jest, używa go nterm/init).
-  Weryfikacja: z macOS `telnet localhost 2323` → bash prompt na NanOS, `ls /` działa,
-  `exit` zamyka sesję czysto (brak wycieku socketów/pty — sprawdzić licznikami).
+- [x] **H3. Port telnetd (inetutils):** przez inetd; negocjacja opcji telnet, pty przez H1,
+  exec login-shella. **ZROBIONE:** telnetd z tego samego services-manifestu (--enable-telnetd,
+  mknx w hooks/post_build.sh); dopełniono nagłówki sysroot (telnet.h LINEMODE+SLC+ENVIRON,
+  syslog.h facilities, ioctl.h FIONBIO+TIOCPKT) bez łatek źródeł. Nowy `nanologin` (single-user
+  root: env + getpwuid->pw_shell) uruchamiany przez `telnetd --exec-login=`. Wymagało dwóch
+  napraw jądra/libc: **TIOCPKT packet-mode w pty** (telnetd odrzuca pierwszy bajt każdego odczytu
+  mastera jako preambułę) i **login_tty ustawia controlling-tty + foreground pgrp** (`tcsetpgrp`),
+  bez czego bash SIGTTIN-stopował się po cichu. Z macOS `telnet localhost 2323` → `bash-5.2#`,
+  `ls /` działa, `exit` czysto; DRUGA sesja reużywa jedną parę pty (brak wycieku); zero faultów,
+  pełna negocjacja IAC na drucie (scripts/telnet-qemu.sh).
 - [ ] **H4. Port darkhttpd:** single-file, HTTP/1.1, serwuje katalog — wystawić
   `/disks/main/apps/www` (dorzucić index.html do obrazu). Weryfikacja: `curl
   http://localhost:5555/` z hosta zwraca 200 + treść; pcap pokazuje POPRAWNY serwerowy
