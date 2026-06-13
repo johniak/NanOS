@@ -32,6 +32,13 @@ const uint32_t NX_BRK_MAX  = NX_BRK_BASE + 32u * 1024u * 1024u;
 // the kernel directory and map() allocates a PRIVATE page table, rather than mutating a
 // shared kernel page table the way a window inside the identity map would. Each module
 // gets one 4 MiB PDE; teardown/fork walk this band like the heap.
+// Per-process user window: the program image at the bottom + the user stack at the top. Two
+// 4 MiB PDEs (8 MiB total: 0x800000..0xFFFFFF) so a large static binary (e.g. the OpenSSL CLI,
+// ~3.7 MiB) fits below the stack. Was one 4 MiB PDE; widened to two. Both PDEs are made private
+// (dropped from the shared kernel directory) at space creation, and walked on fork/teardown.
+const uint32_t NX_USER_BASE  = 0x800000;
+const uint32_t NX_USER_END   = 0x1000000;   // exclusive (16 MiB); window = [0x800000, 0x1000000)
+
 const uint32_t NX_MOD_BASE   = 0x08000000;
 const uint32_t NX_MOD_STRIDE = 0x00400000;
 const uint32_t NX_MOD_MAX    = 0x10000000;
@@ -68,7 +75,7 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 	// Re-reserve the windows the frame pool must never hand out.
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint32_t) (unsigned) &end - 0x100000); // kernel image
-	fa.markRangeUsed(0x800000, 0x400000);                           // exec staging window (4 MiB, raised from 0x400000)
+	fa.markRangeUsed(0x800000, 0x800000);                           // exec staging window (8 MiB: matches the user window)
 	uint32_t heapBase = 0x75BCD15 & kernel::PAGE_MASK;              // kernel byte heap
 	fa.markRangeUsed(heapBase, topOfRam - heapBase);
 	// Lay out the kernel heap over its reserved region before the first malloc below.
@@ -99,8 +106,11 @@ void mmuLoadDirPhys(uint32_t dirPhys) { kernel::loadCr3(dirPhys); }
 
 AddressSpace* mmuCreateAddressSpace() {
 	AddressSpace* s = new AddressSpace(g_env);
-	// Share the whole kernel half; the user window (0x800000) gets a private PT.
-	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x800000);
+	// Share the whole kernel half; the user window (two PDEs) gets private PTs. adopt drops the
+	// first PDE; dropPde clears the rest of the window so each map() there allocates a private PT.
+	s->impl.adoptKernelDirectory(g_kernelDirPhys, NX_USER_BASE);
+	for (uint32_t va = NX_USER_BASE + 0x400000; va < NX_USER_END; va += 0x400000)
+		s->impl.dropPde(va);
 	return s;
 }
 
@@ -125,7 +135,8 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 	// PDEs (anonymous RAM, so freeUserWindow's frame-free is correct), and the directory.
 	// The kernel-half PDEs alias shared kernel page tables — leave them. The framebuffer
 	// window (0x10000000) is MMIO and is intentionally NOT freed here.
-	s->impl.freeUserWindow(0x800000);
+	for (uint32_t va = NX_USER_BASE; va < NX_USER_END; va += 0x400000)
+		s->impl.freeUserWindow(va);   // the program-image + user-stack PDEs (private)
 	for (uint32_t va = NX_BRK_BASE; va < NX_BRK_MAX; va += 0x400000)
 		s->impl.freeUserWindow(va);   // no-op for PDEs the heap never grew into
 	for (uint32_t va = NX_MOD_BASE; va < NX_MOD_MAX; va += NX_MOD_STRIDE)
@@ -140,12 +151,16 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	AddressSpace* s = new AddressSpace(g_env);
 	// Share the kernel half, private (empty) user window, then copy the user pages and
 	// every populated heap PDE (fork duplicates the heap, as a Unix child expects).
-	s->impl.adoptKernelDirectory(g_kernelDirPhys, 0x800000);
+	s->impl.adoptKernelDirectory(g_kernelDirPhys, NX_USER_BASE);
+	for (uint32_t va = NX_USER_BASE + 0x400000; va < NX_USER_END; va += 0x400000)
+		s->impl.dropPde(va);
 	// Eager copy of every user window. If any allocation fails (we hit the physical-memory
 	// ceiling — fork duplicates the program, heap and shared-library pages with no COW), tear
 	// the half-built space down and return 0 so fork degrades to -EAGAIN instead of handing
 	// back a corrupt child.
-	bool ok = s->impl.copyUserWindowFrom(src->impl, 0x800000);
+	bool ok = true;
+	for (uint32_t va = NX_USER_BASE; ok && va < NX_USER_END; va += 0x400000)
+		ok = s->impl.copyUserWindowFrom(src->impl, va);   // program-image + user-stack PDEs
 	for (uint32_t va = NX_BRK_BASE; ok && va < NX_BRK_MAX; va += 0x400000)
 		ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint32_t va = NX_MOD_BASE; ok && va < NX_MOD_MAX; va += NX_MOD_STRIDE)

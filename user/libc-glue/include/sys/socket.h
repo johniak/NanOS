@@ -73,6 +73,13 @@ typedef unsigned short sa_family_t;
 #define SHUT_WR   1
 #define SHUT_RDWR 2
 
+/* SO_LINGER argument (linger-on-close). The kernel ignores the timeout, but the struct must exist
+ * for setsockopt(SO_LINGER) callers (e.g. OpenSSL's s_time/s_client) to compile. */
+struct linger {
+	int l_onoff;    /* linger active */
+	int l_linger;   /* how long to linger (seconds) */
+};
+
 struct sockaddr {
 	sa_family_t sa_family;
 	char        sa_data[14];

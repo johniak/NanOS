@@ -160,6 +160,26 @@ httpd: bin/libc.ndl bin/libc.ndl.a
 	cp "$(HTTPD_PORT)/darkhttpd.nxe" $(BINFOLDER)darkhttpd.nxe
 	@echo "staged $(BINFOLDER)darkhttpd.nxe — run 'make image' to install it into /nanos/bin"
 
+# OpenSSL 3.0.15 (optional, external): libcrypto + libssl + the `openssl` CLI (FAZA 1 of the
+# TLS/SSH plan). Built by the nanos-sdk from $(OPENSSL_PORT)/nxport.toml (own Perl Configure via
+# hooks/pre_configure.sh, no-asm/no-threads/no-shared, seed=/dev/urandom). post_build installs
+# libcrypto.a/libssl.a + headers into the SDK sysroot for the downstream TLS/SSH ports. Same
+# reproducible flow as ping/wget/httpd. `make image` never depends on this.
+OPENSSL_PORT := $(SDK_WORK)/openssl-port
+openssl: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(OPENSSL_PORT)/nxport.toml"   || { echo "openssl port not found at $(OPENSSL_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(OPENSSL_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(OPENSSL_PORT)/openssl.nxe" $(BINFOLDER)openssl.nxe
+	@echo "staged $(BINFOLDER)openssl.nxe — run 'make image' to install it into /nanos/bin"
+
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
 # busybox tree) and mknx it. No busybox source patches — sysroot headers + EXTRA_CFLAGS only.
@@ -198,6 +218,7 @@ externals:
 	            "ifconfig:$(SDK_WORK)/inetutils-services-port/ifconfig.nxe" \
 	            "traceroute:$(SDK_WORK)/inetutils-services-port/traceroute.nxe" \
 	            "darkhttpd:$(SDK_WORK)/darkhttpd-port/darkhttpd.nxe" \
+	            "openssl:$(SDK_WORK)/openssl-port/openssl.nxe" \
 	            "udhcpc:$(BB_DIR)/udhcpc.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
@@ -440,6 +461,11 @@ _image: _all _userland _kext _grub2-image
 	# bin/wget.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)wget.nxe ]; then \
 	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# openssl (optional, external): OpenSSL CLI built by `make openssl` (the nanos-sdk port), staged
+	# into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	if [ -f $(BINFOLDER)openssl.nxe ]; then \
+	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
 	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.

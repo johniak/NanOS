@@ -50,6 +50,10 @@ void AddressSpace::adoptKernelDirectory(uint32_t kernelDirPhys, uint32_t userVa)
 	dst[pdIndex(userVa)] = 0;   // drop the user-window PDE -> private PT on next map()
 }
 
+void AddressSpace::dropPde(uint32_t va) {
+	dir()[pdIndex(va)] = 0;     // drop one PDE -> private PT on next map() (no frames to free yet)
+}
+
 void AddressSpace::freeUserWindow(uint32_t userVa) {
 	uint32_t* pd = dir();
 	uint32_t i = pdIndex(userVa);

@@ -128,6 +128,9 @@ int unlink(const char* p) {
 int link(const char* oldp, const char* newp) {
 	return reterr(sys3(SYS_link, (int) oldp, (int) newp, 0));
 }
+int symlink(const char* target, const char* linkpath) {
+	return reterr(sys3(SYS_symlink, (int) target, (int) linkpath, 0));
+}
 int mkdir(const char* p, mode_t mode) {
 	return reterr(sys3(SYS_mkdir, (int) p, (int) mode, 0));
 }

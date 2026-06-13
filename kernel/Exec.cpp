@@ -44,7 +44,7 @@ static void initBrk(Process* p) {
 // and callers reject an oversize file BEFORE the read, so a large .nxe can never corrupt RAM.
 // Base raised 0x400000 -> 0x800000 to give the kernel image headroom (must match user/nx.ld).
 static const unsigned STAGE_BASE = 0x800000;
-static const unsigned STAGE_CAP  = 0x400000;
+static const unsigned STAGE_CAP  = 0x800000;   // 8 MiB: matches the per-process user window
 
 // Load a .nxe image (already staged at the load base in the kernel identity window),
 // applying relocations + zeroing bss. EXEs load at their preferred base, so the delta is

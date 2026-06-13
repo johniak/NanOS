@@ -35,6 +35,11 @@ public:
 	// space: kernel half shared (supervisor), user window private.
 	void adoptKernelDirectory(uint32_t kernelDirPhys, uint32_t userVa);
 
+	// Clear the page-directory entry covering `va` (without freeing anything), so a later
+	// map() of that region allocates a fresh PRIVATE page table. Used to extend the private
+	// user window beyond the single PDE dropped by adoptKernelDirectory (a multi-PDE window).
+	void dropPde(uint32_t va);
+
 	// Free the page table covering `userVa` and every present frame it maps, then
 	// clear that PDE. Used to tear down a process's private user window WITHOUT
 	// touching the shared kernel-half page tables (which other PDEs alias).

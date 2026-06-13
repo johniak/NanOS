@@ -15,13 +15,13 @@
 #include <string.h>
 
 namespace {
-// The user window is a single 4 MiB PDE (0x800000..0xBFFFFF). The program image loads
-// at the bottom (loadBase = 0x800000); the stack lives at the TOP, giving the image up
-// to ~3.5 MiB. The heap is no longer here — sbrk now grows a separate high-VA region via
-// SYS_brk (see mmu_x86.cpp mmuSetUserBrk), so the old fixed heap window is gone. The window
-// was raised 0x400000 -> 0x800000 to give the kernel image headroom (must match user/nx.ld).
-const uint32_t USER_STACK_TOP = 0xC00000;
-const uint32_t USER_STACK_BOT = 0xB80000;   // 512 KiB user stack (top of the user window)
+// The user window is two 4 MiB PDEs (0x800000..0xFFFFFF, 8 MiB; see mmu_x86.cpp NX_USER_*).
+// The program image loads at the bottom (loadBase = 0x800000); the stack lives at the TOP,
+// giving the image up to ~7.5 MiB — enough for a large static binary (the OpenSSL CLI). The
+// heap is no longer here — sbrk grows a separate high-VA region via SYS_brk (mmuSetUserBrk).
+// loadBase stays 0x800000 (must match user/nx.ld); only the window's top (the stack) moved up.
+const uint32_t USER_STACK_TOP = 0x1000000;  // top of the 8 MiB user window
+const uint32_t USER_STACK_BOT = 0xF80000;   // 512 KiB user stack (top of the user window)
 }
 
 namespace arch {
