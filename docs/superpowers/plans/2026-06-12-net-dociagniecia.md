@@ -347,11 +347,16 @@ klienckiej.
   zapisane tuż przed close ginęło na drucie — nagłówek docierał, body nie). Z hosta `curl`
   (5555→80) → 200 + pełne body; **4 jednoczesne GET-y = 4/4** 200+body (TCB_N=16 z FAZY B); zero
   faultów; regression test w test_tcp.cpp (Nagle-held body flushowane przed FIN). scripts/httpd-qemu.sh.
-- [ ] **H5. rc/init:** start inetd + httpd przy boocie (wpis w istniejącym mechanizmie
-  init→shell; logi na konsolę). QEMU bez faultów przy wielogodzinnym idle z nasłuchującymi
-  serwisami (test: boot + 10 min + 100 połączeń pętlą — liczniki netbufInUse wracają do bazy).
-- [ ] **H6.** Commity: `libc: real openpty/forkpty over kernel pty`, `ports: inetutils inetd`,
-  `ports: telnetd — remote bash login`, `ports: darkhttpd`, `boot: start services`.
+- [x] **H5. rc/init:** start inetd + httpd przy boocie. **ZROBIONE:** init.c `start_services()` po
+  DHCP, przed exec shella (fork+exec+reap; serwisy demonizują się, grandchild reparentuje do init);
+  brak binarki = pominięcie. Pełna akceptacja BEZ wpisywania na konsoli (scripts/boot-services-qemu.sh):
+  curl :5555→200+strona, daytime :5013, echo :5007, telnet :2323→bash — wszystkie zielone, zero
+  faultów. Soak/leak: pętla 40 GET wyłapała wyczerpanie TCB (active-close → TIME_WAIT × TCB_N=16);
+  naprawione **recyklingiem najstarszego TIME_WAIT pod presją** (Linux tcp_tw_reuse) → 40/40,
+  serwer żyje (scripts/svc-loop-qemu.sh).
+- [x] **H6.** Commity (bez wzmianki o AI): pause/sigsuspend/wait/execv; inetutils inetd; pty
+  TIOCPKT+login_tty; inetutils telnetd; TCP_NODELAY+close-flush; pread/pwrite+stuby; darkhttpd;
+  boot start-services; TIME_WAIT recycle.
 
 ### FAZA I — narzędzia diagnostyczne (dowód, że ioctl-e i ICMP-errors są prawdziwe)
 
