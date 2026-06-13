@@ -22,15 +22,21 @@
 #include <poll.h>
 #include <utime.h>
 
-/* Force the stdin stream object to be linked. picolibc's tinystdio pulls stdin/stdout/
- * stderr from libc.a only on reference; programs here use stdout/stderr (printf) but
- * rarely stdin, yet fread()'s __bufio_get references stdin weakly (it flushes stdout
- * before reading stdin). Without a strong reference, stdin resolves to address 0 and the
- * first fread on ANY file dereferences NULL. A static initializer won't do (a stream
- * isn't a compile-time constant), so reference it from a (linked, never-called) function
- * — the relocation alone pulls picolibc's stdin object in. */
+/* Force ALL THREE standard stream objects to be linked into libc.ndl. picolibc's tinystdio
+ * declares stdin/stdout/stderr as `FILE *const` pointer variables pulled from libc.a only on
+ * reference; libc.ndl exports a symbol only if its defining object is pulled in. Without a strong
+ * reference here, the unreferenced streams stay undefined and a program importing one resolves it
+ * to ADDRESS 0 — so e.g. `fprintf(stderr, ...)` faults taking &stderr (seen with Dropbear, whose
+ * dropbearkey logs to stderr but never touches stdin/stdout). Referencing all three from a
+ * (linked, never-called) function pulls every stream object in, so libc.ndl exports all three. */
 FILE* __nx_keep_stdin;
-void __nx_link_streams(void) { __nx_keep_stdin = stdin; }
+FILE* __nx_keep_stdout;
+FILE* __nx_keep_stderr;
+void __nx_link_streams(void) {
+	__nx_keep_stdin = stdin;
+	__nx_keep_stdout = stdout;
+	__nx_keep_stderr = stderr;
+}
 
 static inline int sys3(int nr, int a, int b, int c) {
 	int r;

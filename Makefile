@@ -415,7 +415,7 @@ _image: _all _userland _kext _grub2-image
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	# Network config templates -> /nanos/config/etc (copied into the writable /etc tmpfs at boot).
 	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
-	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf; do \
+	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells; do \
 	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
 	# DHCP: the udhcpc action helper (compiled .nxe; udhcpc exec()s it) -> /nanos/config/udhcpc.script,

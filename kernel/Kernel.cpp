@@ -126,7 +126,7 @@ static void extRwSelftest(Vfs* vfs) {
 // Linux apps expect /etc/{resolv.conf,hosts,nsswitch.conf,protocols,services}; the disk is
 // read-only, so we copy the templates into the tmpfs at boot (DHCP later rewrites resolv.conf).
 static void populateEtc(Vfs* vfs) {
-	static const char* files[] = { "resolv.conf", "hosts", "nsswitch.conf", "protocols", "services", 0 };
+	static const char* files[] = { "resolv.conf", "hosts", "nsswitch.conf", "protocols", "services", "shells", 0 };
 	char buf[512];
 	for (int i = 0; files[i]; i++) {
 		String src = String("/disks/main/nanos/config/etc/") + String(files[i]);

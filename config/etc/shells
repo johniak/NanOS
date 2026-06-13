@@ -1,0 +1,7 @@
+# /etc/shells — valid login shells (getusershell(3)). SSH (dropbear) rejects a login whose
+# passwd shell is not listed here, so the NanOS shells must appear. Copied into the writable
+# /etc tmpfs at boot from this template.
+/disks/main/bin/bash.nxe
+/disks/main/nanos/bin/nsh.nxe
+/bin/bash
+/bin/sh

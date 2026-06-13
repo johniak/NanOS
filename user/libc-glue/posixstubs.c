@@ -69,6 +69,9 @@ int setreuid(uid_t r, uid_t e) { (void) r; (void) e; return 0; }
 int setregid(gid_t r, gid_t e) { (void) r; (void) e; return 0; }
 int getgroups(int n, gid_t* list) { (void) n; (void) list; return 0; }
 int setgroups(int n, const gid_t* list) { (void) n; (void) list; return 0; }
+/* initgroups: single-user NanOS has no supplementary-group database; a no-op succeed (sshd/login
+ * call it when dropping into a session). */
+int initgroups(const char* user, gid_t group) { (void) user; (void) group; return 0; }
 
 /* ---- permission ops on a read-only world: accept, do nothing ---- */
 int chown(const char* p, uid_t u, gid_t g)  { (void) p; (void) u; (void) g; return 0; }

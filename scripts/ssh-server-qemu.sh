@@ -51,11 +51,16 @@ typ("dropbear -r /tmp/hk -p 22 -E -F &", 3.0)
 s.close()
 PY
 
-# 4) HOST: ssh in with the private key and run a command.
-echo "=== HOST ssh -i $KEY -p 2222 root@localhost 'echo SSH_OK; id; uname' ==="
-ssh -i "$KEY" -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=12 -o BatchMode=yes root@localhost 'echo SSH_OK; id; uname; ls / | head' 2>&1
-echo "(ssh exit=$?)"
+# 4) HOST: ssh in with the private key and run a command. Bounded: run in the background and kill
+# after 15s so a stalled session can't hang the harness; output goes to a file we then print.
+echo "=== HOST ssh -i $KEY -p 2222 root@localhost 'echo SSH_OK; id; uname; ls /' ==="
+( ssh -i "$KEY" -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 -o BatchMode=yes -o ServerAliveInterval=2 -o ServerAliveCountMax=3 \
+      root@localhost 'echo SSH_OK; id; uname; ls / | head' > /tmp/ssh-out.txt 2>&1; echo "exit=$?" >> /tmp/ssh-out.txt ) &
+SSHPID=$!
+for i in $(seq 1 15); do kill -0 $SSHPID 2>/dev/null || break; sleep 1; done
+kill -9 $SSHPID 2>/dev/null
+cat /tmp/ssh-out.txt 2>/dev/null; echo "(ssh done)"
 
 python3 - "$MON" "$PPM" <<'PY'
 import socket, sys, time
