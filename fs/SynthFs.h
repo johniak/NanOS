@@ -100,6 +100,8 @@ public:
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
 	short pollReady(String path, short events);
 	WaitQueue* waitQueueAt(String path);
+	bool deviceOpen(String path);
+	void deviceClose(String path);
 
 private:
 	int readNode(String path, unsigned size, unsigned off, void* buf);   // static-tree read

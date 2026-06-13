@@ -9,6 +9,8 @@ Pty::Pty() {
 	m_lineLen = 0;
 	m_fgPgrp = 0;
 	m_packet = false;
+	m_slaveRefs = 0;
+	m_slaveEverOpened = false;
 	m_sigFn = 0;
 	m_sigCtx = 0;
 	for (int i = 0; i < NCCS; i++)
@@ -119,7 +121,7 @@ int Pty::masterWrite(const void* buf, unsigned n) {
 
 int Pty::masterRead(void* buf, unsigned n) {
 	if (m_s2mCount == 0)
-		return -EAGAIN;
+		return slaveGone() ? 0 : -EAGAIN;   // slave hung up + buffer drained -> EOF, else would-block
 	unsigned char* d = (unsigned char*) buf;
 	unsigned r = 0;
 	// Packet mode (TIOCPKT, set by telnetd): every master read is prefixed with a one-byte

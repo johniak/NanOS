@@ -21,6 +21,12 @@ struct WaitQueue;   // event wait list (kernel/WaitQueue.h); a streaming device 
 
 struct CharDevice {
 	virtual ~CharDevice() {}
+	// Open/close accounting: the fd layer calls these as descriptors referencing this device are
+	// created (open/dup/fork) and destroyed (close/exec-cloexec/exit). A streaming device that
+	// pairs two endpoints (the pty) uses them to detect when one side has no open fds left, so the
+	// other side's read can report EOF. Default no-op (most devices don't care).
+	virtual void open() {}
+	virtual void close() {}
 	virtual int read(unsigned off, void* buf, unsigned n) = 0;
 	virtual int write(unsigned off, const void* buf, unsigned n) = 0;
 	virtual int ioctl(unsigned cmd, void* arg) = 0;

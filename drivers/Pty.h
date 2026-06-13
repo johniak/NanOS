@@ -31,14 +31,23 @@ public:
 	Pty();
 
 	// Master side (emulator).
-	int masterRead(void* buf, unsigned n);          // shell output; -EAGAIN if none
+	int masterRead(void* buf, unsigned n);          // shell output; -EAGAIN if none, 0 if slave gone
 	int masterWrite(const void* buf, unsigned n);   // keystrokes -> line discipline
-	bool masterReadable() const { return m_s2mCount > 0; }
+	// Readable when output is buffered OR the slave has hung up (so a blocked master reader wakes
+	// to collect the EOF). Once the slave (shell) has closed every fd, masterRead returns 0.
+	bool masterReadable() const { return m_s2mCount > 0 || slaveGone(); }
 
 	// Slave side (shell).
 	int slaveRead(void* buf, unsigned n);           // processed input; -EAGAIN if none
 	int slaveWrite(const void* buf, unsigned n);    // output -> master (OPOST/ONLCR)
 	bool slaveReadable() const { return m_m2sCount > 0; }
+
+	// Slave fd accounting (the shell side): the fd layer bumps these as slave descriptors are
+	// opened/duped and dropped. After the slave has been opened and then fully closed, the pty has
+	// "hung up" and master reads return EOF (the SSH/telnet server then closes the channel).
+	void slaveOpened() { m_slaveRefs++; m_slaveEverOpened = true; }
+	void slaveClosed() { if (m_slaveRefs > 0) m_slaveRefs--; }
+	bool slaveGone() const { return m_slaveEverOpened && m_slaveRefs == 0; }
 
 	int ioctl(unsigned cmd, void* arg);             // TCGETS/TCSETS/TIOCGWINSZ/...
 	void setSignalFn(PtySignalFn fn, void* ctx) { m_sigFn = fn; m_sigCtx = ctx; }
@@ -56,6 +65,8 @@ private:
 	Winsize m_win;
 	int m_fgPgrp;
 	bool m_packet;   // TIOCPKT packet mode: master reads carry a leading status byte (telnetd)
+	int m_slaveRefs;        // count of open slave fds (shell side)
+	bool m_slaveEverOpened; // a slave fd was opened at least once -> refs hitting 0 means hangup
 	PtySignalFn m_sigFn;
 	void* m_sigCtx;
 	WaitQueue m_wq;
@@ -96,6 +107,8 @@ class PtySlave : public CharDevice {
 	Pty* m_pty;
 public:
 	explicit PtySlave(Pty* p) : m_pty(p) {}
+	void open()  { m_pty->slaveOpened(); }    // a shell fd onto the slave: count it
+	void close() { m_pty->slaveClosed(); }    // last close -> the pty hangs up, master reads EOF
 	int read(unsigned, void* b, unsigned n) { return m_pty->slaveRead(b, n); }
 	int write(unsigned, const void* b, unsigned n) { return m_pty->slaveWrite(b, n); }
 	int ioctl(unsigned cmd, void* arg) { return m_pty->ioctl(cmd, arg); }

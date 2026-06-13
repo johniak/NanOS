@@ -62,6 +62,11 @@ public:
 	// The wait list a blocked reader/writer of this path parks on (a char device's queue), or
 	// 0 if the path never blocks. Lets the dispatch sleep event-driven instead of tick-polling.
 	virtual WaitQueue* waitQueueAt(String) { return 0; }
+	// fd open/close accounting for char devices: deviceOpen returns true if `path` is a char
+	// device (and bumps its open count); deviceClose drops it. Lets a pty know when its slave
+	// side has no open fds left (-> master EOF). Default: not a char device / no-op.
+	virtual bool deviceOpen(String) { return false; }
+	virtual void deviceClose(String) {}
 
 	// Write extensions. Default to read-only (-EROFS); a writable fs (RamFs/tmpfs)
 	// overrides them. create() makes-or-truncates a regular file.
@@ -127,6 +132,8 @@ public:
 	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
 	short pollReady(String path, short events);
 	WaitQueue* waitQueueAt(String path);   // the char device's block wait list for `path`, or 0
+	bool deviceOpen(String path);          // true if `path` is a char device (bumps its open count)
+	void deviceClose(String path);         // drop a char device open count for `path`
 	int create(String path, unsigned mode);
 	int mknod(String path, unsigned mode);
 	int unlink(String path);

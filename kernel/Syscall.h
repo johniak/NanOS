@@ -103,6 +103,7 @@ class Syscalls {
 		Pipe* pipe;         // non-null => this fd is one end of a pipe
 		bool pipeWrite;     // which end (write end if true, read end otherwise)
 		Socket* sock;       // non-null => this fd is a socket (read/write/poll/close route to it)
+		bool isChar;        // this fd is a char-device path (pty/etc): open/close are ref-counted
 	};
 	static const int MAXFD = 128;   // per-process fd table (was an artificial 32; heap-backed)
 	Fd fds[MAXFD];

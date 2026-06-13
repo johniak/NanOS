@@ -646,6 +646,20 @@ WaitQueue* SynthFs::waitQueueAt(String path) {
 	return n->dev->waitQueue();
 }
 
+bool SynthFs::deviceOpen(String path) {
+	SynthNode* n = walk((char*) path);
+	if (!n || n->kind != SK_CHARDEV)
+		return false;          // not a char device: the fd layer does no accounting
+	n->dev->open();
+	return true;
+}
+
+void SynthFs::deviceClose(String path) {
+	SynthNode* n = walk((char*) path);
+	if (n && n->kind == SK_CHARDEV)
+		n->dev->close();
+}
+
 int SynthFs::stat(String path, FileStat& out) {
 	int pid = 0;
 	const char* file = 0;

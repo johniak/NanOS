@@ -60,6 +60,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].pipe = 0;
 		fds[i].pipeWrite = false;
 		fds[i].sock = 0;
+		fds[i].isChar = false;
 	}
 	// fd 0,1,2 = stdin/stdout/stderr -> console.
 	for (int i = 0; i < 3; i++) {
@@ -89,6 +90,8 @@ Syscalls::Syscalls(const Syscalls& o) {
 		}
 		if (fds[i].used && fds[i].sock)      // fork shares the socket (refcount, like a pipe end)
 			socketRef(fds[i].sock);
+		if (fds[i].used && fds[i].isChar)    // fork shares the char device: bump its open count
+			vfs->deviceOpen(fds[i].path);
 	}
 }
 
@@ -96,7 +99,7 @@ Syscalls::Syscalls(const Syscalls& o) {
 // zero) — this is what lets a reader see EOF once the last writing process is gone.
 Syscalls::~Syscalls() {
 	for (int i = 0; i < MAXFD; i++)
-		if (fds[i].used && (fds[i].pipe || fds[i].sock))
+		if (fds[i].used && (fds[i].pipe || fds[i].sock || fds[i].isChar))
 			close(i);
 }
 
@@ -146,6 +149,9 @@ int Syscalls::open(String path, int flags) {
 			fds[fd].size = st.size;
 			fds[fd].flags = (unsigned) flags;
 			fds[fd].cloexec = (flags & O_CLOEXEC) != 0;   // O_CLOEXEC -> close on execve
+			// Account char-device opens (pty/etc.) so the device tracks its open fds; isChar
+			// drives the matching deviceClose on close/exec/exit/fork.
+			fds[fd].isChar = vfs->deviceOpen(path);
 			return fd;
 		}
 	}
@@ -170,8 +176,11 @@ int Syscalls::close(int fd, bool* freedShared) {
 		socketClose(fds[fd].sock);
 		fds[fd].sock = 0;
 	}
+	if (fds[fd].isChar)                       // drop a char-device open (pty: may trigger master EOF)
+		vfs->deviceClose(fds[fd].path);
 	fds[fd].used = false;
 	fds[fd].isConsole = false;
+	fds[fd].isChar = false;
 	fds[fd].cloexec = false;
 	return 0;
 }
@@ -207,12 +216,15 @@ void Syscalls::shareInto(int dst, int src) {
 	fds[dst].pipe = fds[src].pipe;
 	fds[dst].pipeWrite = fds[src].pipeWrite;
 	fds[dst].sock = fds[src].sock;
+	fds[dst].isChar = fds[src].isChar;
 	if (fds[dst].pipe) {
 		if (fds[dst].pipeWrite) fds[dst].pipe->addWriter();
 		else fds[dst].pipe->addReader();
 	}
 	if (fds[dst].sock)               // dup shares the socket (refcount)
 		socketRef(fds[dst].sock);
+	if (fds[dst].isChar)             // dup shares the char device: bump its open count
+		vfs->deviceOpen(fds[dst].path);
 }
 
 int Syscalls::pipe(int out[2]) {

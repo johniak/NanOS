@@ -177,6 +177,19 @@ WaitQueue* Vfs::waitQueueAt(String path) {
 	return fs->waitQueueAt(rel);
 }
 
+bool Vfs::deviceOpen(String path) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	return fs ? fs->deviceOpen(rel) : false;
+}
+
+void Vfs::deviceClose(String path) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs)
+		fs->deviceClose(rel);
+}
+
 int Vfs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);
