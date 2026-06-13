@@ -237,6 +237,7 @@ public:
 	int sockConnectResult(int fd);                                      // 0 done / -EINPROGRESS / -errno
 	int sockListen(int fd, int backlog);
 	int sockAccept(int fd, void* sa, unsigned* salen);                  // new fd, or -EAGAIN/-errno
+	int sockSocketpair(int domain, int type, int protocol, int sv[2]); // AF_UNIX pre-connected pair
 	int sockGetsockopt(int fd, int level, int name, void* val, unsigned* len);
 	int sockSetsockopt(int fd, int level, int name, const void* val, unsigned len);
 	int sockGetsockname(int fd, void* sa, unsigned* salen);

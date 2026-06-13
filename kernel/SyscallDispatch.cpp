@@ -132,7 +132,7 @@ static int socketOp(Syscalls* g, int sub, const unsigned* A) {
 	case SC_SHUTDOWN:
 		return g->sockShutdown(fd, (int) A[1]);
 	case SC_SOCKETPAIR:
-		return -38;   // -ENOSYS: AF_INET socketpair isn't meaningful; apps fall back
+		return g->sockSocketpair((int) A[0], (int) A[1], (int) A[2], (int*) A[3]);
 	case SC_CONNECT: {
 		int r = g->sockConnect(fd, (const void*) A[1], A[2]);
 		if (r != -EINPROGRESS) return r;

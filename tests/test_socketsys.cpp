@@ -274,3 +274,66 @@ TEST_CASE("SIOCADDRT installs a default route from rtentry; SIOCDELRT removes it
 	CHECK(routeLookup(ipv4(8,8,8,8), &od, &nh) == false);
 	sc.close(fd);
 }
+
+// ---- AF_UNIX over the syscall/fd layer (FAZA G): real socketpair + named connect/accept --------
+
+// Build a Linux sockaddr_un into sa[]; returns its salen (2 family + path + NUL).
+static unsigned mkun(unsigned char* sa, const char* path) {
+	std::memset(sa, 0, 110);
+	sa[0] = 1; sa[1] = 0;                                          // AF_UNIX
+	unsigned n = (unsigned) std::strlen(path) + 1;                // include the NUL
+	std::memcpy(sa + 2, path, n);
+	return 2 + n;
+}
+
+TEST_CASE("AF_UNIX socketpair over Syscalls: write()/read() route through the fd table") {
+	netSetup();
+	Syscalls sc(mountFixture2(), sysSink);
+	int sv[2] = { -1, -1 };
+	REQUIRE(sc.sockSocketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	CHECK(sv[0] >= 3); CHECK(sv[1] >= 3);
+
+	CHECK(sc.write(sv[0], "ping", 4) == 4);
+	char buf[16];
+	CHECK(sc.read(sv[1], buf, 16) == 4);
+	CHECK(std::memcmp(buf, "ping", 4) == 0);
+	CHECK(sc.write(sv[1], "pong", 4) == 4);                        // reverse direction
+	CHECK(sc.read(sv[0], buf, 16) == 4);
+	CHECK(std::memcmp(buf, "pong", 4) == 0);
+
+	sc.close(sv[0]);
+	CHECK(sc.read(sv[1], buf, 16) == 0);                           // peer closed -> EOF
+	sc.close(sv[1]);
+
+	CHECK(sc.sockSocketpair(AF_INET, SOCK_STREAM, 0, sv) == -EOPNOTSUPP);   // only AF_UNIX
+}
+
+TEST_CASE("AF_UNIX named over Syscalls: bind/listen/connect/accept + sendto/recvfrom") {
+	netSetup();
+	Syscalls sc(mountFixture2(), sysSink);
+	unsigned char sa[110]; unsigned sl = mkun(sa, "/tmp/sys.sock");
+
+	int srv = sc.sockSocket(AF_UNIX, SOCK_STREAM, 0);
+	REQUIRE(srv >= 3);
+	CHECK(sc.sockBind(srv, sa, sl) == 0);
+	CHECK(sc.sockListen(srv, 5) == 0);
+
+	int cli = sc.sockSocket(AF_UNIX, SOCK_STREAM, 0);
+	CHECK(sc.sockConnect(cli, sa, sl) == 0);                       // local: immediate, no EINPROGRESS
+
+	int conn = sc.sockAccept(srv, 0, 0);
+	REQUIRE(conn >= 3);
+	CHECK(sc.write(cli, "hi", 2) == 2);
+	char buf[16];
+	CHECK(sc.read(conn, buf, 16) == 2);
+	CHECK(std::memcmp(buf, "hi", 2) == 0);
+
+	int dup2sock = sc.sockSocket(AF_UNIX, SOCK_STREAM, 0);         // a 2nd bind to the same path fails
+	CHECK(sc.sockBind(dup2sock, sa, sl) == -EADDRINUSE);
+
+	int ghost = sc.sockSocket(AF_UNIX, SOCK_STREAM, 0);            // connect to a free path is refused
+	unsigned char g[110]; unsigned gl = mkun(g, "/tmp/ghost.sock");
+	CHECK(sc.sockConnect(ghost, g, gl) == -ECONNREFUSED);
+
+	sc.close(cli); sc.close(conn); sc.close(srv); sc.close(dup2sock); sc.close(ghost);
+}

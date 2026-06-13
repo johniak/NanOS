@@ -10,6 +10,7 @@
 #include "NetDevice.h"  // net ioctls (SIOCGIF*)
 #include "Route.h"      // SIOCADDRT
 #include "Packet.h"     // AF_PACKET (sockaddr_ll marshalling, ifindex)
+#include "Unix.h"       // AF_UNIX (sockaddr_un marshalling, socketpair)
 #include <arch/input.h>
 
 namespace kernel {
@@ -1020,6 +1021,32 @@ void writeSockaddrLl(void* sa, unsigned* salen, uint16_t proto, int ifx, int pkt
 	memcpy(sa, t, n);
 	if (salen) *salen = 20;
 }
+
+// struct sockaddr_un (Linux): family(2) + sun_path[108]. salen - 2 = bytes of sun_path the caller
+// supplied; for a named socket that includes the trailing NUL, for an abstract socket sun_path[0]
+// is NUL (matched verbatim). The path bytes are the binding key, used as-is by net/Unix.cpp.
+const int SA_AF_UNIX = 1;
+bool parseSockaddrUn(const void* sa, unsigned salen, char* path, unsigned* pathLen) {
+	if (!sa || salen < 2) return false;
+	const unsigned char* p = (const unsigned char*) sa;
+	if ((p[0] | (p[1] << 8)) != SA_AF_UNIX) return false;
+	unsigned plen = salen - 2;
+	if (plen > UNIX_PATH_MAX) plen = UNIX_PATH_MAX;
+	for (unsigned i = 0; i < plen; i++) path[i] = (char) p[2 + i];
+	*pathLen = plen;
+	return true;
+}
+void writeSockaddrUn(void* sa, unsigned* salen, const char* path, unsigned pathLen) {
+	unsigned total = 2 + pathLen;
+	if (!sa) { if (salen) *salen = total; return; }
+	if (pathLen > UNIX_PATH_MAX) pathLen = UNIX_PATH_MAX;
+	unsigned char t[2 + UNIX_PATH_MAX]; memset(t, 0, sizeof t);
+	t[0] = SA_AF_UNIX;
+	for (unsigned i = 0; i < pathLen; i++) t[2 + i] = (unsigned char) path[i];
+	unsigned cap = salen ? *salen : total; unsigned n = cap < total ? cap : total;
+	memcpy(sa, t, n);
+	if (salen) *salen = total;
+}
 }  // namespace
 
 // Install socket `s` into a fresh fd, honoring SOCK_CLOEXEC(0x80000)/SOCK_NONBLOCK(0x800).
@@ -1046,6 +1073,11 @@ int Syscalls::sockBind(int fd, const void* sa, unsigned salen) {
 		if (!parseSockaddrLl(sa, salen, &ifx, &proto, 0)) return -EINVAL;
 		return packetBind(s, ifx, proto);
 	}
+	if (s->domain == AF_UNIX) {
+		char path[UNIX_PATH_MAX]; unsigned plen = 0;
+		if (!parseSockaddrUn(sa, salen, path, &plen)) return -EINVAL;
+		return unixBind(s, path, plen);
+	}
 	uint32_t ip; uint16_t port;
 	if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT;
 	return socketBind(s, ip, port);
@@ -1053,6 +1085,12 @@ int Syscalls::sockBind(int fd, const void* sa, unsigned salen) {
 
 int Syscalls::sockConnect(int fd, const void* sa, unsigned salen) {
 	if (!isSocketFd(fd)) return -ENOTSOCK;
+	Socket* us = fds[fd].sock;
+	if (us->domain == AF_UNIX) {
+		char path[UNIX_PATH_MAX]; unsigned plen = 0;
+		if (!parseSockaddrUn(sa, salen, path, &plen)) return -EINVAL;
+		return unixConnect(us, path, plen);    // local: connects immediately (no -EINPROGRESS)
+	}
 	uint32_t ip; uint16_t port;
 	if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT;
 	int r = socketConnect(fds[fd].sock, ip, port);
@@ -1073,22 +1111,52 @@ int Syscalls::sockConnectResult(int fd) {
 
 int Syscalls::sockListen(int fd, int backlog) {
 	if (!isSocketFd(fd)) return -ENOTSOCK;
-	if (fds[fd].sock->type != SOCK_STREAM) return -EOPNOTSUPP;
-	return tcpListen(fds[fd].sock, backlog);
+	Socket* s = fds[fd].sock;
+	if (s->domain == AF_UNIX) return unixListen(s, backlog);
+	if (s->type != SOCK_STREAM) return -EOPNOTSUPP;
+	return tcpListen(s, backlog);
 }
 
 int Syscalls::sockAccept(int fd, void* sa, unsigned* salen) {
 	if (!isSocketFd(fd)) return -ENOTSOCK;
+	Socket* s = fds[fd].sock;
 	int err = 0;
-	Socket* ns = tcpAccept(fds[fd].sock, &err);
+	Socket* ns = (s->domain == AF_UNIX) ? unixAccept(s, &err) : tcpAccept(s, &err);
 	if (!ns) return err;                          // -EAGAIN if none waiting (dispatch blocks)
 	int nfd = allocFd(0);
 	if (nfd < 0) { socketClose(ns); return nfd; }
 	fds[nfd].used = true; fds[nfd].isConsole = false; fds[nfd].pipe = 0; fds[nfd].pipeWrite = false;
 	fds[nfd].sock = ns; fds[nfd].path = String(); fds[nfd].offset = 0; fds[nfd].size = 0;
 	fds[nfd].flags = 0; fds[nfd].cloexec = false;
-	if (sa) { uint32_t ip; uint16_t port; socketGetPeerName(ns, &ip, &port); writeSockaddr(sa, salen, ip, port); }
+	if (sa) {
+		if (s->domain == AF_UNIX) writeSockaddrUn(sa, salen, 0, 0);   // peer is unnamed (autobind)
+		else { uint32_t ip; uint16_t port; socketGetPeerName(ns, &ip, &port); writeSockaddr(sa, salen, ip, port); }
+	}
 	return nfd;
+}
+
+// socketpair(2): only AF_UNIX is meaningful. Creates two pre-connected sockets and installs both
+// into fresh descriptors (honoring SOCK_CLOEXEC/SOCK_NONBLOCK in `type`, like sockSocket).
+int Syscalls::sockSocketpair(int domain, int type, int protocol, int sv[2]) {
+	if (domain != AF_UNIX) return -EOPNOTSUPP;
+	int baseType = type & ~(0x80000 | 0x800);     // strip SOCK_CLOEXEC / SOCK_NONBLOCK
+	Socket* a = 0; Socket* b = 0;
+	int rc = unixSocketpair(baseType, protocol, &a, &b);
+	if (rc < 0) return rc;
+	bool cloexec = (type & 0x80000) != 0;
+	int nb = (type & 0x800) ? O_NONBLOCK : 0;
+	int f0 = allocFd(0);
+	if (f0 < 0) { socketClose(a); socketClose(b); return f0; }
+	fds[f0].used = true; fds[f0].isConsole = false; fds[f0].pipe = 0; fds[f0].pipeWrite = false;
+	fds[f0].sock = a; fds[f0].path = String(); fds[f0].offset = 0; fds[f0].size = 0;
+	fds[f0].flags = nb; fds[f0].cloexec = cloexec;
+	int f1 = allocFd(0);
+	if (f1 < 0) { close(f0); socketClose(b); return f1; }
+	fds[f1].used = true; fds[f1].isConsole = false; fds[f1].pipe = 0; fds[f1].pipeWrite = false;
+	fds[f1].sock = b; fds[f1].path = String(); fds[f1].offset = 0; fds[f1].size = 0;
+	fds[f1].flags = nb; fds[f1].cloexec = cloexec;
+	sv[0] = f0; sv[1] = f1;
+	return 0;
 }
 
 int Syscalls::sockGetsockopt(int fd, int level, int name, void* val, unsigned* len) {
@@ -1122,6 +1190,11 @@ int Syscalls::sockSendto(int fd, const void* buf, unsigned len, int /*flags*/, c
 		bool have = sa && parseSockaddrLl(sa, salen, &ifx, &proto, dmac);
 		return packetSend(s, buf, len, ifx, proto, have ? dmac : 0);
 	}
+	if (s->domain == AF_UNIX) {
+		char path[UNIX_PATH_MAX]; unsigned plen = 0;
+		bool have = sa && parseSockaddrUn(sa, salen, path, &plen);
+		return unixSend(s, buf, len, have ? path : 0, have ? plen : 0);
+	}
 	uint32_t ip = 0; uint16_t port = 0;
 	if (sa) { if (parseSockaddr(sa, salen, &ip, &port) != SA_AF_INET) return -EAFNOSUPPORT; }
 	return socketSendTo(s, buf, len, ip, port);
@@ -1134,6 +1207,12 @@ int Syscalls::sockRecvfrom(int fd, void* buf, unsigned len, int flags, void* sa,
 		int ifx, pkttype; uint16_t proto; unsigned char mac[8];
 		int n = packetRecv(s, buf, len, flags, &ifx, &proto, &pkttype, mac);
 		if (n >= 0 && sa) writeSockaddrLl(sa, salen, proto, ifx, pkttype, mac);
+		return n;
+	}
+	if (s->domain == AF_UNIX) {
+		char path[UNIX_PATH_MAX]; unsigned plen = 0;
+		int n = unixRecv(s, buf, len, flags, path, &plen);
+		if (n >= 0 && sa) writeSockaddrUn(sa, salen, path, plen);
 		return n;
 	}
 	uint32_t ip = 0; uint16_t port = 0;
