@@ -22,6 +22,10 @@ int execve(const char* path, char* const argv[], char* const envp[]);
 
 #define FALLBACK_SHELL "/disks/main/nanos/bin/nsh.nxe"
 #define UDHCPC "/disks/main/nanos/bin/udhcpc.nxe"
+#define INETD  "/disks/main/nanos/bin/inetd.nxe"
+#define HTTPD  "/disks/main/nanos/bin/darkhttpd.nxe"
+#define INETD_CONF "/disks/main/nanos/config/etc/inetd.conf"
+#define WWWROOT    "/disks/main/apps/www"
 
 /* Configure networking via DHCP before starting the shell: run the real busybox udhcpc, which
  * acquires a lease over AF_PACKET and exec()s /nanos/config/udhcpc.script to set the address,
@@ -53,6 +57,35 @@ static void run_dhcp(void) {
 	waitpid(pid, 0, 0);
 }
 
+/* Start a self-daemonizing network service: fork, the child execs it, the parent reaps the
+ * short-lived launcher process (the service calls daemon()/--daemon, so the process we forked
+ * exits once the real daemon — reparented to us, PID 1 — is running). Skipped silently if the
+ * binary is absent (an image built without the optional services still boots). A one-line
+ * console note records which services came up, like the DHCP path (no silent magic). */
+static void start_service(const char* path, char* const argv[]) {
+	if (access(path, X_OK) != 0)
+		return;
+	int pid = fork();
+	if (pid == 0) {
+		execve(path, argv, environ);
+		_exit(127);
+	}
+	if (pid > 0)
+		waitpid(pid, 0, 0);            // reap the launcher; daemon() already backgrounded the server
+}
+
+/* Bring up the listening services after the network is configured: inetd (the super-server:
+ * echo/daytime/... + telnet -> telnetd login) and darkhttpd (HTTP on :80 serving /apps/www).
+ * Both daemonize themselves; their grandchildren reparent to init. */
+static void start_services(void) {
+	char* inetd_argv[] = { (char*) "inetd", (char*) "--pidfile=/tmp/inetd.pid",
+	                       (char*) INETD_CONF, 0 };
+	start_service(INETD, inetd_argv);
+	char* httpd_argv[] = { (char*) "darkhttpd", (char*) WWWROOT,
+	                       (char*) "--port", (char*) "80", (char*) "--daemon", 0 };
+	start_service(HTTPD, httpd_argv);
+}
+
 /* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell
  * presents itself as "bash"/"nsh", not "bash.nxe". Written into `out`. */
 static const char* shell_argv0(const char* path, char* out, int cap) {
@@ -67,7 +100,8 @@ static const char* shell_argv0(const char* path, char* out, int cap) {
 }
 
 int main(void) {
-	run_dhcp();   /* bring up eth0 via DHCP before the shell (kernel static = fallback) */
+	run_dhcp();        /* bring up eth0 via DHCP before the shell (kernel static = fallback) */
+	start_services();  /* start the listening services (inetd + httpd) once the network is up */
 	struct passwd* pw = getpwuid(getuid());
 	const char* shell = (pw && pw->pw_shell && pw->pw_shell[0]) ? pw->pw_shell : FALLBACK_SHELL;
 
