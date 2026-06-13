@@ -296,6 +296,7 @@ static int gen_net_tcp(unsigned off, void* buf, unsigned n)  { static char s[204
 static int gen_net_udp(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcUdp(s, sizeof s)); }
 static int gen_net_raw(unsigned off, void* buf, unsigned n)  { static char s[2048]; return serveSnap(off, buf, n, s, netProcRaw(s, sizeof s)); }
 static int gen_net_snmp(unsigned off, void* buf, unsigned n) { static char s[2048]; return serveSnap(off, buf, n, s, netProcSnmp(s, sizeof s)); }
+static int gen_net_unix(unsigned off, void* buf, unsigned n) { static char s[4096]; return serveSnap(off, buf, n, s, netProcUnix(s, sizeof s)); }
 
 // /proc/bus/pci/devices — Linux format: one line per device, tab-separated:
 //   bbDD  vvvvdddd  irq  <7 resource starts:16-hex>  <7 resource lengths:16-hex>  driver
@@ -418,6 +419,7 @@ SynthFs::SynthFs() {
 	addGen(m_net, "udp", gen_net_udp, 0444);
 	addGen(m_net, "raw", gen_net_raw, 0444);
 	addGen(m_net, "snmp", gen_net_snmp, 0444);
+	addGen(m_net, "unix", gen_net_unix, 0444);
 
 	// /proc/bus/pci/devices — PCI device list (deferred from FAZA 1).
 	SynthNode* m_bus = addDir(m_proc, "bus");

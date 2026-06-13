@@ -10,6 +10,7 @@
 #include "Route.h"
 #include "Socket.h"
 #include "Tcp.h"
+#include "Unix.h"
 #include "NetStats.h"
 
 namespace kernel {
@@ -181,6 +182,34 @@ int netProcUdp(char* buf, int cap) {
 		int st = s->connected ? 0x01 : 0x07;   // 01=ESTABLISHED-ish, 07=CLOSE (unconnected)
 		apSockLine(p, end, sl++, s->localIp, s->localPort, s->remoteIp, s->remotePort,
 		           st, 0u /* UDP: no send queue */, (unsigned) s->rxBytes);
+	}
+	return (int) (p - buf);
+}
+
+// /proc/net/unix — AF_UNIX sockets, Linux column layout (Num RefCount Protocol Flags Type St
+// Inode Path). St: 01 unconnected/listening, 03 connected. Flags bit 0x10000 = SO_ACCEPTCON.
+int netProcUnix(char* buf, int cap) {
+	char* p = buf; char* end = buf + cap;
+	apS(p, end, "Num       RefCount Protocol Flags    Type St Inode Path\n");
+	for (int i = 0; i < socketSlots(); i++) {
+		Socket* s = socketAt(i);
+		if (!s || s->domain != AF_UNIX) continue;
+		bool listening = unixIsListening(s);
+		bool conn = unixPeerOf(s) != 0 || s->connected;
+		apHexW(p, end, (unsigned long) ((i + 1) * 0x100), 8); apC(p, end, ':'); apC(p, end, ' ');
+		apHexW(p, end, (unsigned) s->refs, 8); apC(p, end, ' ');
+		apHexW(p, end, 0, 8); apC(p, end, ' ');                       // Protocol (always 0)
+		apHexW(p, end, listening ? 0x10000u : 0u, 8); apC(p, end, ' ');
+		apHexW(p, end, (unsigned) s->type, 4); apC(p, end, ' ');      // 0001 stream / 0002 dgram
+		apHexW(p, end, conn ? 0x03u : 0x01u, 2); apC(p, end, ' ');
+		apURight(p, end, (unsigned) (i + 1), 5); apC(p, end, ' ');    // Inode
+		char path[UNIX_PATH_MAX];
+		unsigned pl = unixGetName(s, path, sizeof path);
+		if (pl > 0) {
+			if (path[0] == 0) { apC(p, end, '@'); for (unsigned k = 1; k < pl && path[k]; k++) apC(p, end, path[k]); }
+			else for (unsigned k = 0; k < pl && path[k]; k++) apC(p, end, path[k]);
+		}
+		apC(p, end, '\n');
 	}
 	return (int) (p - buf);
 }

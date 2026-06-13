@@ -11,6 +11,7 @@
 #include "Route.h"
 #include "Socket.h"
 #include "Tcp.h"
+#include "Unix.h"
 #include "NetBuf.h"
 #include "Net.h"
 #include "NetStats.h"
@@ -111,6 +112,27 @@ TEST_CASE("/proc/net/udp: a bound DGRAM socket") {
 	std::string out = render(netProcUdp);
 	CHECK(out.find("local_address") != std::string::npos);
 	CHECK(out.find("00000000:0035") != std::string::npos);  // *:53 (0x35)
+}
+
+TEST_CASE("/proc/net/unix: a listening named socket + a connected pair") {
+	resetAll();
+	Socket* srv = socketCreate(AF_UNIX, SOCK_STREAM, 0, nullptr);
+	REQUIRE(srv);
+	const char* path = "/tmp/np.sock"; unsigned pl = (unsigned) std::strlen(path) + 1;
+	REQUIRE(unixBind(srv, path, pl) == 0);
+	REQUIRE(unixListen(srv, 5) == 0);
+	Socket *a = nullptr, *b = nullptr;
+	REQUIRE(unixSocketpair(SOCK_STREAM, 0, &a, &b) == 0);
+
+	std::string out = render(netProcUnix);
+	CHECK(out.find("Num") != std::string::npos);             // header
+	CHECK(out.find("RefCount") != std::string::npos);
+	CHECK(out.find("/tmp/np.sock") != std::string::npos);    // the bound listener's path
+	CHECK(out.find("00010000") != std::string::npos);        // SO_ACCEPTCON flag (listening)
+	CHECK(out.find(" 0001 ") != std::string::npos);          // SOCK_STREAM type column
+	// connected pair (a,b) renders St=03; the listener renders St=01
+	CHECK(out.find(" 03 ") != std::string::npos);
+	CHECK(out.find(" 01 ") != std::string::npos);
 }
 
 TEST_CASE("/proc/net/raw: a raw ICMP socket") {

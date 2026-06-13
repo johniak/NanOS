@@ -18,6 +18,7 @@ int netProcArp(char* buf, int cap);     // /proc/net/arp   — ARP cache
 int netProcTcp(char* buf, int cap);     // /proc/net/tcp   — TCP connections
 int netProcUdp(char* buf, int cap);     // /proc/net/udp   — UDP sockets
 int netProcRaw(char* buf, int cap);     // /proc/net/raw   — RAW sockets
+int netProcUnix(char* buf, int cap);    // /proc/net/unix  — AF_UNIX sockets
 int netProcSnmp(char* buf, int cap);    // /proc/net/snmp  — protocol counters
 
 }  // namespace kernel
