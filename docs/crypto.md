@@ -52,11 +52,17 @@ the CSPRNG) and serves files with `openssl s_server -accept 5443 -WWW`. From the
 `make dropbear` builds Dropbear 2022.83 (server `dropbear` + `dropbearkey` + client `dbclient`),
 unmodified upstream (config via `localoptions.h`). Chosen over OpenSSH because it runs as root
 WITHOUT privilege separation (no chroot/setuid-to-nobody, which modern OpenSSH mandates) and
-bundles its own crypto. Auth is **public-key only** (password/PAM auth need `crypt()`, which NanOS
-lacks); the client's key goes in `~/.ssh/authorized_keys` (root's home is `/disks/main/root`).
+bundles its own crypto.
 
-From the macOS host: `ssh -i key -p 2222 root@localhost 'echo SSH_OK'` -> `SSH_OK` — SSH-2 banner,
-KEX, ed25519 host key, pubkey auth, and a bash session over the kernel PTY, all on the guest.
+Auth supports both **password** and **public key**:
+- **Password** (no key management): NanOS's `crypt(3)` (SHA-512 `$6$`, see above) backs it; root's
+  hash is in `/nanos/config/passwd`. From the host: `ssh -p 2222 root@localhost` -> password `nanos`.
+- **Public key:** put the client's key in `~/.ssh/authorized_keys` (root's home is `/disks/main/root`):
+  `ssh -i key -p 2222 root@localhost`.
+
+Either way you get a bash session over the kernel PTY: SSH-2 banner, KEX, ed25519 host key, auth,
+shell — all on the guest. (Start the server first: `dropbearkey -t ed25519 -f /tmp/hk` then
+`dropbear -r /tmp/hk -p 22`; the host reaches it via the `make run` hostfwd 2222->22.)
 
 **Known limitation:** a non-interactive `ssh host cmd` (and a `-t` pty session) returns the command
 output correctly but the client lingers at the end instead of closing cleanly — Dropbear's
