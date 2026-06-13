@@ -283,10 +283,10 @@ WaitQueue, VFS z RamFs.
 - [x] **G1. SOCK_STREAM:** refcountowany `UnixChannel` (dwa bajtowe ringi per kierunek + oba
   endpointy), `bind` na ścieżkę (EADDRINUSE gdy zajęta — autorytet: skan g_socks), `listen/
   accept/connect` przez WaitQueue, `ECONNREFUSED` gdy nikt nie słucha. Testy: pełny cykl
-  client/server, EOF przy close, MSG_PEEK. **REFINEMENT ODŁOŻONY:** widoczny węzeł `S_IFSOCK`
-  w VFS (`ls /tmp`) — funkcjonalnie zbędny (rejestr MI jest autorytetem), a wpięcie `vfs->mknod`
-  w `bind` sprzęga z VFS i psuje czyste host-testy (fixture ext2, brak /tmp). Do zrobienia z
-  RamFs S_IFSOCK + graceful fallback, gdy ścieżka nie jest na zapisywalnym FS.
+  client/server, EOF przy close, MSG_PEEK. **REFINEMENT ZROBIONY:** widoczny węzeł `S_IFSOCK`
+  w VFS — `bind` woła `vfs->mknod` (RamFs S_IFSOCK), `ls -l /tmp` pokazuje `srwxrwxrwx
+  unixtest.sock`, stary plik blokuje rebind do `unlink` (pełna semantyka Linuksa); graceful
+  fallback do rejestru MI, gdy ścieżka nie jest na zapisywalnym FS (host-testy).
 - [x] **G2. SOCK_DGRAM:** datagramy z zachowaniem granic (RXQ ring per socket + socketDeliver),
   `sendto` po ścieżce + `connect` ustawia domyślny cel. Test: granice komunikatów, ECONNREFUSED
   na nieistniejącą ścieżkę.
