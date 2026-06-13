@@ -180,6 +180,28 @@ openssl: bin/libc.ndl bin/libc.ndl.a
 	cp "$(OPENSSL_PORT)/openssl.nxe" $(BINFOLDER)openssl.nxe
 	@echo "staged $(BINFOLDER)openssl.nxe — run 'make image' to install it into /nanos/bin"
 
+# Dropbear (optional, external): small SSH-2 server (dropbear) + keygen (dropbearkey) + client
+# (dbclient) — FAZA 4/5 of the TLS/SSH plan. Bundles its own crypto, runs as root without privsep.
+# Built by the nanos-sdk from $(DROPBEAR_PORT)/nxport.toml. Same reproducible flow. `make image`
+# installs them; the host reaches sshd via hostfwd 2222->22.
+DROPBEAR_PORT := $(SDK_WORK)/dropbear-port
+dropbear: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(DROPBEAR_PORT)/nxport.toml"   || { echo "dropbear port not found at $(DROPBEAR_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(DROPBEAR_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(DROPBEAR_PORT)/dropbear.nxe" $(BINFOLDER)dropbear.nxe
+	@for b in dropbearkey dbclient; do \
+	  test -f "$(DROPBEAR_PORT)/$$b.nxe" && cp "$(DROPBEAR_PORT)/$$b.nxe" $(BINFOLDER)$$b.nxe && echo "  staged $$b.nxe" || true; \
+	done
+	@echo "staged $(BINFOLDER)dropbear.nxe (+ dropbearkey/dbclient) — run 'make image' to install"
+
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
 # busybox tree) and mknx it. No busybox source patches — sysroot headers + EXTRA_CFLAGS only.
@@ -475,6 +497,15 @@ _image: _all _userland _kext _grub2-image
 	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	fi
+	# Dropbear SSH (optional, external): server + keygen + client -> /nanos/bin. Also create root's
+	# home (/disks/main/root, set in passwd) + a .ssh dir + /etc/dropbear (runtime host keys), so
+	# pubkey auth has somewhere to read authorized_keys from and dropbear can store host keys.
+	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
+	  for b in dropbear dropbearkey dbclient; do \
+	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  done; \
+	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	fi
 	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
 	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
