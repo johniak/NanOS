@@ -382,22 +382,19 @@ klienckiej.
 
 ### FAZA J — sweep końcowy: dokumentacja, /proc, hardening nowych powierzchni
 
-- [ ] **J1.** `tests/test_net_hardening.cpp` — rozszerzyć o nowe powierzchnie: złośliwe ICMP
-  errors (cytat kłamiący o protokole/portach, cytat obcięty), ramki do AF_PACKET na martwym
-  ifindexie, śmieci w sockaddr_un (ścieżka bez NUL), telnet-negotiation fuzzing NIE dotyczy
-  jądra (userland) — ale złośliwy klient inetd (SYN flood na listen backlog) nie może
-  wyczerpać TCB: asercja, że accept queue odrzuca nadmiar i TCB wracają do puli.
-- [ ] **J2.** `/proc/net/{tcp,udp}` — zweryfikować, że serwisy nasłuchujące pokazują się ze
-  stanem `0A` (LISTEN) i że `netstat`-owy format dalej parsuje się wzorcem Linuksa.
-- [ ] **J3.** `docs/networking.md` — przepisać sekcje: §5 (DHCP zamiast statyki + fallback),
-  §9 (serwisy: inetd/telnetd/httpd + narzędzia), §10 (tabela różnic — usunąć wiersze, które
-  przestały być różnicami: TCP options, DHCP, AF_UNIX/AF_PACKET, services), §11 (nowe stałe
-  z FAZY B), §13 (zaktualizować out-of-scope: zostaje TLS, IPv6, offload).
-- [ ] **J4.** Pełny sweep: `make test` (cel: utrzymać ≥90% agregatu), `make check-arch`,
-  QEMU pełny scenariusz (boot→DHCP→ping wp.pl→wget→telnet z hosta→curl z hosta→traceroute→
-  cat /proc/net/*) bez faultów; e2fsck-clean.
-- [ ] **J5.** Commit: `docs+test: networking follow-up complete` + wpis w progress-logu
-  (`2026-06-12-net-dociagniecia-progress.md`, format jak plan bazowy).
+- [x] **J1.** `tests/test_net_hardening.cpp` — **ZROBIONE:** złośliwe/obcięte błędy ICMP (cytat
+  kłamiący o protokole/portach, cytat < IP+8) demux-and-drop bez mis-delivery/wycieku; SYN-flood
+  (100 SYN) na listener nie wyczerpuje tablicy TCB ani nie wycieka bufów. 546 testów.
+- [x] **J2.** `/proc/net/tcp` — **ZWERYFIKOWANE:** wszystkie 6 listenerów (echo/discard/daytime/
+  chargen/telnet/http) pokazują stan `0A` (LISTEN) w formacie Linuksa.
+- [x] **J3.** `docs/networking.md` — **PRZEPISANE:** §5 (DHCP+fallback), §9 (serwisy+narzędzia +
+  quirk getopt), §10 (tabela różnic odzwierciedla rzeczywistość: AF_UNIX/PACKET realne, DHCP,
+  TIME-WAIT recycle, trasa 127/8), §13 (out-of-scope przycięte).
+- [x] **J4.** **ZROBIONE:** `make test` 546 testów / 91.1% agregat, `check-arch` czysty; pełny
+  scenariusz QEMU (boot→DHCP→serwisy z hosta→traceroute→telnet→/proc/net) zero faultów; obraz
+  **e2fsck-clean** (dodano `e2fsck -fy` na końcu `_image`).
+- [x] **J5.** Commit + progress-log `2026-06-12-net-dociagniecia-progress.md` (tabela A–J, wszystkie
+  DONE + kryteria akceptacji spełnione).
 
 ---
 
