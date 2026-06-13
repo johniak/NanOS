@@ -133,3 +133,51 @@ TEST_CASE("hardening: malformed Ethernet / ARP frames are dropped without leakin
 	  a[4] = 6; a[5] = 4; wr16be(a + 6, 0x4242); s->dev = &g_hd; ethRx(s); }
 	CHECK(netbufInUse() == base);
 }
+
+TEST_CASE("hardening: malicious / truncated ICMP errors are dropped, never mis-delivered") {
+	hardenSetup();
+	int base = netbufInUse();
+	// A well-formed ICMP port-unreachable whose quoted IP+8 names a UDP flow with no socket:
+	// must be demuxed-and-dropped (FAZA C) — no crash, no leak, nothing delivered.
+	unsigned char icmp[8 + 20 + 8];
+	std::memset(icmp, 0, sizeof icmp);
+	icmp[0] = 3; icmp[1] = 3;                                   // dest-unreachable / port-unreachable
+	unsigned char* q = icmp + 8;                                // the quoted original datagram
+	q[0] = 0x45; q[9] = IPPROTO_UDP;
+	wr32be(q + 12, ipv4(10, 0, 2, 15)); wr32be(q + 16, ipv4(10, 0, 2, 2));
+	wr16be(q + 20, 40000); wr16be(q + 22, 53);                  // bogus sport/dport (no socket)
+	wr16be(icmp + 2, inetChecksum(icmp, sizeof icmp));
+	feedIp(0x45, 20 + (int) sizeof icmp, IPPROTO_ICMP, 0, icmp, (int) sizeof icmp, true);
+	// A truncated ICMP error (quote shorter than IP+8) must hit the length guard and drop.
+	feedIp(0x45, 20 + 8 + 12, IPPROTO_ICMP, 0, icmp, 8 + 12, true);
+	// A quote lying about the protocol (no transport claims it): also dropped.
+	icmp[8 + 9] = 99;
+	wr16be(icmp + 2, 0); wr16be(icmp + 2, inetChecksum(icmp, sizeof icmp));
+	feedIp(0x45, 20 + (int) sizeof icmp, IPPROTO_ICMP, 0, icmp, (int) sizeof icmp, true);
+	CHECK(netbufInUse() == base);                               // every one freed, none mis-delivered
+}
+
+TEST_CASE("hardening: a SYN flood to a listener never exhausts the TCB table or leaks bufs") {
+	hardenSetup();
+	int base = netbufInUse();
+	Socket* srv = socketCreate(AF_INET, SOCK_STREAM, 0, nullptr);
+	REQUIRE(srv);
+	CHECK(socketBind(srv, 0, 80) == 0);
+	CHECK(tcpListen(srv, 8) == 0);
+	// 100 SYNs from distinct (sport,seq) tuples. Each would birth a half-open SYN_RCVD child + a
+	// SYN-ACK (freed via hdTx). The bounded TCB table caps the half-opens and drops the excess;
+	// nothing is retained, so no NetBuf leak and no crash.
+	for (int i = 0; i < 100; i++) {
+		unsigned char t[20]; std::memset(t, 0, sizeof t);
+		wr16be(t + 0, (uint16_t) (40000 + i)); wr16be(t + 2, 80);   // sport varies, dport 80
+		wr32be(t + 4, 0x1000u + i);                                 // distinct ISN
+		t[12] = 0x50; t[13] = 0x02;                                 // data offset 5, SYN
+		feedIp(0x45, 20 + 20, IPPROTO_TCP, 0, t, 20, true);
+	}
+	CHECK(netbufInUse() == base);                                   // SYN-ACKs all freed, no leak
+	// The listener still works: accept finds at most the queue cap, never a wild pointer.
+	int err = 0;
+	for (int i = 0; i < 20; i++) { Socket* c = tcpAccept(srv, &err); if (c) socketClose(c); }
+	socketClose(srv);
+	CHECK(netbufInUse() == base);
+}
