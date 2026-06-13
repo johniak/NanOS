@@ -21,7 +21,7 @@ docker run --rm -v "$PWD":/s -v /tmp:/t -w /s nanos-build debugfs -w "$IMG?offse
 echo "injected authorized_keys: $PUB"
 
 # 2) Boot with hostfwd 2222->22 (snapshot: don't persist further writes).
-qemu-system-i386 -cpu Nehalem -snapshot -drive file="$IMG",format=raw \
+qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \
     -display none -monitor unix:"$MON",server,nowait -no-reboot -d int -D "$LOG" \
     -netdev user,id=n0,hostfwd=tcp::2222-:22 -device e1000,netdev=n0 &
 QPID=$!

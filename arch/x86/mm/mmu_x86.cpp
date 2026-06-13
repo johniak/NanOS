@@ -19,36 +19,33 @@ extern char end;
 
 namespace {
 
-// Anonymous user heap window: 0x20000000 (PDE 128) up to +32 MiB (PDE 135). Above RAM
-// (128 MiB) and the framebuffer window (0x10000000, PDE 64), so it is private per process
-// and needs no identity-map coverage. 32 MiB comfortably holds Doom's 6 MiB zone + WAD
-// caching + screen buffer.
-const uint32_t NX_BRK_BASE = 0x20000000;
-const uint32_t NX_BRK_MAX  = NX_BRK_BASE + 32u * 1024u * 1024u;
+// All per-process virtual windows live HIGH in the 32-bit space (>= 1 GiB), well above any RAM we
+// identity-map. The kernel reads the REAL RAM size from multiboot (bootMemTop), so it is not tied
+// to a fixed amount — but a window placed inside the identity-mapped RAM would force map() to
+// mutate a shared kernel page table (and teardown to free kernel-identity frames). Keeping every
+// window ABOVE topOfRam keeps its PDE ABSENT in the kernel directory, so map() allocates a PRIVATE
+// page table. These used to sit at 128/256/512 MiB, which capped usable RAM at 128 MiB; lifting
+// them to the 1 GiB region raises that ceiling to ~1 GiB (enough for the 512 MiB we now run with).
 
-// Shared-library (.ndl) load band: per-module 4 MiB windows from 0x08000000 (128 MiB,
-// just above the identity-mapped RAM) up to the framebuffer window at 0x10000000 — 32
-// modules. It sits ABOVE RAM (like the heap/fb windows) so each module PDE is absent in
-// the kernel directory and map() allocates a PRIVATE page table, rather than mutating a
-// shared kernel page table the way a window inside the identity map would. Each module
-// gets one 4 MiB PDE; teardown/fork walk this band like the heap.
-// Per-process user window: the program image at the bottom + the user stack at the top. Two
-// 4 MiB PDEs (8 MiB total: 0x800000..0xFFFFFF) so a large static binary (e.g. the OpenSSL CLI,
-// ~3.7 MiB) fits below the stack. Was one 4 MiB PDE; widened to two. Both PDEs are made private
-// (dropped from the shared kernel directory) at space creation, and walked on fork/teardown.
+// Per-process user window: program image (bottom) + user stack (top), two 4 MiB PDEs (8 MiB:
+// 0x800000..0xFFFFFF) so a large static binary (e.g. the OpenSSL CLI, ~3.7 MiB) fits below the
+// stack. Stays LOW (inside the identity range) but its PDEs are dropped to private at creation.
 const uint32_t NX_USER_BASE  = 0x800000;
 const uint32_t NX_USER_END   = 0x1000000;   // exclusive (16 MiB); window = [0x800000, 0x1000000)
 
-const uint32_t NX_MOD_BASE   = 0x08000000;
+// Shared-library (.ndl) load band: 32 per-module 4 MiB windows. libc.ndl etc. are relocated here
+// at load (the loader applies the base delta), so the band can move freely.
+const uint32_t NX_MOD_BASE   = 0x40000000;   // 1 GiB
 const uint32_t NX_MOD_STRIDE = 0x00400000;
-const uint32_t NX_MOD_MAX    = 0x10000000;
+const uint32_t NX_MOD_MAX    = 0x48000000;   // +128 MiB (32 modules)
 
-// Anonymous/file-backed mmap window: 0x30000000 (768 MiB) up to +64 MiB. Above the heap
-// window (which tops out at 0x22000000) and everything else, so it is private per process
-// and shares no page tables. The dispatch bump-allocates VAs here for mmap(MAP_ANONYMOUS)
-// and file-backed mmap; teardown/fork walk it like the heap.
-const uint32_t NX_MMAP_BASE = 0x30000000;
-const uint32_t NX_MMAP_MAX  = NX_MMAP_BASE + 64u * 1024u * 1024u;
+// Anonymous user heap window (brk/sbrk): up to 64 MiB per process (was 32 MiB).
+const uint32_t NX_BRK_BASE = 0x48000000;
+const uint32_t NX_BRK_MAX  = NX_BRK_BASE + 64u * 1024u * 1024u;   // -> 0x4C000000
+
+// Anonymous/file-backed mmap window: up to 64 MiB per process.
+const uint32_t NX_MMAP_BASE = 0x50000000;
+const uint32_t NX_MMAP_MAX  = NX_MMAP_BASE + 64u * 1024u * 1024u; // -> 0x54000000
 
 kernel::FrameAllocator* g_fa = 0;
 uint32_t allocFrame(void*) { return g_fa->alloc(); }
@@ -76,7 +73,13 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint32_t) (unsigned) &end - 0x100000); // kernel image
 	fa.markRangeUsed(0x800000, 0x800000);                           // exec staging window (8 MiB: matches the user window)
-	uint32_t heapBase = 0x75BCD15 & kernel::PAGE_MASK;              // kernel byte heap
+	// Kernel byte heap: carve a slice off the TOP of RAM; the rest (below) is the frame pool for
+	// user pages. Sized at ~25% of RAM, clamped to [8 MiB, 256 MiB] — so more RAM grows BOTH the
+	// heap and the frame pool, instead of a fixed ~123 MiB split that capped the frame pool.
+	uint32_t heapSize = topOfRam / 4u;
+	if (heapSize > 256u * 1024u * 1024u) heapSize = 256u * 1024u * 1024u;
+	if (heapSize < 8u * 1024u * 1024u)   heapSize = 8u * 1024u * 1024u;
+	uint32_t heapBase = (topOfRam - heapSize) & kernel::PAGE_MASK;  // kernel byte heap
 	fa.markRangeUsed(heapBase, topOfRam - heapBase);
 	// Lay out the kernel heap over its reserved region before the first malloc below.
 	// Paging is still off here, so the region is directly (identity) accessible.
@@ -177,7 +180,7 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 uint32_t mmuSpaceDirPhys(AddressSpace* s) { return s->impl.directoryPhys(); }
 
 uint32_t mmuMapUserFb(AddressSpace* s, uint32_t fbPhys, uint32_t bytes) {
-	const uint32_t FB_USER_VA = 0x10000000;   // 256 MiB: above RAM, outside the 1 MiB window
+	const uint32_t FB_USER_VA = 0x58000000;   // 1.375 GiB: above RAM, outside every other window
 	uint32_t base = fbPhys & kernel::PAGE_MASK;
 	uint32_t off = fbPhys - base;
 	uint32_t len = (off + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;

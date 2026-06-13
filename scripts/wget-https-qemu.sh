@@ -8,7 +8,7 @@ URL="${2:-https://example.com/}"
 IMG=disk/image-grub2.img
 MON=/tmp/wget-https.sock; LOG=/tmp/wget-https.log; PPM=/tmp/wget-https.ppm
 rm -f "$MON" "$LOG" "$PPM" "$OUT"
-qemu-system-i386 -cpu Nehalem -snapshot -drive file="$IMG",format=raw \
+qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \
     -display none -monitor unix:"$MON",server,nowait -no-reboot -d int -D "$LOG" \
     -netdev user,id=n0 -device e1000,netdev=n0 &
 QPID=$!

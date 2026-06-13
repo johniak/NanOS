@@ -263,9 +263,13 @@ assets:
 # -cpu Nehalem: expose RDRAND so the kernel CSPRNG seeds from a hardware RNG (the default qemu32
 # CPU lacks it — without this flag archHwRandom returns false and the seed is RDTSC-jitter+RTC only).
 QEMU_CPU=-cpu Nehalem
+# RAM: 512 MiB. The kernel reads the real size from multiboot and lays out its windows above it
+# (mmu_x86.cpp), so this is just the QEMU knob — bump it freely (up to ~1 GiB with the current
+# window placement). More RAM = bigger kernel heap + a bigger user frame pool.
+QEMU_MEM=-m 512
 
 run: image
-	qemu-system-i386 $(QEMU_CPU) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
+	qemu-system-i386 $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
 
 run-iso: iso
 	qemu-system-i386 -cdrom nanos.iso
@@ -289,7 +293,7 @@ NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=t
 NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
 run-net: image
-	qemu-system-i386 $(QEMU_CPU) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
+	qemu-system-i386 $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.

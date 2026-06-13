@@ -12,7 +12,7 @@ boot_once() {
     local PPM="/tmp/nanos-screen-$tag.ppm"
     local OUT="/tmp/randhex-$tag.png"
     rm -f "$MON" "$LOG" "$PPM" "$OUT"
-    qemu-system-i386 -cpu Nehalem -snapshot -drive file="$IMG",format=raw \
+    qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \
         -display none -monitor unix:"$MON",server,nowait \
         -no-reboot -d int -D "$LOG" &
     local QPID=$!
