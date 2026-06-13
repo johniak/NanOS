@@ -258,10 +258,11 @@ run-iso: iso
 # (host:5555 -> guest:80) lets a host client reach a guest server for loopback-free tests.
 PCAP ?= /tmp/nanos.pcap
 # hostfwd map (host port -> guest service): 5555->80 (httpd), 2323->23 (telnetd), 5007->7 (echo),
-# 5013->13 (daytime) — the inetd built-ins + services let a host client reach the guest servers.
+# 5013->13 (daytime), 5443->5443 (openssl s_server TLS), 2222->22 (sshd) — the inetd built-ins +
+# services + the TLS/SSH servers let a host client reach the guest servers.
 # NIC_NET = the NIC + NAT + host port-forwards. `make run` uses it so a host `telnet localhost 2323`
 # reaches the guest's telnetd out of the box (no extra flags). run-net adds a filter-dump pcap.
-NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=tcp::5007-:7,hostfwd=tcp::5013-:13 \
+NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=tcp::5007-:7,hostfwd=tcp::5013-:13,hostfwd=tcp::5443-:5443,hostfwd=tcp::2222-:22 \
         -device e1000,netdev=n0
 NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
@@ -473,6 +474,7 @@ _image: _all _userland _kext _grub2-image
 	if [ -f disk-content/ssl/cert.pem ]; then \
 	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
 	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
