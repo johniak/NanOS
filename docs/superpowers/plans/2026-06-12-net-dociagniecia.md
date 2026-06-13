@@ -340,11 +340,13 @@ klienckiej.
   bez czego bash SIGTTIN-stopował się po cichu. Z macOS `telnet localhost 2323` → `bash-5.2#`,
   `ls /` działa, `exit` czysto; DRUGA sesja reużywa jedną parę pty (brak wycieku); zero faultów,
   pełna negocjacja IAC na drucie (scripts/telnet-qemu.sh).
-- [ ] **H4. Port darkhttpd:** single-file, HTTP/1.1, serwuje katalog — wystawić
-  `/disks/main/apps/www` (dorzucić index.html do obrazu). Weryfikacja: `curl
-  http://localhost:5555/` z hosta zwraca 200 + treść; pcap pokazuje POPRAWNY serwerowy
-  handshake (nasz SYN-ACK z opcjami z FAZY D), transfer i zamknięcie; test równoległości:
-  4 jednoczesne curl-e (limit TCB_N=16 z FAZY B daje zapas).
+- [x] **H4. Port darkhttpd:** single-file HTTP/1.1, serwuje `/disks/main/apps/www` (index.html
+  w obrazie). **ZROBIONE:** `make httpd` (build=make, -DNO_IPV6, bez łatek); dorobiono libc
+  pread/pwrite + stuby chroot/getrusage. Wymagało DWÓCH realnych napraw TCP: **honorować
+  TCP_NODELAY** (był no-op-kłamstwo) i **tcpClose flush bufora nadawczego przed FIN** (ciało HTTP
+  zapisane tuż przed close ginęło na drucie — nagłówek docierał, body nie). Z hosta `curl`
+  (5555→80) → 200 + pełne body; **4 jednoczesne GET-y = 4/4** 200+body (TCB_N=16 z FAZY B); zero
+  faultów; regression test w test_tcp.cpp (Nagle-held body flushowane przed FIN). scripts/httpd-qemu.sh.
 - [ ] **H5. rc/init:** start inetd + httpd przy boocie (wpis w istniejącym mechanizmie
   init→shell; logi na konsolę). QEMU bez faultów przy wielogodzinnym idle z nasłuchującymi
   serwisami (test: boot + 10 min + 100 połączeń pętlą — liczniki netbufInUse wracają do bazy).
