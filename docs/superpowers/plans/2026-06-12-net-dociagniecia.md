@@ -321,10 +321,15 @@ klienckiej.
   w dziecku; login_tty = setsid + dup2(slave→0/1/2). Kompiluje+linkuje do libc.ndl. **UWAGA:**
   jądro ma JEDNĄ parę PTY → jedna sesja naraz (wystarcza na jeden login telnet = akceptacja H);
   wielosesyjność wymaga dynamicznej alokacji PTY w jądrze (osobna zmiana, poza H).
-- [ ] **H2. Port inetd (inetutils):** built-iny echo/discard/daytime/chargen + uruchamianie
-  usług z `/etc/inetd.conf` (nowait/stream: accept→fork→dup2 socket na 0/1/2→exec — wszystkie
-  te syscalle JUŻ działają). `inetd.conf` shipowany: echo, daytime, telnet→telnetd.
-  Weryfikacja: z hosta `nc localhost <port>` na echo/daytime przez hostfwd.
+- [x] **H2. Port inetd (inetutils):** built-iny echo/discard/daytime/chargen + uruchamianie
+  usług z `inetd.conf` (nowait/stream: accept→fork→dup2 socket na 0/1/2→exec — wszystkie
+  te syscalle JUŻ działają). `inetd.conf` shipowany (echo/discard/daytime/chargen tcp+udp).
+  **ZROBIONE:** `make inetd` (services manifest, servers on), zainstalowany w /nanos/bin; dodano
+  syscalle pause/sigsuspend + wrappery wait/execv (libc-glue). Z hosta przez hostfwd: daytime
+  (5013→13) zwraca datę, echo (5007→7) odbija bajty, zero faultów, pełne handshake'y w pcap
+  (scripts/services-qemu.sh). Pierwszy realny konsument listen/accept; tcpsrv.c + tcpsrv-diag.sh
+  izolują i dowodzą ścieżkę passive-open. UWAGA: krótkie opcje argp psute przez getopt picolibc —
+  inetd startuje z długimi opcjami + pozycyjną ścieżką configu (`/disks/main/nanos/config/etc/`).
 - [ ] **H3. Port telnetd (inetutils):** przez inetd; negocjacja opcji telnet, pty przez H1,
   exec login-shella (`getpwuid`→`pw_shell` — mechanizm logowania już jest, używa go nterm/init).
   Weryfikacja: z macOS `telnet localhost 2323` → bash prompt na NanOS, `ls /` działa,
