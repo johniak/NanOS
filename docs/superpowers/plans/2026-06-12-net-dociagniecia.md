@@ -246,7 +246,7 @@ odroczył; static-fallback działa, ale konfiguracja sieci wpisana w kernel to d
   RX ramki broadcast na nieskonfigurowanym dev, ETH_P_ALL widzi i ARP i IP.
 - [x] **F2. Syscall ABI:** `sockaddr_ll` (układ Linux i686: family/protocol/ifindex/hatype/
   pkttype/halen/addr[8]) w sendto/recvfrom/bind; `SIOCGIFINDEX`. Test ABI: offsetof/sizeof.
-- [ ] **F3. Port busybox udhcpc** przez nanos-port (manifest jak inne porty; busybox skonfiguro-
+- [x] **F3. Port busybox udhcpc** przez nanos-port (manifest jak inne porty; busybox skonfiguro-
   wany WYŁĄCZNIE z apletem udhcpc) — **bez łatek źródeł**; cache'ujemy detekcje gnulib-style
   w config. Skrypt akcji (`udhcpc.script`, shell uruchamiany przez busybox z env: ip/mask/
   router/dns) → woła `ifconfig`-owe ioctl-e przez mały helper LUB zapisuje pliki + sygnał;
@@ -255,14 +255,14 @@ odroczył; static-fallback działa, ale konfiguracja sieci wpisana w kernel to d
 - [x] **F4. `SIOCADDRT` naprawdę** (prowizorka #5): parsować pełny `struct rtentry` Linuksa
   (rt_dst/rt_gateway/rt_genmask jako sockaddr_in, RTF_GATEWAY/RTF_UP) zamiast „minimally";
   + `SIOCDELRT`. Test: rtentry z gateway → wpis w tablicy tras zgodny z routeLookup.
-- [ ] **F5. Bring-up:** init odpala `udhcpc -i eth0 -q` przy boocie (przez istniejący
+- [x] **F5. Bring-up:** init odpala `udhcpc -i eth0 -q` przy boocie (przez istniejący
   mechanizm init→shell); kernelowy `netBringUp()` zostaje TYLKO jako fallback, gdy
   `/nanos/bin/udhcpc.nxe` nie istnieje lub nie skonfiguruje w 10 s (log na konsolę, która
   ścieżka zadziałała — żadnego cichego fallbacku).
-- [ ] **F6.** Bramka drutu: pcap pełnej wymiany DISCOVER→OFFER→REQUEST→ACK pole-po-polu jak
+- [x] **F6.** Bramka drutu: pcap pełnej wymiany DISCOVER→OFFER→REQUEST→ACK pole-po-polu jak
   `udhcpc` na Linuksie (maska: xid, secs); po boocie eth0 = 10.0.2.15 Z DHCP (konsola), trasa
   default, resolv.conf przepisany przez skrypt; `ping wp.pl` + `wget` działają jak dotąd.
-- [ ] **F7.** Commity: `net: AF_PACKET sockets`, `syscall: sockaddr_ll + SIOCGIFINDEX +
+- [x] **F7.** Commity: `net: AF_PACKET sockets`, `syscall: sockaddr_ll + SIOCGIFINDEX +
   real rtentry SIOCADDRT/DELRT`, `ports: busybox udhcpc`, `boot: DHCP bring-up (static as
   loud fallback)`.
 
