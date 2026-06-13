@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <time.h>
+#include <fcntl.h>
 
 int execve(const char* path, char* const argv[], char* const envp[]);
 /* `environ` (the kernel-provided environment, TERM=…) comes from nx-dllimport.h, which is
@@ -30,6 +31,15 @@ int execve(const char* path, char* const argv[], char* const envp[]);
 #define SSH_HOSTKEY "/disks/main/nanos/config/dropbear_ed25519_host_key"
 #define WWWROOT    "/disks/main/apps/www"
 
+/* Boot/service log. init's own notes AND every service's stdout/stderr are written here, NOT to
+ * the interactive console — so the shell the user lands in stays clean. `cat /tmp/boot.log` reads
+ * it. g_logfd is opened in main(); until then (and if the open fails) it falls back to fd 1. */
+static int g_logfd = 1;
+static void note(const char* s) { write(g_logfd, s, (int) strlen(s)); }
+/* In a freshly forked service child: redirect its stdout+stderr to the log (the daemon's chatter
+ * — udhcpc leases, dropbear connection logs — lands in the log, not the console). */
+static void log_redirect_child(void) { if (g_logfd > 2) { dup2(g_logfd, 1); dup2(g_logfd, 2); } }
+
 /* Configure networking via DHCP before starting the shell: run the real busybox udhcpc, which
  * acquires a lease over AF_PACKET and exec()s /nanos/config/udhcpc.script to set the address,
  * route and resolv.conf. -f -q -t 4 -n keeps it in the foreground and bounded — it exits after a
@@ -40,6 +50,7 @@ static void run_dhcp(void) {
 		return;
 	int pid = fork();
 	if (pid == 0) {
+		log_redirect_child();
 		char* a[] = { (char*) "udhcpc", (char*) "-i", (char*) "eth0",
 		              (char*) "-f", (char*) "-q", (char*) "-t", (char*) "4", (char*) "-n", 0 };
 		execve(UDHCPC, a, environ);
@@ -65,8 +76,6 @@ static void run_dhcp(void) {
  * exits once the real daemon — reparented to us, PID 1 — is running). Skipped silently if the
  * binary is absent (an image built without the optional services still boots). A one-line
  * console note records which services came up, like the DHCP path (no silent magic). */
-static void note(const char* s) { write(1, s, (int) strlen(s)); }
-
 static void start_service(const char* path, char* const argv[]) {
 	if (access(path, X_OK) != 0) {
 		note("  [init] skip "); note(argv[0] ? argv[0] : path); note(" (not installed)\n");
@@ -75,6 +84,7 @@ static void start_service(const char* path, char* const argv[]) {
 	note("  [init] starting "); note(argv[0] ? argv[0] : path); note("\n");
 	int pid = fork();
 	if (pid == 0) {
+		log_redirect_child();
 		execve(path, argv, environ);
 		_exit(127);
 	}
@@ -134,6 +144,13 @@ static const char* shell_argv0(const char* path, char* out, int cap) {
 }
 
 int main(void) {
+	/* Open the boot/service log on the writable tmpfs and send init's notes + every daemon's
+	 * stdout/stderr there instead of the console, so the shell the user lands in is clean
+	 * (`cat /tmp/boot.log` to read it). Falls back to fd 1 if the open fails. */
+	g_logfd = open("/tmp/boot.log", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	if (g_logfd < 0)
+		g_logfd = 1;
+
 	run_dhcp();        /* bring up eth0 via DHCP before the shell (kernel static = fallback) */
 	start_services();  /* start the listening services (inetd + httpd) once the network is up */
 	struct passwd* pw = getpwuid(getuid());
