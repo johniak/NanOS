@@ -19,6 +19,13 @@
 #ifndef FIONREAD
 #define FIONREAD   0x541B
 #endif
+/* Terminal line-control ioctls (telnet client's sys_bsd.c flushes the tty with TCFLSH). The
+ * kernel pty/console may treat these as no-ops; they only need to exist to compile + run. */
+#ifndef TCSBRK
+#define TCSBRK     0x5409
+#define TCXONC     0x540A
+#define TCFLSH     0x540B
+#endif
 #ifndef FIONBIO
 #define FIONBIO    0x5421   /* set/clear non-blocking I/O (arg: int*) */
 #endif

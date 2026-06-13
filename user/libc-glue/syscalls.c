@@ -420,6 +420,23 @@ int execv(const char* path, char* const argv[]) {
 	return execve(path, argv, environ);
 }
 
+/* execl(3): variadic form — collect the NULL-terminated arg list into an argv[] and execv it.
+ * Used by the telnet client's shell-escape. Capped at 63 args + the terminator. */
+int execl(const char* path, const char* arg0, ...) {
+	char* argv[64];
+	int n = 0;
+	argv[n++] = (char*) arg0;
+	va_list ap; va_start(ap, arg0);
+	while (n < 63) {
+		char* a = va_arg(ap, char*);
+		argv[n++] = a;
+		if (!a) break;
+	}
+	va_end(ap);
+	argv[n] = 0;
+	return execve(path, argv, environ);
+}
+
 /* Console input mode: 0 = cooked (line-edited), 1 = raw (per-key). The shell uses
  * raw for its own line editor and cooked while a child program runs. */
 int termmode(int raw) {

@@ -40,6 +40,10 @@ extern const struct in6_addr in6addr_any;
 #define INADDR_LOOPBACK   ((in_addr_t) 0x7f000001)
 #define IN_LOOPBACKNET    127
 
+/* Privileged-port boundary: ports below this are "reserved" (traceroute picks its source port
+ * relative to it). */
+#define IPPORT_RESERVED   1024
+
 #define IPPROTO_IP    0
 #define IPPROTO_ICMP  1
 #define IPPROTO_IGMP  2

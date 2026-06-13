@@ -138,8 +138,10 @@ inetd: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(SERVICES_PORT)/inetd.nxe" $(BINFOLDER)inetd.nxe
-	@test -f "$(SERVICES_PORT)/telnetd.nxe" && cp "$(SERVICES_PORT)/telnetd.nxe" $(BINFOLDER)telnetd.nxe || true
-	@echo "staged $(BINFOLDER)inetd.nxe (+ telnetd.nxe) — run 'make image' to install into /nanos/bin"
+	@for b in telnetd telnet ifconfig traceroute; do \
+	  test -f "$(SERVICES_PORT)/$$b.nxe" && cp "$(SERVICES_PORT)/$$b.nxe" $(BINFOLDER)$$b.nxe && echo "  staged $$b.nxe" || true; \
+	done
+	@echo "staged $(BINFOLDER)inetd.nxe (+ telnetd/telnet/ifconfig/traceroute) — run 'make image' to install"
 
 # darkhttpd (optional, external): single-file HTTP/1.1 static server (FAZA H4). Built by the
 # nanos-sdk from $(HTTPD_PORT)/nxport.toml (build=make, -DNO_IPV6). Same reproducible flow.
@@ -192,6 +194,9 @@ externals:
 	            "wget:$(SDK_WORK)/wget-port/wget.nxe" \
 	            "inetd:$(SDK_WORK)/inetutils-services-port/inetd.nxe" \
 	            "telnetd:$(SDK_WORK)/inetutils-services-port/telnetd.nxe" \
+	            "telnet:$(SDK_WORK)/inetutils-services-port/telnet.nxe" \
+	            "ifconfig:$(SDK_WORK)/inetutils-services-port/ifconfig.nxe" \
+	            "traceroute:$(SDK_WORK)/inetutils-services-port/traceroute.nxe" \
 	            "darkhttpd:$(SDK_WORK)/darkhttpd-port/darkhttpd.nxe" \
 	            "udhcpc:$(BB_DIR)/udhcpc.nxe"; do \
 	  name=$${spec%%:*}; src=$${spec#*:}; \
@@ -440,6 +445,12 @@ _image: _all _userland _kext _grub2-image
 	if [ -f $(BINFOLDER)telnetd.nxe ]; then \
 	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
+	# inetutils diagnostic clients (FAZA I): telnet / ifconfig / traceroute -> /nanos/bin.
+	for b in telnet ifconfig traceroute; do \
+	  if [ -f $(BINFOLDER)$$b.nxe ]; then \
+	    printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  fi; \
+	done
 	# darkhttpd (optional, external): single-file HTTP server -> /nanos/bin, plus its document
 	# root /apps/www (the served site: index.html). Skipped if the binary is absent.
 	if [ -f $(BINFOLDER)darkhttpd.nxe ]; then \
@@ -701,7 +712,7 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 # picolibc via the generated --undefined list below (see the libc.elf rule).
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
   $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
-  $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o
+  $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not
