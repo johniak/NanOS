@@ -63,6 +63,7 @@ void tcpIcmpError(uint32_t localIp, uint16_t localPort, uint32_t remoteIp, uint1
 // SO_KEEPALIVE / TCP_KEEPIDLE|INTVL|CNT plumbing (called from socketSetOpt). idle/intvl are seconds.
 void tcpKeepalive(Socket* s, bool on);
 void tcpKeepParam(Socket* s, int name, int seconds);
+void tcpNodelay(Socket* s, bool on);                    // TCP_NODELAY: disable Nagle
 
 // Hook so a new passively-accepted connection can be wrapped in a Socket (Socket.cpp installs it).
 typedef Socket* (*TcpNewSockFn)(int domain, int type, int protocol);

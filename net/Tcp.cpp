@@ -54,6 +54,7 @@ struct Tcb {
 	unsigned ackDeadline; int ackSegs;   // delayed-ACK deadline + in-order segments since the last ACK
 	unsigned persistDeadline; int persistBackoff;   // zero-window probe timer (RFC 1122 §4.2.2.17)
 	bool     keepalive;        // SO_KEEPALIVE
+	bool     nodelay;          // TCP_NODELAY: disable Nagle (send small segments immediately)
 	unsigned keepIdle, keepIntvl; int keepCnt;      // TCP_KEEPIDLE/INTVL/CNT (ms, ms, count)
 	unsigned keepDeadline; int keepProbes;          // next keepalive event + unanswered probe count
 
@@ -101,6 +102,7 @@ Tcb* tcbAlloc() {
 			t->srtt = 0; t->rttvar = 0; t->rto = RTO_INIT;
 			t->snd_wnd = 4096;
 			t->keepIdle = 7200000; t->keepIntvl = 75000; t->keepCnt = 9;   // Linux defaults (2h / 75s / 9)
+			t->nodelay = false;
 			return t;
 		}
 	return 0;
@@ -240,7 +242,8 @@ void sendData(Tcb* t) {
 		if ((uint32_t) chunk > win - inflight) chunk = (int) (win - inflight);
 		if (chunk <= 0) break;
 		// Nagle: hold a small (<MSS) segment while data is already in flight (unless nothing's out).
-		if (chunk < t->mss && inflight > 0 && (sentOff + chunk) >= t->sndLen) break;
+		// TCP_NODELAY (darkhttpd, interactive servers) disables this — send immediately.
+		if (!t->nodelay && chunk < t->mss && inflight > 0 && (sentOff + chunk) >= t->sndLen) break;
 		uint8_t fl = TCP_ACK | TCP_PSH;
 		sendSeg(t, fl, t->snd_nxt, t->sndBuf + sentOff, chunk);
 		t->snd_nxt += chunk;
@@ -711,6 +714,15 @@ void tcpClose(Socket* s) {
 	Tcb* t = (Tcb*) s->tcp;
 	t->sock = 0;                                          // orphan: TCB finishes closing on its own
 	s->tcp = 0;
+	// Flush any buffered-but-unsent payload BEFORE the FIN, so close() never drops queued data
+	// (e.g. an HTTP response body the app wrote just before closing). At close there is no more
+	// data coming, so Nagle's "wait for a full segment" assumption is moot — force nodelay so the
+	// flush emits a small final segment even while the previous one is still unacked (otherwise the
+	// body races the FIN and is lost). The FIN's sequence then sits after all data the peer must
+	// still receive. sendData transmits as much as the window allows; for the common small-response
+	// case that is everything, so snd_nxt reaches snd_una+sndLen.
+	t->nodelay = true;
+	sendData(t);
 	switch (t->state) {
 	case TCP_ESTABLISHED:
 		t->finSeq = t->snd_nxt;
@@ -792,6 +804,13 @@ void tcpKeepalive(Socket* s, bool on) {
 	Tcb* t = (Tcb*) s->tcp;
 	t->keepalive = on; t->keepProbes = 0;
 	t->keepDeadline = on ? now() + t->keepIdle : 0;
+}
+
+void tcpNodelay(Socket* s, bool on) {
+	if (!s || !s->tcp) return;
+	Tcb* t = (Tcb*) s->tcp;
+	t->nodelay = on;
+	if (on) sendData(t);   // flush anything Nagle was holding
 }
 void tcpKeepParam(Socket* s, int name, int seconds) {
 	if (!s || !s->tcp || seconds <= 0) return;

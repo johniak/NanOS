@@ -155,9 +155,10 @@ int socketGetPeerName(Socket* s, uint32_t* ip, uint16_t* port) {
 int socketSetOpt(Socket* s, int level, int name, const void* val, unsigned len) {
 	if (!s || !val || len < sizeof(int)) return -SOCK_EINVAL;
 	int v = *(const int*) val;
-	if (level == SOL_TCP) {               // keepalive tuning (TCP_KEEPIDLE/INTVL/CNT)
+	if (level == SOL_TCP) {               // keepalive tuning (TCP_KEEPIDLE/INTVL/CNT) + TCP_NODELAY
 		switch (name) {
 		case TCP_KEEPIDLE: case TCP_KEEPINTVL: case TCP_KEEPCNT: tcpKeepParam(s, name, v); return 0;
+		case TCP_NODELAY: tcpNodelay(s, v != 0); return 0;
 		default: return -SOCK_EINVAL;
 		}
 	}

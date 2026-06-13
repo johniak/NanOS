@@ -339,3 +339,25 @@ TEST_CASE("passive open: LISTEN -> SYN-ACK -> ACK, accept() returns a connection
 	CHECK(tcpState(conn) == TCP_ESTABLISHED);
 	socketClose(conn); socketClose(srv);
 }
+
+TEST_CASE("close flushes Nagle-held data before FIN (HTTP body not lost on close)") {
+	// Reproduces the darkhttpd bug: a small body write while the header is still unacked is held
+	// by Nagle; close() must flush it BEFORE the FIN, not abandon it.
+	setup();
+	uint32_t peer=ipv4(212,77,98,9);
+	Conn c=establish(peer, 80);
+	const char* hdr="HDR";
+	CHECK(tcpSend(c.s, hdr, 3)==3);              // goes out at once (nothing in flight)
+	Seg s1; REQUIRE(parseCap(&s1));
+	CHECK(s1.plen==3);
+	clearCap();
+	const char* body="BODY";
+	CHECK(tcpSend(c.s, body, 4)==4);            // header still unacked -> Nagle holds this
+	CHECK(g_capCount==0);                       // confirm nothing went on the wire (Nagle)
+	socketClose(c.s);
+	// close must emit the held body AND the FIN; the FIN sits after all data (seq = iss+1+3+4).
+	CHECK(g_capCount >= 2);                      // body segment + FIN (two sends)
+	Seg fin; REQUIRE(parseCap(&fin));            // g_cap holds the last segment = the FIN
+	CHECK((fin.flags & TCP_FIN) != 0);
+	CHECK(fin.seq == c.iss + 1 + 3 + 4);         // body was transmitted before the FIN, not dropped
+}

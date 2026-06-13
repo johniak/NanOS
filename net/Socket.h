@@ -23,7 +23,7 @@ enum {                              // setsockopt levels/names we honor
 	SO_REUSEADDR = 2, SO_TYPE = 3, SO_ERROR = 4, SO_BROADCAST = 6,
 	SO_SNDBUF = 7, SO_RCVBUF = 8, SO_KEEPALIVE = 9,
 	SOL_TCP = 6,                    // == IPPROTO_TCP: keepalive tuning lives at this level
-	TCP_KEEPIDLE = 4, TCP_KEEPINTVL = 5, TCP_KEEPCNT = 6,
+	TCP_NODELAY = 1, TCP_KEEPIDLE = 4, TCP_KEEPINTVL = 5, TCP_KEEPCNT = 6,
 };
 // recv/send flags
 enum { MSG_PEEK = 0x02, MSG_DONTWAIT = 0x40 };
