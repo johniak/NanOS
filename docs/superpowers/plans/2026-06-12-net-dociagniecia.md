@@ -316,10 +316,11 @@ klienckiej.
   jak ping; darkhttpd — pojedynczy plik C, zero zależności), `scripts/services-qemu.sh`
   (boot headless + hostfwd + test z hosta + pcap)
 
-- [ ] **H1. Realne `openpty`/`forkpty`/`login_tty`** (prowizorka #4): nad istniejącym PTY
-  jądra (ten sam mechanizm, którego używa nterm). To jest klucz do telnetd i do przyszłych
-  sshd/screen. Test: host-testowalna część (alokacja pary, ujście danych) + QEMU smoke
-  (program forkpty→bash→echo).
+- [x] **H1. Realne `openpty`/`forkpty`/`login_tty`** (`user/libc-glue/pty.c`): nad parą PTY jądra
+  (/dev/ptmx + /dev/pts0). openpty otwiera obie + zwraca nazwę slave'a; forkpty fork + login_tty
+  w dziecku; login_tty = setsid + dup2(slave→0/1/2). Kompiluje+linkuje do libc.ndl. **UWAGA:**
+  jądro ma JEDNĄ parę PTY → jedna sesja naraz (wystarcza na jeden login telnet = akceptacja H);
+  wielosesyjność wymaga dynamicznej alokacji PTY w jądrze (osobna zmiana, poza H).
 - [ ] **H2. Port inetd (inetutils):** built-iny echo/discard/daytime/chargen + uruchamianie
   usług z `/etc/inetd.conf` (nowait/stream: accept→fork→dup2 socket na 0/1/2→exec — wszystkie
   te syscalle JUŻ działają). `inetd.conf` shipowany: echo, daytime, telnet→telnetd.
