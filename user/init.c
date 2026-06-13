@@ -25,6 +25,9 @@ int execve(const char* path, char* const argv[], char* const envp[]);
 #define INETD  "/disks/main/nanos/bin/inetd.nxe"
 #define HTTPD  "/disks/main/nanos/bin/darkhttpd.nxe"
 #define INETD_CONF "/disks/main/nanos/config/etc/inetd.conf"
+#define DROPBEAR    "/disks/main/nanos/bin/dropbear.nxe"
+#define DROPBEARKEY "/disks/main/nanos/bin/dropbearkey.nxe"
+#define SSH_HOSTKEY "/disks/main/nanos/config/dropbear_ed25519_host_key"
 #define WWWROOT    "/disks/main/apps/www"
 
 /* Configure networking via DHCP before starting the shell: run the real busybox udhcpc, which
@@ -74,15 +77,39 @@ static void start_service(const char* path, char* const argv[]) {
 		waitpid(pid, 0, 0);            // reap the launcher; daemon() already backgrounded the server
 }
 
-/* Bring up the listening services after the network is configured: just inetd (the super-server:
- * echo/daytime/... + telnet -> telnetd login). It daemonizes itself; its grandchildren reparent
- * to init. darkhttpd is NOT started by default — start it by hand when wanted:
+/* Start the SSH server (Dropbear) as a boot service. On FIRST boot it generates a persistent
+ * ed25519 host key on the read-write disk, so the key is stable across reboots (no client
+ * host-key-changed warnings); later boots reuse it. dropbear then daemonizes like inetd. Login is
+ * by password (the hash in /nanos/config/passwd) or ~/.ssh/authorized_keys. From the host (the
+ * `make run` hostfwd maps 2222->22): `ssh -p 2222 root@localhost`. Skipped if the binary is absent. */
+static void start_sshd(void) {
+	if (access(DROPBEAR, X_OK) != 0)
+		return;
+	if (access(SSH_HOSTKEY, F_OK) != 0) {        // first boot: make the host key (ed25519 is fast)
+		int pid = fork();
+		if (pid == 0) {
+			char* a[] = { (char*) "dropbearkey", (char*) "-t", (char*) "ed25519",
+			              (char*) "-f", (char*) SSH_HOSTKEY, 0 };
+			execve(DROPBEARKEY, a, environ);
+			_exit(127);
+		}
+		if (pid > 0)
+			waitpid(pid, 0, 0);
+	}
+	char* a[] = { (char*) "dropbear", (char*) "-r", (char*) SSH_HOSTKEY, (char*) "-p", (char*) "22", 0 };
+	start_service(DROPBEAR, a);                  // dropbear daemonizes itself, like inetd
+}
+
+/* Bring up the listening services after the network is configured: inetd (the super-server:
+ * echo/daytime/... + telnet -> telnetd login) and sshd (Dropbear). Both daemonize themselves;
+ * their grandchildren reparent to init. darkhttpd is NOT started by default — start it by hand:
  *   darkhttpd /disks/main/apps/www --port 80 --daemon
  * (its binary still ships in /nanos/bin; only the boot-time autostart is gone). */
 static void start_services(void) {
 	char* inetd_argv[] = { (char*) "inetd", (char*) "--pidfile=/tmp/inetd.pid",
 	                       (char*) INETD_CONF, 0 };
 	start_service(INETD, inetd_argv);
+	start_sshd();
 }
 
 /* argv[0] for a shell at `path`: its basename with any ".nxe" suffix stripped, so the shell
