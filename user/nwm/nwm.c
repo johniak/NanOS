@@ -317,12 +317,43 @@ static void update_clock(void)
 	}
 }
 
+/* Cursor save-under: the cursor is baked into the OFF-SCREEN scene buffer just for the blit, then
+ * removed again, so g_scene stays cursor-free but every framebuffer write already contains the
+ * cursor — there is never a cursor-absent moment on the live LFB (that gap, between erasing the old
+ * cursor and drawing the new one over a freshly-blitted scene region, was the "cursor flicker"
+ * during window drags and on a continuously-repainting window like the browser). */
+static uint32_t g_cur_save[NW_CURSOR_W * NW_CURSOR_H];
+static void cursor_region(int *x, int *y, int *w, int *h)
+{
+	*x = S.cursor_x; *y = S.cursor_y; *w = NW_CURSOR_W; *h = NW_CURSOR_H;
+	if (*x < 0) { *w += *x; *x = 0; }
+	if (*y < 0) { *h += *y; *y = 0; }
+	if (*x + *w > (int) g_xres) *w = (int) g_xres - *x;
+	if (*y + *h > (int) g_yres) *h = (int) g_yres - *y;
+}
+static void cursor_save_scene(void)   /* g_scene[cursor box] -> g_cur_save */
+{
+	int x, y, w, h; cursor_region(&x, &y, &w, &h);
+	for (int r = 0; r < h; r++)
+		memcpy(g_cur_save + (size_t) r * NW_CURSOR_W,
+		       g_scene + (size_t) (y + r) * g_xres + x, (size_t) w * 4);
+}
+static void cursor_restore_scene(void)  /* g_cur_save -> g_scene[cursor box] */
+{
+	int x, y, w, h; cursor_region(&x, &y, &w, &h);
+	for (int r = 0; r < h; r++)
+		memcpy(g_scene + (size_t) (y + r) * g_xres + x,
+		       g_cur_save + (size_t) r * NW_CURSOR_W, (size_t) w * 4);
+}
+
 static void present(void)
 {
 	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
 		return;                                  /* nothing changed */
-	if (g_prev_cx >= 0)
-		blit_scene(g_prev_cx, g_prev_cy, NW_CURSOR_W, NW_CURSOR_H);   /* erase old cursor */
+	/* Erase the old cursor (cursor-free scene at the OLD position) only when the cursor moved; the
+	 * new position is drawn flicker-free below by baking the cursor into the scene before blitting. */
+	if (g_prev_cx >= 0 && (g_prev_cx != S.cursor_x || g_prev_cy != S.cursor_y))
+		blit_scene(g_prev_cx, g_prev_cy, NW_CURSOR_W, NW_CURSOR_H);
 	if (S.dirty) {
 #if NWM_PROFILE
 		long pf_t0 = pf_now_ns();
@@ -341,17 +372,29 @@ static void present(void)
 		nw_surface_noclip(&g_scene_surf);
 		nw_surface_noclip(&g_scratch_surf);
 		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it */
+		/* Bake the cursor into the off-screen scene so the damage blit already carries it (the LFB
+		 * never shows a cursor-absent region), blit damage + the cursor box, restore scene clean. */
+		cursor_save_scene();
+		nw_draw_cursor(&g_scene_surf, S.cursor_x, S.cursor_y);
 		if (have)
-			blit_scene(dx, dy, dw, dh);          /* only the changed region */
+			blit_scene(dx, dy, dw, dh);          /* only the changed region (incl. baked cursor) */
 		else
 			blit_scene(0, 0, (int) g_xres, (int) g_yres);   /* first frame / fallback */
+		blit_scene(S.cursor_x, S.cursor_y, NW_CURSOR_W, NW_CURSOR_H);   /* cursor if outside damage */
+		cursor_restore_scene();
 		S.dirty = 0;
 #if NWM_PROFILE
 		pf_record(pf_now_ns() - pf_t0);
 #endif
+		g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
+		return;
 	}
-	blit_scene(S.cursor_x, S.cursor_y, NW_CURSOR_W, NW_CURSOR_H);     /* scene under cursor */
-	nw_draw_cursor(&g_fb_surf, S.cursor_x, S.cursor_y);
+	/* Not dirty — only the cursor moved. Bake it into the scene, blit the cursor box (which now
+	 * carries the cursor in one memcpy), restore. The old position was erased at the top. */
+	cursor_save_scene();
+	nw_draw_cursor(&g_scene_surf, S.cursor_x, S.cursor_y);
+	blit_scene(S.cursor_x, S.cursor_y, NW_CURSOR_W, NW_CURSOR_H);
+	cursor_restore_scene();
 	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
 
