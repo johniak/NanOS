@@ -421,6 +421,12 @@ int main(void)
 	spawn_client(0, NWTERM_PATH);             /* the NanoOS demo desktop: Terminal + Settings */
 	spawn_client(1, NWSET_PATH);
 	spawn_client(2, NWEXP_PATH);              /* Files spawned last -> on top + focused */
+	/* NanOS netsurf bring-up: launch the NetSurf browser on the desktop. It runs
+	 * argless (no -f / no URL): the port bakes in surface=nanwm, respath
+	 * /disks/main/apps/netsurf/res, and a local welcome.html start page. Spawned
+	 * last so it gets focus + top of the stack. Remove this line to drop NetSurf
+	 * from the default desktop. */
+	spawn_client(3, "/disks/main/apps/netsurf/netsurf.nxe");
 
 	S.dirty = 1;
 	present();                                /* first frame: desktop + cursor */
