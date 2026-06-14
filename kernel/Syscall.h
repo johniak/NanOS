@@ -28,20 +28,25 @@ namespace kernel {
 #define EPIPE 32
 #define ENOTDIR 20
 #define ERANGE 34
-// socket errnos (Linux i686 values)
+// socket errnos — MUST match the target C library (picolibc/newlib) numbering: the libc-glue
+// passes the kernel's negated errno straight to picolibc `errno` (user/libc-glue reterr:
+// errno = -r), so these are the values userland actually compares against. Verified against the
+// sysroot <sys/errno.h>. (Previously Linux i686 values, which COLLIDE with newlib — e.g. Linux
+// EINPROGRESS=115 is newlib ENETDOWN, so a non-blocking connect() returned errno 115 and a
+// picolibc client like libcurl saw "network down" instead of "in progress" and aborted.)
 #define EACCES 13
-#define EMSGSIZE 90
-#define EPROTONOSUPPORT 93
+#define EMSGSIZE 122
+#define EPROTONOSUPPORT 123
 #define EOPNOTSUPP 95
-#define EAFNOSUPPORT 97
-#define EADDRINUSE 98
-#define ENETUNREACH 101
+#define EAFNOSUPPORT 106
+#define EADDRINUSE 112
+#define ENETUNREACH 114
 #define ENOBUFS 105
-#define EISCONN 106
-#define ENOTCONN 107
+#define EISCONN 127
+#define ENOTCONN 128
 #define ECONNREFUSED 111
-#define EINPROGRESS 115
-#define ENOTSOCK 88
+#define EINPROGRESS 119
+#define ENOTSOCK 108
 #define ENXIO 6
 
 // poll(2) event/revent bits live in CharDevice.h (included above) — single source.

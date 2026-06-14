@@ -31,13 +31,16 @@ enum {                              // setsockopt levels/names we honor
 enum { MSG_PEEK = 0x02, MSG_DONTWAIT = 0x40 };
 
 // errno values the socket layer returns (negated). Kept local so net/ needn't pull kernel/Syscall.h.
+// MUST match the target picolibc/newlib <sys/errno.h> numbering — these flow through the libc-glue
+// straight to userland `errno` (see the matching note in kernel/Syscall.h). Previously Linux i686
+// values, which collide with newlib (e.g. Linux EISCONN=106 is newlib EAFNOSUPPORT).
 enum {
-	SOCK_EAGAIN = 11, SOCK_EINVAL = 22, SOCK_EAFNOSUPPORT = 97, SOCK_ECONNREFUSED = 111,
-	SOCK_EISCONN = 106, SOCK_ENOTCONN = 107, SOCK_EADDRINUSE = 98, SOCK_EMSGSIZE = 90,
-	SOCK_EPROTONOSUPPORT = 93, SOCK_EACCES = 13, SOCK_ENOBUFS = 105,
-	SOCK_ENETUNREACH = 101, SOCK_EHOSTUNREACH = 113, SOCK_ETIMEDOUT = 110,
+	SOCK_EAGAIN = 11, SOCK_EINVAL = 22, SOCK_EAFNOSUPPORT = 106, SOCK_ECONNREFUSED = 111,
+	SOCK_EISCONN = 127, SOCK_ENOTCONN = 128, SOCK_EADDRINUSE = 112, SOCK_EMSGSIZE = 122,
+	SOCK_EPROTONOSUPPORT = 123, SOCK_EACCES = 13, SOCK_ENOBUFS = 105,
+	SOCK_ENETUNREACH = 114, SOCK_EHOSTUNREACH = 118, SOCK_ETIMEDOUT = 116,
 	SOCK_ENOENT = 2, SOCK_EPIPE = 32, SOCK_ECONNRESET = 104, SOCK_EOPNOTSUPP = 95,
-	SOCK_ENOTSOCK = 88, SOCK_EDESTADDRREQ = 89,
+	SOCK_ENOTSOCK = 108, SOCK_EDESTADDRREQ = 121,
 };
 
 struct Socket {
