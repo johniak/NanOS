@@ -14,7 +14,9 @@ int udpSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t d
 int rawSend(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t dstPort);
 
 namespace {
-const int SOCK_N = 64;
+const int SOCK_N = 128;   // raised 64->128 in lockstep with TCB_N (64): a full TCP keep-alive pool
+                          // must not starve the table of slots for UDP (DNS) sockets — otherwise a
+                          // new name lookup after a page would fail to even create its socket.
 Socket g_socks[SOCK_N];
 SocketWakeFn g_wake = 0;
 uint16_t g_nextEphemeral = 32768;
