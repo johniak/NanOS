@@ -252,8 +252,21 @@ static void reconcile_buffers(void)
 	struct nw_window *w;
 	while ((w = nw_window_needs_buffer(&S)) != 0) {
 		int slot = (int) (w - S.win);
+		/* A resize nulls w->buf/frame but leaves the old allocations here — free them before
+		 * reallocating at the new size, or they leak (and the pointer is overwritten). */
+		if (g_winbuf[slot])   { free(g_winbuf[slot]);   g_winbuf[slot] = 0; }
+		if (g_winframe[slot]) { free(g_winframe[slot]); g_winframe[slot] = 0; }
 		g_winbuf[slot] = (uint32_t *) malloc((size_t) w->cw * w->ch * 4);
-		if (g_winbuf[slot]) memset(g_winbuf[slot], 0, (size_t) w->cw * w->ch * 4);
+		if (g_winbuf[slot]) {
+			/* Pre-fill with the window material (light/dark per the title's dark flag) instead of
+			 * black, so a window larger than the client's painted content shows clean window
+			 * background where the client hasn't drawn — like Windows erasing to the class
+			 * background brush on resize. Client commits overwrite the painted region; an app that
+			 * re-lays-out (NetSurf) fills the rest, one that ignores resize keeps clean margins. */
+			uint32_t mat = (w->title[0] == '\x01') ? 0x0f121fu : 0xf8fbffu;
+			size_t npx = (size_t) w->cw * w->ch;
+			for (size_t p = 0; p < npx; p++) g_winbuf[slot][p] = mat;
+		}
 		w->buf = g_winbuf[slot];
 		/* the cached frame: chrome (title bar + border) around the content */
 		int fw = w->cw + 2 * NW_BORDER, fh = NW_TITLEBAR_H + w->ch + NW_BORDER;

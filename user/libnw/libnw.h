@@ -48,6 +48,9 @@ nw_win *nw_create_window(nw_display *d, int w, int h, const char *title);
 
 /* The client-side pixel buffer to draw into (w*h, stride = w) and its geometry. */
 void      nw_win_surface(nw_win *win, struct nw_surface *out);
+/* Reallocate the client draw buffer after the compositor resizes the window (an NW_EV_CONFIGURE
+ * delivered after creation). Call this, then re-fetch nw_win_surface and repaint at the new size. */
+void      nw_win_resize(nw_win *win, int w, int h);
 int       nw_win_width(nw_win *win);
 int       nw_win_height(nw_win *win);
 uint32_t  nw_win_id(nw_win *win);

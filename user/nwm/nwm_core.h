@@ -48,11 +48,13 @@ enum {
 	NW_SC_LSUPER = 0xDB, NW_SC_RSUPER = 0xDC,   /* 0xE0 0x5B / 0x5C: the GUI (Super/Cmd) keys */
 	NW_SC_LSHIFT = 0x2A, NW_SC_RSHIFT = 0x36,
 	NW_SC_C = 0x2E, NW_SC_X = 0x2D, NW_SC_V = 0x2F, NW_SC_Q = 0x10, NW_SC_TAB = 0x0F,
-	NW_SC_R = 0x13, NW_SC_ESC = 0x01, NW_SC_ENTER = 0x1C, NW_SC_BACKSP = 0x0E
+	NW_SC_R = 0x13, NW_SC_ESC = 0x01, NW_SC_ENTER = 0x1C, NW_SC_BACKSP = 0x0E, NW_SC_M = 0x32
 };
 
 /* Hit-test regions. */
-enum { NW_HIT_NONE = 0, NW_HIT_CONTENT = 1, NW_HIT_TITLE = 2, NW_HIT_CLOSE = 3, NW_HIT_MIN = 4 };
+enum { NW_HIT_NONE = 0, NW_HIT_CONTENT = 1, NW_HIT_TITLE = 2, NW_HIT_CLOSE = 3, NW_HIT_MIN = 4,
+       NW_HIT_MAX = 5, NW_HIT_RESIZE = 6 };
+enum { NW_RESIZE_GRIP = 16, NW_MIN_CW = 160, NW_MIN_CH = 80 };   /* bottom-right resize grip + min content size */
 
 /* Taskbar (bottom bar): the Start button + one button per open window. */
 enum { NW_TB_NONE = 0, NW_TB_START = 1, NW_TB_TASK = 2 };
@@ -69,6 +71,8 @@ struct nw_window {
 	int       frame_dirty; /* the cached frame is stale and must be re-rendered. Set on content
 	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
 	int       minimized;   /* hidden from the scene (taskbar button stays); restored from the taskbar */
+	int       maximized;   /* filling the work area (between menu bar and taskbar)                    */
+	int       sx, sy, scw, sch;   /* geometry saved before maximizing, restored on un-maximize        */
 	char      title[NW_TITLE_MAX];
 	char      menu[NW_MENU_MAX];   /* app menu spec (NW_REQ_SET_MENU); empty = no app menu */
 	int       menu_len;
@@ -95,6 +99,8 @@ struct nw_server {
 	int   buttons;                  /* last pointer button mask (NW_BTN_*)            */
 	int   drag_win;                 /* window index being dragged, or -1              */
 	int   drag_dx, drag_dy;         /* cursor - frame origin at grab                  */
+	int   resize_win;               /* window index being resized by the grip, or -1  */
+	int   resize_dx, resize_dy;     /* cursor - frame bottom-right at grab            */
 
 	int   super_down, shift_down;
 

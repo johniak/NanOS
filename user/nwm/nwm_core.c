@@ -13,6 +13,12 @@ static void close_box(const struct nw_window *w, int *cx, int *cy)
 	*cx = w->x + frame_w(w) - NW_BORDER - NW_CLOSE - 2;
 	*cy = w->y + (NW_TITLEBAR_H - NW_CLOSE) / 2;
 }
+/* The maximize control (the "□" glyph) sits one control slot left of the close box. */
+static void max_box(const struct nw_window *w, int *cx, int *cy)
+{
+	close_box(w, cx, cy);
+	*cx -= NW_CLOSE;
+}
 /* The minimize control (the "—" glyph) sits two control slots left of the close box. */
 static void min_box(const struct nw_window *w, int *cx, int *cy)
 {
@@ -154,6 +160,8 @@ static void destroy_window(struct nw_server *s, int idx)
 	s->win[idx].minimized = 0;
 	if (s->drag_win == idx)
 		s->drag_win = -1;
+	if (s->resize_win == idx)
+		s->resize_win = -1;
 	if (s->focus == idx)
 		s->focus = topmost_visible(s);          /* skip minimized windows when refocusing */
 	damage(s, 0, s->screen_h - NW_TASK_H, s->screen_w, NW_TASK_H);   /* a taskbar button vanished */
@@ -168,6 +176,7 @@ void nw_server_init(struct nw_server *s, int screen_w, int screen_h)
 	s->next_id  = 1;
 	s->focus    = -1;
 	s->drag_win = -1;
+	s->resize_win = -1;
 	s->cursor_x = screen_w / 2;
 	s->cursor_y = screen_h / 2;
 }
@@ -210,15 +219,20 @@ int nw_hit(const struct nw_server *s, int sx, int sy, int *region)
 		if (sx < w->x || sy < w->y || sx >= w->x + fw || sy >= w->y + fh)
 			continue;
 		/* inside the frame: classify */
-		int cbx, cby, mbx, mby;
+		int cbx, cby, mbx, mby, xbx, xby;
 		close_box(w, &cbx, &cby);
+		max_box(w, &xbx, &xby);
 		min_box(w, &mbx, &mby);
 		if (sx >= cbx && sx < cbx + NW_CLOSE && sy >= cby && sy < cby + NW_CLOSE) {
 			if (region) *region = NW_HIT_CLOSE;
+		} else if (sx >= xbx && sx < xbx + NW_CLOSE && sy >= xby && sy < xby + NW_CLOSE) {
+			if (region) *region = NW_HIT_MAX;
 		} else if (sx >= mbx && sx < mbx + NW_CLOSE && sy >= mby && sy < mby + NW_CLOSE) {
 			if (region) *region = NW_HIT_MIN;
 		} else if (sy < w->y + NW_TITLEBAR_H) {
 			if (region) *region = NW_HIT_TITLE;
+		} else if (!w->maximized && sx >= w->x + fw - NW_RESIZE_GRIP && sy >= w->y + fh - NW_RESIZE_GRIP) {
+			if (region) *region = NW_HIT_RESIZE;   /* bottom-right grip (not while maximized) */
 		} else {
 			int cox = w->x + NW_BORDER, coy = w->y + NW_TITLEBAR_H;
 			if (sx >= cox && sx < cox + w->cw && sy >= coy && sy < coy + w->ch) {
@@ -502,6 +516,46 @@ static void restore_win(struct nw_server *s, int idx)
 }
 
 /* ---- pointer ---------------------------------------------------------------------- */
+/* Resize a window's content to (ncw,nch) at (nx,ny): clamp to the minimum, update geometry, mark
+ * the cached frame stale, and tell the client its new size via CONFIGURE so it can re-layout and
+ * redraw (NetSurf reformats; apps that ignore resize keep their old content top-left). The shell
+ * reallocates the backing buffers when it sees cw/ch changed. Damages the old and new frame. */
+static void apply_geom(struct nw_server *s, int idx, int nx, int ny, int ncw, int nch)
+{
+	struct nw_window *w = &s->win[idx];
+	if (ncw < NW_MIN_CW) ncw = NW_MIN_CW;
+	if (nch < NW_MIN_CH) nch = NW_MIN_CH;
+	if (w->x == nx && w->y == ny && w->cw == ncw && w->ch == nch)
+		return;
+	damage_frame(s, idx);                            /* erase the old frame */
+	w->x = nx; w->y = ny; w->cw = ncw; w->ch = nch;
+	/* Drop the old backing buffers: their size no longer matches cw/ch. NULL makes commit_rect
+	 * (which strides by the NEW cw) skip until the shell reallocates — otherwise a stale commit
+	 * would index the smaller old buffer with the larger new stride and overrun it. reconcile_
+	 * buffers reallocates at the new size; the client redraws after the CONFIGURE below. */
+	w->buf = 0; w->frame = 0;
+	w->frame_dirty = 1;
+	emit_win(s, idx, NW_EVT_CONFIGURE, ncw, nch, 0, 0, 0, 0);   /* tell the client to re-layout */
+	damage_frame(s, idx);                            /* paint the new frame */
+	s->dirty = 1;
+}
+
+/* Maximize <-> restore. Maximizing fills the work area (between the top menu bar and the bottom
+ * taskbar) and saves the previous geometry; toggling again restores it. */
+static void toggle_maximize(struct nw_server *s, int idx)
+{
+	struct nw_window *w = &s->win[idx];
+	if (!w->maximized) {
+		w->sx = w->x; w->sy = w->y; w->scw = w->cw; w->sch = w->ch;
+		int ww = s->screen_w, wh = s->screen_h - NW_PANEL_H - NW_TASK_H;
+		w->maximized = 1;
+		apply_geom(s, idx, 0, NW_PANEL_H, ww - 2 * NW_BORDER, wh - NW_TITLEBAR_H - NW_BORDER);
+	} else {
+		w->maximized = 0;
+		apply_geom(s, idx, w->sx, w->sy, w->scw, w->sch);
+	}
+}
+
 void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 {
 	if (sx < 0) sx = 0;
@@ -523,6 +577,23 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 		if (left_now && !left_was) {
 			if (s->menu_hover >= 0)        menu_activate(s, s->menu_hover);
 			else if (onbar == NW_MENU_NONE) menu_close(s);
+		}
+		s->cursor_x = sx; s->cursor_y = sy; s->buttons = buttons;
+		return;
+	}
+
+	if (s->resize_win >= 0) {                            /* dragging the bottom-right grip */
+		if (left_now) {
+			struct nw_window *w = &s->win[s->resize_win];
+			int nfw = (sx - s->resize_dx) - w->x;        /* new frame size tracks the cursor */
+			int nfh = (sy - s->resize_dy) - w->y;
+			int ncw = nfw - 2 * NW_BORDER, nch = nfh - NW_TITLEBAR_H - NW_BORDER;
+			int dcw = ncw - w->cw; if (dcw < 0) dcw = -dcw;
+			int dch = nch - w->ch; if (dch < 0) dch = -dch;
+			if (dcw >= 8 || dch >= 8)                    /* ~8px steps: limit realloc/relayout churn */
+				apply_geom(s, s->resize_win, w->x, w->y, ncw, nch);
+		} else {
+			s->resize_win = -1;        /* drop on release */
 		}
 		s->cursor_x = sx; s->cursor_y = sy; s->buttons = buttons;
 		return;
@@ -562,6 +633,12 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 				set_focus(s, widx);
 				if (region == NW_HIT_CLOSE) {
 					emit_win(s, widx, NW_EVT_CLOSE, 0, 0, 0, 0, 0, 0);
+				} else if (region == NW_HIT_MAX) {
+					toggle_maximize(s, widx);                /* □ control: maximize <-> restore */
+				} else if (region == NW_HIT_RESIZE) {
+					s->resize_win = widx;                    /* grab the bottom-right grip */
+					s->resize_dx = sx - (s->win[widx].x + frame_w(&s->win[widx]));
+					s->resize_dy = sy - (s->win[widx].y + frame_h(&s->win[widx]));
 				} else if (region == NW_HIT_TITLE) {
 					s->drag_win = widx;
 					s->drag_dx = sx - s->win[widx].x;
@@ -613,6 +690,9 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 			return;
 		case NW_SC_TAB:
 			if (s->zn >= 2) { int back = s->zorder[0]; z_raise(s, back); set_focus(s, back); }
+			return;
+		case NW_SC_M:                           /* Super+M: maximize / restore the focused window */
+			if (s->focus >= 0) toggle_maximize(s, s->focus);
 			return;
 		case NW_SC_C:
 			if (s->focus >= 0) emit_win(s, s->focus, NW_EVT_COPY, 0, 0, 0, 0, 0, 0);  /* a=0 copy */

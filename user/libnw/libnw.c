@@ -100,6 +100,21 @@ int      nw_win_width(nw_win *win)  { return win->w; }
 int      nw_win_height(nw_win *win) { return win->h; }
 uint32_t nw_win_id(nw_win *win)     { return win->id; }
 
+/* Reallocate the client draw buffer to a new size — called when the compositor resizes the window
+ * (an NW_EV_CONFIGURE after creation). The caller then re-fetches nw_win_surface and redraws at the
+ * new size. Without this, a client that kept drawing into the old (smaller) buffer after a resize
+ * would write out of bounds. The new buffer is zeroed; the client repaints it. */
+void nw_win_resize(nw_win *win, int w, int h)
+{
+	if (!win || w <= 0 || h <= 0 || (w == win->w && h == win->h))
+		return;
+	uint32_t *np = (uint32_t *) realloc(win->px, (size_t) w * h * 4);
+	if (!np)
+		return;                          /* keep the old buffer on OOM rather than dangle */
+	win->px = np; win->w = w; win->h = h;
+	memset(win->px, 0, (size_t) w * h * 4);
+}
+
 void nw_commit(nw_win *win, int x, int y, int w, int h)
 {
 	if (x < 0) { w += x; x = 0; }
