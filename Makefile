@@ -669,6 +669,22 @@ $(BINFOLDER)%.o: user/%.S
 $(BINFOLDER)%.o: user/libc-glue/%.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf $< -o $@
+# Vendored musl pthread internals (user/libc-glue/pthread). Compiled with the musl internal
+# headers (pthread_impl.h/atomic.h/syscall.h/...) on the include path AHEAD of nothing else
+# that defines them, and the weak_alias/hidden compat macros force-included. The .s files are
+# GNU-as (AT&T) — i686-elf-gcc assembles them directly.
+# The vendored musl headers must out-rank USER_CFLAGS's `-iquote kernel`: the .c files do
+# `#include "futex.h"` / `"syscall.h"`, names that ALSO exist under kernel/. Listing the musl
+# include dir as `-iquote` FIRST makes it win the quoted-include search. -Wno-unused-value
+# silences musl's intentional `__syscall(...) != -ENOSYS || __syscall(...)` fallback idiom.
+PTHREAD_CFLAGS=-iquote user/libc-glue/pthread/include -I user/libc-glue/pthread/include \
+  $(USER_CFLAGS) -include user/libc-glue/pthread/nanos-musl-compat.h -Wno-unused-value
+$(BINFOLDER)%.o: user/libc-glue/pthread/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(PTHREAD_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/libc-glue/pthread/%.s
+	@mkdir -p $(BINFOLDER)
+	$(CXX) -c $< -o $@
 $(BINFOLDER)%.o: user/term/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
@@ -832,7 +848,15 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
   $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
   $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o \
-  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o $(BINFOLDER)retarget_lock.o
+  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o $(BINFOLDER)retarget_lock.o $(LIBC_PTHREAD_OBJS)
+# Phase 4: the vendored musl pthread internals (user/libc-glue/pthread/, musl 1.2.5),
+# adapted to NanOS syscalls (int 0x80, Linux i386 numbers) + the picolibc TCB. Task 4.1
+# brings in only the futex/clone/TLS primitives (no pthread_create yet); they link into
+# libc.ndl. The vendored .c/.s files are built by the dedicated user/libc-glue/pthread rules
+# below (extra -I for the musl headers + the weak_alias/hidden force-include).
+LIBC_PTHREAD_OBJS=$(BINFOLDER)__wait.o $(BINFOLDER)__timedwait.o $(BINFOLDER)__lock.o \
+  $(BINFOLDER)pthread_self.o $(BINFOLDER)default_attr.o $(BINFOLDER)nanos_glue.o \
+  $(BINFOLDER)clone.o $(BINFOLDER)__set_thread_area.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not
