@@ -72,8 +72,6 @@ Process* ProcTable::alloc(int parent) {
 			p->starttime = (unsigned) Scheduler::ticks();
 			p->mmapNext = 0;         // lazily set to arch::mmuMmapBase() on first mmap
 			p->execed = false;
-			g_forksTotal++;
-			g_lastPid = p->pid;
 			p->task = 0;
 			p->space = 0;
 			p->sys = 0;
@@ -97,6 +95,10 @@ Process* ProcTable::alloc(int parent) {
 				p->used = false;            // thread pool exhausted: undo the process slot
 				return 0;
 			}
+			// Only now that the process is fully allocated do we bump the global counters, so a
+			// thread-pool-exhausted failure above doesn't report a phantom fork in /proc.
+			g_forksTotal++;
+			g_lastPid = p->pid;
 			return p;
 		}
 	}
@@ -200,8 +202,15 @@ int ProcTable::reapStopped(int parentPid, int wantPid, Process** childOut) {
 }
 
 void ProcTable::freeSlot(Process* p) {
-	if (p)
-		p->used = false;
+	if (!p)
+		return;
+	// Release every thread slot the process still owns. alloc() takes the leader slot for every
+	// process (and clone() may add more), so the process slot and its thread slots are freed
+	// together here — otherwise each exit would leak a g_threads entry. freeThread unlinks the
+	// head from p->threads, so freeing the head repeatedly drains the list.
+	while (p->threads)
+		freeThread(p->threads);
+	p->used = false;
 }
 
 int ProcTable::reparentChildren(int oldParent, int newParent) {

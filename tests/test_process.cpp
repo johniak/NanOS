@@ -73,6 +73,36 @@ TEST_CASE("process starts as a single-thread group whose leader tid == pid") {
 	CHECK(p->leaderThread()->tid == p->pid);
 }
 
+TEST_CASE("allocThread adds a non-leader thread with a fresh tid; free paths release slots") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	REQUIRE(p != nullptr);
+	Thread* leader = p->leaderThread();
+	CHECK(leader->tid == p->pid);
+
+	// A clone-style thread: fresh tid (distinct from the pid), group grows, leader stays at head.
+	Thread* t2 = ProcTable::allocThread(p);
+	REQUIRE(t2 != nullptr);
+	CHECK(t2->tid != p->pid);
+	CHECK(t2->proc == p);
+	CHECK(p->threadCount == 2);
+	CHECK(p->leaderThread() == leader);                  // leader not displaced by the splice
+	CHECK(ProcTable::threadByTid(t2->tid) == t2);        // scans the whole thread pool
+	CHECK(ProcTable::threadByTid(p->pid) == leader);
+
+	// freeThread releases just that thread; the leader and the group survive.
+	int t2tid = t2->tid;
+	ProcTable::freeThread(t2);
+	CHECK(p->threadCount == 1);
+	CHECK(ProcTable::threadByTid(t2tid) == nullptr);
+	CHECK(p->leaderThread() == leader);
+
+	// freeSlot releases the process AND its remaining (leader) thread slot — no leak.
+	int pid = p->pid;
+	ProcTable::freeSlot(p);
+	CHECK(ProcTable::threadByTid(pid) == nullptr);
+}
+
 static int g_visited;
 static int g_visitedKthreads;
 static void countVisit(int /*pid*/, bool kthread, void* /*ctx*/) {

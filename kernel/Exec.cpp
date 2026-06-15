@@ -176,7 +176,7 @@ int forkProcess(arch::TrapFrame* tf) {
 	arch::AddressSpace* space = arch::mmuCopyAddressSpace((arch::AddressSpace*) parent->space);
 	arch::mmuLoadDirPhys(parentDir);
 	if (!space) {
-		child->used = false;
+		ProcTable::freeSlot(child);   // releases the process slot AND its leader thread slot
 		return -11;
 	}
 	child->space = space;
@@ -200,7 +200,7 @@ int forkProcess(arch::TrapFrame* tf) {
 		arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) space);
 		arch::mmuLoadDirPhys(cur);
-		child->used = false;
+		ProcTable::freeSlot(child);             // releases the process slot AND its leader thread slot
 		return -11;                             // -EAGAIN (Linux: fork hits the memory ceiling)
 	}
 	ProcTable::bindTask(child, t, child->leaderThread());   // wire task<->process<->leader thread in one place
