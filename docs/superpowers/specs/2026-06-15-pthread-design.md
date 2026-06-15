@@ -41,6 +41,11 @@ A `Process` becomes a **thread group**. Each pthread is an additional `Task`.
 - Representation: a `Thread` record bound to a `Task` and a `Process`; `Process` keeps a thread list +
   live-thread count. `Process` fields that are inherently per-thread (signal mask, the active
   `Syscalls` "current" hooks) move to the `Thread`.
+- **Current-thread tracking (load-bearing):** the scheduler today tracks only the current *process*
+  (`ProcTable::setCurrent(task->proc)`); with several `Task`s per `Process` that is insufficient. Add a
+  `Task::thread` back-pointer and `ProcTable::currentThread()`, switched alongside the current-process on
+  every context switch. `gettid`, TLS reload, `set_tid_address`, the per-thread signal mask and a
+  per-thread `exit(1)` all read the current *thread*, not just the process.
 
 ## 2. Kernel syscalls (Linux i386 semantics)
 
@@ -51,9 +56,13 @@ A `Process` becomes a **thread group**. Each pthread is an additional `Task`.
   `clone` onto one task-creation core (copy-address-space vs share-address-space is the only fork).
 - **`futex(240)`** — `FUTEX_WAIT` (atomically: if `*uaddr == val` block, else `-EAGAIN`), `FUTEX_WAKE`
   (wake ≤`val` waiters), `FUTEX_REQUEUE`/`CMP_REQUEUE` (condvars), `FUTEX_WAIT_BITSET`/`WAKE_BITSET`,
-  `FUTEX_PRIVATE` flag, optional `WAKE_OP`. Backed by a kernel hashtable keyed by the futex address →
-  `WaitQueue`; reuses `Scheduler` block/wake + timed wakeup for timeouts. The atomic compare-and-block
-  runs with interrupts/preemption disabled around the load+enqueue.
+  `FUTEX_PRIVATE` flag, optional `WAKE_OP`. Backed by a kernel hashtable keyed by **`(AddressSpace*, uaddr)`** →
+  `WaitQueue` (a bare VA collides across processes — two address spaces can both hold a futex at the same
+  VA). Every thread of a process shares one `AddressSpace`, so a `FUTEX_PRIVATE` futex is correctly scoped
+  to its process. **Process-shared futexes (private flag clear, a futex in cross-process `MAP_SHARED`
+  memory) are out of scope** — they would need keying by physical frame; the syscall returns `-ENOSYS` for
+  that case rather than silently mis-scoping. Reuses `Scheduler` block/wake + timed wakeup for timeouts.
+  The atomic compare-and-block runs with interrupts/preemption disabled around the load+enqueue.
 - **`set_thread_area(243)`** — allocate/update a per-thread GDT entry (base = TLS block); return its
   index; userland sets `GS = (index<<3)|3`. The running thread's TLS GDT entry is reloaded on context
   switch.
@@ -65,12 +74,18 @@ A `Process` becomes a **thread group**. Each pthread is an additional `Task`.
 ## 3. TLS (GS-based, i686 variant II)
 
 The compiler emits `__thread` accesses GS-relative (variant II: TLS block below the thread pointer, TCB
-at it, first word = self). `set_thread_area` backs GS with a per-thread GDT entry (small slot pool, or a
-single slot reloaded per switch). **The TCB uses musl's `struct __pthread` layout** (holds `self`, `tid`,
-errno, cancellation state, the join futex). **Integration point (designed explicitly): picolibc's
-`errno` must resolve to the TCB's errno** so picolibc functions and app code share one per-thread errno —
-either by routing picolibc's `__errno`/`errno` through the thread pointer, or by making the TCB the
-single source and adapting picolibc's accessor.
+at it, first word = self). `set_thread_area` backs GS with a GDT entry. The GDT is tiny (6 entries today),
+so rather than a slot pool — which neither fits nor scales to dozens of threads — there is **one dedicated
+TLS descriptor (a 7th GDT entry) whose base is reloaded on every context switch** to the now-current
+thread's TLS block; the selector is the fixed `0x33`. On a uniprocessor only one thread runs at a time, so
+one descriptor is sufficient and the thread count is unbounded by the GDT. **The TCB uses musl's
+`struct __pthread` layout** (holds `self`, `tid`, errno, cancellation state, the join futex).
+**Integration point (designed explicitly): picolibc's `errno` must resolve to the TCB's errno.** The
+current dynamic-linking model imports `errno` as a *data* slot (`__imp_errno`) — a single process-wide
+address, which cannot be per-thread. So the program-side ABI switches to the **function** form every
+threaded libc uses: import `__errno_location()` (a code export the `.ndl` loader resolves normally) and
+define `errno` as `(*__errno_location())`; libc.ndl's `__errno_location` returns `&__pthread_self()->__errno`.
+The old single data `errno` slot is dropped (no second source of truth). Programs are all rebuilt from source.
 
 ## 4. Userland: musl pthread on picolibc (`user/libc-glue`)
 
@@ -88,7 +103,11 @@ Bring in musl's pthread sources, adapted to NanOS/picolibc:
 
 Per-thread signal **mask** + pending; process-wide **dispositions** + process-pending. A process-directed
 signal (`kill`) is delivered to any thread not blocking it; `tgkill` targets one thread. `pthread_cancel`
-rides a reserved `SIGCANCEL`. A fatal signal / `exit_group` terminates every thread in the group.
+rides a reserved `SIGCANCEL`. **The kernel signal representation must widen first:** it currently tops out
+at `NANOS_NSIG == 32` with **32-bit** masks and valid signals 1..31, leaving no room for `SIGCANCEL`
+(Linux/musl put it at `__SIGRTMIN` = 32). Widen masks to `uint64_t` / `NANOS_NSIG = 65` so real-time
+signals 32..64 exist (also what apps using `SIGRTMIN`/`SIGRTMAX` need), and reserve `SIGCANCEL = 32`
+kernel-internal. A fatal signal / `exit_group` terminates every thread in the group.
 
 ## 6. Process lifecycle with threads
 
@@ -117,9 +136,17 @@ allocator (memory_manager / picolibc malloc) gets a lock. This is part of "full 
 
 ## Risks
 
-- musl↔picolibc coupling (TCB/errno) — the main integration risk; designed explicitly in §3/§7.
-- futex atomicity under deferred preemption — bracket the compare-and-block with interrupts off.
-- GDT TLS slots — finite; reload per switch.
+- musl↔picolibc coupling (TCB/errno) — the main integration risk; designed explicitly in §3/§7. Resolved by
+  the `__errno_location()` function-import ABI (replacing the `__imp_errno` data slot).
+- futex atomicity under deferred preemption — bracket the compare-and-block with interrupts off. Keyed by
+  `(AddressSpace*, uaddr)`, not a bare VA (which collides across processes).
+- GDT TLS — the GDT has only 6 entries; use **one** dedicated TLS descriptor reloaded per switch (not a
+  pool), so the thread count is unbounded by the GDT.
+- Current-thread tracking — the scheduler must switch a current-*thread* (not just current-process) or
+  gettid/TLS/per-thread mask/`exit(1)` are wrong (§1).
+- Signal width — `SIGCANCEL = 32` requires widening kernel masks to 64-bit first (§5).
+- Task ceiling is already ample (`ProcTable::MAX + 8 = 1032`, heap-allocated kernel stacks) — the real
+  bound is RAM, not the array; do not shrink it.
 - Uniprocessor — concurrency only (acceptable; correctness is the goal).
 - Scope discipline — §7 (thread-safe libc) and cancellation are the parts most likely to be
   under-estimated; they are in-scope for "full."
