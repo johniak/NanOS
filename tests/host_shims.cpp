@@ -39,6 +39,7 @@ unsigned archTaskBootstrap(unsigned char*, unsigned) { return 0; }
 unsigned archKernelCr3() { return 0; }
 void archTimerInit(unsigned) {}
 void setKernelStack(unsigned) {}
+void archLoadThreadTls(unsigned) {}   // TLS descriptor reload is hardware (GDT + %gs): no-op on host
 void halt_or_hlt() {}
 unsigned long cpuIrqSave() { return 0; }   // no interrupts on the host harness
 void cpuIrqRestore(unsigned long) {}

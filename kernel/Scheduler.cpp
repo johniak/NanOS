@@ -165,6 +165,9 @@ void Scheduler::schedule() {
 	arch::setKernelStack(g_tasks[next].esp0);   // ring3 traps land on next's kstack
 	ProcTable::setCurrent(g_tasks[next].proc);  // route syscalls to it (O(1) back-pointer)
 	ProcTable::setCurrentThread(g_tasks[next].thread);  // and the specific thread within it
+	// Re-point the TLS descriptor at the now-current thread's TLS block, so __thread accesses
+	// (%gs:-relative) resolve to the right per-thread storage. 0 = the thread has no TLS yet.
+	arch::archLoadThreadTls(g_tasks[next].thread ? g_tasks[next].thread->tlsBase : 0);
 	arch::cpuIrqRestore(flags);
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
 }
@@ -353,6 +356,7 @@ void Scheduler::start() {
 	arch::setKernelStack(g_tasks[first].esp0);
 	ProcTable::setCurrent(g_tasks[first].proc);
 	ProcTable::setCurrentThread(g_tasks[first].thread);
+	arch::archLoadThreadTls(g_tasks[first].thread ? g_tasks[first].thread->tlsBase : 0);
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static unsigned throwaway;
 	arch::archContextSwitch(&throwaway, g_tasks[first].kesp);

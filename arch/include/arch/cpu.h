@@ -13,6 +13,12 @@ void cpuDisableInterrupts();
 void cpuEnableInterrupts();
 void cpuHalt();
 
+// Re-point the thread-local-storage descriptor at `base` (the current thread's TLS block VA)
+// and reload the TLS segment register. The scheduler calls this on every context switch with
+// the now-current thread's TLS base (0 = the thread has none); set_thread_area also calls it
+// when a thread installs its TLS. On x86 this rewrites the single TLS GDT entry and reloads %gs.
+void archLoadThreadTls(unsigned base);
+
 // Interrupt-flag save/restore for short critical sections: cpuIrqSave returns the prior EFLAGS
 // and disables interrupts; cpuIrqRestore restores them (re-enabling IF only if it was set). Lets
 // a critical region nest and stay correct whether the caller already had interrupts off.

@@ -22,7 +22,7 @@ struct GdtPtr
 
 
 class Gdt {
-	GdtEntry gdtEntries[6];   // null, ring0 code/data, ring3 code/data, TSS
+	GdtEntry gdtEntries[7];   // null, ring0 code/data, ring3 code/data, TSS, TLS
 	GdtPtr gdtPtr;
 	Tss m_tss;
 public:
@@ -30,6 +30,10 @@ public:
 	void initialize();
 	void setKernelStack(unsigned esp0);   // TSS.esp0 — kernel stack for ring3->ring0
 	void loadTss();                        // ltr 0x28 (call after initialize)
+	// Re-point the single TLS descriptor (entry 6, selector 0x33) at `base` and reload
+	// %gs so the CPU refreshes its hidden descriptor cache. The scheduler calls this on
+	// every switch with the now-current thread's TLS block (0 if it has none).
+	void setTlsBase(unsigned base);
 private:
 	void setGate(int num, unsigned base, unsigned limit, unsigned char access,
 			unsigned char gran);

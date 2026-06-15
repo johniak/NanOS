@@ -68,6 +68,10 @@ void powerOff() {
 // calls this on every switch with the next task's kernel-stack top.
 void setKernelStack(unsigned esp0) { g_gdt.setKernelStack(esp0); }
 
+// Re-point the single TLS GDT descriptor (entry 6, selector 0x33) at the current thread's TLS
+// block and reload %gs. Called by the scheduler on every switch and by set_thread_area.
+void archLoadThreadTls(unsigned base) { g_gdt.setTlsBase(base); }
+
 // ---- CPU identification via CPUID (for /proc/cpuinfo) --------------------------------
 namespace {
 inline void cpuid(unsigned leaf, unsigned* a, unsigned* b, unsigned* c, unsigned* d) {

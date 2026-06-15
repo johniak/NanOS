@@ -1,10 +1,11 @@
 #include "Gdt.h"
+#include "GdtBase.h"
 
 
 namespace kernel {
 
 void Gdt::initialize() {
-	gdtPtr.limit = sizeof(GdtEntry) * 6 - 1;
+	gdtPtr.limit = sizeof(GdtEntry) * 7 - 1;
 	gdtPtr.base = (unsigned) &gdtEntries;
 
 	// Flat memory model: each segment spans the full 4 GiB address space.
@@ -23,7 +24,25 @@ void Gdt::initialize() {
 	m_tss.iomap_base = sizeof(Tss);
 	setGate(5, (unsigned) &m_tss, sizeof(Tss) - 1, 0x89, 0x00);
 
+	// 0x33: TLS — one ring-3 (DPL=3) data segment, same flags as 0x23, base 0 for now.
+	// The compiler emits __thread accesses as %gs:-relative (i686 variant II); the scheduler
+	// re-points this descriptor's base at the current thread's TLS block on every switch via
+	// setTlsBase (selector (6<<3)|3 == 0x33). One reloaded entry suffices on a uniprocessor.
+	setGate(6, 0, 0xFFFFFFFF, 0xF2, 0xCF);
+
 	gdt_flush((unsigned) &gdtPtr);
+}
+
+void Gdt::setTlsBase(unsigned base) {
+	// Rewrite only entry 6's base bytes, then reload %gs (0x33) so the CPU refreshes the
+	// hidden descriptor cache from the updated entry. Base 0 (a thread with no TLS) is
+	// harmless: the kernel never touches %gs and such a thread never reads %gs:-relative.
+	unsigned char* d = (unsigned char*) &gdtEntries[6];
+	d[2] = (unsigned char) (base & 0xFF);
+	d[3] = (unsigned char) ((base >> 8) & 0xFF);
+	d[4] = (unsigned char) ((base >> 16) & 0xFF);
+	d[7] = (unsigned char) ((base >> 24) & 0xFF);
+	__asm__ __volatile__("mov %0, %%gs" : : "r"((unsigned short) 0x33));
 }
 
 void Gdt::setKernelStack(unsigned esp0) {
@@ -36,13 +55,11 @@ void Gdt::loadTss() {
 
 void Gdt::setGate(int num, unsigned base, unsigned limit, unsigned char access,
 		unsigned char gran) {
-	gdtEntries[num].base_lo = base & 0xFFFF;
-	gdtEntries[num].base_mid = (base >> 16) & 0xFF;
-	gdtEntries[num].base_hi = (base >> 24) & 0xFF;
-
-	gdtEntries[num].limit_lo = limit & 0xFFFF;
-	gdtEntries[num].granularity = ((limit >> 16) & 0x0F) | (gran & 0xF0);
-
+	// Base + 20-bit limit go through the host-tested pure packer; access and the high
+	// flag nibble (granularity/size) are this descriptor's own bits.
+	unsigned char* d = (unsigned char*) &gdtEntries[num];
+	kernel_arch::gdtPackBase(d, base, limit);
+	gdtEntries[num].granularity = (unsigned char) ((gdtEntries[num].granularity & 0x0F) | (gran & 0xF0));
 	gdtEntries[num].access = access;
 }
 
