@@ -832,7 +832,7 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
   $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
   $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o \
-  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o
+  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o $(BINFOLDER)retarget_lock.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not
