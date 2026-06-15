@@ -169,6 +169,24 @@ hidden void __unmapself(void *, size_t);
 hidden int __clock_gettime(clockid_t, struct timespec *);
 hidden int __pthread_setcancelstate(int, int *);
 
+/* NanOS addition (Task 4.3): cross-TU internal prototypes the vendored mutex/cond sources
+ * reference. Upstream musl gets these from its src/include/pthread.h build overlay (the hidden
+ * prototypes that shadow the public header); we don't vendor that overlay, so declare them
+ * here. The public pthread_* names are the weak_alias targets (declared in <pthread.h>);
+ * these __pthread_* / __private_* / __vm_* / __pthread_testcancel names are internal-only.
+ * __pthread_testcancel is the no-op cancellation stub in nanos_glue.c (cancellation is
+ * Phase 5); __vm_* live in vmlock.c (process-shared paths only). */
+hidden int __pthread_mutex_lock(pthread_mutex_t *);
+hidden int __pthread_mutex_unlock(pthread_mutex_t *);
+hidden int __pthread_mutex_trylock(pthread_mutex_t *);
+hidden int __pthread_mutex_timedlock(pthread_mutex_t *__restrict, const struct timespec *__restrict);
+hidden int __pthread_cond_timedwait(pthread_cond_t *__restrict, pthread_mutex_t *__restrict, const struct timespec *__restrict);
+hidden int __private_cond_signal(pthread_cond_t *, int);
+hidden void __pthread_testcancel(void);
+hidden void __vm_lock(void);
+hidden void __vm_unlock(void);
+hidden void __vm_wait(void);
+
 hidden int __timedwait(volatile int *, int, clockid_t, const struct timespec *, int);
 hidden int __timedwait_cp(volatile int *, int, clockid_t, const struct timespec *, int);
 hidden void __wait(volatile int *, volatile int *, int, int);

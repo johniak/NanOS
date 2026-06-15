@@ -74,3 +74,10 @@ hidden int __pthread_setcancelstate(int new_state, int *old_state)
 		*old_state = PTHREAD_CANCEL_ENABLE;
 	return 0;
 }
+
+/* Cancellation point hook. pthread_cond_timedwait() calls __pthread_testcancel() on entry and
+ * after a consumed signal; with no cancellation machinery yet (Phase 5) it is a no-op, so a
+ * cond wait is never a cancellation point. weak_alias to the public name so a program calling
+ * pthread_testcancel() links too. */
+hidden void __pthread_testcancel(void) { }
+weak_alias(__pthread_testcancel, pthread_testcancel);

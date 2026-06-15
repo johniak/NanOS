@@ -859,7 +859,15 @@ LIBC_PTHREAD_OBJS=$(BINFOLDER)__wait.o $(BINFOLDER)__timedwait.o $(BINFOLDER)__l
   $(BINFOLDER)pthread_self.o $(BINFOLDER)default_attr.o $(BINFOLDER)nanos_glue.o \
   $(BINFOLDER)clone.o $(BINFOLDER)__set_thread_area.o \
   $(BINFOLDER)pthread_create.o $(BINFOLDER)pthread_join.o $(BINFOLDER)pthread_detach.o \
-  $(BINFOLDER)pthread_attr.o
+  $(BINFOLDER)pthread_attr.o \
+  $(BINFOLDER)pthread_mutex_lock.o $(BINFOLDER)pthread_mutex_unlock.o \
+  $(BINFOLDER)pthread_mutex_trylock.o $(BINFOLDER)pthread_mutex_timedlock.o \
+  $(BINFOLDER)pthread_mutex_init.o $(BINFOLDER)pthread_mutex_destroy.o \
+  $(BINFOLDER)pthread_mutexattr_init.o $(BINFOLDER)pthread_mutexattr_destroy.o \
+  $(BINFOLDER)pthread_mutexattr_settype.o $(BINFOLDER)vmlock.o \
+  $(BINFOLDER)pthread_cond_wait.o $(BINFOLDER)pthread_cond_timedwait.o \
+  $(BINFOLDER)pthread_cond_signal.o $(BINFOLDER)pthread_cond_broadcast.o \
+  $(BINFOLDER)pthread_cond_init.o $(BINFOLDER)pthread_cond_destroy.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not

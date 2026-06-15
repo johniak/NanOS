@@ -69,5 +69,10 @@ hidden long __syscall_cp(syscall_arg_t, syscall_arg_t, syscall_arg_t, syscall_ar
 #define SYS_gettid          224
 #define SYS_futex           240
 #define SYS_set_thread_area 243
+/* Task 4.3: referenced (compile-time) by the robust-mutex registration path in
+ * pthread_mutex_trylock.c. NanOS implements no robust-futex list, but a process-private,
+ * non-robust mutex never reaches that path, so this is link-completeness only — if it ever
+ * executed, the kernel would return -ENOSYS for the unknown number. */
+#define SYS_set_robust_list 311
 
 #endif
