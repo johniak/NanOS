@@ -58,8 +58,16 @@ static int sys_gettid(void) {
  * 2 = locked (maybe waiters). owner/recur are used only by the recursive variants. */
 struct __lock { int futex; int owner; int recur; };
 
+/* A NULL _LOCK_T means "not yet initialized": picolibc's static std streams (stdin/stdout/stderr,
+ * FDEV_SETUP_BUFIO) leave their .lock field zeroed and only __bufio_lock_init() (malloc) fills it
+ * in — which never runs for them on NanOS (no global constructors). picolibc's own default lock
+ * stubs ignore their argument, so a NULL lock was always a no-op; we preserve that (an uninitialized
+ * lock is by definition uncontended). Real locks — fopen'd FILE locks and __lock___libc_recursive_mutex
+ * — are non-NULL and lock for real. (Proper std-stream FILE locking is wired in Task 3.3.) */
+
 /* Plain (non-recursive) mutex: 3-state futex, owner/recur untouched. */
 static void lock_acquire(struct __lock* l) {
+	if (!l) return;                  /* uninitialized lock -> no-op (see note above) */
 	int expect = 0;
 	int c = __atomic_compare_exchange_n(&l->futex, &expect, 1, 0,
 		__ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ? 0 : expect;
@@ -74,6 +82,7 @@ static void lock_acquire(struct __lock* l) {
 }
 
 static void lock_release(struct __lock* l) {
+	if (!l) return;                  /* uninitialized lock -> no-op (see note above) */
 	if (__atomic_fetch_sub(&l->futex, 1, __ATOMIC_RELEASE) != 1) {
 		__atomic_store_n(&l->futex, 0, __ATOMIC_RELEASE);
 		futex_wake(&l->futex, 1);
@@ -83,7 +92,7 @@ static void lock_release(struct __lock* l) {
 void __retarget_lock_init(_LOCK_T* lock) {
 	struct __lock* l = (struct __lock*) malloc(sizeof *l);
 	if (l) { l->futex = 0; l->owner = 0; l->recur = 0; }
-	*lock = l;
+	*lock = l;   /* OOM: *lock stays NULL; acquire/release no-op on NULL, so the FILE just runs unlocked */
 }
 
 void __retarget_lock_init_recursive(_LOCK_T* lock) {
@@ -106,21 +115,26 @@ void __retarget_lock_release(_LOCK_T lock) {
 	lock_release(lock);
 }
 
-/* Recursive mutex: the owning thread may re-acquire; only the outermost release unlocks the futex. */
+/* Recursive mutex: the owning thread may re-acquire; only the outermost release unlocks the futex.
+ * The owner read/writes use relaxed atomics to document intent (no data race in the C sense): owner
+ * is only ever set to a nonzero tid by the thread holding the lock, and tids are unique, so a match
+ * means THIS thread owns it. recur is touched only under the lock, so it needs no atomicity. */
 void __retarget_lock_acquire_recursive(_LOCK_T lock) {
+	if (!lock) return;               /* uninitialized lock -> no-op (see note above) */
 	int self = sys_gettid();
-	if (lock->owner == self) {
+	if (__atomic_load_n(&lock->owner, __ATOMIC_RELAXED) == self) {
 		lock->recur++;
 		return;
 	}
 	lock_acquire(lock);
-	lock->owner = self;
+	__atomic_store_n(&lock->owner, self, __ATOMIC_RELAXED);
 	lock->recur = 1;
 }
 
 void __retarget_lock_release_recursive(_LOCK_T lock) {
+	if (!lock) return;               /* uninitialized lock -> no-op (see note above) */
 	if (--lock->recur == 0) {
-		lock->owner = 0;
+		__atomic_store_n(&lock->owner, 0, __ATOMIC_RELAXED);   /* clear owner BEFORE releasing the futex */
 		lock_release(lock);
 	}
 }

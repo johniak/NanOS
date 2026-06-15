@@ -551,5 +551,5 @@ int fstat(int fd, struct stat* o) {
 	return 0;
 }
 
-/* picolibc supplies default no-op __retarget_lock_* (single-threaded), so we do
- * not define them here. */
+/* The picolibc retargetable locks (__retarget_lock_*) are implemented over the kernel
+ * futex in user/libc-glue/retarget_lock.c, not here. */
