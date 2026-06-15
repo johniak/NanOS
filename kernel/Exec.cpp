@@ -195,6 +195,13 @@ int forkProcess(arch::TrapFrame* tf) {
 	child->sid = parent->sid;
 	sigForkInherit(child->psig, parent->psig);                            // dispositions (process-wide)
 	sigForkInherit(child->leaderThread()->sig, parent->leaderThread()->sig);  // block mask (per-thread)
+	// Inherit the TLS base: mmuCopyAddressSpace duplicated the parent's TLS block (the musl/picolibc
+	// TCB) at the SAME virtual address, so the child's %gs:0 must point at it too. Without this the
+	// child runs with GDT TLS base 0 and the first errno/__thread access (now %gs-relative since the
+	// per-thread-errno migration) faults — fatal for a fork-heavy program like bash. The child's own
+	// crt0 re-runs set_thread_area after exec; this keeps TLS valid in the pre-exec window and in
+	// fork-without-exec children (subshells, pipelines, command substitution).
+	child->leaderThread()->tlsBase = parent->leaderThread()->tlsBase;
 
 	Task* t = Scheduler::createBlank(child->pid);   // allocates the child's kernel stack (heap)
 	if (!t) {                                   // out of memory / task table full: fail cleanly,
