@@ -36,6 +36,10 @@ struct FutexWaiter {
 	// kernel glue (Task 1.2) must therefore use wake() for FUTEX_WAKE and reserve wakeBitset()
 	// for FUTEX_WAKE_BITSET with an explicit caller-supplied mask.
 	unsigned    bitset;
+	// Set true by the wake path (the kernel glue) just before it readies this waiter's task, so
+	// the waiter can tell an explicit FUTEX_WAKE apart from a timeout/signal after it resumes —
+	// the scheduler's wake is deferred, so the clock may pass the deadline even on a real wake.
+	bool        woken;
 	FutexWaiter* next;      // intrusive FIFO link within a bucket
 };
 
@@ -85,7 +89,7 @@ private:
 // Pure FUTEX_WAIT precondition check: returns 0 if *uaddr still equals `expected` (the caller
 // should block), or -EAGAIN (-11) if it already differs (a racing wake bumped the word, so the
 // wait must not park). Kept here, free of errno headers, so it is host-tested with the table.
-int futexWaitPrecheck(const unsigned* uaddr, unsigned expected);
+int futexWaitPrecheck(volatile const unsigned* uaddr, unsigned expected);
 
 }  // namespace kernel
 

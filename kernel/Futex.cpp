@@ -107,7 +107,7 @@ int FutexTable::requeue(const void* fromSpace, void* from,
 	return woken + moved;
 }
 
-int futexWaitPrecheck(const unsigned* uaddr, unsigned expected) {
+int futexWaitPrecheck(volatile const unsigned* uaddr, unsigned expected) {
 	return (*uaddr == expected) ? 0 : -11;   // -EAGAIN: the word changed under us, don't park
 }
 

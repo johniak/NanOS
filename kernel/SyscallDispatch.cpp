@@ -253,6 +253,13 @@ enum {
 	FUTEX_PRIVATE_FLAG = 128, FUTEX_CLOCK_REALTIME = 256,
 };
 
+// futex is a RAW Linux-ABI syscall: its negated-errno return is read DIRECTLY by its low-level
+// callers (the vendored musl pthread internals, Task 4; the picolibc lock retarget, Task 3.2),
+// which compare it against musl's Linux-numbered errno constants — it is NOT routed through
+// picolibc `errno`. So these two use Linux i386 numbers (musl's), deliberately distinct from the
+// picolibc-aligned socket/file errnos in Syscall.h. EAGAIN(11)/EINVAL(22) happen to match both.
+enum { ENOSYS = 38, ETIMEDOUT = 110 };
+
 // The single kernel-global futex table. Its only state is a zeroed bucket array, identical to
 // .bss zero-init — so it is correct even though the kernel never runs global constructors.
 static FutexTable g_futex;
@@ -265,6 +272,7 @@ static int futexWakeN(const void* space, void* uaddr, unsigned n, unsigned bitse
 		FutexWaiter* w = useBitset ? g_futex.popOneBitset(space, uaddr, bitset)
 		                           : g_futex.popOne(space, uaddr);
 		if (!w) break;
+		w->woken = true;            // mark explicit wake so the waiter won't misread a late tick as timeout
 		Scheduler::wake(w->task);
 		woke++;
 	}
@@ -275,7 +283,7 @@ static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 		unsigned uaddr2, unsigned val3) {
 	int cmd = op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
 	if (!(op & FUTEX_PRIVATE_FLAG))
-		return -38;            // -ENOSYS: process-shared futexes are out of scope
+		return -ENOSYS;        // process-shared futexes are out of scope
 	if (uaddr == 0) return -EINVAL;
 	const void* space = ProcTable::current()->space;
 	void* ua = (void*) uaddr;
@@ -288,7 +296,7 @@ static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 		// Atomic compare-and-enqueue: re-test *uaddr and park, interrupts off, so a concurrent
 		// wake cannot land between the test and the enqueue (uniprocessor: cli is sufficient).
 		unsigned long f = arch::cpuIrqSave();
-		if (futexWaitPrecheck((const unsigned*) uaddr, val) != 0) {
+		if (futexWaitPrecheck((volatile const unsigned*) uaddr, val) != 0) {
 			arch::cpuIrqRestore(f);
 			return -EAGAIN;    // the word already changed -> don't block
 		}
@@ -318,8 +326,11 @@ static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 		g_futex.remove(&w);
 		arch::cpuIrqRestore(f2);
 
+		if (w.woken) return 0;                                     // an explicit FUTEX_WAKE always wins,
+		                                                           // even if the deferred wake let the
+		                                                           // clock pass the deadline first
 		if (hasPendingSignalCurrent()) return -ERESTARTSYS;        // restart or -EINTR at delivery
-		if (timed && (int) (Scheduler::ticks() - deadline) >= 0) return -110;   // -ETIMEDOUT
+		if (timed && (int) (Scheduler::ticks() - deadline) >= 0) return -ETIMEDOUT;
 		return 0;
 	}
 	case FUTEX_WAKE:
@@ -331,7 +342,7 @@ static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 		// CMP_REQUEUE gates on *uaddr == val3 (the expected word) before touching the queue.
 		if (cmd == FUTEX_CMP_REQUEUE) {
 			unsigned long f = arch::cpuIrqSave();
-			int mismatch = (futexWaitPrecheck((const unsigned*) uaddr, val3) != 0);
+			int mismatch = (futexWaitPrecheck((volatile const unsigned*) uaddr, val3) != 0);
 			arch::cpuIrqRestore(f);
 			if (mismatch) return -EAGAIN;
 		}
