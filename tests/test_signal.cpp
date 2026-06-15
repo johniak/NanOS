@@ -28,6 +28,21 @@ TEST_CASE("signal mask is per-thread; dispositions are process-wide") {
 	CHECK(ps.handler(SIGUSR1) == (void*)0x1234); // shared dispositions
 }
 
+TEST_CASE("SIGCONT cancels every pending stop signal, including SIGTTIN/SIGTTOU") {
+	ProcSignals ps;
+	sigInit(ps);
+	sigPost(ps, SIGTTIN);
+	sigPost(ps, SIGTTOU);
+	sigPost(ps, SIGTSTP);
+	CHECK((ps.pending & (1u << (SIGTTIN - 1))) != 0);   // all three pending first
+	sigPost(ps, SIGCONT);                               // ... then SIGCONT cancels them all
+	CHECK((ps.pending & (1u << (SIGSTOP - 1))) == 0);
+	CHECK((ps.pending & (1u << (SIGTSTP - 1))) == 0);
+	CHECK((ps.pending & (1u << (SIGTTIN - 1))) == 0);
+	CHECK((ps.pending & (1u << (SIGTTOU - 1))) == 0);
+	CHECK((ps.pending & (1u << (SIGCONT - 1))) != 0);   // SIGCONT itself stays pending
+}
+
 TEST_CASE("sigPost/sigNextDeliverable: lowest pending unblocked signal") {
 	ThreadSignals ts;
 	ProcSignals ps;
@@ -159,7 +174,7 @@ TEST_CASE("sigExecReset: caught -> DFL, ignored stays ignored, pending dropped")
 	ps.restart = 0x6;
 	sigPost(ps, SIGTERM);
 
-	sigExecReset(ps, ts);
+	sigExecReset(ts, ps);
 	CHECK(ps.handlers[SIGINT] == kSigDefault);       // reset
 	CHECK(ps.handlers[SIGQUIT] == kSigIgnore);      // preserved
 	CHECK(ts.blocked == 0x4u);                     // mask preserved

@@ -143,7 +143,7 @@ void sigForkInherit(ThreadSignals& child, const ThreadSignals& parent);// copy m
 // execve: caught dispositions -> default (ignored stay ignored), SA_RESTART flags cleared,
 // and all pending dropped (both the process-directed set and this thread's). The block mask
 // is preserved (Linux preserves it across exec).
-void sigExecReset(ProcSignals& ps, ThreadSignals& ts);
+void sigExecReset(ThreadSignals& ts, ProcSignals& ps);   // arg order matches the rest of the split API: (thread, proc)
 
 // Encode a child status the glibc/picolibc W* macros understand:
 //   exited  -> (code & 0xFF) << 8     (WIFEXITED)

@@ -153,7 +153,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	initBrk(p);                              // fresh image -> empty heap
 	ProcTable::setCommand(p, argv, argc);
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
-	sigExecReset(p->psig, p->leaderThread()->sig);   // caught handlers -> default across exec
+	sigExecReset(p->leaderThread()->sig, p->psig);   // caught handlers -> default across exec
 	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
 	kernelSyscalls()->resetForRun();
 
@@ -342,14 +342,26 @@ static void procKill(int sig) {
 	p->exited = true;
 	p->sys->closeAll();      // release fds/pipes at death so peers see EOF before the reap
 	orphanCheckOnExit(p);    // same orphan-group handling as a normal exit
+	// Re-home our children on init (pid 1) so they stay reapable after we die — identical to
+	// procExit. A signal death must do this too, or grandchildren name a freed parent slot and
+	// leak as unreapable zombies.
+	if (p->pid != 1 && ProcTable::reparentChildren(p->pid, 1) > 0) {
+		Process* init = ProcTable::byPid(1);
+		if (init) { sigPost(init->psig, SIGCHLD); Scheduler::wake(init->task); }
+	}
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 		p->space = 0;
 	}
+	// Notify the parent with SIGCHLD (+ wake), exactly as procExit does — a parent collecting
+	// children asynchronously via a SIGCHLD handler (e.g. a job-control shell) must learn of a
+	// signal death, not only a normal exit.
 	Process* parent = ProcTable::byPid(p->parent);
-	if (parent)
+	if (parent) {
+		sigPost(parent->psig, SIGCHLD);
 		Scheduler::wake(parent->task);
+	}
 	Scheduler::current()->state = TASK_ZOMBIE;
 	Scheduler::schedule();
 	for (;;) {}   // unreachable

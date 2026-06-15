@@ -68,7 +68,9 @@ void sigInit(ProcSignals& s) {
 // directed, the two words never disagree in practice.
 static void postBit(unsigned& pending, int sig) {
 	if (sig == SIGCONT)
-		pending &= ~(bit(SIGSTOP) | bit(SIGTSTP));
+		// Cancel every pending stop signal, matching Linux's SIG_KERNEL_STOP_MASK
+		// {SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU} — not just the two job-control keys.
+		pending &= ~(bit(SIGSTOP) | bit(SIGTSTP) | bit(SIGTTIN) | bit(SIGTTOU));
 	else if (sigDefaultAction(sig) == SD_STOP)
 		pending &= ~bit(SIGCONT);
 	pending |= bit(sig);
@@ -154,7 +156,7 @@ void sigForkInherit(ThreadSignals& child, const ThreadSignals& parent) {
 // execve keeps ignored signals ignored but resets caught ones to the default; pending
 // signals are dropped (both the process-directed set and the calling thread's). The
 // block mask is preserved (Linux preserves it across exec).
-void sigExecReset(ProcSignals& ps, ThreadSignals& ts) {
+void sigExecReset(ThreadSignals& ts, ProcSignals& ps) {
 	ps.pending = 0;
 	ts.pending = 0;
 	for (int i = 0; i < NANOS_NSIG; i++)
