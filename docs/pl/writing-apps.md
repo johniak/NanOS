@@ -303,25 +303,28 @@ _start:
 | `posixstubs.c`       | stuby (getrlimit/getrusage…) |
 | `include/`           | POSIX-owe nagłówki (arpa, net, netinet, sys, dirent.h, netdb.h, poll.h, pty.h…) |
 
-**Dlaczego `nx-dllimport.h`?** picolibc eksponuje `stdin/stdout/stderr` jako *obiekty danych*,
-a `errno` jako *zmienną*. Program odwołuje się do nich po adresie — czego biblioteka dzielona
-nie może spełnić bez pośrednictwa typu dllimport. Force-include `nx-dllimport.h` przedefiniowuje
-każdy z tych symboli na dereferencję slotu IAT (`__imp_<name>`), który loader wypełnia adresem
-symbolu wewnątrz `libc.ndl` — dokładnie model `__declspec(dllimport)` z Windows:
+**Dlaczego `nx-dllimport.h`?** picolibc eksponuje `stdin/stdout/stderr` (i `environ`) jako *obiekty
+danych*. Program odwołuje się do nich po adresie — czego biblioteka dzielona nie może spełnić bez
+pośrednictwa typu dllimport. Force-include `nx-dllimport.h` przedefiniowuje każdy z tych symboli na
+dereferencję slotu IAT (`__imp_<name>`), który loader wypełnia adresem symbolu wewnątrz `libc.ndl` —
+dokładnie model `__declspec(dllimport)` z Windows:
 
 ```c
 extern FILE **__imp_stdin;
 extern FILE **__imp_stdout;
 extern FILE **__imp_stderr;
-extern int   *__imp_errno;
 extern char ***__imp_environ;
 
 #define stdin   (*__imp_stdin)
 #define stdout  (*__imp_stdout)
 #define stderr  (*__imp_stderr)
-#define errno   (*__imp_errno)
 #define environ (*__imp_environ)
 ```
+
+`errno` jest obsłużony inaczej — to **nie** import danych. picolibc budujemy z
+`-Derrno-function=__errno_location`, więc `errno` rozwija się do `(*__errno_location())` — zwykłego
+importu funkcji. `__errno_location()` w `libc.ndl` zwraca adres komórki errno **bieżącego wątku**
+(jego TCB pod `%gs:0`), więc errno jest per-wątek i bezpieczny wątkowo, bez współdzielonego slotu.
 
 Dlatego programy są kompilowane z `DYNHDR`, a glue (które *jest* libc) — bez.
 

@@ -171,15 +171,21 @@ Linker ściąga tylko te membery, do których program faktycznie się odwołuje.
 otagować każdy `NxImport` jego biblioteką źródłową (stąd bierze się `libOff`). Sloty żyją
 wewnątrz załadowanego obrazu, by loader mógł je załatać.
 
-**Importy danych** (`stdin`/`stdout`/`stderr`/`errno`/`environ`) nie da się spełnić zwykłym
+**Importy danych** (`stdin`/`stdout`/`stderr`/`environ`) nie da się spełnić zwykłym
 externem przez granicę modułu, więc `user/libc-glue/nx-dllimport.h` (force-included do źródeł
 programu, *nie* do glue, które *jest* libc) przedefiniowuje każdy jako dereferencję jego slotu IAT —
 dokładnie model `__declspec(dllimport)` z Windows:
 
 ```c
-extern int *__imp_errno;
-#define errno (*__imp_errno)
+extern char ***__imp_environ;
+#define environ (*__imp_environ)
 ```
+
+`errno` jest wyjątkiem — to **nie** import danych. picolibc budujemy z
+`-Derrno-function=__errno_location`, więc `errno` rozwija się do `(*__errno_location())` — zwykłego
+importu *funkcji*, który libc.ndl rozwiązuje jak każdy symbol kodu. `__errno_location()` zwraca adres
+komórki errno **bieżącego wątku** (w jego TCB pod `%gs:0`) — errno jest więc per-wątek i bez
+współdzielonego slotu danych (patrz `user/libc-glue/tls.c`).
 
 Istniejące biblioteki: **`libc.ndl`** (picolibc + warstwa syscalli `user/libc-glue`, budowana
 `--export-all`), **`libnw.ndl`** (klient kompozytora NanWM), **`libnwui.ndl`** (toolkit UI, potrzebuje

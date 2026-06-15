@@ -54,5 +54,8 @@ void __nx_init_tls(void) {
 	ud.base_addr    = (unsigned int) &__nx_main_tcb;
 	ud.limit        = 0xFFFFF;
 	ud.flags        = 0x51;                /* seg_32bit | limit_in_pages | useable */
-	sys_set_thread_area(&ud);
+	if (sys_set_thread_area(&ud) != 0)
+		/* TLS setup failed -> %gs:0 is invalid and the first errno access would fault or
+		 * corrupt memory. Trap loudly instead of limping on with a broken thread pointer. */
+		__asm__ __volatile__("int3");
 }

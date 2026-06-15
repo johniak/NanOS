@@ -171,15 +171,21 @@ The linker pulls only the members the program actually references. `user/nx.ld` 
 tag each `NxImport` with its source library (that is where `libOff` comes from). The slots live
 inside the loaded image so the loader can patch them.
 
-**Data imports** (`stdin`/`stdout`/`stderr`/`errno`/`environ`) can't be satisfied by a plain
+**Data imports** (`stdin`/`stdout`/`stderr`/`environ`) can't be satisfied by a plain
 extern across a module boundary, so `user/libc-glue/nx-dllimport.h` (force-included into program
 sources, *not* into the glue that *is* libc) redefines each as a dereference of its IAT slot —
 exactly the Windows `__declspec(dllimport)` model:
 
 ```c
-extern int *__imp_errno;
-#define errno (*__imp_errno)
+extern char ***__imp_environ;
+#define environ (*__imp_environ)
 ```
+
+`errno` is the exception: it is **not** a data import. picolibc is built with
+`-Derrno-function=__errno_location`, so `errno` expands to `(*__errno_location())` — an ordinary
+*function* import that libc.ndl resolves like any code symbol. `__errno_location()` returns the
+address of the **current thread's** errno cell (in its TCB at `%gs:0`), giving a thread-safe,
+per-thread errno with no shared data slot (see `user/libc-glue/tls.c`).
 
 The libraries that exist: **`libc.ndl`** (picolibc + `user/libc-glue` syscall layer, built
 `--export-all`), **`libnw.ndl`** (NanWM compositor client), **`libnwui.ndl`** (UI toolkit, needs

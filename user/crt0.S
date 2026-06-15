@@ -27,7 +27,8 @@ _start:
     push ecx                    ; __nx_set_environ(envp)
     call __nx_set_environ       ; publish the environment for getenv()
     add esp, 4                  ; drop its arg; argc/argv/envp remain staged for main
-    mov eax, [edx]              ; argv[0] (edx still points at the argv array)
+    mov edx, [esp + 4]          ; reload argv (edx is caller-saved across __nx_set_environ)
+    mov eax, [edx]              ; argv[0]
     push eax                    ; __nx_set_progname(argv[0]) so getprogname() works
     call __nx_set_progname      ; (gnulib's error()/coreutils use getprogname for the prefix)
     add esp, 4
