@@ -7,7 +7,7 @@ include arch/$(ARCH)/arch.mk
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamFs.o RamBlockDevice.o DeviceManager.o Vfs.o
 MI_SOURCES+= Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o
 MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
-MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o Csprng.o
+MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o Futex.o Csprng.o
 MI_SOURCES+= Pci.o
 MI_SOURCES+= Net.o NetBuf.o NetDevice.o Loopback.o NetCore.o Ether.o Arp.o Ip.o Route.o Icmp.o
 MI_SOURCES+= Socket.o Udp.o Raw.o Tcp.o Packet.o Unix.o NetProc.o NetStats.o
@@ -991,7 +991,7 @@ TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
-TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp fs/ext/Crc32c.cpp fs/ext/BlockCache.cpp fs/ext/ExtCsum.cpp fs/ext/ExtAllocator.cpp fs/ext/Journal.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp kernel/Csprng.cpp lib/String.cpp
+TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp fs/ext/Crc32c.cpp fs/ext/BlockCache.cpp fs/ext/ExtCsum.cpp fs/ext/ExtAllocator.cpp fs/ext/Journal.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp kernel/Futex.cpp kernel/Csprng.cpp lib/String.cpp
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp arch/x86/mm/AddressSpace.cpp
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
 TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
@@ -1009,7 +1009,7 @@ TEST_MODULES+= net/NetProc.cpp net/NetStats.cpp   # /proc/net renderers + SNMP c
 TEST_MODULES+= user/libc-glue/resolv_parse.c   # pure resolver parsers (resolv.conf/services/protocols/DNS, FAZA E)
 TEST_MODULES+= user/libc-glue/crypt.c          # crypt(3) SHA-512 ($6$) — known-answer vs openssl
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
