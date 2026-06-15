@@ -37,12 +37,16 @@ void Gdt::setTlsBase(unsigned base) {
 	// Rewrite only entry 6's base bytes, then reload %gs (0x33) so the CPU refreshes the
 	// hidden descriptor cache from the updated entry. Base 0 (a thread with no TLS) is
 	// harmless: the kernel never touches %gs and such a thread never reads %gs:-relative.
+	// Base bytes only (limit/flags untouched) — mirrors gdtPackBase's base scatter; the hot path
+	// must not rewrite the limit. The "memory" clobber serializes these stores BEFORE the %gs
+	// reload: without it, at -O2 the compiler could hoist the segment load ahead of the base
+	// writes and reload %gs from a stale base.
 	unsigned char* d = (unsigned char*) &gdtEntries[6];
 	d[2] = (unsigned char) (base & 0xFF);
 	d[3] = (unsigned char) ((base >> 8) & 0xFF);
 	d[4] = (unsigned char) ((base >> 16) & 0xFF);
 	d[7] = (unsigned char) ((base >> 24) & 0xFF);
-	__asm__ __volatile__("mov %0, %%gs" : : "r"((unsigned short) 0x33));
+	__asm__ __volatile__("mov %0, %%gs" : : "r"((unsigned short) 0x33) : "memory");
 }
 
 void Gdt::setKernelStack(unsigned esp0) {
