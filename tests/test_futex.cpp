@@ -108,6 +108,18 @@ TEST_CASE("wakeBitset honours n and matches FIFO order") {
 	CHECK(ft.count(sp, A) == 2);
 }
 
+TEST_CASE("a bitset==0 (plain FUTEX_WAIT) waiter is never woken by wakeBitset, only by wake") {
+	FutexTable ft;
+	void* sp = (void*)0x10;
+	void* A = (void*)0x1000;
+	FutexWaiter z{};                            // bitset defaults to 0 -> plain FUTEX_WAIT
+	ft.enqueue(sp, A, &z);
+	CHECK(ft.wakeBitset(sp, A, 1, ~0u) == 0);   // not even MATCH_ANY matches a bitset==0 waiter
+	CHECK(ft.count(sp, A) == 1);
+	CHECK(ft.wake(sp, A, 1) == 1);              // plain wake() is the only thing that catches it
+	CHECK(ft.count(sp, A) == 0);
+}
+
 TEST_CASE("requeue with nwake>0 wakes then moves") {
 	FutexTable ft;
 	void* sp = (void*)0x10;

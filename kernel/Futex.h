@@ -30,7 +30,12 @@ struct FutexWaiter {
 	const void* space;     // owning AddressSpace* (key part 1)
 	void*       uaddr;      // user virtual address of the futex word (key part 2)
 	Task*       task;       // the blocked task to wake (opaque to this table)
-	unsigned    bitset;     // FUTEX_WAIT_BITSET mask (0 is treated as "all" by callers)
+	// FUTEX_WAIT_BITSET mask. A plain FUTEX_WAIT waiter stores 0 here, meaning "wake me only
+	// via wake(), not wakeBitset()". wakeBitset matches (w->bitset & mask) != 0, so a bitset==0
+	// waiter is NEVER matched by it — not even with mask == ~0u (FUTEX_BITSET_MATCH_ANY). The
+	// kernel glue (Task 1.2) must therefore use wake() for FUTEX_WAKE and reserve wakeBitset()
+	// for FUTEX_WAKE_BITSET with an explicit caller-supplied mask.
+	unsigned    bitset;
 	FutexWaiter* next;      // intrusive FIFO link within a bucket
 };
 
@@ -45,7 +50,8 @@ public:
 	// were removed. The caller wakes each (this pure table does not touch the scheduler).
 	int wake(const void* space, void* uaddr, int n);
 
-	// Like wake, but only matches waiters whose (bitset & arg) != 0.
+	// Like wake, but only matches waiters whose (bitset & arg) != 0. NOTE: a waiter parked
+	// with bitset==0 (a plain FUTEX_WAIT) is never matched here — use wake() for FUTEX_WAKE.
 	int wakeBitset(const void* space, void* uaddr, int n, unsigned bitset);
 
 	// Wake up to `nwake` waiters on (fromSpace, from), then move up to `nmove` of the
