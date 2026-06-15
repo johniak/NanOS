@@ -67,7 +67,18 @@ A `Process` becomes a **thread group**. Each pthread is an additional `Task`.
   index; userland sets `GS = (index<<3)|3`. The running thread's TLS GDT entry is reloaded on context
   switch.
 - **`set_tid_address(258)`** — record the CHILD_CLEARTID address; on thread exit the kernel writes `0`
-  to `*ctid` and `FUTEX_WAKE`s it (how `pthread_join` observes exit).
+  to `*ctid` and `FUTEX_WAKE`s it (how `pthread_join` observes exit). **Stack ownership:** the kernel never
+  frees a thread's *user* stack/TLS (userland `mmap`'d them — `pthread_join`/`detach` reclaims them); on a
+  per-thread exit the kernel only CLEARTID-wakes + reaps the `Task`/kernel stack.
+- **Threads need their own pool + allocator,** not just a leader slot: `clone` creates many non-leader
+  threads. A global `Thread` pool (sized like the task table) with alloc/free + a `threadByTid` that scans
+  all threads; tids are drawn from the **same id space as pids** (Linux model) so they never collide. The
+  `Task`↔`Thread`↔`Process` binding goes through one helper (the `Task` is attached after `alloc`).
+- **64-bit signals force a syscall-ABI change:** the classic `sigprocmask`/`sigsuspend` carry the mask as
+  one 32-bit word and can't address signals 32..64, so add the Linux **`rt_sigprocmask/rt_sigaction/
+  rt_sigpending/rt_sigsuspend`** family (mask by pointer + `sigsetsize`); the legacy one-word calls keep
+  serving signals 1..31. Futex blocking uses the scheduler's `block()`/`wake(Task*)` (+ `sleepUntil` for
+  timeouts) over the futex's own waiter queue — not the `WaitQueue`/`sleepOn` path, which would desync.
 - **`gettid(224)`, `tgkill(270)`** (per-thread signal), **`exit(1)`** = end *this thread*, **`exit_group(252)`**
   = end the whole group. `get_thread_area(244)` for completeness.
 
