@@ -84,6 +84,19 @@ ret_from_fork:
    mov fs, ax
    mov gs, ax
 
+   ; Per-thread TLS: returning to ring 3, point %gs at the TLS slot (selector 0x33,
+   ; GDT entry 6 whose base the scheduler/set_thread_area keep aimed at the current
+   ; thread's TLS block) instead of mirroring the user data selector. Without this the
+   ; line above would reset %gs to the saved ds (0x23) on every syscall return, wiping
+   ; the thread pointer (see Gdt::setTlsBase). Saved CS sits at [esp+44] now (esp+0..31
+   ; = pusha, +32 = int_no, +36 = err_code, +40 = eip, +44 = cs). Ring 0 returns are
+   ; left untouched (the kernel never uses %gs for addressing).
+   test dword [esp + 44], 3
+   jz .ret_kernel_gs
+   mov ax, 0x33
+   mov gs, ax
+.ret_kernel_gs:
+
    popa                     ; Pops edi,esi,ebp...
    add esp, 8     ; Cleans up the pushed error code and pushed ISR number
    sti

@@ -8,11 +8,16 @@
 [GLOBAL _start]
 [EXTERN main]
 [EXTERN exit]
+[EXTERN __nx_init_tls]
 [EXTERN __nx_set_environ]
 [EXTERN __nx_set_progname]
 
 _start:
     mov ebp, 0
+    ; Install the main thread's TLS (TCB + %gs:0) FIRST, before any libc work — errno is
+    ; (*__errno_location()) which reads the TCB at %gs:0, so the thread pointer must be
+    ; live before the first libc call. (libc.ndl exports __nx_init_tls; see tls.c.)
+    call __nx_init_tls
     mov eax, [esp]              ; argc
     lea edx, [esp + 4]         ; argv
     lea ecx, [esp + 8 + eax*4] ; envp  (= esp + 4 + (argc+1)*4)

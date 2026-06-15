@@ -632,8 +632,8 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex
-SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex
+USER_PROGS=init nsh cat ls sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest
+SYS_PROGS=nsh cat ls free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -754,6 +754,7 @@ $(BINFOLDER)pipetest.nxe:  $(DYN_DEPS) $(BINFOLDER)pipetest.o
 $(BINFOLDER)forkmany.nxe:  $(DYN_DEPS) $(BINFOLDER)forkmany.o
 $(BINFOLDER)orphan.nxe:    $(DYN_DEPS) $(BINFOLDER)orphan.o
 $(BINFOLDER)clonetest.nxe: $(DYN_DEPS) $(BINFOLDER)clonetest.o $(BINFOLDER)clone_helper.o
+$(BINFOLDER)errnotest.nxe: $(DYN_DEPS) $(BINFOLDER)errnotest.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
@@ -831,7 +832,7 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
   $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
   $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o \
-  $(BINFOLDER)crypt.o
+  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not

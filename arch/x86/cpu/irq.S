@@ -58,6 +58,16 @@ irq_common_stub:
    mov fs, bx
    mov gs, bx
 
+   ; Per-thread TLS: on the way back to ring 3, point %gs at the TLS slot (0x33) rather
+   ; than the saved data selector, so the thread pointer survives a timer IRQ too. Saved
+   ; CS is at [esp+44] here (esp+0..31 = pushad, +32 = int_no, +36 = err_code, +40 = eip,
+   ; +44 = cs). Ring 0 returns keep the restored kernel %gs. (Matches isr.S/ret_from_fork.)
+   test dword [esp + 44], 3
+   jz .irq_kernel_gs
+   mov bx, 0x33
+   mov gs, bx
+.irq_kernel_gs:
+
   popad
    add esp, 8
    sti

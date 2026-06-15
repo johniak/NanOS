@@ -32,20 +32,23 @@ extern const char (*__imp__ctype_b)[];
 #undef stdin
 #undef stdout
 #undef stderr
-#undef errno
 
 /* Each slot holds the ADDRESS of the corresponding object in libc.ndl; dereferencing it
- * yields the value the program expects (a FILE* for the streams, an int lvalue for errno). */
+ * yields the value the program expects (a FILE* for the streams). */
 extern FILE **__imp_stdin;
 extern FILE **__imp_stdout;
 extern FILE **__imp_stderr;
-extern int   *__imp_errno;
 extern char ***__imp_environ;
 
 #define stdin   (*__imp_stdin)
 #define stdout  (*__imp_stdout)
 #define stderr  (*__imp_stderr)
-#define errno   (*__imp_errno)
 #define environ (*__imp_environ)
+
+/* errno is NOT a data slot: picolibc is built with -Derrno-function=__errno_location, so
+ * <errno.h> already expands `errno` to `(*__errno_location())`. __errno_location is an
+ * ordinary FUNCTION export of libc.ndl (glue: tls.c) the loader resolves like any code
+ * symbol, returning &__pthread_self()->__errno — a per-thread cell. Nothing to redirect
+ * here; we deliberately do NOT #undef/redefine errno (the old `__imp_errno` slot is gone). */
 
 #endif

@@ -79,7 +79,8 @@ RUN set -eux; \
         -Dincludedir=include -Dlibdir=lib \
         -Dmultilib=false -Dpicocrt=false -Dpicolib=true -Dsemihost=false \
         -Dposix-console=true \
-        -Dtests=false -Dformat-default=double -Dthread-local-storage=false; \
+        -Dtests=false -Dformat-default=double -Dthread-local-storage=false \
+        -Derrno-function=__errno_location; \
     ninja -C build; \
     ninja -C build install; \
     cd /; rm -rf /tmp/picolibc /tmp/picolibc-i686-elf.txt
