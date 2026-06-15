@@ -73,6 +73,16 @@ TEST_CASE("process starts as a single-thread group whose leader tid == pid") {
 	CHECK(p->leaderThread()->tid == p->pid);
 }
 
+TEST_CASE("currentThread tracks the running thread, not just the process") {
+	kernel::ProcTable::init();
+	kernel::Process* p = kernel::ProcTable::alloc(0);
+	REQUIRE(p != nullptr);
+	kernel::ProcTable::setCurrent(p);
+	kernel::ProcTable::setCurrentThread(p->leaderThread());
+	CHECK(kernel::ProcTable::currentThread() == p->leaderThread());
+	CHECK(kernel::ProcTable::currentThread()->proc == p);
+}
+
 TEST_CASE("allocThread adds a non-leader thread with a fresh tid; free paths release slots") {
 	ProcTable::init();
 	Process* p = ProcTable::alloc(0);

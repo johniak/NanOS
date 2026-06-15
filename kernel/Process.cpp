@@ -12,6 +12,7 @@ static Process g_procs[MAXPROC];
 static Thread g_threads[MAXTHREADS];
 static int g_nextPid = 1;
 static Process* g_current = 0;
+static Thread* g_currentThread = 0;
 static unsigned g_cpuUser, g_cpuSystem, g_cpuIdle;   // global CPU ticks (jiffies) by class
 static unsigned g_forksTotal;                         // processes ever created (since boot)
 static int g_lastPid;                                 // most recently allocated pid
@@ -53,6 +54,7 @@ void ProcTable::init() {
 		g_threads[i].used = false;
 	g_nextPid = 1;
 	g_current = 0;
+	g_currentThread = 0;
 	g_cpuUser = g_cpuSystem = g_cpuIdle = 0;
 	g_forksTotal = 0;
 	g_lastPid = 0;
@@ -107,6 +109,8 @@ Process* ProcTable::alloc(int parent) {
 
 Process* ProcTable::current() { return g_current; }
 void ProcTable::setCurrent(Process* p) { g_current = p; }
+Thread* ProcTable::currentThread() { return g_currentThread; }
+void ProcTable::setCurrentThread(Thread* t) { g_currentThread = t; }
 
 Process* ProcTable::byPid(int pid) {
 	for (int i = 0; i < MAXPROC; i++)

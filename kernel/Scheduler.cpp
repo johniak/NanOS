@@ -164,6 +164,7 @@ void Scheduler::schedule() {
 	g_tasks[next].state = TASK_RUNNING;
 	arch::setKernelStack(g_tasks[next].esp0);   // ring3 traps land on next's kstack
 	ProcTable::setCurrent(g_tasks[next].proc);  // route syscalls to it (O(1) back-pointer)
+	ProcTable::setCurrentThread(g_tasks[next].thread);  // and the specific thread within it
 	arch::cpuIrqRestore(flags);
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
 }
@@ -351,6 +352,7 @@ void Scheduler::start() {
 	g_tasks[first].state = TASK_RUNNING;
 	arch::setKernelStack(g_tasks[first].esp0);
 	ProcTable::setCurrent(g_tasks[first].proc);
+	ProcTable::setCurrentThread(g_tasks[first].thread);
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static unsigned throwaway;
 	arch::archContextSwitch(&throwaway, g_tasks[first].kesp);

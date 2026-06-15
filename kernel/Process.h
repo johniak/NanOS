@@ -114,6 +114,8 @@ public:
 	static Process* alloc(int parent);   // a free slot with a fresh pid, or 0
 	static Process* current();           // the running process (0 before set)
 	static void setCurrent(Process* p);
+	static Thread* currentThread();      // the running thread (0 before set)
+	static void setCurrentThread(Thread* t);
 	static Process* byPid(int pid);
 	static Process* byTask(Task* t);     // the process whose scheduler task is t
 
