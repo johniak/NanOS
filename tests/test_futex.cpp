@@ -3,6 +3,47 @@
 
 using namespace kernel;
 
+TEST_CASE("FUTEX_WAIT returns -EAGAIN when the value already changed") {
+	unsigned word = 7;
+	CHECK(kernel::futexWaitPrecheck(&word, /*expected*/5) == -11);  // 7 != 5 -> -EAGAIN
+	CHECK(kernel::futexWaitPrecheck(&word, /*expected*/7) == 0);    // matches -> would block
+}
+
+TEST_CASE("popOne unlinks the oldest matching waiter (FIFO), 0 when none") {
+	FutexTable ft;
+	void* sp = (void*)0x10;
+	void* A = (void*)0x1000;
+	void* B = (void*)0x2000;
+	FutexWaiter a{}, b{}, other{};
+	ft.enqueue(sp, A, &a);
+	ft.enqueue(sp, A, &b);
+	ft.enqueue(sp, B, &other);            // different key, must be untouched
+	CHECK(ft.popOne(sp, A) == &a);        // oldest first
+	CHECK(ft.popOne(sp, A) == &b);
+	CHECK(ft.popOne(sp, A) == (FutexWaiter*)0);   // drained -> 0
+	CHECK(ft.count(sp, B) == 1);                  // other key intact
+	CHECK(ft.popOne(sp, B) == &other);
+	// popped nodes are unlinked (next cleared)
+	CHECK(a.next == (FutexWaiter*)0);
+}
+
+TEST_CASE("popOneBitset matches only intersecting masks, never a bitset==0 waiter") {
+	FutexTable ft;
+	void* sp = (void*)0x10;
+	void* A = (void*)0x1000;
+	FutexWaiter z{}, a{}, b{};
+	z.bitset = 0; a.bitset = 0x1; b.bitset = 0x2;
+	ft.enqueue(sp, A, &z);
+	ft.enqueue(sp, A, &a);
+	ft.enqueue(sp, A, &b);
+	CHECK(ft.popOneBitset(sp, A, 0x1) == &a);             // skips z (0), matches a
+	CHECK(ft.popOneBitset(sp, A, 0x4) == (FutexWaiter*)0);// nothing intersects 0x4 (b is 0x2)
+	CHECK(ft.popOneBitset(sp, A, 0x2) == &b);
+	CHECK(ft.count(sp, A) == 1);                          // only z remains
+	CHECK(ft.popOneBitset(sp, A, ~0u) == (FutexWaiter*)0);// MATCH_ANY still never wakes z (0)
+	CHECK(ft.popOne(sp, A) == &z);                        // plain pop catches it
+}
+
 TEST_CASE("futex buckets keyed by (space, addr): independent spaces, wake N, requeue") {
 	kernel::FutexTable ft;
 	void* sp1 = (void*)0xA00; void* sp2 = (void*)0xB00;   // two address spaces

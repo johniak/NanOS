@@ -54,6 +54,15 @@ public:
 	// with bitset==0 (a plain FUTEX_WAIT) is never matched here — use wake() for FUTEX_WAKE.
 	int wakeBitset(const void* space, void* uaddr, int n, unsigned bitset);
 
+	// Unlink and return the oldest waiter on (space, uaddr), or 0 if none. Unlike wake() (which
+	// only counts), this hands the node back so the kernel glue can call Scheduler::wake on its
+	// Task*. The table stays pure: it returns the node, the caller does the scheduler work.
+	FutexWaiter* popOne(const void* space, void* uaddr);
+
+	// popOne restricted to waiters whose (bitset & arg) != 0 (FUTEX_WAKE_BITSET). As with
+	// wakeBitset, a bitset==0 (plain FUTEX_WAIT) waiter is never matched.
+	FutexWaiter* popOneBitset(const void* space, void* uaddr, unsigned bitset);
+
 	// Wake up to `nwake` waiters on (fromSpace, from), then move up to `nmove` of the
 	// remaining from-waiters to (toSpace, to), re-keying them. Returns nwoken + nmoved.
 	int requeue(const void* fromSpace, void* from,
@@ -72,6 +81,11 @@ private:
 
 	static int hash(const void* space, const void* uaddr);
 };
+
+// Pure FUTEX_WAIT precondition check: returns 0 if *uaddr still equals `expected` (the caller
+// should block), or -EAGAIN (-11) if it already differs (a racing wake bumped the word, so the
+// wait must not park). Kept here, free of errno headers, so it is host-tested with the table.
+int futexWaitPrecheck(const unsigned* uaddr, unsigned expected);
 
 }  // namespace kernel
 

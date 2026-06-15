@@ -4,6 +4,7 @@
 #include "Exec.h"
 #include "SignalDispatch.h"
 #include "Scheduler.h"
+#include "Futex.h"
 #include "Clock.h"
 #include "Csprng.h"
 #include <arch/syscall.h>
@@ -237,6 +238,111 @@ static int doSelect(Syscalls* g, int nfds, unsigned* rfds, unsigned* wfds, unsig
 		if (hasPendingSignalCurrent()) return -ERESTARTSYS;
 		if (timeoutMs > 0 && Scheduler::ticks() - start >= (unsigned) timeoutMs) return 0;
 		Scheduler::ioWait();
+	}
+}
+
+// ---- futex(2) (Task 1.2) ----------------------------------------------------------------
+// Wires the pure FutexTable onto the scheduler's block/wake primitives. Private-only: a
+// futex without FUTEX_PRIVATE_FLAG is process-shared (out of scope) -> -ENOSYS. The key is
+// (AddressSpace*, uaddr); the table only links caller-owned waiter nodes (here, on this
+// task's kernel stack), so there is no allocation. The compare-and-enqueue runs with
+// interrupts off so a wake can't slip between the load of *uaddr and the enqueue.
+enum {
+	FUTEX_WAIT = 0, FUTEX_WAKE = 1, FUTEX_REQUEUE = 3, FUTEX_CMP_REQUEUE = 4,
+	FUTEX_WAIT_BITSET = 9, FUTEX_WAKE_BITSET = 10,
+	FUTEX_PRIVATE_FLAG = 128, FUTEX_CLOCK_REALTIME = 256,
+};
+
+// The single kernel-global futex table. Its only state is a zeroed bucket array, identical to
+// .bss zero-init — so it is correct even though the kernel never runs global constructors.
+static FutexTable g_futex;
+
+// Pop up to `n` waiters matching the key (optionally a bitset) and Scheduler::wake each. The
+// pop accessor hands us the node so we can reach its Task*; the count is the return value.
+static int futexWakeN(const void* space, void* uaddr, unsigned n, unsigned bitset, bool useBitset) {
+	int woke = 0;
+	for (unsigned i = 0; i < n; i++) {
+		FutexWaiter* w = useBitset ? g_futex.popOneBitset(space, uaddr, bitset)
+		                           : g_futex.popOne(space, uaddr);
+		if (!w) break;
+		Scheduler::wake(w->task);
+		woke++;
+	}
+	return woke;
+}
+
+static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
+		unsigned uaddr2, unsigned val3) {
+	int cmd = op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+	if (!(op & FUTEX_PRIVATE_FLAG))
+		return -38;            // -ENOSYS: process-shared futexes are out of scope
+	if (uaddr == 0) return -EINVAL;
+	const void* space = ProcTable::current()->space;
+	void* ua = (void*) uaddr;
+
+	switch (cmd) {
+	case FUTEX_WAIT:
+	case FUTEX_WAIT_BITSET: {
+		unsigned bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : 0;
+		if (cmd == FUTEX_WAIT_BITSET && bitset == 0) return -EINVAL;   // empty mask is invalid
+		// Atomic compare-and-enqueue: re-test *uaddr and park, interrupts off, so a concurrent
+		// wake cannot land between the test and the enqueue (uniprocessor: cli is sufficient).
+		unsigned long f = arch::cpuIrqSave();
+		if (futexWaitPrecheck((const unsigned*) uaddr, val) != 0) {
+			arch::cpuIrqRestore(f);
+			return -EAGAIN;    // the word already changed -> don't block
+		}
+		FutexWaiter w{};
+		w.task = Scheduler::current();
+		w.bitset = bitset;
+		g_futex.enqueue(space, ua, &w);
+		arch::cpuIrqRestore(f);
+
+		// Block until woken. NULL timeout (timeout==0) blocks forever; otherwise treat the user
+		// timespec* as a relative wait and arm a tick deadline so the wait can never hang. (Linux
+		// makes WAIT_BITSET's timeout absolute; we approximate it as relative — best-effort.)
+		bool timed = (timeout != 0);
+		unsigned deadline = 0;
+		if (timed) {
+			const unsigned* ts = (const unsigned*) timeout;        // {tv_sec, tv_nsec} (i386)
+			unsigned ms = ts[0] * 1000u + (ts[1] + 999999u) / 1000000u;
+			deadline = Scheduler::ticks() + ms;
+			Scheduler::sleepUntil(deadline);
+		} else {
+			Scheduler::block();
+		}
+
+		// Cancel our waiter (idempotent: a wake already unlinked it; on timeout/signal it is
+		// still queued and this removes it) before deciding the outcome.
+		unsigned long f2 = arch::cpuIrqSave();
+		g_futex.remove(&w);
+		arch::cpuIrqRestore(f2);
+
+		if (hasPendingSignalCurrent()) return -ERESTARTSYS;        // restart or -EINTR at delivery
+		if (timed && (int) (Scheduler::ticks() - deadline) >= 0) return -110;   // -ETIMEDOUT
+		return 0;
+	}
+	case FUTEX_WAKE:
+		return futexWakeN(space, ua, val, 0, false);
+	case FUTEX_WAKE_BITSET:
+		return futexWakeN(space, ua, val, val3, true);
+	case FUTEX_REQUEUE:
+	case FUTEX_CMP_REQUEUE: {
+		// CMP_REQUEUE gates on *uaddr == val3 (the expected word) before touching the queue.
+		if (cmd == FUTEX_CMP_REQUEUE) {
+			unsigned long f = arch::cpuIrqSave();
+			int mismatch = (futexWaitPrecheck((const unsigned*) uaddr, val3) != 0);
+			arch::cpuIrqRestore(f);
+			if (mismatch) return -EAGAIN;
+		}
+		// Wake up to `val`, then requeue up to val2 (which Linux passes in the `timeout` slot
+		// for REQUEUE) of the remaining waiters from uaddr onto uaddr2. Return woken + moved.
+		int woke = futexWakeN(space, ua, val, 0, false);
+		int moved = g_futex.requeue(space, ua, space, (void*) uaddr2, 0, (int) timeout);
+		return woke + moved;
+	}
+	default:
+		return -EINVAL;
 	}
 }
 
@@ -762,6 +868,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		}
 		break;
 	}
+	case SYS_futex:
+		// a0=uaddr, a1=op, a2=val, a3=timeout (or val2 for REQUEUE), a4=uaddr2, a5=val3.
+		ret = futexSyscall(a0, (int) a1, a2, a3, a4, a5);
+		break;
 	}
 	return ret;
 }

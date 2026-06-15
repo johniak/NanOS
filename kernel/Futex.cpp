@@ -40,37 +40,45 @@ int FutexTable::count(const void* space, void* uaddr) const {
 	return n;
 }
 
-int FutexTable::wake(const void* space, void* uaddr, int n) {
-	if (n <= 0) return 0;
-	int woken = 0;
+FutexWaiter* FutexTable::popOne(const void* space, void* uaddr) {
 	FutexWaiter** pp = &buckets_[hash(space, uaddr)];
-	while (*pp && woken < n) {
+	while (*pp) {
 		FutexWaiter* w = *pp;
 		if (w->space == space && w->uaddr == uaddr) {
 			*pp = w->next;       // unlink
 			w->next = 0;
-			woken++;
-		} else {
-			pp = &w->next;
+			return w;
 		}
+		pp = &w->next;
 	}
-	return woken;
+	return 0;
 }
 
-int FutexTable::wakeBitset(const void* space, void* uaddr, int n, unsigned bitset) {
-	if (n <= 0) return 0;
-	int woken = 0;
+FutexWaiter* FutexTable::popOneBitset(const void* space, void* uaddr, unsigned bitset) {
 	FutexWaiter** pp = &buckets_[hash(space, uaddr)];
-	while (*pp && woken < n) {
+	while (*pp) {
 		FutexWaiter* w = *pp;
 		if (w->space == space && w->uaddr == uaddr && (w->bitset & bitset)) {
 			*pp = w->next;       // unlink
 			w->next = 0;
-			woken++;
-		} else {
-			pp = &w->next;
+			return w;
 		}
+		pp = &w->next;
 	}
+	return 0;
+}
+
+// wake/wakeBitset are popOne in a loop, discarding the nodes — the count is all the pure table
+// reports. The kernel glue uses popOne directly when it needs the Task* to actually wake.
+int FutexTable::wake(const void* space, void* uaddr, int n) {
+	int woken = 0;
+	while (woken < n && popOne(space, uaddr)) woken++;
+	return woken;
+}
+
+int FutexTable::wakeBitset(const void* space, void* uaddr, int n, unsigned bitset) {
+	int woken = 0;
+	while (woken < n && popOneBitset(space, uaddr, bitset)) woken++;
 	return woken;
 }
 
@@ -97,6 +105,10 @@ int FutexTable::requeue(const void* fromSpace, void* from,
 		}
 	}
 	return woken + moved;
+}
+
+int futexWaitPrecheck(const unsigned* uaddr, unsigned expected) {
+	return (*uaddr == expected) ? 0 : -11;   // -EAGAIN: the word changed under us, don't park
 }
 
 void FutexTable::remove(FutexWaiter* w) {
