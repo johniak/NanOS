@@ -29,7 +29,9 @@ enum { TLS_ENTRY = 6, TLS_SELECTOR = (TLS_ENTRY << 3) | 3 /* == 0x33, RPL 3 */ }
 // derive %gs = (entry<<3)|3) and return the selector. Pure — no arch state touched here;
 // the kernel glue separately records tlsBase and calls arch::archLoadThreadTls(base_addr).
 inline int userDescToSelector(UserDesc* ud) {
-	if (!ud) return TLS_SELECTOR;
+	// Precondition: ud is non-null (the syscall dispatch validates the user pointer and
+	// returns -EINVAL before calling here). Keeping this pure — no null branch returning a
+	// bogus "success" selector — so the postcondition (entry_number written) always holds.
 	ud->entry_number = TLS_ENTRY;
 	return TLS_SELECTOR;
 }
