@@ -42,6 +42,23 @@ int *__errno_location(void) {
 	return &__pthread_self()->__errno;
 }
 
+/* libc.ndl's OWN constructor array, bracketed by the hidden symbols from user/dll.ld's
+ * .nx_init_array. picolibc registers startup constructors here — notably each std stream's
+ * lock-init `posix_init`, which calls __retarget_lock_init to allocate the FILE's _LOCK_T.
+ * NanOS links libc with -nostdlib, so no crt runs these; the loader relocates these absolute
+ * pointers to the load address (--emit-relocs), but nothing CALLS them. We do, once per
+ * process from __nx_init_tls() below, so stdin/stdout/stderr get real locks and stdio is
+ * thread-safe (without this their _LOCK_T stays NULL and the retarget hooks no-op → unlocked
+ * stdio across threads). Hidden + may be an empty range (start==end) for modules with none. */
+extern void (*__nx_ctors_start[])(void) __attribute__((visibility("hidden")));
+extern void (*__nx_ctors_end[])(void)   __attribute__((visibility("hidden")));
+
+static void __nx_run_ctors(void) {
+	void (**p)(void);
+	for (p = __nx_ctors_start; p < __nx_ctors_end; p++)
+		(*p)();
+}
+
 /* Install the main thread's TLS: self-point the TCB and aim the fixed TLS GDT slot
  * (entry 6 / selector 0x33) at it via set_thread_area. The kernel reloads %gs on the way
  * back to ring 3, so %gs:0 reads `self` immediately after this returns. Called from crt0
@@ -58,4 +75,11 @@ void __nx_init_tls(void) {
 		/* TLS setup failed -> %gs:0 is invalid and the first errno access would fault or
 		 * corrupt memory. Trap loudly instead of limping on with a broken thread pointer. */
 		__asm__ __volatile__("int3");
+
+	/* TLS (and thus errno) is live now; malloc's static recursive lock already works. Run
+	 * libc.ndl's constructors so picolibc's std-stream lock-init fires and stdio is locked.
+	 * Done AFTER set_thread_area because the constructors may touch errno/malloc. NOTE: this
+	 * runs BEFORE crt0 calls __nx_set_environ, so `environ` is still NULL here — do not add a
+	 * constructor that calls getenv(). */
+	__nx_run_ctors();
 }
