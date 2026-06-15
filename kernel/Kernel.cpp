@@ -165,8 +165,7 @@ static void registerKthread(Task* t, const char* name) {
 	Process* p = ProcTable::alloc(0);
 	if (!p)
 		return;
-	p->task = t;
-	t->proc = p;            // back-pointer so schedule() routes syscalls without an O(n) scan
+	ProcTable::bindTask(p, t, p->leaderThread());   // wire task<->process<->leader thread in one place
 	p->kthread = true;
 	const char* a[] = { name, 0 };
 	ProcTable::setCommand(p, a, 1);
@@ -356,8 +355,7 @@ void Kernel::start() {
 	Scheduler::init();
 	Task* initTask = Scheduler::create(initTaskBody, 1);
 	Process* p1 = ProcTable::byPid(1);
-	p1->task = initTask;                    // the boot process (pid 1) runs the init task
-	initTask->proc = p1;                    // back-pointer (see registerKthread)
+	ProcTable::bindTask(p1, initTask, p1->leaderThread());   // pid 1 runs the init task (leader thread)
 	const char* initArgv[] = { "init", 0 };
 	ProcTable::setCommand(p1, initArgv, 1);   // until it execve's nsh
 	registerKthread(Scheduler::idle(), "idle");   // the idle kernel thread, visible in /proc

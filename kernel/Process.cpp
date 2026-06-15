@@ -5,16 +5,52 @@ namespace kernel {
 
 const int ProcTable::MAX;                    // out-of-line definition for ODR-use
 static const int MAXPROC = ProcTable::MAX;   // single source of truth (see Process.h)
+// Threads have their own pool (clone() makes many non-leader threads). Sized like MAXTASKS
+// (ProcTable::MAX + 8): every process needs a leader plus headroom for the boot kthreads.
+static const int MAXTHREADS = ProcTable::MAX + 8;
 static Process g_procs[MAXPROC];
+static Thread g_threads[MAXTHREADS];
 static int g_nextPid = 1;
 static Process* g_current = 0;
 static unsigned g_cpuUser, g_cpuSystem, g_cpuIdle;   // global CPU ticks (jiffies) by class
 static unsigned g_forksTotal;                         // processes ever created (since boot)
 static int g_lastPid;                                 // most recently allocated pid
 
+// Grab a free Thread slot, initialise it, and link it into p->threads with the given tid.
+// The leader (first thread of a process) stays at the head of the list so leaderThread() is
+// O(1); later threads are spliced in just after the head. Returns 0 if the pool is exhausted.
+static Thread* linkThread(Process* p, int tid) {
+	for (int i = 0; i < MAXTHREADS; i++) {
+		if (g_threads[i].used)
+			continue;
+		Thread* th = &g_threads[i];
+		th->used = true;
+		th->tid = tid;
+		th->task = 0;             // bound later by ProcTable::bindTask
+		th->proc = p;
+		th->userStackBase = 0;
+		th->tlsBase = 0;
+		th->clearTidAddr = 0;
+		sigInit(th->sig);
+		th->exiting = false;
+		if (p->threads == 0) {    // the leader: head of the list
+			th->next = 0;
+			p->threads = th;
+		} else {                  // a non-leader: splice in after the leader (keeps leader at head)
+			th->next = p->threads->next;
+			p->threads->next = th;
+		}
+		p->threadCount++;
+		return th;
+	}
+	return 0;
+}
+
 void ProcTable::init() {
 	for (int i = 0; i < MAXPROC; i++)
 		g_procs[i].used = false;
+	for (int i = 0; i < MAXTHREADS; i++)
+		g_threads[i].used = false;
 	g_nextPid = 1;
 	g_current = 0;
 	g_cpuUser = g_cpuSystem = g_cpuIdle = 0;
@@ -52,6 +88,15 @@ Process* ProcTable::alloc(int parent) {
 			p->stopSignal = 0;
 			p->stopReported = false;
 			p->continued = false;
+			// Thread group: every process starts as a single-thread group. The leader's tid
+			// must equal the pid (Linux invariant), so it does not draw a fresh id.
+			p->tgid = p->pid;
+			p->threadCount = 0;
+			p->threads = 0;
+			if (!linkThread(p, p->pid)) {   // the leader (head of p->threads); its task binds later
+				p->used = false;            // thread pool exhausted: undo the process slot
+				return 0;
+			}
 			return p;
 		}
 	}
@@ -73,6 +118,50 @@ Process* ProcTable::byTask(Task* t) {
 		if (g_procs[i].used && g_procs[i].task == t)
 			return &g_procs[i];
 	return 0;
+}
+
+// A non-leader thread for clone(): a free slot with a FRESH tid from the shared pid id space
+// (so a tid never collides with a pid or another tid). 0 if the pool is full -> clone -EAGAIN.
+Thread* ProcTable::allocThread(Process* p) {
+	return linkThread(p, g_nextPid++);
+}
+
+// Release a thread slot (thread exit/reap): unlink it from its process's list, decrement the
+// live count, and mark the slot free for reuse.
+void ProcTable::freeThread(Thread* t) {
+	if (!t || !t->used)
+		return;
+	Process* p = t->proc;
+	if (p) {
+		Thread** pp = &p->threads;
+		while (*pp && *pp != t)
+			pp = &(*pp)->next;
+		if (*pp == t)
+			*pp = t->next;
+		if (p->threadCount > 0)
+			p->threadCount--;
+	}
+	t->next = 0;
+	t->proc = 0;
+	t->task = 0;
+	t->used = false;
+}
+
+Thread* ProcTable::threadByTid(int tid) {
+	for (int i = 0; i < MAXTHREADS; i++)
+		if (g_threads[i].used && g_threads[i].tid == tid)
+			return &g_threads[i];
+	return 0;
+}
+
+// Bind a scheduler task to a process and one of its threads in one place, so neither
+// Task::thread nor Thread::task is ever left dangling (see the three call sites converted to
+// this helper: registerKthread, the init process, and forkProcess).
+void ProcTable::bindTask(Process* p, Task* t, Thread* th) {
+	p->task = t;
+	t->proc = p;
+	t->thread = th;
+	th->task = t;
 }
 
 int ProcTable::reapChild(int parentPid, int wantPid, Process** childOut) {

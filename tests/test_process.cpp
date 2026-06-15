@@ -64,6 +64,15 @@ TEST_CASE("reapChild: child alive -> 0; exited -> pid + frees slot") {
 	CHECK(ProcTable::reapChild(parent->pid, -1, &out2) == -10);
 }
 
+TEST_CASE("process starts as a single-thread group whose leader tid == pid") {
+	ProcTable::init();
+	kernel::Process* p = kernel::ProcTable::alloc(/*parent*/0);
+	REQUIRE(p != nullptr);
+	CHECK(p->threadCount == 1);
+	CHECK(p->tgid == p->pid);
+	CHECK(p->leaderThread()->tid == p->pid);
+}
+
 static int g_visited;
 static int g_visitedKthreads;
 static void countVisit(int /*pid*/, bool kthread, void* /*ctx*/) {

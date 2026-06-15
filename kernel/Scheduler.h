@@ -15,6 +15,7 @@
 namespace kernel {
 
 struct Process;   // a task's owning process (Process.h); back-pointer avoids an O(n) byTask scan
+struct Thread;    // the thread (within a process) this task runs (Process.h); set when the task binds
 struct WaitQueue; // event wait list (WaitQueue.h); sleepOn/wakeAll bridge it to task states
 
 enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_STOPPED, TASK_DONE, TASK_ZOMBIE, TASK_FREE };
@@ -33,6 +34,7 @@ struct Task {
 	unsigned char* kstack;
 	unsigned wakeAt;        // BLOCKED with a timed wakeup: tick at which onTick re-wakes it (0 = none)
 	Process* proc;          // owning process (0 for none) — set when the process binds the task
+	Thread*  thread;        // the thread this task runs (0 for none) — set by ProcTable::bindTask
 	Task*    waitNext;      // intrusive link while parked on a WaitQueue (see WaitQueue.h)
 };
 

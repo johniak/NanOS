@@ -15,6 +15,25 @@ namespace kernel {
 
 struct Task;       // scheduler task (Scheduler.h)
 class Syscalls;    // per-process syscall state incl. the fd table (Syscall.h)
+struct Process;
+
+// One thread of execution within a process (thread group). The Task is the scheduler
+// context; the rest is per-thread state that used to live (implicitly) on the Process.
+struct Thread {
+	bool     used;
+	int      tid;            // system-wide unique; leader thread tid == process pid
+	Task*    task;           // scheduler context for this thread
+	Process* proc;           // owning thread group
+	unsigned userStackBase;  // userland's mmap'd stack base — recorded for /proc only; the KERNEL
+	                         // never frees it (pthread_join/detach owns it). 0 = leader/main.
+	unsigned tlsBase;        // TLS block VA (set_thread_area); 0 until set. (The GDT slot is the
+	                         // single fixed entry 6 from Task 2.1 — no per-thread slot index.)
+	unsigned clearTidAddr;   // set_tid_address: zero+futex-wake here on exit; 0 = none
+	SignalState sig;         // per-thread signal mask + pending. Task 0.3 narrows this type to
+	                         // ThreadSignals (mask+pending only); dispositions move to Process.
+	bool     exiting;        // this thread is tearing down
+	Thread*  next;           // intrusive list within the process
+};
 
 struct Process {
 	bool used;
@@ -58,6 +77,14 @@ struct Process {
 	int  stopSignal;     // the signal that stopped it (valid while `stopped`)
 	bool stopReported;   // waitpid(WUNTRACED) has already reported this stop
 	bool continued;      // SIGCONT delivered since the last wait report
+
+	// Thread group. Every process is a thread group: tgid == pid, with at least the leader
+	// thread (whose tid == pid). clone() (Task 2.3) adds more threads to `threads`.
+	int tgid;            // thread-group id (== pid)
+	int threadCount;     // live threads in the group
+	Thread* threads;     // head of the intrusive thread list (leader first)
+
+	Thread* leaderThread() { return threads; }   // the leader (head of the list); tid == pid
 };
 
 // A read-only snapshot of one process, the source for /proc and ps. Decoupled from
@@ -89,6 +116,21 @@ public:
 	static void setCurrent(Process* p);
 	static Process* byPid(int pid);
 	static Process* byTask(Task* t);     // the process whose scheduler task is t
+
+	// Threads (the thread group). Threads live in their own global pool (clone() makes many
+	// non-leader threads); tids are drawn from the same id space as pids (Linux invariant), so
+	// a tid never collides with a pid or another tid.
+	//   allocThread(p): a free slot with a fresh tid, linked into p->threads, p->threadCount++;
+	//     0 if the pool is full (-> clone returns -EAGAIN).
+	//   freeThread(t):  unlink from t->proc->threads, threadCount--, used = false (on exit/reap).
+	//   threadByTid(tid): scan the thread pool (every thread, all processes).
+	static Thread* allocThread(Process* p);
+	static void freeThread(Thread* t);
+	static Thread* threadByTid(int tid);
+	// Bind a scheduler task to a process and one of its threads in one place (so neither
+	// Task::thread nor Thread::task is ever left dangling). Pass the leader for pid setup,
+	// or a freshly allocThread'd thread for a clone child.
+	static void bindTask(Process* p, Task* t, Thread* th);
 
 	// waitpid lookup (pure bookkeeping; the scheduler/arch teardown is the caller's).
 	// Scan the children of `parentPid` (wantPid > 0 narrows to that one child):
