@@ -355,6 +355,13 @@ void procThreadExit(int code) {
 	Task* self = Scheduler::current();
 	if (th)
 		ProcTable::freeThread(th);   // release the thread slot + threadCount-- (unlinks from p->threads)
+	// If the LEADER thread exits first (POSIX allows pthread_exit() from main while workers run),
+	// its task is the process's primary p->task — the slot waitProcess reaps when the group later
+	// ends. Reaping self would leave p->task dangling at a freed/reused slot (a later procExit
+	// would reap the wrong task). Repoint p->task at a surviving thread's task, mirroring
+	// procExitGroup. (p->threads now excludes self, since freeThread unlinked it.)
+	if (p->task == self && p->threads && p->threads->task)
+		p->task = p->threads->task;
 	// Mark the task DONE, not ZOMBIE: a thread is never reaped via waitpid, so the scheduler's
 	// onTick reclaims a DONE task's slot + kstack on its own (the ZOMBIE convention exists only
 	// for a process a parent must wait on). The user stack + TLS belong to userland (pthread
