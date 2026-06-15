@@ -16,6 +16,7 @@
  */
 #include <time.h>
 #include <stddef.h>
+#include <errno.h>
 #include "libc.h"
 #include "syscall.h"
 #include "pthread.h"
@@ -43,6 +44,19 @@ hidden long (__syscall_cp)(syscall_arg_t n, syscall_arg_t a, syscall_arg_t b,
                            syscall_arg_t c, syscall_arg_t d, syscall_arg_t e, syscall_arg_t f)
 {
 	return __syscall6(n, a, b, c, d, e, f);
+}
+
+/* Translate a raw kernel return into the userland (val, errno) convention. musl's syscall()
+ * wrapper macro (syscall.h) expands to __syscall_ret(__syscall(...)); pthread_create/join reach
+ * it via the syscall() form. Same body as musl's src/internal/syscall_ret.c, except errno is the
+ * per-thread cell (picolibc's __errno_location -> %gs:0 -> self->errno). */
+hidden long __syscall_ret(unsigned long r)
+{
+	if (r > -4096UL) {
+		errno = -(long)r;
+		return -1;
+	}
+	return (long)r;
 }
 
 /* musl's internal monotonic/realtime clock hook, used by __timedwait to compute timeouts. */
