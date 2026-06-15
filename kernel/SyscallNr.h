@@ -79,6 +79,9 @@
                              * 32-bit word; the legacy i386 history slots are unused) */
 #define SYS_nanosleep 162
 #define SYS_futex 240
+#define SYS_gettid 224
+#define SYS_set_thread_area 243
+#define SYS_set_tid_address 258
 #define SYS_clock_gettime 265
 #define SYS_getrandom 355
 #define SYS_ioctl 54

@@ -5,6 +5,7 @@
 #include "SignalDispatch.h"
 #include "Scheduler.h"
 #include "Futex.h"
+#include "ThreadArea.h"
 #include "Clock.h"
 #include "Csprng.h"
 #include <arch/syscall.h>
@@ -883,6 +884,37 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// a0=uaddr, a1=op, a2=val, a3=timeout (or val2 for REQUEUE), a4=uaddr2, a5=val3.
 		ret = futexSyscall(a0, (int) a1, a2, a3, a4, a5);
 		break;
+	case SYS_gettid: {
+		// The calling thread's tid (== pid for the leader). Thread tracking is live after
+		// Task 0.2; guard the null case defensively (return the pid as a sane fallback).
+		Thread* t = ProcTable::currentThread();
+		ret = t ? t->tid : ProcTable::current()->pid;
+		break;
+	}
+	case SYS_set_thread_area: {
+		// a0 = struct user_desc*. The kernel runs on the caller's address space, so the user
+		// pointer is read directly (same pattern as futex's uaddr / select's fd_sets). NanOS
+		// has ONE fixed TLS slot (GDT entry 6, selector 0x33): point it at the caller's TLS
+		// block. userDescToSelector writes entry_number=6 back (musl derives %gs from it).
+		UserDesc* ud = (UserDesc*) a0;
+		if (!ud) { ret = -EINVAL; break; }
+		Thread* t = ProcTable::currentThread();
+		if (!t) { ret = -EINVAL; break; }
+		userDescToSelector(ud);                 // writes ud->entry_number = 6
+		t->tlsBase = ud->base_addr;
+		arch::archLoadThreadTls(ud->base_addr); // re-point entry 6 + reload %gs now
+		ret = 0;
+		break;
+	}
+	case SYS_set_tid_address: {
+		// a0 = clear-tid address. Record it on the calling thread; on thread exit (Task 2.3)
+		// the kernel zeroes *ptr and futex-wakes it (the pthread_join handshake). Returns tid.
+		Thread* t = ProcTable::currentThread();
+		if (!t) { ret = ProcTable::current()->pid; break; }
+		t->clearTidAddr = a0;
+		ret = t->tid;
+		break;
+	}
 	}
 	return ret;
 }
