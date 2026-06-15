@@ -83,7 +83,7 @@ Process* ProcTable::alloc(int parent) {
 			p->kthread = false;
 			p->comm[0] = 0;
 			p->cmdline[0] = 0;
-			sigInit(p->sig);
+			sigInit(p->psig);
 			p->stopped = false;
 			p->stopSignal = 0;
 			p->stopReported = false;

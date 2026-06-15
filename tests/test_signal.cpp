@@ -4,41 +4,74 @@
 using namespace kernel;
 
 TEST_CASE("sigInit clears everything to defaults") {
-	SignalState s;
-	sigInit(s);
-	CHECK(s.pending == 0);
-	CHECK(s.blocked == 0);
-	CHECK(s.restart == 0);
-	CHECK(s.restorer == 0);
+	ThreadSignals ts;
+	ProcSignals ps;
+	sigInit(ts);
+	sigInit(ps);
+	CHECK(ts.pending == 0);
+	CHECK(ts.blocked == 0);
+	CHECK(ps.pending == 0);
+	CHECK(ps.restart == 0);
+	CHECK(ps.restorer == 0);
 	for (int i = 0; i < NANOS_NSIG; i++)
-		CHECK(s.handlers[i] == kSigDefault);
-	CHECK(sigNextDeliverable(s) == 0);
+		CHECK(ps.handlers[i] == kSigDefault);
+	CHECK(sigNextDeliverable(ts, ps) == 0);
+}
+
+TEST_CASE("signal mask is per-thread; dispositions are process-wide") {
+	kernel::ThreadSignals ts1{}, ts2{};
+	kernel::ProcSignals  ps{};
+	ps.setHandler(SIGUSR1, (void*)0x1234);
+	ts1.block(SIGUSR1);
+	CHECK(ts1.isBlocked(SIGUSR1));
+	CHECK(!ts2.isBlocked(SIGUSR1));            // independent masks
+	CHECK(ps.handler(SIGUSR1) == (void*)0x1234); // shared dispositions
 }
 
 TEST_CASE("sigPost/sigNextDeliverable: lowest pending unblocked signal") {
-	SignalState s;
-	sigInit(s);
-	sigPost(s, SIGTERM);
-	sigPost(s, SIGINT);
-	CHECK(sigNextDeliverable(s) == SIGINT);   // 2 < 15
-	sigConsume(s, SIGINT);
-	CHECK(sigNextDeliverable(s) == SIGTERM);
-	sigConsume(s, SIGTERM);
-	CHECK(sigNextDeliverable(s) == 0);
+	ThreadSignals ts;
+	ProcSignals ps;
+	sigInit(ts);
+	sigInit(ps);
+	sigPost(ps, SIGTERM);
+	sigPost(ps, SIGINT);
+	CHECK(sigNextDeliverable(ts, ps) == SIGINT);   // 2 < 15
+	sigConsume(ts, ps, SIGINT);
+	CHECK(sigNextDeliverable(ts, ps) == SIGTERM);
+	sigConsume(ts, ps, SIGTERM);
+	CHECK(sigNextDeliverable(ts, ps) == 0);
+}
+
+TEST_CASE("thread-directed and process-directed pending both deliver") {
+	ThreadSignals ts;
+	ProcSignals ps;
+	sigInit(ts);
+	sigInit(ps);
+	sigPost(ts, SIGTERM);                      // thread-directed (e.g. future tgkill)
+	sigPost(ps, SIGINT);                       // process-directed (kill)
+	CHECK(sigNextDeliverable(ts, ps) == SIGINT);   // lowest of the union
+	sigConsume(ts, ps, SIGINT);
+	CHECK(sigNextDeliverable(ts, ps) == SIGTERM);
+	sigConsume(ts, ps, SIGTERM);               // clears from whichever set held it
+	CHECK(sigNextDeliverable(ts, ps) == 0);
+	CHECK(ts.pending == 0);
+	CHECK(ps.pending == 0);
 }
 
 TEST_CASE("blocked signals are not deliverable, except SIGKILL/SIGSTOP") {
-	SignalState s;
-	sigInit(s);
-	s.blocked = ~0u;                          // block everything
-	sigPost(s, SIGINT);
-	CHECK(sigNextDeliverable(s) == 0);        // SIGINT is blocked
+	ThreadSignals ts;
+	ProcSignals ps;
+	sigInit(ts);
+	sigInit(ps);
+	ts.blocked = ~0u;                          // block everything
+	sigPost(ps, SIGINT);
+	CHECK(sigNextDeliverable(ts, ps) == 0);    // SIGINT is blocked
 
-	sigPost(s, SIGKILL);
-	CHECK(sigNextDeliverable(s) == SIGKILL);  // unblockable
-	sigConsume(s, SIGKILL);
-	sigPost(s, SIGSTOP);
-	CHECK(sigNextDeliverable(s) == SIGSTOP);  // unblockable
+	sigPost(ps, SIGKILL);
+	CHECK(sigNextDeliverable(ts, ps) == SIGKILL);  // unblockable
+	sigConsume(ts, ps, SIGKILL);
+	sigPost(ps, SIGSTOP);
+	CHECK(sigNextDeliverable(ts, ps) == SIGSTOP);  // unblockable
 }
 
 TEST_CASE("sigDefaultAction classifies the common signals") {
@@ -53,109 +86,121 @@ TEST_CASE("sigDefaultAction classifies the common signals") {
 }
 
 TEST_CASE("sigResolve folds the handler table and the default action") {
-	SignalState s;
-	sigInit(s);
-	CHECK(sigResolve(s, SIGINT) == DISP_TERM);    // DFL -> terminate
-	CHECK(sigResolve(s, SIGCHLD) == DISP_IGN);    // DFL -> ignore
-	CHECK(sigResolve(s, SIGTSTP) == DISP_STOP);   // DFL -> stop
-	CHECK(sigResolve(s, SIGCONT) == DISP_CONT);
+	ProcSignals ps;
+	sigInit(ps);
+	CHECK(sigResolve(ps, SIGINT) == DISP_TERM);    // DFL -> terminate
+	CHECK(sigResolve(ps, SIGCHLD) == DISP_IGN);    // DFL -> ignore
+	CHECK(sigResolve(ps, SIGTSTP) == DISP_STOP);   // DFL -> stop
+	CHECK(sigResolve(ps, SIGCONT) == DISP_CONT);
 
-	s.handlers[SIGINT] = kSigIgnore;
-	CHECK(sigResolve(s, SIGINT) == DISP_IGN);
-	s.handlers[SIGINT] = 0x401000;                // a user handler address
-	CHECK(sigResolve(s, SIGINT) == DISP_HANDLER);
+	ps.handlers[SIGINT] = kSigIgnore;
+	CHECK(sigResolve(ps, SIGINT) == DISP_IGN);
+	ps.handlers[SIGINT] = 0x401000;                // a user handler address
+	CHECK(sigResolve(ps, SIGINT) == DISP_HANDLER);
 
 	// SIGKILL/SIGSTOP ignore any installed handler.
-	s.handlers[SIGKILL] = 0x401000;
-	s.handlers[SIGSTOP] = 0x401000;
-	CHECK(sigResolve(s, SIGKILL) == DISP_TERM);
-	CHECK(sigResolve(s, SIGSTOP) == DISP_STOP);
+	ps.handlers[SIGKILL] = 0x401000;
+	ps.handlers[SIGSTOP] = 0x401000;
+	CHECK(sigResolve(ps, SIGKILL) == DISP_TERM);
+	CHECK(sigResolve(ps, SIGSTOP) == DISP_STOP);
 	CHECK(!sigCanCatch(SIGKILL));
 	CHECK(!sigCanCatch(SIGSTOP));
 	CHECK(sigCanCatch(SIGINT));
 }
 
 TEST_CASE("SIGCONT and stop signals cancel each other when posted") {
-	SignalState s;
-	sigInit(s);
-	sigPost(s, SIGTSTP);
-	sigPost(s, SIGCONT);                          // cancels the pending stop
-	CHECK(sigNextDeliverable(s) == SIGCONT);
+	ThreadSignals ts;
+	ProcSignals ps;
+	sigInit(ts);
+	sigInit(ps);
+	sigPost(ps, SIGTSTP);
+	sigPost(ps, SIGCONT);                          // cancels the pending stop
+	CHECK(sigNextDeliverable(ts, ps) == SIGCONT);
 
-	sigInit(s);
-	sigPost(s, SIGCONT);
-	sigPost(s, SIGTSTP);                          // cancels the pending cont
-	CHECK(sigNextDeliverable(s) == SIGTSTP);
+	sigInit(ps);
+	sigPost(ps, SIGCONT);
+	sigPost(ps, SIGTSTP);                          // cancels the pending cont
+	CHECK(sigNextDeliverable(ts, ps) == SIGTSTP);
 }
 
 TEST_CASE("sigForkInherit copies dispositions + mask, drops pending") {
-	SignalState parent;
-	sigInit(parent);
-	parent.handlers[SIGINT] = 0x401000;
-	parent.handlers[SIGQUIT] = kSigIgnore;
-	parent.blocked = 0x8;
-	parent.restart = 0x2;
-	parent.restorer = 0x402000;
-	sigPost(parent, SIGTERM);
+	ProcSignals pps;
+	ThreadSignals pts;
+	sigInit(pps);
+	sigInit(pts);
+	pps.handlers[SIGINT] = 0x401000;
+	pps.handlers[SIGQUIT] = kSigIgnore;
+	pts.blocked = 0x8;
+	pps.restart = 0x2;
+	pps.restorer = 0x402000;
+	sigPost(pps, SIGTERM);
 
-	SignalState child;
-	sigForkInherit(child, parent);
-	CHECK(child.handlers[SIGINT] == 0x401000u);
-	CHECK(child.handlers[SIGQUIT] == kSigIgnore);
-	CHECK(child.blocked == 0x8u);
-	CHECK(child.restart == 0x2u);                 // SA_RESTART flags inherited
-	CHECK(child.restorer == 0x402000u);
-	CHECK(child.pending == 0);                    // pending NOT inherited
+	ProcSignals cps;
+	ThreadSignals cts;
+	sigForkInherit(cps, pps);                      // dispositions (process-wide)
+	sigForkInherit(cts, pts);                      // mask (per-thread)
+	CHECK(cps.handlers[SIGINT] == 0x401000u);
+	CHECK(cps.handlers[SIGQUIT] == kSigIgnore);
+	CHECK(cts.blocked == 0x8u);
+	CHECK(cps.restart == 0x2u);                    // SA_RESTART flags inherited
+	CHECK(cps.restorer == 0x402000u);
+	CHECK(cps.pending == 0);                        // pending NOT inherited
+	CHECK(cts.pending == 0);
 }
 
 TEST_CASE("sigExecReset: caught -> DFL, ignored stays ignored, pending dropped") {
-	SignalState s;
-	sigInit(s);
-	s.handlers[SIGINT] = 0x401000;                // caught
-	s.handlers[SIGQUIT] = kSigIgnore;                // ignored
-	s.blocked = 0x4;
-	s.restart = 0x6;
-	sigPost(s, SIGTERM);
+	ProcSignals ps;
+	ThreadSignals ts;
+	sigInit(ps);
+	sigInit(ts);
+	ps.handlers[SIGINT] = 0x401000;                // caught
+	ps.handlers[SIGQUIT] = kSigIgnore;              // ignored
+	ts.blocked = 0x4;
+	ps.restart = 0x6;
+	sigPost(ps, SIGTERM);
 
-	sigExecReset(s);
-	CHECK(s.handlers[SIGINT] == kSigDefault);         // reset
-	CHECK(s.handlers[SIGQUIT] == kSigIgnore);        // preserved
-	CHECK(s.blocked == 0x4u);                     // mask preserved
-	CHECK(s.restart == 0);                        // restart flags cleared (handlers gone)
-	CHECK(s.pending == 0);
+	sigExecReset(ps, ts);
+	CHECK(ps.handlers[SIGINT] == kSigDefault);       // reset
+	CHECK(ps.handlers[SIGQUIT] == kSigIgnore);      // preserved
+	CHECK(ts.blocked == 0x4u);                     // mask preserved
+	CHECK(ps.restart == 0);                        // restart flags cleared (handlers gone)
+	CHECK(ps.pending == 0);
+	CHECK(ts.pending == 0);
 }
 
 TEST_CASE("sigHasInterrupt: ignored/cont signals do not interrupt; term/stop/handler do") {
-	SignalState s;
-	sigInit(s);
-	CHECK(!sigHasInterrupt(s));
+	ThreadSignals ts;
+	ProcSignals ps;
+	sigInit(ts);
+	sigInit(ps);
+	CHECK(!sigHasInterrupt(ts, ps));
 
-	sigPost(s, SIGCHLD);                      // default-ignore -> no interrupt (no EINTR)
-	CHECK(!sigHasInterrupt(s));
+	sigPost(ps, SIGCHLD);                     // default-ignore -> no interrupt (no EINTR)
+	CHECK(!sigHasInterrupt(ts, ps));
 
-	sigPost(s, SIGINT);                       // default-terminate -> interrupts
-	CHECK(sigHasInterrupt(s));
+	sigPost(ps, SIGINT);                      // default-terminate -> interrupts
+	CHECK(sigHasInterrupt(ts, ps));
 
-	sigInit(s);
-	sigPost(s, SIGCONT);                      // resume -> does not interrupt a wait
-	CHECK(!sigHasInterrupt(s));
+	sigInit(ps);
+	sigPost(ps, SIGCONT);                     // resume -> does not interrupt a wait
+	CHECK(!sigHasInterrupt(ts, ps));
 
-	sigInit(s);
-	sigPost(s, SIGTSTP);                      // stop -> interrupts
-	CHECK(sigHasInterrupt(s));
+	sigInit(ps);
+	sigPost(ps, SIGTSTP);                     // stop -> interrupts
+	CHECK(sigHasInterrupt(ts, ps));
 
-	sigInit(s);
-	s.handlers[SIGINT] = kSigIgnore;          // explicitly ignored -> no interrupt
-	sigPost(s, SIGINT);
-	CHECK(!sigHasInterrupt(s));
+	sigInit(ps);
+	ps.handlers[SIGINT] = kSigIgnore;         // explicitly ignored -> no interrupt
+	sigPost(ps, SIGINT);
+	CHECK(!sigHasInterrupt(ts, ps));
 
-	s.handlers[SIGINT] = 0x401000;            // a handler -> interrupts
-	CHECK(sigHasInterrupt(s));
+	ps.handlers[SIGINT] = 0x401000;           // a handler -> interrupts
+	CHECK(sigHasInterrupt(ts, ps));
 
-	sigInit(s);                               // blocked terminate -> not deliverable, no interrupt
-	s.blocked = ~0u;
-	sigPost(s, SIGINT);
-	CHECK(!sigHasInterrupt(s));
+	sigInit(ps);                              // blocked terminate -> not deliverable, no interrupt
+	ts.blocked = ~0u;
+	sigPost(ps, SIGINT);
+	CHECK(!sigHasInterrupt(ts, ps));
 }
 
 TEST_CASE("wait-status encodings match the W* macro contract") {

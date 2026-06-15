@@ -29,8 +29,8 @@ struct Thread {
 	unsigned tlsBase;        // TLS block VA (set_thread_area); 0 until set. (The GDT slot is the
 	                         // single fixed entry 6 from Task 2.1 — no per-thread slot index.)
 	unsigned clearTidAddr;   // set_tid_address: zero+futex-wake here on exit; 0 = none
-	SignalState sig;         // per-thread signal mask + pending. Task 0.3 narrows this type to
-	                         // ThreadSignals (mask+pending only); dispositions move to Process.
+	ThreadSignals sig;       // per-thread signal mask + pending. The shared dispositions
+	                         // (handlers/restart/restorer) live on Process::psig.
 	bool     exiting;        // this thread is tearing down
 	Thread*  next;           // intrusive list within the process
 };
@@ -71,8 +71,9 @@ struct Process {
 	unsigned starttime;  // tick count when the process was created (Linux field 22)
 	bool execed;         // has called execve at least once (POSIX setpgid restriction)
 
-	// Signals + job control.
-	SignalState sig;     // pending/blocked masks + disposition table
+	// Signals + job control. The per-thread pending/blocked masks live on each Thread::sig;
+	// psig holds the process-wide disposition table + a process-directed pending set.
+	ProcSignals psig;    // disposition table + SA_RESTART/restorer + process-directed pending
 	bool stopped;        // job-control stopped (its task is TASK_STOPPED)
 	int  stopSignal;     // the signal that stopped it (valid while `stopped`)
 	bool stopReported;   // waitpid(WUNTRACED) has already reported this stop

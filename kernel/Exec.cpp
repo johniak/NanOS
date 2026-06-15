@@ -153,7 +153,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	initBrk(p);                              // fresh image -> empty heap
 	ProcTable::setCommand(p, argv, argc);
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
-	sigExecReset(p->sig);                    // caught handlers -> default across exec
+	sigExecReset(p->psig, p->leaderThread()->sig);   // caught handlers -> default across exec
 	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
 	kernelSyscalls()->resetForRun();
 
@@ -191,7 +191,8 @@ int forkProcess(arch::TrapFrame* tf) {
 		child->cmdline[i] = parent->cmdline[i];
 	child->pgid = parent->pgid;                // inherit the process group + session
 	child->sid = parent->sid;
-	sigForkInherit(child->sig, parent->sig);   // inherit dispositions + mask (no pending)
+	sigForkInherit(child->psig, parent->psig);                            // dispositions (process-wide)
+	sigForkInherit(child->leaderThread()->sig, parent->leaderThread()->sig);  // block mask (per-thread)
 
 	Task* t = Scheduler::createBlank(child->pid);   // allocates the child's kernel stack (heap)
 	if (!t) {                                   // out of memory / task table full: fail cleanly,
@@ -253,7 +254,7 @@ void procExit() {
 	// Nudge init in case any are already zombies waiting to be collected.
 	if (p->pid != 1 && ProcTable::reparentChildren(p->pid, 1) > 0) {
 		Process* init = ProcTable::byPid(1);
-		if (init) { sigPost(init->sig, SIGCHLD); Scheduler::wake(init->task); }
+		if (init) { sigPost(init->psig, SIGCHLD); Scheduler::wake(init->task); }
 	}
 	arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
 	if (p->space) {
@@ -264,7 +265,7 @@ void procExit() {
 	// sitting in its SIGCHLD handler's read(), like the init shell collecting orphans — reaps us.
 	Process* parent = ProcTable::byPid(p->parent);
 	if (parent) {
-		sigPost(parent->sig, SIGCHLD);
+		sigPost(parent->psig, SIGCHLD);
 		Scheduler::wake(parent->task);
 	}
 	Scheduler::current()->state = TASK_ZOMBIE;
@@ -369,7 +370,7 @@ static void procStop(int sig) {
 	p->stopReported = false;
 	Process* parent = ProcTable::byPid(p->parent);
 	if (parent) {
-		sigPost(parent->sig, SIGCHLD);
+		sigPost(parent->psig, SIGCHLD);
 		Scheduler::wake(parent->task);
 	}
 	Scheduler::current()->state = TASK_STOPPED;
@@ -410,12 +411,12 @@ int signalSend(int pid, int sig) {
 		return -3;    // -ESRCH
 	if (sig == 0)
 		return 0;     // existence check only
-	sigPost(t->sig, sig);
+	sigPost(t->psig, sig);
 	if (sig == SIGCONT && t->stopped) {        // resume a stopped process (job control)
 		t->stopped = false;
 		t->continued = true;
 		Process* parent = ProcTable::byPid(t->parent);
-		if (parent) { sigPost(parent->sig, SIGCHLD); Scheduler::wake(parent->task); }
+		if (parent) { sigPost(parent->psig, SIGCHLD); Scheduler::wake(parent->task); }
 	}
 	// Wake the target so it reaches a return-to-user and delivers: any blocked task, or a
 	// stopped task that is being continued or killed.
@@ -435,33 +436,33 @@ int signalAction(int sig, unsigned handler, unsigned restorer) {
 	if (sig <= 0 || sig >= NANOS_NSIG || !sigCanCatch(sig))
 		return -22;   // -EINVAL
 	Process* p = ProcTable::current();
-	unsigned prev = p->sig.handlers[sig];
+	unsigned prev = p->psig.handlers[sig];
 	if (handler == 0xFFFFFFFFu)
 		return (int) prev;   // query only (sigaction with act == NULL): don't change anything
-	p->sig.handlers[sig] = handler;
+	p->psig.handlers[sig] = handler;
 	if (restorer)
-		p->sig.restorer = restorer;
+		p->psig.restorer = restorer;
 	// signal() carries SA_RESTART (glibc/BSD semantics): a handler restarts interrupted
 	// syscalls. Default/ignore dispositions clear it.
 	if (handler != kSigDefault && handler != kSigIgnore)
-		p->sig.restart |= sigbit(sig);
+		p->psig.restart |= sigbit(sig);
 	else
-		p->sig.restart &= ~sigbit(sig);
+		p->psig.restart &= ~sigbit(sig);
 	return (int) prev;
 }
 
 // sigprocmask(2): how 0=BLOCK, 1=UNBLOCK, 2=SETMASK. SIGKILL/SIGSTOP stay unblockable.
 int signalMask(int how, unsigned set, unsigned* oldset) {
-	Process* p = ProcTable::current();
+	Thread* th = ProcTable::currentThread();   // sigprocmask is per-thread
 	if (oldset)
-		*oldset = p->sig.blocked;
+		*oldset = th->sig.blocked;
 	switch (how) {
-	case 0: p->sig.blocked |= set; break;
-	case 1: p->sig.blocked &= ~set; break;
-	case 2: p->sig.blocked = set; break;
+	case 0: th->sig.blocked |= set; break;
+	case 1: th->sig.blocked &= ~set; break;
+	case 2: th->sig.blocked = set; break;
 	default: return -22;   // -EINVAL
 	}
-	p->sig.blocked &= ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	th->sig.blocked &= ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
 	return 0;
 }
 
@@ -485,34 +486,37 @@ int signalPause() {
 // condition either way. Documented here as a known, bounded simplification, consistent with
 // the kernel's existing signal fidelity (see signalAction's sa_mask note).
 int signalSuspend(unsigned mask) {
-	Process* p = ProcTable::current();
-	unsigned old = p->sig.blocked;
-	p->sig.blocked = mask & ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	Thread* th = ProcTable::currentThread();
+	unsigned old = th->sig.blocked;
+	th->sig.blocked = mask & ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
 	while (!hasPendingSignalCurrent())
 		Scheduler::block();
-	p->sig.blocked = old;
+	th->sig.blocked = old;
 	return -4;   // -EINTR
 }
 
 bool hasPendingSignalCurrent() {
 	Process* p = ProcTable::current();
-	return p && sigHasInterrupt(p->sig);   // ignored signals (SIGCHLD) must not cause EINTR
+	Thread* th = ProcTable::currentThread();
+	// ignored signals (SIGCHLD) must not cause EINTR
+	return p && th && sigHasInterrupt(th->sig, p->psig);
 }
 
 // Deliver pending signals at a return-to-user point. The caller has already ensured the
 // trap frame returns to ring 3.
 void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall) {
 	Process* p = ProcTable::current();
-	if (!p || p->kthread)
+	Thread* th = ProcTable::currentThread();
+	if (!p || !th || p->kthread)
 		return;
 	// Was this a blocking syscall interrupted by a signal (eligible for restart/EINTR)?
 	bool restartable = inSyscall && (arch::archSyscallResult(tf) == -ERESTARTSYS);
 	for (;;) {
-		int sig = sigNextDeliverable(p->sig);
+		int sig = sigNextDeliverable(th->sig, p->psig);
 		if (!sig)
 			break;
-		sigConsume(p->sig, sig);
-		switch (sigResolve(p->sig, sig)) {
+		sigConsume(th->sig, p->psig, sig);
+		switch (sigResolve(p->psig, sig)) {
 		case DISP_IGN:
 		case DISP_CONT:
 			continue;                  // ignored / resume is handled when SIGCONT is posted
@@ -525,11 +529,11 @@ void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall) {
 			// or report -EINTR.
 			int action = arch::SIG_FRAME_KEEP;
 			if (restartable)
-				action = (p->sig.restart & sigbit(sig)) ? arch::SIG_FRAME_RESTART
-				                                        : arch::SIG_FRAME_EINTR;
-			unsigned oldMask = p->sig.blocked;
-			p->sig.blocked |= sigbit(sig);
-			arch::archPushSignalFrame(tf, p->sig.handlers[sig], p->sig.restorer,
+				action = (p->psig.restart & sigbit(sig)) ? arch::SIG_FRAME_RESTART
+				                                         : arch::SIG_FRAME_EINTR;
+			unsigned oldMask = th->sig.blocked;
+			th->sig.blocked |= sigbit(sig);
+			arch::archPushSignalFrame(tf, p->psig.handlers[sig], p->psig.restorer,
 					sig, oldMask, origEax, action);
 			return;                    // one handler per return-to-user; rest after sigreturn
 		}
@@ -550,7 +554,7 @@ void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall) {
 int signalReturn(arch::TrapFrame* tf) {
 	uint32_t oldMask = 0;   // archSigreturn wants a uint32_t* (== unsigned long* on i686)
 	int rc = arch::archSigreturn(tf, &oldMask);
-	ProcTable::current()->sig.blocked = (unsigned) oldMask;
+	ProcTable::currentThread()->sig.blocked = (unsigned) oldMask;
 	return rc;
 }
 
@@ -589,12 +593,12 @@ int signalSendGroup(int pgid, int sig) {
 		Process* p = ProcTable::byPid(pids[i]);
 		if (!p || p->kthread)
 			continue;
-		sigPost(p->sig, sig);
+		sigPost(p->psig, sig);
 		if (sig == SIGCONT && p->stopped) {
 			p->stopped = false;
 			p->continued = true;
 			Process* par = ProcTable::byPid(p->parent);
-			if (par) { sigPost(par->sig, SIGCHLD); Scheduler::wake(par->task); }
+			if (par) { sigPost(par->psig, SIGCHLD); Scheduler::wake(par->task); }
 		}
 		if (p->task) {
 			if (p->task->state == TASK_BLOCKED)
