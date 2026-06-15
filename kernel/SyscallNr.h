@@ -10,6 +10,8 @@
 
 #define SYS_exit 1
 #define SYS_fork 2
+#define SYS_clone 120        /* thread/process creation (pthread keystone) */
+#define SYS_exit_group 252   /* terminate the whole thread group */
 #define SYS_getpid 20
 #define SYS_getppid 64
 #define SYS_read 3

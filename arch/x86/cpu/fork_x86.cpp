@@ -41,4 +41,28 @@ void archForkChild(kernel::Task* child, TrapFrame* parentTf, unsigned childCr3) 
 	child->kesp = (unsigned) sp;
 }
 
+// clone (thread create): same fabrication as archForkChild, but the new thread runs on its
+// own user stack — so after copying the parent's trap frame we override `useresp` (the ring-3
+// ESP iret restores) with the caller-supplied childUserEsp. `cr3` is the SHARED directory phys
+// (the thread keeps the parent's address space); the context-switch frame still reloads it so
+// archContextSwitch's unconditional CR3 write lands on a valid (here, unchanged) directory.
+void archCloneChild(kernel::Task* child, TrapFrame* parentTf, unsigned cr3, unsigned childUserEsp) {
+	kernel::Registers* parent = (kernel::Registers*) parentTf;
+
+	unsigned char* top = (unsigned char*) child->esp0;
+	kernel::Registers* frame = ((kernel::Registers*) top) - 1;
+	*frame = *parent;
+	frame->eax = 0;                     // clone() returns 0 in the new thread
+	frame->useresp = childUserEsp;      // ... which runs on its own stack
+
+	unsigned* sp = (unsigned*) frame;
+	*--sp = (unsigned) ret_from_fork;   // ret target after the 5 pops
+	*--sp = 0;                          // ebp
+	*--sp = 0;                          // edi
+	*--sp = 0;                          // esi
+	*--sp = 0;                          // ebx
+	*--sp = cr3;                        // cr3 (popped first, loaded into CR3) — shared dir
+	child->kesp = (unsigned) sp;
+}
+
 }  // namespace arch

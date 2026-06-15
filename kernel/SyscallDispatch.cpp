@@ -280,6 +280,12 @@ static int futexWakeN(const void* space, void* uaddr, unsigned n, unsigned bitse
 	return woke;
 }
 
+// Kernel-callable FUTEX_WAKE: wake up to `n` waiters on (space, uaddr). Used by the
+// CLONE_CHILD_CLEARTID handshake in procThreadExit (a joiner is parked here via pthread_join).
+void futexWakeAddr(const void* space, void* uaddr, int n) {
+	futexWakeN(space, uaddr, (unsigned) n, 0, false);
+}
+
 static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 		unsigned uaddr2, unsigned val3) {
 	int cmd = op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
@@ -366,11 +372,24 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
 	switch (nr) {
 	case SYS_exit:
+		// A non-last thread of a multithreaded process exits just THIS thread (CLEARTID wake +
+		// reap), leaving the process alive for its siblings. The last thread falls through to the
+		// normal path: set the exited flag and let the arch syscall-return hook run procExit().
+		if (ProcTable::current()->threadCount > 1)
+			procThreadExit((int) a0);   // does not return
 		g_sys->exit((int) a0);
 		ret = 0;
 		break;
+	case SYS_exit_group:
+		procExitGroup((int) a0);   // terminate the whole group; does not return
+		ret = 0;                   // unreachable
+		break;
 	case SYS_fork:
 		ret = forkProcess(tf);
+		break;
+	case SYS_clone:
+		// i386 ABI: a0=flags, a1=child_stack, a2=ptid, a3=tls, a4=ctid.
+		ret = cloneThread(tf, a0, a1, a2, a3, a4);
 		break;
 	case SYS_getpid:
 		ret = ProcTable::current()->pid;

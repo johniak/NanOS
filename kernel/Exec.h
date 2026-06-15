@@ -33,6 +33,15 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 // of 0. Returns the child's pid to the parent, or <0 on failure (-EAGAIN).
 int forkProcess(arch::TrapFrame* tf);
 
+// clone(2) — thread creation. Add a new Task+Thread to the CURRENT process (same address
+// space + fd table), resuming from the trap frame *tf on its own user stack `childStack`
+// with a return value of 0. Honours CLONE_SETTLS / CLONE_PARENT_SETTID / CLONE_CHILD_SETTID
+// / CLONE_CHILD_CLEARTID (Linux i386: a3=tls, a2=ptid, a4=ctid). Returns the new tid to the
+// caller, or <0 (-EAGAIN/-EINVAL). A non-CLONE_THREAD clone with no CLONE_VM delegates to
+// forkProcess (a plain fork); any other non-thread clone is -EINVAL.
+int cloneThread(arch::TrapFrame* tf, unsigned flags, unsigned childStack,
+		unsigned ptid, unsigned tls, unsigned ctid);
+
 // waitpid(2): wait on a child of the current process (matching `wantPid`, or any child
 // when wantPid <= 0); write its W*-encoded status to *statusOut and return its pid.
 // `options` are the Linux bits: WNOHANG (1) returns 0 rather than blocking, WUNTRACED
@@ -42,6 +51,18 @@ int waitProcess(int wantPid, int* statusOut, int options);
 // SYS_exit handler tail: free the current process's address space, mark its task a
 // zombie, and schedule away. Does NOT return.
 void procExit();
+
+// Per-thread exit (a non-last thread of a multithreaded process called SYS_exit). Runs the
+// CLONE_CHILD_CLEARTID handshake (zero *clearTidAddr + futex-wake one joiner), releases the
+// thread's slot, marks its task done so the scheduler reaps it, and schedules away. The user
+// stack + TLS are owned by userland (pthread_join/detach), so the kernel never frees them.
+// Does NOT return. The address space stays alive for the surviving threads.
+void procThreadExit(int code);
+
+// exit_group(2): terminate the WHOLE thread group. Tears down every sibling Task/Thread,
+// then runs the normal process teardown (procExit) which frees the shared address space —
+// taking all threads' stacks with it. Does NOT return.
+void procExitGroup(int code);
 
 // Kill the current (ring-3) process with a fatal signal — the CPU-exception backstop: a user
 // program that faults (bad pointer, #GP, ...) is terminated like a SIGSEGV instead of taking the

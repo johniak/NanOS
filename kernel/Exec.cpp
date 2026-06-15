@@ -6,6 +6,8 @@
 #include "SignalDispatch.h"
 #include "Process.h"
 #include "Scheduler.h"
+#include "CloneFlags.h"
+#include "ThreadArea.h"   // UserDesc: CLONE_SETTLS reads the child's TLS base from it
 #include "String.h"
 #include "memory_manager.h"   // malloc/free: process-table snapshots go on the heap, not the
                               // 8 KB kernel stack (the table now holds up to ProcTable::MAX)
@@ -210,6 +212,65 @@ int forkProcess(arch::TrapFrame* tf) {
 	return child->pid;                          // parent sees the child's pid
 }
 
+// clone(2) — thread creation (the pthread keystone). Unlike fork, a CLONE_THREAD clone adds a
+// new Task+Thread to the CURRENT process (NO ProcTable::alloc): it shares the address space and
+// fd table, and runs on its own user stack. The new thread resumes from the same trap frame with
+// eax=0 (clone returns 0 in the child) on `childStack`. Returns the new tid, or <0.
+int cloneThread(arch::TrapFrame* tf, unsigned flags, unsigned childStack,
+		unsigned ptid, unsigned tls, unsigned ctid) {
+	// Not a thread-group clone? A no-CLONE_VM clone is a plain fork (glibc/musl fork() is
+	// clone(SIGCHLD,...)) — delegate so the existing, well-tested fork path owns it. Any other
+	// shape (e.g. CLONE_VM without CLONE_THREAD: vfork) is not supported here.
+	if (!cloneIsThread(flags)) {
+		if (!cloneSharesAddressSpace(flags))
+			return forkProcess(tf);
+		return -22;   // -EINVAL: unsupported clone shape (we only do fork or full thread)
+	}
+
+	Process* p = ProcTable::current();
+	Thread* th = ProcTable::allocThread(p);     // fresh tid, linked into p->threads, threadCount++
+	if (!th)
+		return -11;   // -EAGAIN: thread pool exhausted
+	Task* t = Scheduler::createBlank(th->tid);  // a task slot + kernel stack (kesp fabricated below)
+	if (!t) {
+		ProcTable::freeThread(th);              // undo the thread slot so we leak nothing
+		return -11;   // -EAGAIN: task table / kstack memory exhausted
+	}
+
+	// Wire the task<->thread links DIRECTLY — deliberately NOT ProcTable::bindTask, because
+	// bindTask also sets p->task = t, which would hijack the process's PRIMARY task (the leader's
+	// scheduler context that waitpid/SIGCHLD route through). A clone child is a SECONDARY task of
+	// the same process; only its own thread points back at it.
+	t->proc = p;
+	t->thread = th;
+	th->task = t;
+
+	// CLONE_SETTLS: the child's TLS base comes from the user_desc the caller points `tls` at
+	// (same struct as set_thread_area). The scheduler reloads GDT entry 6 from th->tlsBase when
+	// it first switches to this task, so __thread accesses resolve to the child's own block.
+	if ((flags & CLONE_SETTLS) && tls) {
+		UserDesc* ud = (UserDesc*) tls;
+		th->tlsBase = ud->base_addr;
+	}
+	// CLONE_PARENT_SETTID: publish the new tid to the PARENT's *ptid (shared space -> visible now).
+	if ((flags & CLONE_PARENT_SETTID) && ptid)
+		*(int*) ptid = th->tid;
+	// CLONE_CHILD_SETTID: publish the new tid to *ctid (the child would also write it, but the
+	// shared address space lets us do it here once — Linux writes it from the child's context).
+	if ((flags & CLONE_CHILD_SETTID) && ctid)
+		*(int*) ctid = th->tid;
+	// CLONE_CHILD_CLEARTID: on this thread's exit, zero *ctid and futex-wake it — the kernel half
+	// of the pthread_join handshake. Record the address now; procThreadExit fires it.
+	if (flags & CLONE_CHILD_CLEARTID)
+		th->clearTidAddr = ctid;
+
+	// Fabricate the child's kernel stack: same as fork, but it runs on childStack and shares the
+	// parent's (current) page directory — a thread gets no private address space.
+	arch::archCloneChild(t, tf, arch::mmuSpaceDirPhys((arch::AddressSpace*) p->space), childStack);
+	t->state = TASK_READY;                      // scheduler picks it up; resumes with eax=0
+	return th->tid;                             // the caller sees the new thread's tid
+}
+
 // When a process exits it may orphan one of its children's process groups (POSIX): a group
 // that loses its last live, in-session, out-of-group parent. If such a group has stopped
 // members, they must receive SIGHUP then SIGCONT so they are not left blocked forever.
@@ -271,6 +332,59 @@ void procExit() {
 	Scheduler::current()->state = TASK_ZOMBIE;
 	Scheduler::schedule();   // never returns to this (now zombie) task
 	for (;;) {}              // unreachable
+}
+
+// Per-thread exit: a NON-LAST thread of a multithreaded process called SYS_exit. We tear down
+// only THIS thread — the address space, fd table and surviving threads stay alive. Does NOT
+// return. (The last thread takes the normal procExit path instead; see the SYS_exit dispatch.)
+void procThreadExit(int code) {
+	(void) code;   // a thread carries no waitpid-reportable status; pthread_join learns of
+	               // completion via the CLEARTID futex below, not an exit code.
+	Process* p = ProcTable::current();
+	Thread* th = ProcTable::currentThread();
+	unsigned ctid = th ? th->clearTidAddr : 0;
+
+	// CLONE_CHILD_CLEARTID handshake: zero the tid word and wake one joiner blocked in
+	// futex(FUTEX_WAIT) on it (the pthread_join side). The address space is shared, so the
+	// store is immediately visible to the joiner.
+	if (ctid) {
+		*(int*) ctid = 0;
+		futexWakeAddr(p->space, (void*) ctid, 1);
+	}
+
+	Task* self = Scheduler::current();
+	if (th)
+		ProcTable::freeThread(th);   // release the thread slot + threadCount-- (unlinks from p->threads)
+	// Mark the task DONE, not ZOMBIE: a thread is never reaped via waitpid, so the scheduler's
+	// onTick reclaims a DONE task's slot + kstack on its own (the ZOMBIE convention exists only
+	// for a process a parent must wait on). The user stack + TLS belong to userland (pthread
+	// join/detach owns them), so the kernel leaves them untouched.
+	self->state = TASK_DONE;
+	Scheduler::schedule();   // never returns to this (now done) task
+	for (;;) {}              // unreachable
+}
+
+// exit_group(2): terminate the WHOLE thread group. Reap every SIBLING thread's task (so none
+// lingers runnable), then run the normal process teardown — which frees the shared address
+// space, taking all threads' user stacks with it. Does NOT return. For a single-threaded
+// process this is exactly equivalent to a plain exit (no siblings to reap).
+void procExitGroup(int code) {
+	Process* p = ProcTable::current();
+	Task* self = Scheduler::current();
+	// Reap each sibling task's kernel stack/slot. We do NOT freeThread here: ProcTable::freeSlot
+	// (run when the parent reaps this process) drains the whole thread list, so we only need the
+	// scheduler Task slots gone now. NOTE (DONE_WITH_CONCERNS): a sibling parked on a futex/wait
+	// queue has its waiter node on the kstack we free here — it is left dangling in the queue.
+	// Harmless in the common case (the whole group is dying; nothing wakes it), but a hardening
+	// pass (Task 6.1) should cancel blocked siblings' waiters before reaping.
+	for (Thread* th = p->threads; th; th = th->next)
+		if (th->task && th->task != self)
+			Scheduler::reap(th->task);
+	// The calling thread becomes the process's zombie task the parent reaps. If the leader's task
+	// was among those reaped above, repoint p->task at the survivor so waitpid reaps a live slot.
+	p->task = self;
+	p->sys->exit(code);   // record the group exit status (procExit reads p->sys->code())
+	procExit();           // frees the shared address space + zombifies self + wakes parent; no return
 }
 
 // waitpid(2): wait on a child of the current process. With WUNTRACED, also report a

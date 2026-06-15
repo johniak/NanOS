@@ -39,4 +39,10 @@ void halt_or_hlt();
 // copied frame (eax = 0) into ring 3 under `childCr3`. `child` already has kstack/esp0.
 void archForkChild(kernel::Task* child, TrapFrame* parentTf, unsigned childCr3);
 
+// clone (thread create): identical to archForkChild — copy the parent's trap frame, set
+// eax=0, build the ret_from_fork context-switch frame — EXCEPT the new thread runs on its
+// OWN user stack, so the copied frame's ring-3 ESP is set to `childUserEsp`. `cr3` is the
+// SHARED (parent's) page-directory phys (a thread does not get a private address space).
+void archCloneChild(kernel::Task* child, TrapFrame* parentTf, unsigned cr3, unsigned childUserEsp);
+
 }
