@@ -417,7 +417,7 @@ static void fillStat(LinuxStat* out, const FileStat& st) {
 	out->st_uid = st.uid;
 	out->st_gid = st.gid;
 	out->st_mtime = st.mtime;
-	out->st_ino = 1;
+	out->st_ino = st.ino ? st.ino : 1;   // real inode (file identity); 1 only if the fs left it 0
 }
 
 int Syscalls::stat(String path, LinuxStat* out) {
@@ -563,9 +563,18 @@ int Syscalls::symlink(String target, String path) {
 }
 
 // ---- Phase 4: metadata, statfs, *at family ------------------------------------------------
+// Linux i386 AT_* values (the kernel ABI; what SDK-built ports like git use).
 #define AT_FDCWD            (-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_REMOVEDIR        0x200
+// The in-tree userland links picolibc, whose <fcntl.h> uses DIFFERENT (newlib) AT_* values
+// (AT_FDCWD -2, AT_SYMLINK_NOFOLLOW 0x2, AT_REMOVEDIR 0x8) and defines them unconditionally, so
+// they can't be overridden in a force-included header. Accept BOTH encodings: the value sets do
+// not collide (no real fd is -2 or -100, and Linux callers never set bits 0x2/0x8).
+#define AT_FDCWD_PICO       (-2)
+#define IS_AT_FDCWD(d)      ((d) == AT_FDCWD || (d) == AT_FDCWD_PICO)
+#define HAS_AT_REMOVEDIR(f) ((f) & (AT_REMOVEDIR | 0x8))
+#define HAS_AT_NOFOLLOW(f)  ((f) & (AT_SYMLINK_NOFOLLOW | 0x2))
 
 // Fill a Linux i386 struct statfs (64 bytes) from our StatFs.
 static void fillStatfs(void* buf, const StatFs& s) {
@@ -656,7 +665,7 @@ int Syscalls::creat(String path, int mode) {
 String Syscalls::resolveAt(int dirfd, String path, bool* badfd) {
 	if (badfd) *badfd = false;
 	const char* p = (char*) path;
-	if ((p && p[0] == '/') || dirfd == AT_FDCWD)
+	if ((p && p[0] == '/') || IS_AT_FDCWD(dirfd))
 		return resolvePath(path);
 	if (!valid(dirfd) || fds[dirfd].isConsole) {
 		if (badfd) *badfd = true;
@@ -691,7 +700,7 @@ int Syscalls::mkdirat(int dirfd, String path, int mode) {
 int Syscalls::unlinkat(int dirfd, String path, int flags) {
 	bool bad; String p = resolveAt(dirfd, path, &bad);
 	if (bad) return -9;
-	return (flags & AT_REMOVEDIR) ? vfs->rmdir(p) : vfs->unlink(p);
+	return HAS_AT_REMOVEDIR(flags) ? vfs->rmdir(p) : vfs->unlink(p);
 }
 int Syscalls::renameat(int oldfd, String oldpath, int newfd, String newpath) {
 	bool b1, b2; String a = resolveAt(oldfd, oldpath, &b1); String b = resolveAt(newfd, newpath, &b2);
@@ -729,7 +738,7 @@ int Syscalls::fchownat(int dirfd, String path, int uid, int gid, int flags) {
 int Syscalls::fstatat(int dirfd, String path, LinuxStat* out, int flags) {
 	bool bad; String p = resolveAt(dirfd, path, &bad);
 	if (bad) return -9;
-	return (flags & AT_SYMLINK_NOFOLLOW) ? lstat(p, out) : stat(p, out);
+	return HAS_AT_NOFOLLOW(flags) ? lstat(p, out) : stat(p, out);
 }
 
 static unsigned rd32le(const void* p, unsigned off) {

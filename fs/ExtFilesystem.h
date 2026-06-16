@@ -428,7 +428,7 @@ public:
 		return readFile(inode, size, offset, buff);
 	}
 
-	void fillFileStat(FileStat& out, Ext2Inode& inode) {
+	void fillFileStat(FileStat& out, Ext2Inode& inode, unsigned ino) {
 		out.type = isSymlink(inode) ? NODE_SYMLINK
 		         : isDirectory(inode) ? NODE_DIR : NODE_FILE;
 		out.size = inode.lowerSize;
@@ -437,22 +437,49 @@ public:
 		out.uid = inodeUid(inode);
 		out.gid = inodeGid(inode);
 		out.mtime = (unsigned) inode.lastmodification;
+		out.ino = ino;
+	}
+
+	// No-follow path resolution that also yields the final inode number (the lstat counterpart
+	// of resolvePathNum). Mirrors getInodeNoFollow.
+	bool getInodeNoFollowNum(String path, Ext2Inode& out, int& outNum) {
+		const char* p = (char*) path;
+		if (!p || p[0] != '/')
+			return false;
+		int end = 0;
+		while (p[end]) end++;
+		while (end > 0 && p[end - 1] == '/') end--;
+		int start = end;
+		while (start > 0 && p[start - 1] != '/') start--;
+		int len = end - start;
+		if (len <= 0) { out = getInode(2); outNum = 2; return true; }   // "/" -> root inode 2
+		char pp[256];
+		int k = 0;
+		for (int i = 0; i < start && k < 255; i++) pp[k++] = p[i];
+		pp[k] = 0;
+		Ext2Inode parent;
+		int parentNo;
+		if (!resolvePathNum(pp, parent, parentNo, 0))
+			return false;
+		return getChildrenInodeNum(parent, p + start, len, out, outNum);
 	}
 
 	int stat(String path, FileStat& out) {
 		Ext2Inode inode;
-		if (!getInodeByPath(path, inode))   // follows symlinks
+		int inodeNo = 0;
+		if (!resolvePathNum((char*) path, inode, inodeNo, 0))   // follows symlinks
 			return -1;
-		fillFileStat(out, inode);
+		fillFileStat(out, inode, (unsigned) inodeNo);
 		return 0;
 	}
 
 	// lstat: stat the link itself (do not follow a symlink in the final component).
 	int lstat(String path, FileStat& out) {
 		Ext2Inode inode;
-		if (!getInodeNoFollow(path, inode))
+		int inodeNo = 0;
+		if (!getInodeNoFollowNum(path, inode, inodeNo))
 			return -1;
-		fillFileStat(out, inode);
+		fillFileStat(out, inode, (unsigned) inodeNo);
 		return 0;
 	}
 

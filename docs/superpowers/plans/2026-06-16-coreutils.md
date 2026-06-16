@@ -223,18 +223,18 @@ required behavior; note `-P` as a limitation rather than adding `realpath` here.
   Confirm `tf` is created (size 0), 0 faults.
 - [x] Commit `feat: add touch coreutil`. Tick.
 
-### - [ ] **Task 1.4: `rm`** (depends on Task 0.2)
+### - [x] **Task 1.4: `rm`** (depends on Task 0.2)
 
 **Likely objects:** `eprintf.o recurse.o` (vendor `libutil/recurse.c` + `fs.h`). Source: `rm.c`.
 `rm -r` traverses via `recurse()` (uses the `*at` family from Task 0.2).
 
-- [ ] Vendor `rm.c`, `libutil/recurse.c`, and `user/third_party/sbase/fs.h`. Wire `rm` into
+- [x] Vendor `rm.c`, `libutil/recurse.c`, and `user/third_party/sbase/fs.h`. Wire `rm` into
   `USER_PROGS`/`SYS_PROGS` + `SBASE_UTIL_RM=$(BINFOLDER)eprintf.o $(BINFOLDER)recurse.o` + link rule.
-- [ ] `make build`; resolve link errors (recurse may pull `estrtol`/`ealloc` etc. — vendor as named).
-- [ ] `make image`, QEMU:
+- [x] `make build`; resolve link errors (recurse may pull `estrtol`/`ealloc` etc. — vendor as named).
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "mkdir -p /disks/main/rd/sub" "touch /disks/main/rd/sub/f" "rm -r /disks/main/rd" "ls /disks/main"`.
   Confirm `rd` is gone, 0 faults. Also test plain `rm /disks/main/<file>` on a regular file.
-- [ ] Commit `feat: add rm coreutil (incl -r via sbase recurse)`. Tick.
+- [x] Commit `feat: add rm coreutil (incl -r via sbase recurse)`. Tick.
 
 ### - [ ] **Task 1.5: `ln`**
 

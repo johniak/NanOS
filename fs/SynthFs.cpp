@@ -684,6 +684,7 @@ int SynthFs::stat(String path, FileStat& out) {
 		out.mode = (c == 2) ? (0x4000 | 0555) : (0x8000 | 0444);
 		out.nlink = 1;
 		out.uid = out.gid = out.mtime = 0;
+		out.ino = 0x50000000u + (unsigned) pid;   // synthetic /proc ino, clear of disk inodes
 		return 0;
 	}
 
@@ -703,6 +704,10 @@ int SynthFs::stat(String path, FileStat& out) {
 	out.uid = 0;
 	out.gid = 0;
 	out.mtime = 0;
+	// Per-node identity from the (stable, distinct) node pointer. Heap addresses are far above
+	// any ext inode number, so the synthetic root never collides with a disk file (rm relies on
+	// this to tell "/" apart from files under /disks/main).
+	out.ino = (unsigned) (unsigned long) n;
 	return 0;
 }
 

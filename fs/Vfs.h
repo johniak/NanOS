@@ -17,6 +17,8 @@ struct FileStat {
 	unsigned uid;      // owner id
 	unsigned gid;      // group id
 	unsigned mtime;    // last-modification time (epoch seconds)
+	unsigned ino;      // inode number (file identity; 0 = unknown). Hard links share it; tools
+	                   // like rm/find compare it to refuse removing "." / ".." / "/".
 };
 
 // Filesystem-wide statistics (statfs/fstatfs).

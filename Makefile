@@ -671,12 +671,13 @@ SBASE_UTIL_MKDIR=$(BINFOLDER)eprintf.o $(BINFOLDER)mode.o $(BINFOLDER)mkdirp.o $
 SBASE_UTIL_RMDIR=$(BINFOLDER)eprintf.o
 SBASE_UTIL_PWD=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
 SBASE_UTIL_TOUCH=$(BINFOLDER)eprintf.o $(BINFOLDER)strtonum.o
+SBASE_UTIL_RM=$(BINFOLDER)eprintf.o $(BINFOLDER)recurse.o $(BINFOLDER)rm_cb.o $(BINFOLDER)confirm.o $(BINFOLDER)strlcpy.o $(BINFOLDER)ealloc.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir pwd touch sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract
-SYS_PROGS=nsh cat ls mkdir rmdir pwd touch free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
+USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract
+SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest pthrtest pthrstress pfract
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -703,6 +704,13 @@ $(BINFOLDER)%.o: user/libc-glue/%.c
 $(BINFOLDER)%.o: $(SBASE)/%.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/libutil/%.c
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
+# sbase ships the fs-operation callbacks (rm/cp) in libutil/{rm,cp}.c, whose basenames collide
+# with the top-level command files (rm.c/cp.c -> bin/{rm,cp}.o). Compile the libutil callbacks to
+# distinct *_cb.o objects so both can link into the command's .nxe.
+$(BINFOLDER)rm_cb.o: $(SBASE)/libutil/rm.c
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
+$(BINFOLDER)cp_cb.o: $(SBASE)/libutil/cp.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/libutf/%.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
@@ -795,6 +803,7 @@ $(BINFOLDER)mkdir.nxe:     $(DYN_DEPS) $(BINFOLDER)mkdir.o $(SBASE_UTIL_MKDIR)
 $(BINFOLDER)rmdir.nxe:     $(DYN_DEPS) $(BINFOLDER)rmdir.o $(SBASE_UTIL_RMDIR)
 $(BINFOLDER)pwd.nxe:       $(DYN_DEPS) $(BINFOLDER)pwd.o $(SBASE_UTIL_PWD)
 $(BINFOLDER)touch.nxe:     $(DYN_DEPS) $(BINFOLDER)touch.o $(SBASE_UTIL_TOUCH)
+$(BINFOLDER)rm.nxe:        $(DYN_DEPS) $(BINFOLDER)rm.o $(SBASE_UTIL_RM)
 $(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
 $(BINFOLDER)crashtest.nxe: $(DYN_DEPS) $(BINFOLDER)crashtest.o
 $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o

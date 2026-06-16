@@ -289,6 +289,7 @@ static void fillStat(FileStat& out, RamNode* n) {
 	out.uid = n->uid;
 	out.gid = n->gid;
 	out.mtime = n->mtime;
+	out.ino = (unsigned) (unsigned long) n;   // per-node identity (distinct from disk inodes)
 }
 
 int RamFs::stat(String path, FileStat& out) {
