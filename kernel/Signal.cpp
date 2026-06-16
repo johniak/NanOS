@@ -2,7 +2,7 @@
 
 namespace kernel {
 
-static unsigned bit(int sig) { return 1u << (sig - 1); }
+static SigMask bit(int sig) { return (SigMask) 1 << (sig - 1); }   // 64-bit: signals 1..64
 static bool valid(int sig) { return sig > 0 && sig < NANOS_NSIG; }
 
 // --- ThreadSignals / ProcSignals accessors -------------------------------------------
@@ -66,7 +66,7 @@ void sigInit(ProcSignals& s) {
 // The interplay is applied within whichever pending word is posted to (thread- vs
 // process-directed); since with one thread per process every async signal is process-
 // directed, the two words never disagree in practice.
-static void postBit(unsigned& pending, int sig) {
+static void postBit(SigMask& pending, int sig) {
 	if (sig == SIGCONT)
 		// Cancel every pending stop signal, matching Linux's SIG_KERNEL_STOP_MASK
 		// {SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU} — not just the two job-control keys.
@@ -96,8 +96,8 @@ void sigConsume(ThreadSignals& ts, ProcSignals& ps, int sig) {
 // Lowest-numbered deliverable signal over the union of thread- and process-directed
 // pending. SIGKILL/SIGSTOP cannot be blocked.
 int sigNextDeliverable(const ThreadSignals& ts, const ProcSignals& ps) {
-	unsigned pending = ts.pending | ps.pending;
-	unsigned ready = pending & ~ts.blocked;
+	SigMask pending = ts.pending | ps.pending;
+	SigMask ready = pending & ~ts.blocked;
 	ready |= pending & (bit(SIGKILL) | bit(SIGSTOP));   // these ignore the mask
 	for (int sig = 1; sig < NANOS_NSIG; sig++)
 		if (ready & bit(sig))
@@ -127,8 +127,8 @@ SigDisp sigResolve(const ProcSignals& ps, int sig) {
 }
 
 bool sigHasInterrupt(const ThreadSignals& ts, const ProcSignals& ps) {
-	unsigned pending = ts.pending | ps.pending;
-	unsigned ready = (pending & ~ts.blocked)
+	SigMask pending = ts.pending | ps.pending;
+	SigMask ready = (pending & ~ts.blocked)
 	               | (pending & (bit(SIGKILL) | bit(SIGSTOP)));   // these ignore the mask
 	for (int sig = 1; sig < NANOS_NSIG; sig++) {
 		if (!(ready & bit(sig)))

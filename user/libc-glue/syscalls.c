@@ -10,6 +10,7 @@
 #include "SyscallNr.h"
 #include <errno.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -41,6 +42,15 @@ void __nx_link_streams(void) {
 static inline int sys3(int nr, int a, int b, int c) {
 	int r;
 	__asm__ __volatile__("int $0x80" : "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c) : "memory");
+	return r;
+}
+
+/* 4-arg form (i386: nr=eax, a=ebx, b=ecx, c=edx, d=esi). Needed by the rt_sig* calls, whose
+ * 4th argument is the sigsetsize. */
+static inline int sys4(int nr, int a, int b, int c, int d) {
+	int r;
+	__asm__ __volatile__("int $0x80"
+		: "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c), "S"(d) : "memory");
 	return r;
 }
 
@@ -211,34 +221,46 @@ void (*signal(int sig, void (*handler)(int)))(int) {
 	return (void (*)(int)) r;
 }
 
-/* sigaction(2): implemented over SYS_signal. The struct layout lives in picolibc's headers
- * (compiled here), so sa_handler/sa_mask read at the right offsets. Our kernel signals
- * always carry SA_RESTART (BSD semantics) and auto-handle the trampoline, so sa_flags/
- * sa_mask beyond the handler are not separately honored. act == NULL queries without
- * changing (handler sentinel -1). Returns the previous handler in `old`. */
+/* sigaction(2): routed through SYS_rt_sigaction with the kernel-ABI struct k_sigaction (the
+ * same layout musl marshals into), carrying an 8-byte sigsetsize. picolibc's sigset_t is a
+ * single 32-bit word and apps only use signals 1..31, so we don't copy sa_mask into the
+ * 64-bit kernel mask — the kernel ignores it anyway (it implies SA_RESTART and runs the
+ * handler with just the delivered signal blocked). We supply the libc sigreturn trampoline
+ * as sa_restorer. act == NULL queries without changing; the previous handler comes back in
+ * `old`. */
 int sigaction(int sig, const struct sigaction* act, struct sigaction* old) {
-	int prev = act
-		? sys3(SYS_signal, sig, (int) (size_t) act->sa_handler, (int) &__nx_sigtramp)
-		: sys3(SYS_signal, sig, -1 /* query, do not change */, 0);
-	if (prev < 0 && prev > -256) { errno = -prev; return -1; }
+	struct k_sigaction ka, ko;
+	memset(&ka, 0, sizeof ka);
+	memset(&ko, 0, sizeof ko);
+	if (act) {
+		ka.k_sa_handler  = (void*) (size_t) act->sa_handler;
+		ka.k_sa_flags    = (unsigned long) act->sa_flags;
+		ka.k_sa_restorer = (void*) &__nx_sigtramp;
+		/* sa_mask intentionally left zero — see comment above. */
+	}
+	int r = sys4(SYS_rt_sigaction, sig, act ? (int) &ka : 0, old ? (int) &ko : 0, 8);
+	if (r < 0) { errno = -r; return -1; }
 	if (old) {
-		old->sa_handler = (void (*)(int)) (size_t) prev;
+		old->sa_handler = (void (*)(int)) (size_t) ko.k_sa_handler;
 		old->sa_flags = 0;
 		memset(&old->sa_mask, 0, sizeof old->sa_mask);
 	}
 	return 0;
 }
 
-/* sigprocmask(2): sigset_t is a 32-bit unsigned long here, so it maps straight onto the
- * kernel's bitmask. picolibc uses BSD `how` values (SETMASK=0, BLOCK=1, UNBLOCK=2) but the
- * kernel uses the Linux numbering (BLOCK=0, UNBLOCK=1, SETMASK=2), so translate. A NULL set
- * queries without changing (BLOCK an empty set). */
+/* sigprocmask(2): routed through SYS_rt_sigprocmask, which carries the mask by pointer + an
+ * 8-byte sigsetsize (so signals 32..64 are addressable). picolibc's sigset_t is one 32-bit
+ * word and apps only touch signals 1..31, so we zero-extend it into a local 64-bit mask for
+ * the call and narrow the result back. picolibc uses BSD `how` values (SETMASK=0, BLOCK=1,
+ * UNBLOCK=2) but the kernel uses the Linux numbering (BLOCK=0, UNBLOCK=1, SETMASK=2), so
+ * translate. A NULL set queries without changing. */
 int sigprocmask(int how, const sigset_t* set, sigset_t* old) {
 	int khow = set ? (how == SIG_BLOCK ? 0 : how == SIG_UNBLOCK ? 1 : 2) : 0;
-	unsigned o = 0;
-	int r = sys3(SYS_sigprocmask, khow, set ? (int) (unsigned) *set : 0, (int) &o);
+	uint64_t kset = set ? (uint64_t) (unsigned) *set : 0;
+	uint64_t kold = 0;
+	int r = sys4(SYS_rt_sigprocmask, khow, set ? (int) &kset : 0, (int) &kold, 8);
 	if (r < 0) { errno = -r; return -1; }
-	if (old) *old = (sigset_t) o;
+	if (old) *old = (sigset_t) (unsigned) kold;
 	return 0;
 }
 
@@ -249,10 +271,12 @@ int pause(void) {
 }
 
 /* sigsuspend(2): install *mask as the blocked set, wait for a deliverable signal, restore the
- * previous mask. sigset_t is one 32-bit word here (same bit layout as the kernel's mask), so
- * the value passes straight through in the first arg. Always returns -1 with errno == EINTR. */
+ * previous mask. Routed through SYS_rt_sigsuspend (mask by pointer + 8-byte sigsetsize); the
+ * single-word picolibc sigset_t is zero-extended into a local 64-bit mask. Always returns -1
+ * with errno == EINTR. */
 int sigsuspend(const sigset_t* mask) {
-	return reterr(sys3(SYS_sigsuspend, mask ? (int) (unsigned) *mask : 0, 0, 0));
+	uint64_t kmask = mask ? (uint64_t) (unsigned) *mask : 0;
+	return reterr(sys3(SYS_rt_sigsuspend, mask ? (int) &kmask : 0, 8, 0));
 }
 
 /* getrandom(2): fill buf with CSPRNG bytes from the kernel (kernel/Csprng.*, seeded at boot from

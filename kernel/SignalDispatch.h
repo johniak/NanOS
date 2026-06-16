@@ -8,7 +8,13 @@
  */
 #pragma once
 
+#include <stdint.h>   // uint64_t — the rt_* glue carries the 64-bit signal mask
+
 namespace arch { struct TrapFrame; }
+
+// The kernel-ABI sigaction struct rt_sigaction reads/writes (defined in SyscallNr.h). Only
+// a forward declaration is needed here; the dispatch includes SyscallNr.h for the layout.
+struct k_sigaction;
 
 namespace kernel {
 
@@ -19,9 +25,15 @@ static const int ERESTARTSYS = 512;
 
 int  signalSend(int pid, int sig);                                  // kill(2)
 int  signalAction(int sig, unsigned handler, unsigned restorer);    // signal(2)
-int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocmask(2)
+int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocmask(2) [legacy, low 32]
 int  signalPause();                                                 // pause(2)
-int  signalSuspend(unsigned mask);                                  // sigsuspend(2)
+int  signalSuspend(unsigned mask);                                  // sigsuspend(2)  [legacy, low 32]
+// Real-time signal glue (the rt_* syscalls): the mask is carried by pointer so signals
+// 32..64 are addressable. sigsetsize MUST be 8 (a 64-bit mask) or these return -EINVAL.
+int  signalMaskRt(int how, const uint64_t* set, uint64_t* oldset, unsigned sigsetsize);     // rt_sigprocmask(2)
+int  signalSuspendRt(const uint64_t* mask, unsigned sigsetsize);                            // rt_sigsuspend(2)
+int  signalActionRt(int sig, const ::k_sigaction* act, ::k_sigaction* old, unsigned sigsetsize); // rt_sigaction(2)
+int  signalPendingRt(uint64_t* set, unsigned sigsetsize);                                   // rt_sigpending(2)
 // Deliver pending signals at a return to ring 3. `origEax` is the syscall number when
 // coming from the syscall path (`inSyscall` true) so an interrupted, restartable syscall
 // can be restarted; on the IRQ path pass (0, false).

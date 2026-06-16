@@ -437,13 +437,29 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = signalAction((int) a0, a1, a2);   // a1 = handler, a2 = sa_restorer
 		break;
 	case SYS_sigprocmask:
-		ret = signalMask((int) a0, a1, (unsigned*) a2);
+		ret = signalMask((int) a0, a1, (unsigned*) a2);   // legacy single-word form (low 31 signals)
+		break;
+	case SYS_rt_sigprocmask:
+		// i386: a0=how, a1=set*, a2=oldset*, a3=sigsetsize (must be 8).
+		ret = signalMaskRt((int) a0, (const uint64_t*) a1, (uint64_t*) a2, a3);
+		break;
+	case SYS_rt_sigaction:
+		// i386: a0=sig, a1=act*, a2=old*, a3=sigsetsize (must be 8).
+		ret = signalActionRt((int) a0, (const k_sigaction*) a1, (k_sigaction*) a2, a3);
+		break;
+	case SYS_rt_sigpending:
+		// i386: a0=set*, a1=sigsetsize (must be 8).
+		ret = signalPendingRt((uint64_t*) a0, a1);
 		break;
 	case SYS_pause:
 		ret = signalPause();           // block until a signal -> -EINTR
 		break;
 	case SYS_sigsuspend:
-		ret = signalSuspend(a0);       // a0 = wait-mask (NanOS single-word sigset)
+		ret = signalSuspend(a0);       // legacy: a0 = wait-mask (single-word sigset)
+		break;
+	case SYS_rt_sigsuspend:
+		// i386: a0=mask*, a1=sigsetsize (must be 8).
+		ret = signalSuspendRt((const uint64_t*) a0, a1);
 		break;
 	case SYS_sigreturn:
 		ret = signalReturn(tf);   // restores the trap frame; ret = the saved eax

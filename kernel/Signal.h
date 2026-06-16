@@ -13,6 +13,8 @@
 #ifndef SIGNAL_H_
 #define SIGNAL_H_
 
+#include <stdint.h>   // uint64_t — the pending/blocked masks are now 64 bits wide
+
 // Signal numbers (Linux i386 ABI). Defined as guarded macros so they coexist with the
 // host libc's <signal.h> (doctest pulls it in; the values match on our Linux test host),
 // while the freestanding kernel build — which has no <signal.h> — gets them from here.
@@ -77,9 +79,21 @@
 #define SIGUSR2 12
 #endif
 
-#define NANOS_NSIG 32   // disposition-table size; valid signals are 1..NANOS_NSIG-1
+// SIGCANCEL — the first real-time signal (32), reserved for the kernel's internal
+// pthread_cancel mechanism (Task 5.3). Userland kill/signal/sigaction refuse it.
+#ifndef SIGCANCEL
+#define SIGCANCEL 32
+#endif
+
+#define NANOS_NSIG 65   // disposition-table size; valid signals are 1..NANOS_NSIG-1 (1..64).
+                        // Widened from 32 to make room for the real-time signals 32..64; the
+                        // pending/blocked masks are 64-bit accordingly (see SigMask below).
 
 namespace kernel {
+
+// The pending/blocked signal masks: one bit per signal (sig-1). 64 bits wide so signals
+// 32..64 (the real-time range) are addressable. Signals 1..31 keep their exact old bits.
+typedef uint64_t SigMask;
 
 // Disposition values stored in ProcSignals::handlers[]. NOT the libc SIG_DFL/SIG_IGN
 // pointer-cast macros — these are plain small integers compared against the unsigned
@@ -90,9 +104,9 @@ static const unsigned kSigIgnore  = 1;   // SIG_IGN
 // PER-THREAD signal state: each thread has its own pending set and its own block mask
 // (sigprocmask is per-thread in POSIX). Lives on Thread::sig.
 struct ThreadSignals {
-	unsigned pending;                  // bit (sig-1) set => sig is pending FOR THIS THREAD
+	SigMask pending;                   // bit (sig-1) set => sig is pending FOR THIS THREAD
 	                                   // (thread-directed; populated by tgkill in Task 5.2)
-	unsigned blocked;                  // sigprocmask: this thread's blocked signals
+	SigMask blocked;                   // sigprocmask: this thread's blocked signals
 
 	void block(int sig);               // add sig to the block mask
 	void unblock(int sig);             // remove sig from the block mask
@@ -104,9 +118,9 @@ struct ThreadSignals {
 // signal sent to the process — kill(pid) — lands here until a thread picks it up). Lives
 // on Process::psig.
 struct ProcSignals {
-	unsigned pending;                  // process-directed pending (kill(pid)); any thread may take it
-	unsigned restart;                  // bit set => this signal's handler has SA_RESTART
-	unsigned handlers[NANOS_NSIG];     // kSigDefault / kSigIgnore / user handler address
+	SigMask pending;                   // process-directed pending (kill(pid)); any thread may take it
+	SigMask restart;                   // bit set => this signal's handler has SA_RESTART
+	unsigned handlers[NANOS_NSIG];     // kSigDefault / kSigIgnore / user handler address (32-bit addr)
 	unsigned restorer;                 // sa_restorer trampoline (libc __nx_sigtramp)
 
 	void  setHandler(int sig, void* h);  // install a disposition (DFL/IGN/handler address)

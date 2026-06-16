@@ -4,6 +4,7 @@
 #include "Syscall.h"
 #include "SyscallDispatch.h"
 #include "SignalDispatch.h"
+#include "SyscallNr.h"   // struct k_sigaction: the rt_sigaction kernel-ABI layout
 #include "Process.h"
 #include "Scheduler.h"
 #include "CloneFlags.h"
@@ -459,7 +460,7 @@ int waitProcess(int wantPid, int* statusOut, int options) {
 // the current process and schedule away; posting from another context only sets the
 // pending bit (and wakes a blocked target so it reaches a return-to-user).
 
-namespace { unsigned sigbit(int s) { return 1u << (s - 1); } }
+namespace { SigMask sigbit(int s) { return (SigMask) 1 << (s - 1); } }   // 64-bit mask bit
 
 // Terminate the current process because of a fatal signal. Mirrors procExit but records
 // the killing signal (so waitpid reports WIFSIGNALED). Does NOT return.
@@ -535,6 +536,8 @@ static void bcastVisit(int pid, bool kthread, void* c) {
 int signalSend(int pid, int sig) {
 	if (sig < 0 || sig >= NANOS_NSIG)
 		return -22;   // -EINVAL
+	if (sig == SIGCANCEL)
+		return -22;   // -EINVAL: SIGCANCEL is kernel-internal (pthread_cancel); apps can't send it
 	if (pid == -1) {  // broadcast: every process we may signal, except init (pid 1) and self
 		Process* me = ProcTable::current();
 		BcastCtx bc = { sig, me ? me->pid : 0, -3 };
@@ -573,8 +576,8 @@ int signalSend(int pid, int sig) {
 // kSigIgnore, or a user function address; `restorer` (the libc sigreturn trampoline) is
 // remembered when nonzero. Returns the previous disposition.
 int signalAction(int sig, unsigned handler, unsigned restorer) {
-	if (sig <= 0 || sig >= NANOS_NSIG || !sigCanCatch(sig))
-		return -22;   // -EINVAL
+	if (sig <= 0 || sig >= NANOS_NSIG || !sigCanCatch(sig) || sig == SIGCANCEL)
+		return -22;   // -EINVAL (SIGCANCEL is kernel-internal; apps can't install a disposition)
 	Process* p = ProcTable::current();
 	unsigned prev = p->psig.handlers[sig];
 	if (handler == 0xFFFFFFFFu)
@@ -591,18 +594,89 @@ int signalAction(int sig, unsigned handler, unsigned restorer) {
 	return (int) prev;
 }
 
-// sigprocmask(2): how 0=BLOCK, 1=UNBLOCK, 2=SETMASK. SIGKILL/SIGSTOP stay unblockable.
+// sigprocmask(2) — LEGACY single-word form (SYS_sigprocmask). how 0=BLOCK, 1=UNBLOCK,
+// 2=SETMASK. SIGKILL/SIGSTOP stay unblockable. The blocked mask is now 64-bit, but this
+// legacy call only addresses signals 1..31: BLOCK/UNBLOCK OR/AND-NOT the low word, and
+// SETMASK replaces ONLY the low 32 bits — the high bits (signals 32..64, owned by the rt_*
+// callers and the kernel's SIGCANCEL) must never be clobbered by a legacy mask.
 int signalMask(int how, unsigned set, unsigned* oldset) {
 	Thread* th = ProcTable::currentThread();   // sigprocmask is per-thread
 	if (oldset)
-		*oldset = th->sig.blocked;
+		*oldset = (unsigned) th->sig.blocked;   // low word only (legacy sigset is one word)
 	switch (how) {
-	case 0: th->sig.blocked |= set; break;
-	case 1: th->sig.blocked &= ~set; break;
-	case 2: th->sig.blocked = set; break;
+	case 0: th->sig.blocked |= (SigMask) set; break;
+	case 1: th->sig.blocked &= ~(SigMask) set; break;
+	case 2: th->sig.blocked = (th->sig.blocked & 0xFFFFFFFF00000000ull) | set; break;
 	default: return -22;   // -EINVAL
 	}
 	th->sig.blocked &= ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	return 0;
+}
+
+// rt_sigprocmask(2): the wide form. The mask is carried by pointer, so signals 32..64 are
+// addressable; sigsetsize MUST be 8 (a 64-bit mask). Same how semantics as the legacy call,
+// but operating on the full 64-bit blocked set.
+int signalMaskRt(int how, const uint64_t* set, uint64_t* oldset, unsigned sigsetsize) {
+	if (sigsetsize != 8)
+		return -22;   // -EINVAL: NanOS only supports a 64-bit sigset
+	Thread* th = ProcTable::currentThread();
+	if (oldset)
+		*oldset = th->sig.blocked;
+	if (set) {
+		switch (how) {
+		case 0: th->sig.blocked |= *set; break;
+		case 1: th->sig.blocked &= ~*set; break;
+		case 2: th->sig.blocked = *set; break;
+		default: return -22;   // -EINVAL
+		}
+		th->sig.blocked &= ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	}
+	return 0;
+}
+
+// rt_sigaction(2): the wide form, reading/writing the kernel-ABI struct k_sigaction (the
+// layout musl marshals into). NanOS's signal model only honours the handler + restorer (it
+// implies SA_RESTART and runs handlers with the delivered signal blocked), so sa_flags and
+// sa_mask beyond that are accepted but not separately applied — consistent with signal()/
+// signalAction(). SIGCANCEL stays refused for userland, exactly like signalAction.
+int signalActionRt(int sig, const k_sigaction* act, k_sigaction* old, unsigned sigsetsize) {
+	if (sigsetsize != 8)
+		return -22;   // -EINVAL
+	if (sig <= 0 || sig >= NANOS_NSIG || !sigCanCatch(sig) || sig == SIGCANCEL)
+		return -22;   // -EINVAL
+	Process* p = ProcTable::current();
+	unsigned prev = p->psig.handlers[sig];
+	if (act) {
+		unsigned handler  = (unsigned) (unsigned long) act->k_sa_handler;
+		unsigned restorer = (unsigned) (unsigned long) act->k_sa_restorer;
+		p->psig.handlers[sig] = handler;
+		if (restorer)
+			p->psig.restorer = restorer;
+		if (handler != kSigDefault && handler != kSigIgnore)
+			p->psig.restart |= sigbit(sig);
+		else
+			p->psig.restart &= ~sigbit(sig);
+	}
+	if (old) {
+		old->k_sa_handler  = (void*) (unsigned long) prev;
+		old->k_sa_flags    = 0;
+		old->k_sa_restorer = 0;
+		old->k_sa_mask[0]  = 0;
+		old->k_sa_mask[1]  = 0;
+	}
+	return 0;
+}
+
+// rt_sigpending(2): report the set of signals pending (and currently blocked) for the
+// caller — the union of this thread's pending and the process-directed pending.
+int signalPendingRt(uint64_t* set, unsigned sigsetsize) {
+	if (sigsetsize != 8)
+		return -22;   // -EINVAL
+	if (set) {
+		Process* p = ProcTable::current();
+		Thread* th = ProcTable::currentThread();
+		*set = th->sig.pending | p->psig.pending;
+	}
 	return 0;
 }
 
@@ -627,8 +701,25 @@ int signalPause() {
 // the kernel's existing signal fidelity (see signalAction's sa_mask note).
 int signalSuspend(unsigned mask) {
 	Thread* th = ProcTable::currentThread();
-	unsigned old = th->sig.blocked;
-	th->sig.blocked = mask & ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	SigMask old = th->sig.blocked;
+	// Legacy single-word form: set the low 32 bits from `mask`, keep the high bits (32..64)
+	// as they were — the wait-mask only addresses signals 1..31.
+	th->sig.blocked = ((old & 0xFFFFFFFF00000000ull) | mask)
+	                & ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
+	while (!hasPendingSignalCurrent())
+		Scheduler::block();
+	th->sig.blocked = old;
+	return -4;   // -EINTR
+}
+
+// rt_sigsuspend(2): the wide form. Installs the full 64-bit `mask` as the blocked set, waits
+// for a deliverable signal, then restores the previous mask. sigsetsize MUST be 8.
+int signalSuspendRt(const uint64_t* mask, unsigned sigsetsize) {
+	if (sigsetsize != 8)
+		return -22;   // -EINVAL
+	Thread* th = ProcTable::currentThread();
+	SigMask old = th->sig.blocked;
+	th->sig.blocked = (mask ? *mask : 0) & ~(sigbit(SIGKILL) | sigbit(SIGSTOP));
 	while (!hasPendingSignalCurrent())
 		Scheduler::block();
 	th->sig.blocked = old;

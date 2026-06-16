@@ -95,6 +95,14 @@
 #define SYS_fstat 108
 #define SYS_sigreturn 119
 #define SYS_sigprocmask 126
+/* Real-time signal ABI (Linux i386): the mask is carried BY POINTER + size, so it can
+ * address signals 32..64 (the legacy single-word calls above only reach 1..31). Each call
+ * takes a trailing sigsetsize that MUST equal 8 (a 64-bit mask). musl's pthread issues
+ * these directly. */
+#define SYS_rt_sigaction 174
+#define SYS_rt_sigprocmask 175
+#define SYS_rt_sigpending 176
+#define SYS_rt_sigsuspend 179
 #define SYS_getdents64 220
 #define SYS_dup 41
 #define SYS_pipe 42
@@ -144,6 +152,17 @@
 #define SC_SENDMSG 16
 #define SC_RECVMSG 17
 #define SC_ACCEPT4 18
+
+/* The kernel-ABI sigaction layout that rt_sigaction(2) reads/writes (Linux i386 "new"
+ * struct, also what musl marshals into). Field order/sizes are load-bearing: sa_mask is a
+ * 64-bit signal mask (two 32-bit words on i386) and sits last for extensibility. Shared with
+ * the kernel dispatch so both ends agree on the byte layout. */
+struct k_sigaction {
+	void*         k_sa_handler;    /* handler addr, or SIG_DFL (0) / SIG_IGN (1) */
+	unsigned long k_sa_flags;      /* sa_flags (SA_RESTART etc.; NanOS implies SA_RESTART) */
+	void*         k_sa_restorer;   /* sigreturn trampoline (libc __nx_sigtramp) */
+	unsigned      k_sa_mask[2];    /* 64-bit blocked-during-handler mask (low word first) */
+};
 
 /* NanOS-private numbers (outside the Linux i386 range, so they never collide with
  * a Linux number we might add later). */

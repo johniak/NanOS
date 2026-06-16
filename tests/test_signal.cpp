@@ -235,3 +235,40 @@ TEST_CASE("wait-status encodings match the W* macro contract") {
 	CHECK((st & 0xff) == 0x7f);
 	CHECK(((st >> 8) & 0xff) == SIGTSTP);
 }
+
+TEST_CASE("64-bit masks: real-time signals 32..64 are independent of 1..31") {
+	// The disposition table now spans the full range, and SIGCANCEL=32 is reserved.
+	CHECK(NANOS_NSIG == 65);
+	CHECK(SIGCANCEL == 32);
+
+	ThreadSignals ts{};
+	sigInit(ts);
+
+	// Signal 31 (highest of the legacy 32-bit word) and the new real-time signals.
+	ts.block(31);
+	ts.block(SIGCANCEL);   // 32 — the lowest bit of the high word
+	ts.block(64);          // 64 — the highest valid signal
+	CHECK(ts.isBlocked(31));
+	CHECK(ts.isBlocked(SIGCANCEL));
+	CHECK(ts.isBlocked(64));
+	// The masks really use the high 32 bits.
+	CHECK((ts.blocked & (1ull << 30)) != 0);   // bit (31-1)
+	CHECK((ts.blocked & (1ull << 31)) != 0);   // bit (32-1) — SIGCANCEL
+	CHECK((ts.blocked & (1ull << 63)) != 0);   // bit (64-1)
+
+	// Clearing a high-word signal leaves the low word untouched (independent bits).
+	ts.unblock(SIGCANCEL);
+	CHECK(!ts.isBlocked(SIGCANCEL));
+	CHECK(ts.isBlocked(31));
+	CHECK(ts.isBlocked(64));
+
+	// 65 is out of range and must not be accepted.
+	ts.block(65);
+	CHECK(!ts.isBlocked(65));
+
+	// Pending tracking works across the full 64-bit width too.
+	ProcSignals ps{};
+	sigInit(ps);
+	sigPost(ps, 64);
+	CHECK((ps.pending & (1ull << 63)) != 0);
+}
