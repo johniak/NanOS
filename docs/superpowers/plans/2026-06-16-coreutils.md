@@ -319,14 +319,14 @@ streaming). Sources: `head.c`, `tail.c`.
   (reuse `wf` from Task 2.2 or create one). Confirm correct first/last line, 0 faults.
 - [x] Commit `feat: add head + tail coreutils`. Tick.
 
-### - [ ] **Task 2.4: `true` + `false`**
+### - [x] **Task 2.4: `true` + `false`**
 
 **Likely objects:** none beyond glue (return 0 / 1). Sources: `true.c`, `false.c`.
-- [ ] Vendor both. Wire (link rule needs just `$(DYN_DEPS) $(BINFOLDER)true.o` etc.).
-- [ ] `make build`; `make image`, QEMU:
+- [x] Vendor both. Wire (link rule needs just `$(DYN_DEPS) $(BINFOLDER)true.o` etc.).
+- [x] `make build`; `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "true" "false"`. Confirm boot clean (exit codes
   are the proof; if the shell prints `$?` use `true; echo $?` style if supported). 0 faults.
-- [ ] Commit `feat: add true + false coreutils`. Tick.
+- [x] Commit `feat: add true + false coreutils`. Tick.
 
 ### - [ ] **Task 2.5: `env` + `basename` + `dirname`**
 
