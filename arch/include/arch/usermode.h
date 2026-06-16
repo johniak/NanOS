@@ -50,11 +50,11 @@ enum {
 // sigreturn. `restartAction` (SIG_FRAME_*) decides what the resumed context does about an
 // interrupted syscall; `origEax` is the syscall number to restore when restarting.
 void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
-                         int sig, uint32_t oldMask, uint32_t origEax, int restartAction);
+                         int sig, uint64_t oldMask, uint32_t origEax, int restartAction);
 
-// SYS_sigreturn: restore `tf` from the user-stack signal frame; writes the mask to be
-// restored to *oldMaskOut and returns the interrupted code's saved eax.
-int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut);
+// SYS_sigreturn: restore `tf` from the user-stack signal frame; writes the full 64-bit
+// mask to be restored to *oldMaskOut and returns the interrupted code's saved eax.
+int archSigreturn(TrapFrame* tf, uint64_t* oldMaskOut);
 
 // The current syscall result sitting in the trap frame (eax), as a signed int.
 int archSyscallResult(TrapFrame* tf);

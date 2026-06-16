@@ -100,12 +100,13 @@ struct SigContext {
 	uint32_t eip, eflags;
 	uint32_t eax, ecx, edx, ebx;
 	uint32_t esp, ebp, esi, edi;
-	uint32_t oldmask;
+	uint32_t oldmask;       // low 32 bits of the saved 64-bit signal mask
+	uint32_t oldmask_hi;    // high 32 bits (signals 33..64, incl. SIGCANCEL=32)
 };
 }
 
 void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
-                         int sig, uint32_t oldMask, uint32_t origEax, int restartAction) {
+                         int sig, uint64_t oldMask, uint32_t origEax, int restartAction) {
 	// Delivery runs in the target's own context, so its user CR3 is active and the user
 	// stack at useresp is directly writable.
 	kernel::Registers* r = (kernel::Registers*) tf;
@@ -127,7 +128,8 @@ void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
 	ctx->edx = r->edx;     ctx->ebx = r->ebx;
 	ctx->esp = r->useresp; ctx->ebp = r->ebp;
 	ctx->esi = r->esi;     ctx->edi = r->edi;
-	ctx->oldmask = oldMask;
+	ctx->oldmask    = (uint32_t) oldMask;
+	ctx->oldmask_hi = (uint32_t) (oldMask >> 32);
 
 	usp -= 4; *(uint32_t*) usp = (uint32_t) sig;        // handler's cdecl arg1
 	usp -= 4; *(uint32_t*) usp = restorer;              // handler's return address
@@ -137,7 +139,7 @@ void archPushSignalFrame(TrapFrame* tf, uint32_t handler, uint32_t restorer,
 	r->eflags &= ~0x400u;   // clear DF for the handler (SysV entry convention)
 }
 
-int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut) {
+int archSigreturn(TrapFrame* tf, uint64_t* oldMaskOut) {
 	kernel::Registers* r = (kernel::Registers*) tf;
 	// The trampoline popped the signum, so useresp now points at the saved context.
 	const SigContext* ctx = (const SigContext*) r->useresp;
@@ -151,7 +153,7 @@ int archSigreturn(TrapFrame* tf, uint32_t* oldMaskOut) {
 	r->eax = savedEax;
 
 	if (oldMaskOut)
-		*oldMaskOut = ctx->oldmask;
+		*oldMaskOut = ((uint64_t) ctx->oldmask_hi << 32) | ctx->oldmask;
 	return (int) savedEax;
 }
 

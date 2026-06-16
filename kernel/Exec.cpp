@@ -667,8 +667,8 @@ int signalActionRt(int sig, const k_sigaction* act, k_sigaction* old, unsigned s
 	return 0;
 }
 
-// rt_sigpending(2): report the set of signals pending (and currently blocked) for the
-// caller — the union of this thread's pending and the process-directed pending.
+// rt_sigpending(2): report the set of pending signals for the caller — the union of this
+// thread's pending and the process-directed pending (all pending, not just the blocked ones).
 int signalPendingRt(uint64_t* set, unsigned sigsetsize) {
 	if (sigsetsize != 8)
 		return -22;   // -EINVAL
@@ -762,7 +762,7 @@ void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall) {
 			if (restartable)
 				action = (p->psig.restart & sigbit(sig)) ? arch::SIG_FRAME_RESTART
 				                                         : arch::SIG_FRAME_EINTR;
-			unsigned oldMask = th->sig.blocked;
+			SigMask oldMask = th->sig.blocked;
 			th->sig.blocked |= sigbit(sig);
 			arch::archPushSignalFrame(tf, p->psig.handlers[sig], p->psig.restorer,
 					sig, oldMask, origEax, action);
@@ -783,9 +783,9 @@ void signalDeliver(arch::TrapFrame* tf, unsigned origEax, bool inSyscall) {
 // signal mask that was in effect before the handler ran. Returns the interrupted code's
 // eax (which the dispatch propagates back into the trap frame).
 int signalReturn(arch::TrapFrame* tf) {
-	uint32_t oldMask = 0;   // archSigreturn wants a uint32_t* (== unsigned long* on i686)
+	uint64_t oldMask = 0;   // archSigreturn restores the full 64-bit mask (signals 1..64)
 	int rc = arch::archSigreturn(tf, &oldMask);
-	ProcTable::currentThread()->sig.blocked = (unsigned) oldMask;
+	ProcTable::currentThread()->sig.blocked = oldMask;
 	return rc;
 }
 
