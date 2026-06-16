@@ -308,16 +308,16 @@ for `ln a b c dir/` form — vendor `libutil/enmasse.c` if the linker asks.
   Confirm line/word/byte counts, 0 faults.
 - [x] Commit `feat: add wc coreutil`. Tick.
 
-### - [ ] **Task 2.3: `head` + `tail`**
+### - [x] **Task 2.3: `head` + `tail`**
 
 **Likely objects:** `eprintf.o` (+ `estrtonum.o`/`parseoffset.o` for `-n`/`-c`; `concat.o` for tail
 streaming). Sources: `head.c`, `tail.c`.
-- [ ] Vendor `head.c`, `tail.c` (+ the `libutil/*.c` the linker names). Wire both.
-- [ ] `make build`; resolve.
-- [ ] `make image`, QEMU:
+- [x] Vendor `head.c`, `tail.c` (+ the `libutil/*.c` the linker names). Wire both.
+- [x] `make build`; resolve.
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "head -n 1 /disks/main/wf" "tail -n 1 /disks/main/wf"`
   (reuse `wf` from Task 2.2 or create one). Confirm correct first/last line, 0 faults.
-- [ ] Commit `feat: add head + tail coreutils`. Tick.
+- [x] Commit `feat: add head + tail coreutils`. Tick.
 
 ### - [ ] **Task 2.4: `true` + `false`**
 
