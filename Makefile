@@ -867,7 +867,23 @@ LIBC_PTHREAD_OBJS=$(BINFOLDER)__wait.o $(BINFOLDER)__timedwait.o $(BINFOLDER)__l
   $(BINFOLDER)pthread_mutexattr_settype.o $(BINFOLDER)vmlock.o \
   $(BINFOLDER)pthread_cond_wait.o $(BINFOLDER)pthread_cond_timedwait.o \
   $(BINFOLDER)pthread_cond_signal.o $(BINFOLDER)pthread_cond_broadcast.o \
-  $(BINFOLDER)pthread_cond_init.o $(BINFOLDER)pthread_cond_destroy.o
+  $(BINFOLDER)pthread_cond_init.o $(BINFOLDER)pthread_cond_destroy.o \
+  $(BINFOLDER)pthread_rwlock_rdlock.o $(BINFOLDER)pthread_rwlock_tryrdlock.o \
+  $(BINFOLDER)pthread_rwlock_timedrdlock.o $(BINFOLDER)pthread_rwlock_wrlock.o \
+  $(BINFOLDER)pthread_rwlock_trywrlock.o $(BINFOLDER)pthread_rwlock_timedwrlock.o \
+  $(BINFOLDER)pthread_rwlock_unlock.o $(BINFOLDER)pthread_rwlock_init.o \
+  $(BINFOLDER)pthread_rwlock_destroy.o \
+  $(BINFOLDER)pthread_barrier_wait.o $(BINFOLDER)pthread_barrier_init.o \
+  $(BINFOLDER)pthread_barrier_destroy.o \
+  $(BINFOLDER)pthread_spin_init.o $(BINFOLDER)pthread_spin_destroy.o \
+  $(BINFOLDER)pthread_spin_lock.o $(BINFOLDER)pthread_spin_trylock.o \
+  $(BINFOLDER)pthread_spin_unlock.o \
+  $(BINFOLDER)pthread_once.o $(BINFOLDER)pthread_cleanup_push.o \
+  $(BINFOLDER)pthread_key_create.o $(BINFOLDER)pthread_getspecific.o \
+  $(BINFOLDER)pthread_setspecific.o \
+  $(BINFOLDER)sem_init.o $(BINFOLDER)sem_destroy.o $(BINFOLDER)sem_wait.o \
+  $(BINFOLDER)sem_trywait.o $(BINFOLDER)sem_timedwait.o $(BINFOLDER)sem_post.o \
+  $(BINFOLDER)sem_getvalue.o $(BINFOLDER)sem_named.o
 # libc.ndl is a COMPLETE C library: export every public picolibc function EXCEPT the handful
 # our glue overrides (sbrk/signal/setenv/...). We force-undefine the whole picolibc surface
 # (minus glue) so the linker pulls it in; because these are --undefined refs (not

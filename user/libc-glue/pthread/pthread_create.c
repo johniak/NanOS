@@ -39,11 +39,12 @@
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_CHILD_SETTID   0x01000000
 
-/* A single shared, never-dereferenced empty dtv/tsd. NanOS userland has no __thread TLS image
+/* A single shared, never-dereferenced empty dtv. NanOS userland has no __thread TLS image
  * (no .tdata modules in the .nxe loader), so __tls_get_addr is never called; the slot only has
- * to be a valid, non-NULL pointer so musl's TCB invariants hold. */
+ * to be a valid, non-NULL pointer so musl's TCB invariants hold. (tsd, by contrast, must be a
+ * real PER-THREAD array — pthread_get/setspecific index self->tsd[key] for key<PTHREAD_KEYS_MAX
+ * — so each thread gets its own zeroed tsd[] carved out of its mapping below, not a shared one.) */
 static uintptr_t dummy_dtv[1];
-static void     *dummy_tsd[1];
 
 /* The argument block handed to the child's entry trampoline, placed in the new thread's own
  * mapping (shared via CLONE_VM) just below its TCB. */
@@ -97,10 +98,13 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	guard   = (guard   + 4095) & ~(size_t)4095;
 	stacksz = (stacksz + 4095) & ~(size_t)4095;
 
-	/* One mapping holds, high to low: [TCB][start_args][stack ... grows down][guard].
+	/* One mapping holds, high to low: [TCB][start_args][tsd[]][stack ... grows down][guard].
 	 * NanOS has no page-permission guard (mprotect is best-effort), so the guard is just
-	 * reserved address space below the stack. */
-	size_t total = guard + stacksz + sizeof(struct start_args) + sizeof(struct pthread) + 64;
+	 * reserved address space below the stack. The tsd[] block is this thread's private
+	 * pthread_setspecific storage (PTHREAD_KEYS_MAX void*), zero by virtue of MAP_ANONYMOUS. */
+	size_t tsd_size = sizeof(void *) * PTHREAD_KEYS_MAX;
+	size_t total = guard + stacksz + tsd_size + sizeof(struct start_args)
+	             + sizeof(struct pthread) + 64;
 
 	unsigned char *map = mmap(0, total, PROT_READ | PROT_WRITE,
 	                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -109,7 +113,8 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 
 	struct pthread    *new    = ALIGN_DOWN(map + total - sizeof(struct pthread), 16);
 	struct start_args *stargs = ALIGN_DOWN((unsigned char *)new - sizeof(struct start_args), 16);
-	unsigned char     *stack_top = ALIGN_DOWN(stargs, 16);
+	void             **tsd    = (void **)ALIGN_DOWN((unsigned char *)stargs - tsd_size, 16);
+	unsigned char     *stack_top = ALIGN_DOWN((unsigned char *)tsd, 16);
 
 	memset(new, 0, sizeof *new);
 	new->self         = new;                 /* %gs:0 -> self */
@@ -119,7 +124,7 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	new->stack_size   = (size_t)(stack_top - (map + guard));
 	new->guard_size   = guard;
 	new->dtv          = dummy_dtv;
-	new->tsd          = dummy_tsd;
+	new->tsd          = tsd;                 /* per-thread pthread_setspecific storage (zeroed) */
 	new->detach_state = (attr._a_detach == PTHREAD_CREATE_DETACHED) ? DT_DETACHED : DT_JOINABLE;
 	new->tid          = -1;                  /* kernel overwrites via PARENT/CHILD_SETTID */
 

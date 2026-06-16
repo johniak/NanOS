@@ -18,4 +18,16 @@
 #define MAXPATHLEN PATH_MAX
 #endif
 
+/* POSIX threads / semaphore limits the vendored musl pthread sources (pthread_key_create.c,
+ * sem_*.c) need. picolibc's <limits.h> does not define them; values are musl 1.2.5's. */
+#ifndef PTHREAD_KEYS_MAX
+#define PTHREAD_KEYS_MAX 128
+#endif
+#ifndef PTHREAD_DESTRUCTOR_ITERATIONS
+#define PTHREAD_DESTRUCTOR_ITERATIONS 4
+#endif
+#ifndef SEM_VALUE_MAX
+#define SEM_VALUE_MAX 0x7fffffff
+#endif
+
 #endif /* _NX_LIMITS_OVERLAY_H */

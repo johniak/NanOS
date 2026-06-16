@@ -182,6 +182,16 @@ hidden int __pthread_mutex_trylock(pthread_mutex_t *);
 hidden int __pthread_mutex_timedlock(pthread_mutex_t *__restrict, const struct timespec *__restrict);
 hidden int __pthread_cond_timedwait(pthread_cond_t *__restrict, pthread_mutex_t *__restrict, const struct timespec *__restrict);
 hidden int __private_cond_signal(pthread_cond_t *, int);
+/* NanOS addition (Task 4.4): rwlock internal prototypes the vendored rwlock + key_create
+ * sources call cross-TU (rdlock->timedrdlock->tryrdlock, key_lock rd/wr/unlock). Upstream
+ * musl gets these from its src/include/pthread.h build overlay; declare them here instead. */
+hidden int __pthread_rwlock_rdlock(pthread_rwlock_t *);
+hidden int __pthread_rwlock_tryrdlock(pthread_rwlock_t *);
+hidden int __pthread_rwlock_timedrdlock(pthread_rwlock_t *__restrict, const struct timespec *__restrict);
+hidden int __pthread_rwlock_wrlock(pthread_rwlock_t *);
+hidden int __pthread_rwlock_trywrlock(pthread_rwlock_t *);
+hidden int __pthread_rwlock_timedwrlock(pthread_rwlock_t *__restrict, const struct timespec *__restrict);
+hidden int __pthread_rwlock_unlock(pthread_rwlock_t *);
 hidden void __pthread_testcancel(void);
 hidden void __vm_lock(void);
 hidden void __vm_unlock(void);
