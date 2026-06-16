@@ -23,6 +23,15 @@ TEST_CASE("SynthFs root lists the virtual top-level dirs") {
 	CHECK(listed(e, "proc"));
 }
 
+TEST_CASE("SynthFs mkdir: existing path is EEXIST, missing path is EROFS") {
+	SynthFs fs;
+	// The synthetic tree is read-only, but an existing node must report EEXIST (POSIX orders
+	// existence before writability) so `mkdir -p` skips it instead of aborting.
+	CHECK(fs.mkdir("/disks", 0755) == -17);   // -EEXIST (exists)
+	CHECK(fs.mkdir("/dev", 0755) == -17);     // -EEXIST (exists)
+	CHECK(fs.mkdir("/nope", 0755) == -30);    // -EROFS (does not exist, cannot create)
+}
+
 TEST_CASE("SynthFs stat: virtual dirs are directories") {
 	SynthFs fs;
 	FileStat st;

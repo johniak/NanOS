@@ -219,6 +219,12 @@ int Vfs::mkdir(String path, unsigned mode) {
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
 		return -1;
+	// A mount-point root (rel == "/") always already exists; report EEXIST rather than letting
+	// the fs try (and fail) to create its own root. This is what lets `mkdir -p` walk through
+	// mount points such as /disks/main without aborting (POSIX: EEXIST over EROFS/ENOENT).
+	const char* r = (char*) rel;
+	if (r[0] == '/' && r[1] == 0)
+		return -17;   // -EEXIST
 	return fs->mkdir(rel, mode);
 }
 

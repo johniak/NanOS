@@ -94,6 +94,11 @@ public:
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
 	int readdir(String path, List<DirEntry>& out);
+	// mkdir on the read-only synthetic tree always fails, but POSIX orders existence before
+	// writability: an existing path must report EEXIST, not EROFS. Without this, `mkdir -p`
+	// (and cp -r, which mkdir's each component) aborts on the first existing read-only parent
+	// like /disks when given an absolute path under /disks/main.
+	int mkdir(String path, unsigned mode);
 	// Device extensions (override the FileSystem defaults; only char-device nodes honor them).
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);

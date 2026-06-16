@@ -660,6 +660,15 @@ void SynthFs::deviceClose(String path) {
 		n->dev->close();
 }
 
+int SynthFs::mkdir(String path, unsigned mode) {
+	(void) mode;
+	// The synthetic tree is read-only, but report EEXIST for a path that already exists so
+	// `mkdir -p` skips existing components (POSIX: EEXIST takes precedence over EROFS).
+	if (walk((char*) path))
+		return -17;            // -EEXIST
+	return -30;                // -EROFS
+}
+
 int SynthFs::stat(String path, FileStat& out) {
 	int pid = 0;
 	const char* file = 0;

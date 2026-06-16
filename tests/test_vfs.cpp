@@ -27,6 +27,12 @@ struct FakeFS : FileSystem {
 		strcpy(received, (char*) path);
 		return 0;
 	}
+	// Records the relative path; returns -EROFS like the FileSystem default (so the read-only
+	// assertions elsewhere still hold) while letting tests see whether mkdir was routed at all.
+	int mkdir(String path, unsigned) {
+		strcpy(received, (char*) path);
+		return -30;
+	}
 };
 
 struct FakeType : FileSystemType {
@@ -194,4 +200,20 @@ TEST_CASE("Vfs routes writes to a tmpfs mount; a read-only mount stays -EROFS") 
 	CHECK(vfs.write("/etc/x", 1, 0, data) == -30);
 	CHECK(vfs.create("/etc/x", 0644) == -30);
 	CHECK(vfs.mkdir("/etc", 0755) == -30);
+}
+
+TEST_CASE("Vfs reports EEXIST for mkdir of a mount-point root (lets mkdir -p cross mounts)") {
+	Vfs vfs;
+	FakeFS root(1);
+	FakeFS sub(2);
+	CHECK(vfs.mount("/", &root) == 0);
+	CHECK(vfs.mount("/disks", &sub) == 0);
+	// mkdir of the mount-point root itself: EEXIST, and the mounted fs's mkdir is NOT called
+	// (so `mkdir -p /disks/main/...` walks past /disks instead of aborting on EROFS/ENOENT).
+	sub.received[0] = 0;
+	CHECK(vfs.mkdir("/disks", 0755) == -17);   // -EEXIST
+	CHECK(sub.received[0] == 0);               // routing short-circuited before fs->mkdir
+	// A path below the mount still routes normally, with the mountpoint stripped.
+	CHECK(vfs.mkdir("/disks/new", 0755) == -30);
+	CHECK(strcmp(sub.received, "/new") == 0);
 }

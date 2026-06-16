@@ -181,21 +181,21 @@ headers only if picolibc's headers don't already declare them. `fdopendir` alrea
 > Each task: vendor source → wire Makefile → resolve libutil link errors → build → QEMU → commit.
 > The QEMU command in each task assumes `make image` was just run.
 
-### - [ ] **Task 1.1: `mkdir` + `rmdir`**
+### - [x] **Task 1.1: `mkdir` + `rmdir`**
 
 **Likely objects:** `mkdir` → `eprintf.o mkdirp.o` (vendor `libutil/mkdirp.c`); `rmdir` →
 `eprintf.o`. Sources: `mkdir.c`, `rmdir.c`.
 
-- [ ] Vendor `user/third_party/sbase/mkdir.c`, `rmdir.c`, and `libutil/mkdirp.c`.
-- [ ] Makefile: add `mkdir rmdir` to `USER_PROGS` + `SYS_PROGS`; add
+- [x] Vendor `user/third_party/sbase/mkdir.c`, `rmdir.c`, and `libutil/mkdirp.c`.
+- [x] Makefile: add `mkdir rmdir` to `USER_PROGS` + `SYS_PROGS`; add
   `SBASE_UTIL_MKDIR=$(BINFOLDER)eprintf.o $(BINFOLDER)mkdirp.o` and
   `SBASE_UTIL_RMDIR=$(BINFOLDER)eprintf.o`; add link rules
   `$(BINFOLDER)mkdir.nxe: $(DYN_DEPS) $(BINFOLDER)mkdir.o $(SBASE_UTIL_MKDIR)` and the rmdir analog.
-- [ ] `make build` → resolve any extra undefined refs by vendoring the named `libutil/*.c`.
-- [ ] `make image`, then QEMU:
+- [x] `make build` → resolve any extra undefined refs by vendoring the named `libutil/*.c`.
+- [x] `make image`, then QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "mkdir /disks/main/d1" "mkdir -p /disks/main/d2/d3" "ls /disks/main" "rmdir /disks/main/d1"`.
   Confirm `d1`,`d2` appear, `d1` gone after rmdir, 0 faults.
-- [ ] Commit `feat: add mkdir + rmdir coreutils (in-tree sbase)`. Tick.
+- [x] Commit `feat: add mkdir + rmdir coreutils (in-tree sbase)`. Tick.
 
 ### - [ ] **Task 1.2: `pwd`**
 
