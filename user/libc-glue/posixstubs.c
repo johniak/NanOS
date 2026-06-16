@@ -75,11 +75,9 @@ int setgroups(int n, const gid_t* list) { (void) n; (void) list; return 0; }
  * call it when dropping into a session). */
 int initgroups(const char* user, gid_t group) { (void) user; (void) group; return 0; }
 
-/* ---- permission ops on a read-only world: accept, do nothing ---- */
-int chown(const char* p, uid_t u, gid_t g)  { (void) p; (void) u; (void) g; return 0; }
-int fchown(int fd, uid_t u, gid_t g)        { (void) fd; (void) u; (void) g; return 0; }
-int chmod(const char* p, mode_t m)          { (void) p; (void) m; return 0; }
-int fchmod(int fd, mode_t m)                { (void) fd; (void) m; return 0; }
+/* ---- permission ops ---- chmod/fchmod/chown/lchown/fchown now call the real syscalls (the ext
+ * FS is read-write); their implementations live in syscalls.c beside the other file-metadata ops.
+ * They used to be no-ops here when the disk was read-only. */
 
 /* chroot: NanOS has no per-process root. Reported as unsupported; callers (darkhttpd) only invoke
  * it when explicitly asked to (--chroot), which we never do — the symbol just needs to resolve. */

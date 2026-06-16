@@ -161,6 +161,14 @@ int truncate(const char* p, off_t length) { return reterr(sys3(SYS_truncate, (in
 int utime(const char* path, const struct utimbuf* times) {
 	return reterr(sys3(SYS_utime, (int) path, (int) times, 0));
 }
+/* Permission ops. The ext FS is read-write, so these call the real syscalls (they were no-op
+ * stubs in posixstubs.c back when the disk was read-only). NanOS is single-user/root, but chmod
+ * actually changes the on-disk mode and chown the owner, persisting through JBD2. */
+int chmod(const char* p, mode_t m)          { return reterr(sys3(SYS_chmod,  (int) p, (int) m, 0)); }
+int fchmod(int fd, mode_t m)                { return reterr(sys3(SYS_fchmod, fd, (int) m, 0)); }
+int chown(const char* p, uid_t u, gid_t g)  { return reterr(sys3(SYS_chown,  (int) p, (int) u, (int) g)); }
+int lchown(const char* p, uid_t u, gid_t g) { return reterr(sys3(SYS_lchown, (int) p, (int) u, (int) g)); }
+int fchown(int fd, uid_t u, gid_t g)        { return reterr(sys3(SYS_fchown, fd, (int) u, (int) g)); }
 /* rename(2): NanOS has no rename syscall, so do it in userland — copy the old file to the
  * new name, then unlink the old. Both ends are ordinary files (Doom uses it to finalize a
  * savegame from a temp file). Only valid within a writable fs (e.g. /tmp). */
