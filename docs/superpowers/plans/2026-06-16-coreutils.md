@@ -143,7 +143,7 @@ edit.
   (0 faults in `/tmp/nanos-int.log`). The functional proof comes with tier-2 `chmod` (Task 2.1).
 - [x] **Step 4** — Commit: `fix: libc chmod/chown/fchmod/fchown call the real syscalls (were no-op stubs)`. Tick this task.
 
-### - [ ] **Task 0.2: Add the `*at` family + `utimes`/`utimensat` libc wrappers**
+### - [x] **Task 0.2: Add the `*at` family + `utimes`/`utimensat` libc wrappers**
 
 **Why:** sbase `recurse.c` (used by `rm -r`, `cp -r`, `mv` of dirs) traverses with
 `openat`/`fstatat`/`unlinkat`/`fdopendir`, and `touch` sets times with `utimensat`/`utimes`. None
@@ -154,7 +154,7 @@ any missing prototypes in `user/libc-glue/compat-decls.h` or the relevant `user/
 headers only if picolibc's headers don't already declare them. `fdopendir` already exists
 (`user/libc-glue/dirent.c`).
 
-- [ ] **Step 1** — Add thin wrappers, each forwarding to its syscall via `sys3`/a 4-5-arg syscall
+- [x] **Step 1** — Add thin wrappers, each forwarding to its syscall via `sys3`/a 4-5-arg syscall
   helper (check `syscalls.c` for an existing `sys4`/`sys5`/`sys6`; if only `sys3` exists, add the
   needed N-arg variant the same way). Implement the set the tools actually reference — at minimum:
   `openat, mkdirat, unlinkat, renameat, symlinkat, linkat, fchmodat, fchownat, fstatat64
@@ -168,10 +168,10 @@ headers only if picolibc's headers don't already declare them. `fdopendir` alrea
   ```
   Keep it minimal — only wire what links. Do not invent semantics the kernel doesn't implement;
   if a syscall arg the kernel ignores (e.g. flags), pass it through anyway.
-- [ ] **Step 2** — `make build` clean.
-- [ ] **Step 3** — No QEMU gate of its own (exercised by Task 1.4 `rm -r` and Task 1.3 `touch`).
+- [x] **Step 2** — `make build` clean.
+- [x] **Step 3** — No QEMU gate of its own (exercised by Task 1.4 `rm -r` and Task 1.3 `touch`).
   Just confirm the build links.
-- [ ] **Step 4** — Commit: `feat: libc *at-family + utimes/utimensat wrappers`. Tick this task.
+- [x] **Step 4** — Commit: `feat: libc *at-family + utimes/utimensat wrappers`. Tick this task.
 
 ---
 

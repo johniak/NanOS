@@ -604,5 +604,60 @@ int fstat(int fd, struct stat* o) {
 	return 0;
 }
 
+/* ---- the *at family + utimes/utimensat ----
+ * Directory-relative ops (dirfd == AT_FDCWD resolves against the cwd in the kernel). sbase's
+ * libutil/recurse.c traverses with openat/fstatat/unlinkat/readlinkat, and touch sets times via
+ * utimensat. All kernel-side (kernel/Syscall.cpp); register order is a0=ebx..a4=edi. Returns are
+ * `int` to match this file's convention — on i386 int/ssize_t/mode_t/uid_t are all 32-bit, so the
+ * ABI matches picolibc's POSIX prototypes that sbase compiles against. No <fcntl.h>/<unistd.h>
+ * include here on purpose (they'd clash with the int read/write decls above). */
+int openat(int dirfd, const char* p, int flags, ...) {
+	return reterr(sys3(SYS_openat, dirfd, (int) p, flags));   /* kernel openat ignores mode */
+}
+int mkdirat(int dirfd, const char* p, mode_t m)   { return reterr(sys3(SYS_mkdirat, dirfd, (int) p, (int) m)); }
+int unlinkat(int dirfd, const char* p, int flags) { return reterr(sys3(SYS_unlinkat, dirfd, (int) p, flags)); }
+int renameat(int ofd, const char* op, int nfd, const char* np) {
+	return reterr(sys4(SYS_renameat, ofd, (int) op, nfd, (int) np));
+}
+int linkat(int ofd, const char* op, int nfd, const char* np, int flags) {
+	return reterr(sys5(SYS_linkat, ofd, (int) op, nfd, (int) np, flags));
+}
+int symlinkat(const char* target, int nfd, const char* p) {
+	return reterr(sys3(SYS_symlinkat, (int) target, nfd, (int) p));
+}
+int readlinkat(int dirfd, const char* p, char* buf, size_t n) {
+	return reterr(sys4(SYS_readlinkat, dirfd, (int) p, (int) buf, (int) n));
+}
+int fchmodat(int dirfd, const char* p, mode_t m, int flags) {
+	return reterr(sys4(SYS_fchmodat, dirfd, (int) p, (int) m, flags));
+}
+int fchownat(int dirfd, const char* p, uid_t u, gid_t g, int flags) {
+	return reterr(sys5(SYS_fchownat, dirfd, (int) p, (int) u, (int) g, flags));
+}
+int faccessat(int dirfd, const char* p, int mode, int flags) {
+	return reterr(sys4(SYS_faccessat, dirfd, (int) p, mode, flags));
+}
+int fstatat(int dirfd, const char* p, struct stat* o, int flags) {
+	struct knl_stat k;
+	int r = sys4(SYS_fstatat64, dirfd, (int) p, (int) &k, flags);
+	if (r < 0) { errno = -r; return -1; }
+	fillstat(o, &k);
+	return 0;
+}
+/* utimensat: the kernel reads struct timespec[2] (or NULL=now) directly, honoring UTIME_NOW/OMIT
+ * in tv_nsec — pass the pointer straight through (i386 timespec = {long long sec @0; long ns @8}
+ * = 12 bytes, exactly what the kernel decodes). */
+int utimensat(int dirfd, const char* p, const struct timespec times[2], int flags) {
+	return reterr(sys4(SYS_utimensat, dirfd, (int) p, (int) times, flags));
+}
+/* utimes(timeval[2]): the kernel's utimes takes whole seconds (not a pointer), so extract tv_sec
+ * here; NULL -> now via time(). */
+int utimes(const char* p, const struct timeval times[2]) {
+	unsigned at, mt;
+	if (!times) { at = mt = (unsigned) time(0); }
+	else { at = (unsigned) times[0].tv_sec; mt = (unsigned) times[1].tv_sec; }
+	return reterr(sys3(SYS_utimes, (int) p, (int) at, (int) mt));
+}
+
 /* The picolibc retargetable locks (__retarget_lock_*) are implemented over the kernel
  * futex in user/libc-glue/retarget_lock.c, not here. */
