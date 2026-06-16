@@ -298,15 +298,15 @@ for `ln a b c dir/` form — vendor `libutil/enmasse.c` if the linker asks.
   Confirm the mode shows `rwx------` (proves Task 0.1's real syscall + ext persistence), 0 faults.
 - [x] Commit `feat: add chmod coreutil`. Tick.
 
-### - [ ] **Task 2.2: `wc`**
+### - [x] **Task 2.2: `wc`**
 
 **Likely objects:** `eprintf.o` (+ libutf objects if `-m` multibyte). Source: `wc.c`.
-- [ ] Vendor `wc.c`. Wire. For `-m`, add `$(LIBUTF_OBJS)` to the rule (like `ls`).
-- [ ] `make build`; resolve.
-- [ ] `make image`, QEMU:
+- [x] Vendor `wc.c`. Wire. For `-m`, add `$(LIBUTF_OBJS)` to the rule (like `ls`).
+- [x] `make build`; resolve.
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "echo hello world > /disks/main/wf" "wc /disks/main/wf"`.
   Confirm line/word/byte counts, 0 faults.
-- [ ] Commit `feat: add wc coreutil`. Tick.
+- [x] Commit `feat: add wc coreutil`. Tick.
 
 ### - [ ] **Task 2.3: `head` + `tail`**
 
