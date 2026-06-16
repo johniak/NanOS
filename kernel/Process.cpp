@@ -27,17 +27,30 @@ unsigned mmapFreeCarve(MmapFree* list, int* count, int i, unsigned bytes) {
 	return va;
 }
 
-// Append [va, va+len). Coalesces with an adjacent existing entry (either side) to keep the
-// list compact across churn. Returns false if the list is full (caller leaks the VA).
+// Record [va, va+len) as free, keeping the list a set of DISJOINT ranges. Before storing, the
+// new range is UNIONed with every existing entry that overlaps or merely touches it (adjacency),
+// absorbing them into one maximal range — so re-adding an already-free range is idempotent (it
+// merges back into the identical entry, no duplicate), partial overlaps coalesce, and a range
+// that bridges two entries merges BOTH sides into one. Without this a double/overlapping munmap
+// would leave aliasing free-list entries that a later mmap hands out twice. Returns false only
+// if the merged range still needs a new slot and the list is full (caller leaks the VA).
 bool mmapFreeAdd(MmapFree* list, int* count, int cap, unsigned va, unsigned len) {
+	unsigned lo = va, hi = va + len;
 	for (int i = 0; i < *count; i++) {
-		if (list[i].va + list[i].len == va) { list[i].len += len; return true; }  // extend up
-		if (va + len == list[i].va) { list[i].va = va; list[i].len += len; return true; }  // down
+		unsigned elo = list[i].va, ehi = list[i].va + list[i].len;
+		if (elo <= hi && lo <= ehi) {                 // overlap or adjacency (touching)
+			if (elo < lo) lo = elo;
+			if (ehi > hi) hi = ehi;
+			for (int j = i + 1; j < *count; j++)      // remove the absorbed entry, compact tail
+				list[j - 1] = list[j];
+			(*count)--;
+			i--;                                      // re-examine the entry swapped into slot i
+		}
 	}
 	if (*count >= cap)
 		return false;
-	list[*count].va = va;
-	list[*count].len = len;
+	list[*count].va = lo;
+	list[*count].len = hi - lo;
 	(*count)++;
 	return true;
 }

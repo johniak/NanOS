@@ -27,8 +27,10 @@ struct MmapFree { unsigned va; unsigned len; };
 //   mmapFreeCarve: take `bytes` off the FRONT of entry i, return the VA to use; if the
 //                  entry is fully consumed the array is compacted (*count decremented).
 //                  Precondition: list[i].len >= bytes && bytes is page-rounded.
-//   mmapFreeAdd:   append [va, va+len); coalesces with an adjacent entry if possible.
-//                  Returns false if the list is full (caller leaks the VA, frees frames).
+//   mmapFreeAdd:   record [va, va+len), keeping the list a set of DISJOINT ranges — it UNIONs
+//                  the new range with any entry it overlaps or touches (so re-adding an already
+//                  free range is idempotent, never a duplicate). Returns false if a new slot is
+//                  needed but the list is full (caller leaks the VA; frames are already freed).
 int      mmapFreeFind(const MmapFree* list, int count, unsigned bytes);
 unsigned mmapFreeCarve(MmapFree* list, int* count, int i, unsigned bytes);
 bool     mmapFreeAdd(MmapFree* list, int* count, int cap, unsigned va, unsigned len);

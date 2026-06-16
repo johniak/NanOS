@@ -98,6 +98,8 @@ int execProgram(Vfs* vfs, const char* path) {
 	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, argc, envp, envc);
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
+	ProcTable::current()->mmapNext = 0;          // fresh image -> empty mmap window
+	ProcTable::current()->mmapFreeCount = 0;     // and no stale reclaim ranges
 	ProcTable::setCommand(ProcTable::current(), argv, 1);
 	// init (this process) is the console's controlling session leader: seed the console's
 	// foreground process group with its pgrp, exactly as a tty's pgrp is set when a session
@@ -189,6 +191,8 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 	p->space = newSpace;
 	initBrk(p);                              // fresh image -> empty heap
+	p->mmapNext = 0;                         // fresh image -> empty mmap window (don't inherit the
+	p->mmapFreeCount = 0;                    // old image's bump pointer / stale reclaim ranges)
 	ProcTable::setCommand(p, argv, argc);
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
 	sigExecReset(caller->sig, p->psig);      // caught handlers -> default across exec (calling thread)

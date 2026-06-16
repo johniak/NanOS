@@ -471,6 +471,45 @@ TEST_CASE("mmapFreeAdd: coalesces with an adjacent range on either side") {
 	CHECK(list[0].len == 0x3000);
 }
 
+TEST_CASE("mmapFreeAdd: re-adding the same range is idempotent (no duplicate)") {
+	// A legal double munmap(X, L) must not append a second [X,L] entry — that would later be
+	// first-fit twice and alias the same VA. The union-merge collapses it back into one entry.
+	MmapFree list[4];
+	int count = 0;
+	CHECK(mmapFreeAdd(list, &count, 4, 0x10000, 0x4000));
+	CHECK(count == 1);
+	CHECK(mmapFreeAdd(list, &count, 4, 0x10000, 0x4000));   // exact duplicate
+	CHECK(count == 1);                                      // still ONE entry, not two
+	CHECK(list[0].va == 0x10000);
+	CHECK(list[0].len == 0x4000);
+}
+
+TEST_CASE("mmapFreeAdd: an overlapping range unions into one maximal range") {
+	MmapFree list[4];
+	int count = 0;
+	CHECK(mmapFreeAdd(list, &count, 4, 0x10000, 0x4000));   // [0x10000, 0x14000)
+	CHECK(mmapFreeAdd(list, &count, 4, 0x10000, 0x8000));   // [0x10000, 0x18000) overlaps the above
+	CHECK(count == 1);                                      // merged, not appended
+	CHECK(list[0].va == 0x10000);
+	CHECK(list[0].len == 0x8000);                           // union spans the larger range
+
+	// A partial overlap from the other side also unions to the maximal span.
+	CHECK(mmapFreeAdd(list, &count, 4, 0xC000, 0x6000));    // [0xC000, 0x12000) overlaps the front
+	CHECK(count == 1);
+	CHECK(list[0].va == 0xC000);
+	CHECK(list[0].len == 0xC000);                           // [0xC000, 0x18000)
+}
+
+TEST_CASE("mmapFreeAdd: a range bridging two entries merges BOTH sides into one") {
+	MmapFree list[4] = {{0x1000, 0x1000}, {0x4000, 0x1000}};   // [0x1000,0x2000) + [0x4000,0x5000)
+	int count = 2;
+	// [0x2000, 0x4000) touches the top of entry 0 and the bottom of entry 1 -> one [0x1000,0x5000).
+	CHECK(mmapFreeAdd(list, &count, 4, 0x2000, 0x2000));
+	CHECK(count == 1);
+	CHECK(list[0].va == 0x1000);
+	CHECK(list[0].len == 0x4000);
+}
+
 TEST_CASE("mmap free-list: a freed range is reused by a later same-size request") {
 	// End-to-end of the churn pattern: free a region, then a same-size mmap reuses its VA
 	// instead of bumping (what keeps the finite window alive across create/join).

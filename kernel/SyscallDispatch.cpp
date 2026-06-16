@@ -841,6 +841,8 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		}
 		// File-backed must be writable so we can load into it; anonymous honors PROT_WRITE (2).
 		int writable = (fd >= 0) ? 1 : ((prot & 2) != 0);
+		// If mmuMapAnon fails after a free-list carve already consumed the VA, that carved range
+		// leaks (acceptable — same as the bump path, which also leaks mmapNext on failure).
 		if (arch::mmuMapAnon(space, va, bytes, writable) != 0) { ret = -12; break; }
 		if (fd >= 0) {                          // file-backed: eager-read the file into the map
 			g_sys->lseek(fd, (int) offset, 0 /*SEEK_SET*/);
@@ -864,6 +866,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		if (addr & 0xFFFu) { ret = -22; break; }       // -EINVAL: unaligned address (like Linux)
 		if (length == 0) { ret = -22; break; }          // -EINVAL: zero length
 		unsigned len = (length + 0xFFFu) & ~0xFFFu;      // page-round the length up
+		// Reject a length that round-up-overflowed to 0 (huge `length`) and an addr+len that wraps
+		// past 4 GiB — either would slip past the window bounds check and append a bogus giant
+		// free-list entry. Linux returns EINVAL for length 0, so this matches.
+		if (len == 0 || addr + len < addr) { ret = -22; break; }   // -EINVAL: overflow / wrap
 		unsigned base = arch::mmuMmapBase(), top = arch::mmuMmapMax();
 		if (addr < base || addr >= top || addr + len > top) { ret = 0; break; }  // outside: no-op
 		Process* p = ProcTable::current();
