@@ -9,6 +9,12 @@
 
 CROSS ?= i686-elf-
 
+# Build knobs shared with the top-level Makefile (mirrored in arch/x86_64/arch.mk).
+ASM_FMT    ?= elf
+QEMU       ?= qemu-system-i386
+QEMU_CPU   ?= -cpu Nehalem
+KARCHFLAGS ?=
+
 # The CPU/boot/asm sources now live under arch/x86/{boot,cpu,drivers}; the
 # mm/multiboot and remaining PC-driver sources migrate here in later steps (until
 # then they are found via the MI VPATH dirs: mm/, drivers/, kernel/).

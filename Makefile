@@ -304,17 +304,19 @@ assets:
 
 # -cpu Nehalem: expose RDRAND so the kernel CSPRNG seeds from a hardware RNG (the default qemu32
 # CPU lacks it — without this flag archHwRandom returns false and the seed is RDTSC-jitter+RTC only).
-QEMU_CPU=-cpu Nehalem
+# Default set by arch/$(ARCH)/arch.mk (i686 -> Nehalem, x86_64 -> qemu64); ?= lets the arch value
+# (assigned at the line 4 include, before this) win.
+QEMU_CPU ?= -cpu Nehalem
 # RAM: 512 MiB. The kernel reads the real size from multiboot and lays out its windows above it
 # (mmu_x86.cpp), so this is just the QEMU knob — bump it freely (up to ~1 GiB with the current
 # window placement). More RAM = bigger kernel heap + a bigger user frame pool.
 QEMU_MEM=-m 512
 
 run: image
-	qemu-system-i386 $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
 
 run-iso: iso
-	qemu-system-i386 -cdrom nanos.iso
+	$(QEMU) -cdrom nanos.iso
 
 # Networking harness (FAZA 0 of docs/superpowers/plans/2026-06-12-networking.md). Attach an
 # Intel e1000 (82540EM = PCI 8086:100E — a REAL NIC with the canonical Linux driver) on QEMU's
@@ -335,7 +337,7 @@ NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=t
 NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
 run-net: image
-	qemu-system-i386 $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
@@ -363,6 +365,16 @@ check-arch:
 	@if grep -rnE '#include[[:space:]]*"(Gdt|Idt|Interrupt|IOPort|Paging|PagingControl|AddressSpace|Multiboot)[A-Za-z]*\.h"|\bRegisters\b|\bIRQ[0-9]|__asm__|asm[[:space:]]*\(|asm[[:space:]]+volatile|\b(outb|inb|inw)\b' $(MI_CHECK_DIRS); then \
 	   echo "FAIL: machine-dependent reference in MI layer (above)"; exit 1; \
 	 else echo "OK: MI layer is arch-clean."; fi
+
+# x86_64 bring-up (Plan 1): build the minimal long-mode boot image + a tiny GRUB rescue
+# ISO in the container, then boot it natively. QEMU's -kernel (multiboot1) loader rejects
+# ELF64 ("give a 32bit one"), so we boot through GRUB, whose multiboot1 loader DOES accept
+# an ELF64 kernel and hands off in 32-bit PM where loader.S switches to long mode.
+.PHONY: bringup64
+bringup64:
+	$(DOCKER_RUN) make ARCH=x86_64 _bringup64
+	@echo "Booting bin/nanos64.iso — expect 'NanOS x86_64 long mode OK' on the VGA console."
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -cdrom $(BINFOLDER)nanos64.iso
 
 else
 # ============================================================================
@@ -400,7 +412,7 @@ UOPTFLAGS=-O2 -fno-strict-aliasing -fno-delete-null-pointer-checks
 # layer before the kernel can take -O2; it is independent of the GUI work, where no kernel code is hot.
 KOPTFLAGS=
 
-CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KOPTFLAGS)
+CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KARCHFLAGS) $(KOPTFLAGS)
 LDFLAGS=-T$(ARCH_LINKER) -nostdlib -nostartfiles -lgcc
 ASFLAGS=
 
@@ -439,7 +451,24 @@ $(BINFOLDER)vtk.o: user/term/vt.c
 $(BINFOLDER)%.o: %.s
 	$(AS) $(ASFLAGS) $< -o $@
 $(BINFOLDER)%.o: %.S
-	nasm -f elf $< -o $@
+	nasm -f $(ASM_FMT) $< -o $@
+
+# Minimal long-mode bring-up link (Plan 1): ONLY the boot trampoline + 64-bit C entry,
+# bypassing MI_SOURCES. loader.S / entry64.cpp don't include <string.h>, so they compile
+# directly in /src without the case-insensitive-FS copy dance. Explicit recipe with a
+# distinct loader64.o name (NOT the generic loader.o) so the x86_64 elf64 object never
+# collides with / poisons the i686 bin/loader.o in the shared bin/ dir. Then wrap the
+# ELF64 in a tiny GRUB rescue ISO (multiboot1 menuentry) — the boot path QEMU -cdrom
+# uses, since QEMU's own -kernel multiboot loader can't take an ELF64 image.
+_bringup64:
+	@mkdir -p $(BINFOLDER)
+	nasm -f $(ASM_FMT) arch/x86_64/boot/loader.S -o $(BINFOLDER)loader64.o
+	$(CXX) -c $(CXXFLAGS) arch/x86_64/boot/entry64.cpp -o $(BINFOLDER)entry64.o
+	$(LD) -T$(ARCH_LINKER) -nostdlib -nostartfiles -o $(BINFOLDER)kernel64.bin $(BINFOLDER)loader64.o $(BINFOLDER)entry64.o
+	@rm -rf /tmp/iso64 && mkdir -p /tmp/iso64/boot/grub
+	@cp $(BINFOLDER)kernel64.bin /tmp/iso64/boot/kernel64.bin
+	@printf 'set timeout=0\nset default=0\nmenuentry "nanos64" {\n  multiboot /boot/kernel64.bin\n  boot\n}\n' > /tmp/iso64/boot/grub/grub.cfg
+	grub-mkrescue -o $(BINFOLDER)nanos64.iso /tmp/iso64
 
 -include $(OBJECTS:.o=.d)
 
