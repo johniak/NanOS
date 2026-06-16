@@ -680,12 +680,15 @@ SBASE_UTIL_CHMOD=$(BINFOLDER)eprintf.o $(BINFOLDER)mode.o $(BINFOLDER)recurse.o 
 SBASE_UTIL_WC=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
 SBASE_UTIL_HEAD=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o $(BINFOLDER)strtonum.o
 SBASE_UTIL_TAIL=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o $(BINFOLDER)strtonum.o $(BINFOLDER)writeall.o $(BINFOLDER)concat.o $(BINFOLDER)ealloc.o
+SBASE_UTIL_ENV=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
+SBASE_UTIL_BASENAME=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
+SBASE_UTIL_DIRNAME=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract
-SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
+USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract
+SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest pthrtest pthrstress pfract
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -821,6 +824,9 @@ $(BINFOLDER)head.nxe:      $(DYN_DEPS) $(BINFOLDER)head.o $(SBASE_UTIL_HEAD)
 $(BINFOLDER)tail.nxe:      $(DYN_DEPS) $(BINFOLDER)tail.o $(SBASE_UTIL_TAIL) $(LIBUTF_OBJS)
 $(BINFOLDER)true.nxe:      $(DYN_DEPS) $(BINFOLDER)true.o
 $(BINFOLDER)false.nxe:     $(DYN_DEPS) $(BINFOLDER)false.o
+$(BINFOLDER)env.nxe:       $(DYN_DEPS) $(BINFOLDER)env.o $(SBASE_UTIL_ENV)
+$(BINFOLDER)basename.nxe:  $(DYN_DEPS) $(BINFOLDER)basename.o $(SBASE_UTIL_BASENAME)
+$(BINFOLDER)dirname.nxe:   $(DYN_DEPS) $(BINFOLDER)dirname.o $(SBASE_UTIL_DIRNAME)
 $(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
 $(BINFOLDER)crashtest.nxe: $(DYN_DEPS) $(BINFOLDER)crashtest.o
 $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o

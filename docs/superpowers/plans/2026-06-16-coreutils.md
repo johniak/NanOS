@@ -328,15 +328,15 @@ streaming). Sources: `head.c`, `tail.c`.
   are the proof; if the shell prints `$?` use `true; echo $?` style if supported). 0 faults.
 - [x] Commit `feat: add true + false coreutils`. Tick.
 
-### - [ ] **Task 2.5: `env` + `basename` + `dirname`**
+### - [x] **Task 2.5: `env` + `basename` + `dirname`**
 
 **Likely objects:** `eprintf.o` each. Sources: `env.c`, `basename.c`, `dirname.c`.
-- [ ] Vendor all three. Wire each into `USER_PROGS`/`SYS_PROGS` + link rules.
-- [ ] `make build`; resolve.
-- [ ] `make image`, QEMU:
+- [x] Vendor all three. Wire each into `USER_PROGS`/`SYS_PROGS` + link rules.
+- [x] `make build`; resolve.
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "basename /a/b/c" "dirname /a/b/c" "env"`.
   Confirm `c`, `/a/b`, and an env listing, 0 faults.
-- [ ] Commit `feat: add env + basename + dirname coreutils`. Tick.
+- [x] Commit `feat: add env + basename + dirname coreutils`. Tick.
 
 ### - [ ] **Task 2.6: `stat` (NOT in sbase — decide)**
 
