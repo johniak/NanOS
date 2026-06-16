@@ -197,19 +197,19 @@ headers only if picolibc's headers don't already declare them. `fdopendir` alrea
   Confirm `d1`,`d2` appear, `d1` gone after rmdir, 0 faults.
 - [x] Commit `feat: add mkdir + rmdir coreutils (in-tree sbase)`. Tick.
 
-### - [ ] **Task 1.2: `pwd`**
+### - [x] **Task 1.2: `pwd`**
 
 **Likely objects:** `eprintf.o` (uses `getcwd`, already in libc-glue). Source: `pwd.c`. If `pwd -P`
 pulls `realpath` (missing) and you don't want to add it, that's fine — `pwd` (logical) is the
 required behavior; note `-P` as a limitation rather than adding `realpath` here.
 
-- [ ] Vendor `pwd.c`. Wire `pwd` into `USER_PROGS`/`SYS_PROGS` + `SBASE_UTIL_PWD=$(BINFOLDER)eprintf.o`
+- [x] Vendor `pwd.c`. Wire `pwd` into `USER_PROGS`/`SYS_PROGS` + `SBASE_UTIL_PWD=$(BINFOLDER)eprintf.o`
   + link rule.
-- [ ] `make build`; resolve link errors. If `realpath` is the only blocker and only `-P` needs it,
+- [x] `make build`; resolve link errors. If `realpath` is the only blocker and only `-P` needs it,
   leave it out (document) — don't block the task.
-- [ ] `make image`, QEMU: `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "cd /disks/main" "pwd"`.
+- [x] `make image`, QEMU: `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "cd /disks/main" "pwd"`.
   Confirm it prints `/disks/main`, 0 faults.
-- [ ] Commit `feat: add pwd coreutil`. Tick.
+- [x] Commit `feat: add pwd coreutil`. Tick.
 
 ### - [ ] **Task 1.3: `touch`** (depends on Task 0.2)
 

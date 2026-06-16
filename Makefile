@@ -669,12 +669,13 @@ SBASE_UTIL_LS=$(BINFOLDER)eprintf.o $(BINFOLDER)ealloc.o $(BINFOLDER)reallocarra
 # Basic coreutils (in-tree sbase ports, see docs/superpowers/plans/2026-06-16-coreutils.md).
 SBASE_UTIL_MKDIR=$(BINFOLDER)eprintf.o $(BINFOLDER)mode.o $(BINFOLDER)mkdirp.o $(BINFOLDER)strlcpy.o
 SBASE_UTIL_RMDIR=$(BINFOLDER)eprintf.o
+SBASE_UTIL_PWD=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract
-SYS_PROGS=nsh cat ls mkdir rmdir free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
+USER_PROGS=init nsh cat ls mkdir rmdir pwd sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract
+SYS_PROGS=nsh cat ls mkdir rmdir pwd free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest pthrtest pthrstress pfract
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -791,6 +792,7 @@ $(BINFOLDER)cat.nxe:       $(DYN_DEPS) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
 $(BINFOLDER)ls.nxe:        $(DYN_DEPS) $(BINFOLDER)ls.o $(SBASE_UTIL_LS) $(LIBUTF_OBJS) $(GLUE_LS)
 $(BINFOLDER)mkdir.nxe:     $(DYN_DEPS) $(BINFOLDER)mkdir.o $(SBASE_UTIL_MKDIR)
 $(BINFOLDER)rmdir.nxe:     $(DYN_DEPS) $(BINFOLDER)rmdir.o $(SBASE_UTIL_RMDIR)
+$(BINFOLDER)pwd.nxe:       $(DYN_DEPS) $(BINFOLDER)pwd.o $(SBASE_UTIL_PWD)
 $(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
 $(BINFOLDER)crashtest.nxe: $(DYN_DEPS) $(BINFOLDER)crashtest.o
 $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o
