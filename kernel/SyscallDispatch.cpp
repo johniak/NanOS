@@ -418,6 +418,14 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	case SYS_kill:
 		ret = signalSend((int) a0, (int) a1);
 		break;
+	case SYS_tkill:
+		// i386: a0=tid, a1=sig. No tgid check (tgid = -1 = "any group").
+		ret = signalSendThread(-1, (int) a0, (int) a1);
+		break;
+	case SYS_tgkill:
+		// i386: a0=tgid, a1=tid, a2=sig.
+		ret = signalSendThread((int) a0, (int) a1, (int) a2);
+		break;
 	case SYS_setpgid:
 		ret = sysSetpgid((int) a0, (int) a1);
 		break;

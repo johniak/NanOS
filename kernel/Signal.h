@@ -146,6 +146,17 @@ int  sigNextDeliverable(const ThreadSignals& ts, const ProcSignals& ps);
 SigDisp sigResolve(const ProcSignals& ps, int sig);   // fold the (process-wide) disposition table
 bool sigCanCatch(int sig);                       // false for SIGKILL/SIGSTOP
 
+// Choose which thread of a multithreaded process should take a PROCESS-DIRECTED signal
+// (kill(pid)). `threads[i]` is the per-thread signal state of thread i, with index 0 the
+// group leader. Returns the index of the first thread NOT blocking `sig` — so the signal is
+// woken on a thread that can actually deliver it, like Linux. The leader is preferred when it
+// can take the signal (i starts at 0). If EVERY thread blocks it (or count<=0/threads==null),
+// returns 0: the signal stays process-directed-pending on the leader until some thread
+// unblocks it (also Linux). SIGCANCEL is treated as any other signal — it is NOT excluded
+// here (it is the pthread_cancel transport). SIGKILL/SIGSTOP can never be blocked, so any
+// thread (the leader) takes them. Pure + freestanding (array, not STL) -> host-tested.
+int  pickSignalTarget(int sig, const ThreadSignals* threads, int count);
+
 // True if a deliverable signal (thread-directed or process-directed) would actually
 // interrupt the thread — i.e. resolves to terminate / stop / run-a-handler. Ignored
 // signals (e.g. default SIGCHLD) and SIGCONT do NOT count, so they must not yield EINTR

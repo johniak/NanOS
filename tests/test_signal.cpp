@@ -272,3 +272,49 @@ TEST_CASE("64-bit masks: real-time signals 32..64 are independent of 1..31") {
 	sigPost(ps, 64);
 	CHECK((ps.pending & (1ull << 63)) != 0);
 }
+
+TEST_CASE("pickSignalTarget picks a thread that does not block the signal") {
+	ThreadSignals t[3];
+	for (int i = 0; i < 3; i++)
+		sigInit(t[i]);
+
+	// The leader (index 0) blocks SIGUSR1; thread 1 does not -> the signal is routed there,
+	// so a kill(pid) lands on a thread that can actually take it (Linux semantics).
+	t[0].block(SIGUSR1);
+	CHECK(pickSignalTarget(SIGUSR1, t, 3) == 1);
+
+	// When the leader can take the signal it is preferred (cheapest, already-known thread).
+	CHECK(pickSignalTarget(SIGUSR2, t, 3) == 0);
+
+	// SIGKILL/SIGSTOP cannot be blocked: any thread (the leader) takes them regardless of mask.
+	t[0].block(SIGKILL);
+	CHECK(pickSignalTarget(SIGKILL, t, 3) == 0);
+}
+
+TEST_CASE("pickSignalTarget falls back to the leader when every thread blocks the signal") {
+	ThreadSignals t[2];
+	for (int i = 0; i < 2; i++) {
+		sigInit(t[i]);
+		t[i].block(SIGTERM);
+	}
+	// No thread can take it -> index 0 (leader); the signal stays process-directed-pending
+	// until a thread unblocks it, exactly like Linux.
+	CHECK(pickSignalTarget(SIGTERM, t, 2) == 0);
+
+	// Degenerate inputs are safe.
+	CHECK(pickSignalTarget(SIGTERM, t, 0) == 0);
+	CHECK(pickSignalTarget(SIGTERM, (const ThreadSignals*) 0, 2) == 0);
+}
+
+TEST_CASE("pickSignalTarget treats SIGCANCEL as an ordinary target (not specially excluded)") {
+	ThreadSignals t[2];
+	for (int i = 0; i < 2; i++)
+		sigInit(t[i]);
+
+	// SIGCANCEL is the pthread_cancel transport (Task 5.3): the pure chooser must route it to
+	// a thread that can take it, never refuse it.
+	t[0].block(SIGCANCEL);
+	CHECK(pickSignalTarget(SIGCANCEL, t, 2) == 1);
+	t[0].unblock(SIGCANCEL);
+	CHECK(pickSignalTarget(SIGCANCEL, t, 2) == 0);
+}

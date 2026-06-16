@@ -75,6 +75,8 @@
 #define SYS_times 43
 #define SYS_brk 45
 #define SYS_kill 37
+#define SYS_tkill 238       /* signal a SPECIFIC thread by tid */
+#define SYS_tgkill 270      /* signal a SPECIFIC thread by (tgid, tid) — pthread_cancel transport */
 #define SYS_signal 48
 #define SYS_pause 29
 #define SYS_sigsuspend 72   /* NanOS passes the wait-mask in the first arg (our sigset_t is one

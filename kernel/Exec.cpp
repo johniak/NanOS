@@ -530,6 +530,26 @@ static void bcastVisit(int pid, bool kthread, void* c) {
 		b->rc = 0;
 }
 
+// Walk a process's intrusive thread list and pick which thread should take a process-directed
+// signal, delegating the policy to the pure (host-tested) pickSignalTarget. Copies the few
+// per-thread masks into a small ON-STACK array (no heap: this can run from the keyboard IRQ via
+// consoleSignal -> signalSend); a process never has anywhere near this many threads.
+static Thread* pickSignalTargetThread(Process* p, int sig) {
+	if (!p || !p->threads)
+		return 0;
+	const int CAP = 32;
+	ThreadSignals masks[CAP];
+	Thread* list[CAP];
+	int n = 0;
+	for (Thread* th = p->threads; th && n < CAP; th = th->next) {
+		masks[n] = th->sig;
+		list[n] = th;
+		n++;
+	}
+	int idx = pickSignalTarget(sig, masks, n);
+	return (idx >= 0 && idx < n) ? list[idx] : p->threads;
+}
+
 // kill(2): post `sig` to process `pid`. Wakes a blocked target so it can deliver. Per POSIX
 // a non-positive pid targets a process group: pid == 0 is the caller's group, pid < 0 is
 // the group |pid|.
@@ -561,13 +581,48 @@ int signalSend(int pid, int sig) {
 		Process* parent = ProcTable::byPid(t->parent);
 		if (parent) { sigPost(parent->psig, SIGCHLD); Scheduler::wake(parent->task); }
 	}
-	// Wake the target so it reaches a return-to-user and delivers: any blocked task, or a
-	// stopped task that is being continued or killed.
-	if (t->task) {
-		if (t->task->state == TASK_BLOCKED)
-			Scheduler::wake(t->task);
-		else if (t->task->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
-			Scheduler::resume(t->task);   // STOPPED -> READY: only a continue/kill un-stops it
+	// Process-directed: wake a thread that does NOT block the signal so it reaches a
+	// return-to-user and delivers (Linux routes kill(pid) to any able thread). With one thread
+	// the leader is the only candidate -> identical to the old single-thread behaviour.
+	Thread* target = pickSignalTargetThread(t, sig);
+	Task* tk = target ? target->task : t->task;
+	if (tk) {
+		if (tk->state == TASK_BLOCKED)
+			Scheduler::wake(tk);
+		else if (tk->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
+			Scheduler::resume(tk);        // STOPPED -> READY: only a continue/kill un-stops it
+	}
+	return 0;
+}
+
+// tgkill(2)/tkill(2): post `sig` to the SPECIFIC thread `tid` (thread-directed pending, which
+// signalDeliver folds into that thread's deliverable set when it returns to user) and wake it.
+// SIGCANCEL is ALLOWED here — this is the in-process pthread_cancel transport (Task 5.3); only
+// kill(2)-by-pid refuses it. tgid >= 0 requires the thread to be in that thread group.
+int signalSendThread(int tgid, int tid, int sig) {
+	if (sig < 0 || sig >= NANOS_NSIG)
+		return -22;   // -EINVAL
+	Thread* th = ProcTable::threadByTid(tid);
+	if (!th || !th->proc)
+		return -3;    // -ESRCH: no such thread
+	Process* t = th->proc;
+	if (tgid >= 0 && t->tgid != tgid)
+		return -3;    // -ESRCH: thread is not in the named thread group
+	if (sig == 0)
+		return 0;     // existence/permission check only
+	sigPost(th->sig, sig);                     // thread-directed: lands on THIS thread's pending
+	if (sig == SIGCONT && t->stopped) {        // job-control stop/continue is per-process
+		t->stopped = false;
+		t->continued = true;
+		Process* parent = ProcTable::byPid(t->parent);
+		if (parent) { sigPost(parent->psig, SIGCHLD); Scheduler::wake(parent->task); }
+	}
+	// Wake the targeted thread's own task so it reaches a return-to-user and delivers.
+	if (th->task) {
+		if (th->task->state == TASK_BLOCKED)
+			Scheduler::wake(th->task);
+		else if (th->task->state == TASK_STOPPED && (sig == SIGCONT || sig == SIGKILL))
+			Scheduler::resume(th->task);
 	}
 	return 0;
 }

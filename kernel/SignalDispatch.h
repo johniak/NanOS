@@ -24,6 +24,11 @@ namespace kernel {
 static const int ERESTARTSYS = 512;
 
 int  signalSend(int pid, int sig);                                  // kill(2)
+// Thread-directed delivery (tgkill(2)/tkill(2)): post `sig` to the SPECIFIC thread `tid` and
+// wake it. Unlike kill(2) this is the legitimate in-process transport for SIGCANCEL
+// (pthread_cancel, Task 5.3), so SIGCANCEL is allowed here. tgid >= 0 also requires the thread
+// to belong to that thread group (-ESRCH otherwise); tgid < 0 is the tkill form (no group check).
+int  signalSendThread(int tgid, int tid, int sig);                  // tgkill(2) / tkill(2)
 int  signalAction(int sig, unsigned handler, unsigned restorer);    // signal(2)
 int  signalMask(int how, unsigned set, unsigned* oldset);           // sigprocmask(2) [legacy, low 32]
 int  signalPause();                                                 // pause(2)

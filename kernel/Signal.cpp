@@ -48,6 +48,17 @@ bool sigCanCatch(int sig) {
 	return sig != SIGKILL && sig != SIGSTOP;
 }
 
+int pickSignalTarget(int sig, const ThreadSignals* threads, int count) {
+	if (!threads || count <= 0)
+		return 0;                          // degenerate: nothing to choose from -> the leader
+	// SIGKILL/SIGSTOP are immune to the block mask: any thread (the leader, index 0) takes them.
+	bool unblockable = (sig == SIGKILL || sig == SIGSTOP);
+	for (int i = 0; i < count; i++)
+		if (unblockable || !threads[i].isBlocked(sig))
+			return i;                      // first thread that can take it (leader preferred)
+	return 0;                              // every thread blocks it -> leave it pending on leader
+}
+
 void sigInit(ThreadSignals& s) {
 	s.pending = 0;
 	s.blocked = 0;
