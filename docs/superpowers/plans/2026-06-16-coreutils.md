@@ -338,7 +338,11 @@ streaming). Sources: `head.c`, `tail.c`.
   Confirm `c`, `/a/b`, and an env listing, 0 faults.
 - [x] Commit `feat: add env + basename + dirname coreutils`. Tick.
 
-### - [ ] **Task 2.6: `stat` (NOT in sbase — decide)**
+### - [x] **Task 2.6: `stat` (NOT in sbase — decide)**
+
+> Decision: option 1 — skip `stat`. sbase has no `stat` utility (confirmed against commit
+> c546c3a); `ls -l` already shows mode/size/owner/mtime, which covers the need. No code; the
+> roadmap note is recorded in Task F.1.
 
 **Reality:** sbase has no `stat` utility. Options, in order of preference:
 1. **Skip it** — `ls -l` already shows mode/size/owner/mtime; mark `stat` as "covered by `ls -l`"
@@ -346,7 +350,7 @@ streaming). Sources: `head.c`, `tail.c`.
 2. If a real `stat` is wanted later, write a tiny `user/stat.c` (own program, not sbase) using
    `lstat` + print fields — but that's out of scope for "basic coreutils"; defer.
 
-- [ ] Choose option 1 (recommended): no code. Add a one-line note to the roadmap entry (done in
+- [x] Choose option 1 (recommended): no code. Add a one-line note to the roadmap entry (done in
   Finish) and tick this task. (If you instead build a custom `stat`, follow the Phase 1 wiring
   flow and QEMU-verify.)
 
