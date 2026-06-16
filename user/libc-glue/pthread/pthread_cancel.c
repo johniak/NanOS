@@ -21,6 +21,7 @@
 int pthread_cancel(pthread_t t)
 {
 	a_store(&t->cancel, 1);
-	__syscall(SYS_tkill, t->tid, NX_SIGCANCEL);
-	return 0;
+	/* POSIX: ESRCH if no such thread. tkill returns -ESRCH (negated errno); map it. */
+	int r = __syscall(SYS_tkill, t->tid, NX_SIGCANCEL);
+	return r < 0 ? -r : 0;
 }

@@ -37,6 +37,10 @@ struct pthread {
 	volatile int detach_state;
 	volatile int cancel;
 	volatile unsigned char canceldisable, cancelasync;
+	/* NanOS addition: musl's __cancel() records a masked/deferred cancellation here and
+	 * returns -ECANCELED (instead of exiting), so the cancellation point can unwind first.
+	 * Upstream musl carries this field too; the vendored struct lacked it. Non-ABI. */
+	volatile int canceled;
 	unsigned char tsd_used:1;
 	unsigned char dlerror_flag:1;
 	unsigned char *map_base;
@@ -174,8 +178,8 @@ hidden int __pthread_setcancelstate(int, int *);
  * prototypes that shadow the public header); we don't vendor that overlay, so declare them
  * here. The public pthread_* names are the weak_alias targets (declared in <pthread.h>);
  * these __pthread_* / __private_* / __vm_* / __pthread_testcancel names are internal-only.
- * __pthread_testcancel is the no-op cancellation stub in nanos_glue.c (cancellation is
- * Phase 5); __vm_* live in vmlock.c (process-shared paths only). */
+ * __pthread_testcancel is the real cancellation point in nanos_glue.c (acts on a pending
+ * request via __cancel); __vm_* live in vmlock.c (process-shared paths only). */
 hidden int __pthread_mutex_lock(pthread_mutex_t *);
 hidden int __pthread_mutex_unlock(pthread_mutex_t *);
 hidden int __pthread_mutex_trylock(pthread_mutex_t *);

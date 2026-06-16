@@ -8,8 +8,9 @@
  *                             libc.need_locks (in __lock.c). Zero-initialised => single-
  *                             threaded fast path until pthread_create flips it (Task 4.2).
  *   __syscall_cp(...)       — musl routes cancellable syscalls through this. NanOS honours a
- *                             pending cancel here (deferred model, Task 5.3): check the flag
- *                             before the call and on -EINTR after it; otherwise plain syscall.
+ *                             pending cancel here (deferred model, Task 5.3) via __cancel():
+ *                             before the call when async, and on -EINTR after it. __cancel exits
+ *                             (ENABLE/async) or returns -ECANCELED (MASKED), which we propagate.
  *   __clock_gettime(...)    — musl's internal clock hook; forward to picolibc clock_gettime
  *                             (NanOS impl in user/libc-glue/syscalls.c).
  *   __pthread_setcancelstate— real cancellation enable/disable (+ setcanceltype, testcancel).
@@ -36,27 +37,30 @@ _Static_assert(offsetof(struct pthread, errno_val) == 28,  "musl errno_val must 
 /* musl's process-global libc state. Hidden to match the `extern hidden` decl in libc.h. */
 struct __libc __libc;
 
-/* The cancellation action (cancel_impl.c) — never returns; exits the thread with
- * PTHREAD_CANCELED, running cleanup handlers via __pthread_exit. */
-_Noreturn void __cancel(void);
+/* The cancellation action (cancel_impl.c). Under ENABLE/ASYNC it exits the thread with
+ * PTHREAD_CANCELED (running cleanup handlers via __pthread_exit) and never returns; under
+ * MASKED/deferred it records the pending cancel and returns -ECANCELED for the caller to unwind. */
+long __cancel(void);
 
-/* Cancellable-syscall entry point — the heart of the NanOS deferred-cancellation model.
- * A pending cancel (flag set + not disabled) is honoured at the cancellation point: BEFORE the
- * call (so a request that arrived while runnable cancels here) and, if the syscall came back
- * -EINTR, AFTER it (the SIGCANCEL that pthread_cancel sent interrupted a blocked futex). In
- * both cases __cancel() does not return. Otherwise it is a plain 6-arg int $0x80, returning the
- * kernel's negated-errno result. A thread with cancellation disabled just runs the syscall. */
+/* Cancellable-syscall entry point — the heart of the NanOS deferred-cancellation model, and a
+ * faithful mirror of musl's __syscall_cp_c. A pending cancel (flag set + not DISABLED) routes
+ * the decision through __cancel(): BEFORE the call only when ASYNCHRONOUS (best-effort async,
+ * since we cannot preempt mid-computation), and, if the syscall came back -EINTR, AFTER it (the
+ * SIGCANCEL pthread_cancel sent interrupted a blocked futex). __cancel() either exits the thread
+ * (ENABLE/ASYNC, never returns) or — under PTHREAD_CANCEL_MASKED — returns -ECANCELED, which we
+ * PROPAGATE as the syscall result so the masking caller (pthread_cond_timedwait) can unlink its
+ * waiter node, relock, and re-test. A thread with cancellation DISABLED just runs the syscall. */
 /* Parenthesised name dodges the __syscall_cp(...) dispatch macro from syscall.h, exactly as
  * musl's own src/thread/__syscall_cp.c defines `long (__syscall_cp)(...)`. */
 hidden long (__syscall_cp)(syscall_arg_t n, syscall_arg_t a, syscall_arg_t b,
                            syscall_arg_t c, syscall_arg_t d, syscall_arg_t e, syscall_arg_t f)
 {
 	pthread_t self = __pthread_self();
-	if (self->cancel && !self->canceldisable)
-		__cancel();                                  /* pending cancel at this cp */
+	if (self->cancel && self->canceldisable != PTHREAD_CANCEL_DISABLE && self->cancelasync)
+		return __cancel();                           /* async + pending: cancel before the call */
 	long r = __syscall6(n, a, b, c, d, e, f);
-	if (r == -EINTR && self->cancel && !self->canceldisable)
-		__cancel();                                  /* interrupted by SIGCANCEL while blocked */
+	if (r == -EINTR && self->cancel && self->canceldisable != PTHREAD_CANCEL_DISABLE)
+		return __cancel();                           /* interrupted by SIGCANCEL: exit, or -ECANCELED if masked */
 	return r;
 }
 
@@ -79,20 +83,21 @@ hidden int __clock_gettime(clockid_t clk, struct timespec *ts)
 	return clock_gettime(clk, ts);
 }
 
-/* pthread_setcancelstate(state, oldstate): enable/disable cancellation for the calling thread.
- * NanOS stores canceldisable as a strict boolean (DISABLE => 1, else 0); PTHREAD_CANCEL_MASKED
- * (used internally by pthread_cond_timedwait) is therefore treated as ENABLE — cond/sem waits
- * are cancellation points. Validates state against the three legal values, reports the prior
- * state (DISABLE/ENABLE), and succeeds. __timedwait (the NON-cancellable wait used by mutex/
- * rwlock locks) brackets its futex wait with DISABLE..restore, so those waits never cancel. */
+/* pthread_setcancelstate(state, oldstate): set the calling thread's cancellation-enable state.
+ * NanOS stores the FULL tri-state in canceldisable (matching musl): ENABLE(0) / DISABLE(1) /
+ * MASKED(2). MASKED (used internally by pthread_cond_timedwait around its futex wait) is NOT
+ * collapsed to ENABLE — under it a cancel arriving mid-wait returns -ECANCELED instead of
+ * exiting, so the waiter can unwind first. Validates state against the three legal values,
+ * reports the real prior state, and succeeds. __timedwait (the NON-cancellable wait used by
+ * mutex/rwlock locks) brackets its futex wait with DISABLE..restore, so those never cancel. */
 hidden int __pthread_setcancelstate(int state, int *oldstate)
 {
 	if ((unsigned) state > 2u)
 		return EINVAL;   /* ENABLE(0) / DISABLE(1) / MASKED(2) */
 	pthread_t self = __pthread_self();
 	if (oldstate)
-		*oldstate = self->canceldisable ? PTHREAD_CANCEL_DISABLE : PTHREAD_CANCEL_ENABLE;
-	self->canceldisable = (state == PTHREAD_CANCEL_DISABLE);
+		*oldstate = self->canceldisable;
+	self->canceldisable = (unsigned char) state;
 	return 0;
 }
 weak_alias(__pthread_setcancelstate, pthread_setcancelstate);
@@ -112,14 +117,15 @@ int pthread_setcanceltype(int type, int *oldtype)
 	return 0;
 }
 
-/* Cancellation point hook. pthread_cond_timedwait() calls __pthread_testcancel() on entry and
- * after a consumed signal; it now acts on a pending request (flag set + not disabled) by
- * running __cancel() (which does not return). weak_alias to the public name so a program
- * calling pthread_testcancel() links too. */
+/* Cancellation point hook. pthread_cond_timedwait() calls __pthread_testcancel() on entry and,
+ * after unwinding a cancelled wait, at its `done:` label (once the real ENABLE/DISABLE state is
+ * restored). It acts on a pending request (flag set + not DISABLED) by running __cancel(): under
+ * ENABLE that exits the thread; under MASKED __cancel returns harmlessly (testcancel is void).
+ * weak_alias to the public name so a program calling pthread_testcancel() links too. */
 hidden void __pthread_testcancel(void)
 {
 	pthread_t self = __pthread_self();
-	if (self->cancel && !self->canceldisable)
+	if (self->cancel && self->canceldisable != PTHREAD_CANCEL_DISABLE)
 		__cancel();
 }
 weak_alias(__pthread_testcancel, pthread_testcancel);

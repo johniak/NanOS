@@ -21,6 +21,7 @@
  *     pthrtest: condvar ok sum=499500
  *     ... (rwlock/barrier/once/tlskey/sem) ...
  *     pthrtest: cancel ok
+ *     pthrtest: cancel reuse ok
  */
 #include <pthread.h>
 #include <semaphore.h>
@@ -175,7 +176,10 @@ static pthread_cond_t  cxl_cond = PTHREAD_COND_INITIALIZER;
 static volatile int    cxl_ready;
 static volatile int    cxl_cleanup_ran;
 
-static void cxl_cleanup(void *p) { (void)p; cxl_cleanup_ran = 1; }
+/* POSIX idiom: pthread_cond_wait re-acquires the mutex before cancellation runs cleanup
+ * handlers, so the handler is responsible for releasing it. Unlocking here is also what lets
+ * the condvar-reuse check below relock cxl_lock after the cancelled worker is gone. */
+static void cxl_cleanup(void *p) { (void)p; cxl_cleanup_ran = 1; pthread_mutex_unlock(&cxl_lock); }
 
 static void *cxl_worker(void *p)
 {
@@ -187,6 +191,29 @@ static void *cxl_worker(void *p)
 	while (1)
 		pthread_cond_wait(&cxl_cond, &cxl_lock);
 	pthread_cleanup_pop(0);                 /* never reached: cancellation exits inside the wait */
+	pthread_mutex_unlock(&cxl_lock);
+	return 0;
+}
+
+/* ---- cancellation regression: REUSE the same condvar after a cancel -------------------- *
+ * The cancelled cxl_worker had a stack `struct waiter node` linked into cxl_cond's waiter list
+ * while parked. The fix unlinks that node as the wait unwinds (-ECANCELED). If it leaked (the
+ * old bug, where a masked cancel exited the thread immediately mid-wait), a later signal on the
+ * SAME condvar would walk the dead node, "deliver" the wakeup to the corpse, and never wake a
+ * live waiter behind it — a lost wakeup that hangs this check forever. So a fresh waiter that
+ * waits on cxl_cond and then gets signalled MUST actually wake. */
+static volatile int cxl2_ready;
+static volatile int cxl2_woke;
+static int          cxl2_pred;
+
+static void *cxl_reuse_worker(void *p)
+{
+	(void)p;
+	pthread_mutex_lock(&cxl_lock);
+	cxl2_ready = 1;
+	while (!cxl2_pred)
+		pthread_cond_wait(&cxl_cond, &cxl_lock);
+	cxl2_woke = 1;
 	pthread_mutex_unlock(&cxl_lock);
 	return 0;
 }
@@ -318,6 +345,26 @@ int main(void)
 		printf("pthrtest: cancel ok\n");
 	else
 		printf("pthrtest: cancel FAIL res=%p cleanup=%d\n", cr, cxl_cleanup_ran);
+
+	/* cancel regression: REUSE cxl_cond. A fresh waiter on the same condvar must still be
+	 * wakeable; a leaked dead waiter node from the cancelled thread would lose this wakeup and
+	 * hang the join. (The cancelled worker's cleanup released cxl_lock, so we can relock it.) */
+	cxl2_ready = 0;
+	cxl2_woke = 0;
+	cxl2_pred = 0;
+	pthread_t ct2;
+	pthread_create(&ct2, 0, cxl_reuse_worker, 0);
+	while (!cxl2_ready) ;                       /* wait until it holds the lock */
+	for (volatile long i = 0; i < 5000000L; i++) ;   /* let it actually park in the futex */
+	pthread_mutex_lock(&cxl_lock);
+	cxl2_pred = 1;
+	pthread_cond_signal(&cxl_cond);
+	pthread_mutex_unlock(&cxl_lock);
+	pthread_join(ct2, 0);                       /* hangs forever on a lost wakeup */
+	if (cxl2_woke)
+		printf("pthrtest: cancel reuse ok\n");
+	else
+		printf("pthrtest: cancel reuse FAIL\n");
 
 	return 0;
 }
