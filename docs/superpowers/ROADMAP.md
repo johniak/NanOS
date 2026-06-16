@@ -159,6 +159,10 @@ domyślnym sposobem dokładania portów. To zmienia Q8 z „dopiero zaczynamy pa
 
 ### 2.2. Nienaruszalne zachowanie oryginału (AKCJA #1, przed jakimkolwiek ruchem `master`)
 
+> ✅ **ZROBIONE (2026-06-16):** tag `original-zero-ai-2026-02-05` + `legacy/original-zero-ai`
+> (@ `b83b433`) utworzone i wypchnięte na origin. ⬜ Pozostaje: **branch protection** na origin
+> (no force-push / no delete dla tagu + `legacy/*`).
+
 ```
 git tag -a original-zero-ai-2026-02-05 b83b433 -m "Pristine zero-AI NanOS baseline (last human commit)"
 git branch legacy/original-zero-ai b83b433
@@ -171,20 +175,24 @@ zworktree'ować do audytu „co napisał człowiek". To spełnia „nie może za
 
 ### 2.3. Model gałęzi (zatwierdzony: `master`→legacy, nowy `main`+`develop`)
 
+> ✅ **ZROBIONE (2026-06-16):** struktura założona lokalnie i na origin; domyślna gałąź GitHub
+> przepięta na `main`; stare scalone gałęzie (`feat/pthread`, `feat/nap-package-manager`,
+> `dockerized-build`) usunięte. `master` przemianowany na **`legacy/master`** (lok. + origin).
+
 ```
-legacy/original-zero-ai   (= tag original-zero-ai-2026-02-05)  ← NIETYKALNE, oryginał
-main                      ← stabilny trunk; TYLKO zweryfikowany na realnym sprzęcie ("wysoki")
-develop                   ← integracja: agenci mergują tu; CI + headless-QEMU bramkuje
-release/qN                ← (opcjonalnie) snapshot kwartalny pod sprzęt
-feat/<agent>/<temat>      ← per-agent, KAŻDY w osobnym worktree
+legacy/original-zero-ai   (= tag original-zero-ai-2026-02-05)  ← NIETYKALNE, oryginał   ✅
+legacy/master             (= dawny master @ b83b433)           ← wskaźnik historyczny   ✅
+main                      ← stabilny trunk; domyślna gałąź origin                       ✅
+develop                   ← integracja: agenci mergują tu; CI + headless-QEMU bramkuje  ✅
+release/qN                ← (opcjonalnie) snapshot kwartalny pod sprzęt                 ⬜
+feat/<agent>/<temat>      ← per-agent, KAŻDY w osobnym worktree                          ⬜
 ```
 
-Mechanika cut-over (po 2.2):
-1. `main` ← obecny dorobek (promowany z `feat/pthread` po zazielenieniu).
-2. `develop` ← `main`; codzienna integracja agentów.
-3. `master` przestaje być trunkiem; pozostaje wskaźnik historyczny lub usuwany po
-   potwierdzeniu, że tag+legacy istnieją na origin. **`master` NIE jest ruszany, dopóki
-   2.2 nie jest na origin.**
+Mechanika cut-over (po 2.2): ✅ wykonana —
+1. `main` ← obecny dorobek (promowany z `feat/pthread` po zazielenieniu). ✅
+2. `develop` ← `main`; codzienna integracja agentów. ✅
+3. `master` nie jest już trunkiem — przemianowany na `legacy/master` (kotwica była już na
+   origin, więc warunek z 2.2 spełniony). ✅
 
 ### 2.4. Worktree governance (równoległa praca 30 agentów)
 
@@ -460,10 +468,12 @@ do krytycznej ścieżki A.
 
 ## 9. Pierwsze akcje (sprint 0)
 
-1. **Governance (AKCJA #1):** tag `original-zero-ai-2026-02-05` + `legacy/original-zero-ai`
-   + push + branch protection (sekcja 2.2). **Przed jakimkolwiek ruchem `master`.**
-2. Utworzyć `main` (z zazielenionego `feat/pthread`) i `develop`; spisać konwencję worktree.
-3. Per-worktree build-infra (obraz/socket/kontener parametryzowane) — odblokowuje 30 agentów.
+1. ✅ **Governance (AKCJA #1):** tag `original-zero-ai-2026-02-05` + `legacy/original-zero-ai`
+   + push **zrobione (2026-06-16)**. ⬜ Pozostaje: branch protection na origin (sekcja 2.2).
+2. ✅ **Zrobione (2026-06-16):** `main` (z zazielenionego `feat/pthread`) i `develop` utworzone
+   i wypchnięte; `master`→`legacy/master`; stare scalone gałęzie usunięte; domyślna gałąź = `main`.
+   ⬜ Pozostaje: spisać konwencję worktree.
+3. ⬜ Per-worktree build-infra (obraz/socket/kontener parametryzowane) — odblokowuje 30 agentów.
 4. `arch/x86_64/arch.mk` + `x86_64-elf` w Dockerze (pusty arch kompiluje się).
 5. Skonsolidować literały okien VA do kontraktu `arch/mmu.h` (przygotowanie pod 64-bit).
 6. **Potwierdzić sprzęt egzemplarza Latitude 5310:** CSM tak/nie w BIOS, CPU (rdzenie/wątki),
