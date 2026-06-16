@@ -99,6 +99,22 @@ a thread that has it unblocked. Cancellation is implemented on top of this via a
   still reclaim physical RAM but leak the VA (logged once). Ample for thread churn, where each
   join frees a region the next create immediately reuses.
 
+## Verification (QEMU)
+
+- **Stress (`pthrstress`):** 32 worker threads hammering a mutex-protected counter to `640000`
+  (exact — no lost updates), a condvar producer/consumer, and **100 rounds of 32-thread
+  create/join churn** (3200 thread lifecycles). Result: `pthrstress: 32 threads,
+  counter=640000, churn 100 rounds ok`, 0 CPU faults. This churn is what surfaced the original
+  mmap-stack leak (fixed by real `munmap` + VA reuse, above).
+- **Parallel render (`pfract`):** `pfract: 8 workers, 1540 cells, checksum=0x… ok` with the
+  Mandelbrot set drawn in ASCII — a real mutex+condvar thread-pool work queue.
+- **Kernel-stack RAM headroom:** `/proc/meminfo` `KHeapFree` is **identical before and after**
+  the 3200-thread churn (e.g. `32350 kB` → `32350 kB`). Each thread's 32 KiB kernel stack is
+  heap-allocated on create and fully reclaimed when the scheduler reaps the DONE task, so the
+  kernel heap returns to the byte with no leak; peak concurrent kernel-stack use (~32–64 live
+  threads ≈ 1–2 MiB) stays well within the heap. The task-slot ceiling
+  (`MAXTASKS = ProcTable::MAX + 8`) is ample and was deliberately **not** lowered.
+
 ## Follow-up
 
 A Polish translation `docs/pl/threads.md` is a pending follow-up (docs are bilingual; see
