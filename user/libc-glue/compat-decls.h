@@ -9,6 +9,11 @@
 struct stat;
 int lstat(const char* path, struct stat* buf);
 
+/* mknod: picolibc declares mknodat but not mknod for i686-elf; cp.c (compiled as C++) needs a
+ * declaration or the call is a hard error. The (ENOSYS) definition lives in posixstubs.c. */
+#include <sys/types.h>
+int mknod(const char* path, mode_t mode, dev_t dev);
+
 /* picolibc gates the POSIX timer API behind a feature macro that our freestanding
  * build doesn't set, so it declares neither clock_gettime/nanosleep nor the CLOCK_*
  * ids — but it DOES define struct timespec/clockid_t. Expose them here (impl in

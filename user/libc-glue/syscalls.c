@@ -151,6 +151,7 @@ int mkdir(const char* p, mode_t mode) {
 	return reterr(sys3(SYS_mkdir, (int) p, (int) mode, 0));
 }
 int rmdir(const char* p)                { return reterr(sys3(SYS_rmdir, (int) p, 0, 0)); }
+int creat(const char* p, mode_t m)      { return reterr(sys3(SYS_creat, (int) p, (int) m, 0)); }
 int fsync(int fd)                       { return reterr(sys3(SYS_fsync, fd, 0, 0)); }
 int fdatasync(int fd)                   { return reterr(sys3(SYS_fdatasync, fd, 0, 0)); }
 void sync(void)                         { sys3(SYS_sync, 0, 0, 0); }

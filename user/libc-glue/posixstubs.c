@@ -83,6 +83,11 @@ int initgroups(const char* user, gid_t group) { (void) user; (void) group; retur
  * it when explicitly asked to (--chroot), which we never do — the symbol just needs to resolve. */
 int chroot(const char* path) { (void) path; errno = ENOSYS; return -1; }
 
+/* mknod: NanOS has no mknod syscall (device/fifo nodes are not user-creatable). Only `cp -a` of a
+ * block/char/socket/fifo special file reaches this; ordinary file/dir copies never do. Report
+ * ENOSYS so the symbol resolves and such a copy fails cleanly rather than silently. */
+int mknod(const char* path, mode_t mode, dev_t dev) { (void) path; (void) mode; (void) dev; errno = ENOSYS; return -1; }
+
 /* getrusage: no per-process resource accounting. Zero the struct and succeed (servers query it for
  * optional stats logging; zeros are an honest "not measured"). */
 int getrusage(int who, struct rusage* usage) {

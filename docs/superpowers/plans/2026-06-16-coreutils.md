@@ -248,18 +248,18 @@ for `ln a b c dir/` form — vendor `libutil/enmasse.c` if the linker asks.
   Confirm the symlink shows `-> /disks/main/orig` and the hard link shares the inode, 0 faults.
 - [x] Commit `feat: add ln coreutil (symbolic + hard links)`. Tick.
 
-### - [ ] **Task 1.6: `cp`** (depends on Task 0.2)
+### - [x] **Task 1.6: `cp`** (depends on Task 0.2)
 
 **Likely objects:** `eprintf.o recurse.o` (+ `fs.h`, shared with rm). Source: `cp.c`. `cp -r` uses
 `recurse()`. May also pull `concat`/`ealloc`.
 
-- [ ] Vendor `cp.c` (reuse the already-vendored `fs.h`/`recurse.c` from Task 1.4). Wire `cp`.
-- [ ] `make build`; resolve link errors. Note the sbase `fs.h` cross-file design: `cp.c` defines a
+- [x] Vendor `cp.c` (reuse the already-vendored `fs.h`/`recurse.c` from Task 1.4). Wire `cp`.
+- [x] `make build`; resolve link errors. Note the sbase `fs.h` cross-file design: `cp.c` defines a
   `cp()` used by `mv` later — that's expected; just get `cp` itself to link now.
-- [ ] `make image`, QEMU:
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "echo hi > /disks/main/src" "cp /disks/main/src /disks/main/dst" "cat /disks/main/dst" "mkdir -p /disks/main/cpd/a" "touch /disks/main/cpd/a/x" "cp -r /disks/main/cpd /disks/main/cpd2" "ls -R /disks/main/cpd2"`.
   Confirm `dst` contents = `hi`, recursive copy reproduces the tree, 0 faults.
-- [ ] Commit `feat: add cp coreutil (incl -r)`. Tick.
+- [x] Commit `feat: add cp coreutil (incl -r)`. Tick.
 
 ### - [ ] **Task 1.7: `mv`** (depends on Task 0.2, and on `cp`/`rm` objects per sbase `fs.h`)
 
