@@ -253,8 +253,14 @@ celu daily-driver desktop wymaga aktywnego dopracowania → dedykowany Strumień
 - **A:** trampolina long-mode w `loader.s` (identity-map 2 MiB hugepages, PAE+LME+PG),
   64-bit GDT, skok do 64-bitowego `kmain` (znak na VGA = pierwszy dowód życia). Paging
   4-poziomowy (`AddressSpace`/`mmu` → 64-bit, NX) — rozwijane **TDD na hoście**.
+  > 🟡 CZĘŚCIOWO (2026-06-16): trampolina + 64-bit GDT + dowód życia na VGA ✅ ZROBIONE
+  > (`plans/2026-06-15-x86_64-plan-1-foundation.md`, „NanOS x86_64 long mode OK" w QEMU).
+  > ⬜ Pozostaje paging 4-poziomowy host-TDD (Plan 3).
 - **B:** `arch/x86_64/arch.mk`, `x86_64-elf` w Dockerze, `nasm -f elf64`,
   `OUTPUT_FORMAT(elf64-x86-64)`, `qemu-system-x86_64`. Pusty `arch/x86_64` kompiluje się.
+  > ✅ ZROBIONE (2026-06-16): Plan 1 — drugi toolchain w Dockerze, `arch/x86_64/{arch.mk,
+  > linker.ld,boot/}`, `make ARCH=x86_64 bringup64` bootuje ELF64 przez GRUB ISO (QEMU `-kernel`
+  > nie ładuje ELF64). i686 bez regresji.
 - **C:** dokończenie pthread/musl na i686 (proving ground); **audyt blokad jądra** pod SMP
   (gdzie są niejawne założenia jednoprocesorowości).
 - **D:** projekt ścieżki UEFI; **analiza BIOS Latitude 5310 — czy CSM w ogóle dostępny**
@@ -474,7 +480,9 @@ do krytycznej ścieżki A.
    i wypchnięte; `master`→`legacy/master`; stare scalone gałęzie usunięte; domyślna gałąź = `main`.
    ⬜ Pozostaje: spisać konwencję worktree.
 3. ⬜ Per-worktree build-infra (obraz/socket/kontener parametryzowane) — odblokowuje 30 agentów.
-4. `arch/x86_64/arch.mk` + `x86_64-elf` w Dockerze (pusty arch kompiluje się).
+4. ✅ ZROBIONE (2026-06-16): `arch/x86_64/arch.mk` + `x86_64-elf` w Dockerze — i więcej:
+   pełny Plan 1 (`plans/2026-06-15-x86_64-plan-1-foundation.md`) bootuje 64-bitowy `kernel64.bin`
+   w QEMU („NanOS x86_64 long mode OK"). Gałąź `feat/x86_64-foundation`.
 5. Skonsolidować literały okien VA do kontraktu `arch/mmu.h` (przygotowanie pod 64-bit).
 6. **Potwierdzić sprzęt egzemplarza Latitude 5310:** CSM tak/nie w BIOS, CPU (rdzenie/wątki),
    NVMe vs SATA, wariant NIC (I219-LM vs -V; RJ45 jest), WiFi (AX201?), touchpad (I2C-HID?),
