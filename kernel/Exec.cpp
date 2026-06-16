@@ -531,23 +531,22 @@ static void bcastVisit(int pid, bool kthread, void* c) {
 }
 
 // Walk a process's intrusive thread list and pick which thread should take a process-directed
-// signal, delegating the policy to the pure (host-tested) pickSignalTarget. Copies the few
-// per-thread masks into a small ON-STACK array (no heap: this can run from the keyboard IRQ via
-// consoleSignal -> signalSend); a process never has anywhere near this many threads.
+// signal. This is the SAME 3-case policy the pure (host-tested) pickSignalTarget encodes (see
+// kernel/Signal.cpp), applied directly to the list so it is unbounded and copy-free: a thread
+// group can hold up to ProcTable::MAX threads, far too many for an on-stack mask array (the
+// kernel stack is only 8 KB), and this can run from the keyboard IRQ via consoleSignal ->
+// signalSend, so no heap either. The leader is the head of the list (p->threads).
 static Thread* pickSignalTargetThread(Process* p, int sig) {
 	if (!p || !p->threads)
 		return 0;
-	const int CAP = 32;
-	ThreadSignals masks[CAP];
-	Thread* list[CAP];
-	int n = 0;
-	for (Thread* th = p->threads; th && n < CAP; th = th->next) {
-		masks[n] = th->sig;
-		list[n] = th;
-		n++;
-	}
-	int idx = pickSignalTarget(sig, masks, n);
-	return (idx >= 0 && idx < n) ? list[idx] : p->threads;
+	// SIGKILL/SIGSTOP are immune to the block mask: the leader takes them.
+	if (sig == SIGKILL || sig == SIGSTOP)
+		return p->threads;
+	// First thread that does not block the signal (leader preferred, it is the head).
+	for (Thread* th = p->threads; th; th = th->next)
+		if (!th->sig.isBlocked(sig))
+			return th;
+	return p->threads;   // every thread blocks it -> leave it pending on the leader
 }
 
 // kill(2): post `sig` to process `pid`. Wakes a blocked target so it can deliver. Per POSIX
@@ -574,6 +573,8 @@ int signalSend(int pid, int sig) {
 		return -3;    // -ESRCH
 	if (sig == 0)
 		return 0;     // existence check only
+	if (t->exited)
+		return 0;     // signalling a zombie is a no-op (its sibling Tasks may already be freed)
 	sigPost(t->psig, sig);
 	if (sig == SIGCONT && t->stopped) {        // resume a stopped process (job control)
 		t->stopped = false;
@@ -610,6 +611,8 @@ int signalSendThread(int tgid, int tid, int sig) {
 		return -3;    // -ESRCH: thread is not in the named thread group
 	if (sig == 0)
 		return 0;     // existence/permission check only
+	if (t->exited)
+		return 0;     // signalling a zombie is a no-op (its sibling Tasks may already be freed)
 	sigPost(th->sig, sig);                     // thread-directed: lands on THIS thread's pending
 	if (sig == SIGCONT && t->stopped) {        // job-control stop/continue is per-process
 		t->stopped = false;
