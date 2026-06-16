@@ -297,8 +297,7 @@ celu daily-driver desktop wymaga aktywnego dopracowania → dedykowany Strumień
 ### Q4 — Bring-up sprzętu: USB + storage + pierwszy bare-metal
 - **F:** USB core + **HID** (klawiatura/mysz USB) + **mass storage** (bulk-only, SCSI read).
 - **E:** **NVMe** dopracowane pod M.2 Latitude 5310; NIC: rozszerzenie e1000 → **e1000e/I219**
-  (LM/V) **jeśli egzemplarz ma RJ45** — 5310 bywa bez natywnego Ethernetu, wtedy LAN przez
-  dok/USB-Ethernet (do potwierdzenia).
+  — 5310 **ma natywny RJ45** (Ethernet wbudowany); wariant chipa I219-LM vs -V do potwierdzenia.
 - **I:** integracja desktopu ze sprzętem: natywna rozdzielczość **GOP**, kursor/mysz przez
   **USB-HID** (od F) lub **I2C-HID touchpad**; apki Files/Settings/Terminal z trybu demo
   do produkcyjnych.
@@ -388,7 +387,7 @@ celu daily-driver desktop wymaga aktywnego dopracowania → dedykowany Strumień
 | Klawiatura | i8042 (PS/2, EC) — do potwierdzenia | (jest) / F | Q4 | **NanOS już ma PS/2** → klawiatura „za darmo" jeśli i8042; USB-HID/I2C-HID jako backup |
 | Touchpad/pointstick | precyzyjny **I2C-HID** (do potwierdzenia) | G | Q7 | I2C-HID trudniejsze niż PS/2; 5310 prawdopodobnie nie ma PS/2 touchpada |
 | Magazyn | **NVMe (M.2 PCIe)** — podstawowy; AHCI/SATA tylko jeśli wariant ma (do potwierdzenia) | E | Q3–Q4 | **NVMe priorytetem** (odwrotnie niż EliteBook); virtio-blk w QEMU |
-| Sieć LAN | **Intel I219-LM/V** jeśli egzemplarz ma RJ45 (do potwierdzenia — 5310 bywa bez Ethernetu) | E | Q4 | rozszerzenie e1000 → e1000e/I219; fallback: USB-Ethernet/dok |
+| Sieć LAN | **natywny RJ45**, Intel **I219-LM/V** (wariant chipa do potwierdzenia) | E | Q4 | rozszerzenie e1000 → e1000e/I219; LAN dostępny od razu (`nap` przez sieć działa) |
 | WiFi | **Intel Wi-Fi 6 AX201** (CNVi) — do potwierdzenia | H | Q8+ | od zera poza zakresem; realne przez **`iwlwifi`/LinuxKPI** jako follow-on po 1.0 |
 | USB | Intel **xHCI** (USB 3.x, USB-C) | F | Q3–Q4 | mandatory: storage do flashowania, mysz; USB-C może mieć Thunderbolt (do potwierdzenia) |
 | Audio | Intel HDA (kodek Realtek ALC — do potwierdzenia) | G | Q7 | stretch; klasyczny HDA |
@@ -436,7 +435,7 @@ do krytycznej ścieżki A.
 | Red zone / `swapgs` / adresy kanoniczne w ścieżce przerwań | średni | review asm, IST dla #DF, testy fault na sprzęcie |
 | SMP locking — niejawne założenia jednoprocesorowości | wysoki | audyt Q1 przed wdrożeniem; stress-testy; Big Kernel Lock jako etap pośredni |
 | **Brak CSM na Latitude 5310** (Comet Lake/2020) — odpada tani bootstrap Multiboot1 | wysoki | potwierdzić w BIOS w Q1; jeśli brak → UEFI Class 3 wymagane od Q3 (Strumień D priorytet) |
-| **5310 bez natywnego RJ45 / nieznany part NIC** | średni | LAN-zależne ścieżki (`nap` przez sieć) mają fallback: lokalny ZIP/USB; potwierdzić NIC + RJ45 w labie |
+| Dokładny wariant NIC (I219-LM vs -V) nieznany | niski | RJ45 potwierdzony; e1000e/I219 pokrywa oba warianty — `nap` przez LAN działa; fallback lokalny ZIP/USB pozostaje |
 | Realny sprzęt ≠ QEMU (warianty firmware/peryferiów) | wysoki | lab z Latitude 5310 od Q4; serial debug; konkretny egzemplarz referencyjny |
 | 30 agentów × współdzielona build-infra | średni | per-worktree obraz/socket/kontener (Strumień 0, Q1) |
 | Rebuild ~12 portów (dominujący koszt kalendarzowy) | średni | równoległy, odseparowany od kernela; rusza po Bramce Q2; ryzyko rozproszone |
@@ -468,7 +467,8 @@ do krytycznej ścieżki A.
 4. `arch/x86_64/arch.mk` + `x86_64-elf` w Dockerze (pusty arch kompiluje się).
 5. Skonsolidować literały okien VA do kontraktu `arch/mmu.h` (przygotowanie pod 64-bit).
 6. **Potwierdzić sprzęt egzemplarza Latitude 5310:** CSM tak/nie w BIOS, CPU (rdzenie/wątki),
-   NVMe vs SATA, RJ45/NIC, WiFi (AX201?), touchpad (I2C-HID?), kodek audio — uzupełnić §5.
+   NVMe vs SATA, wariant NIC (I219-LM vs -V; RJ45 jest), WiFi (AX201?), touchpad (I2C-HID?),
+   kodek audio — uzupełnić §5.
 7. `nano-packages`: utrwalić baseline gałęzi `feat/nap-mvp`, spisać kontrakt z NanOS
    (`NAP_CLIENT`, ścieżki `/disks/main`, default `NAP_REPO`), dodać plan integracji
    x86_64 targetu po Bramce Q2.
