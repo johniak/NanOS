@@ -18,10 +18,15 @@
  * the wake. (Upstream musl instead wakes &detach_state from userspace; leaning on the kernel
  * here is simpler and already proven on NanOS.)
  *
- * STACK / TCB LIFETIME: NanOS munmap is a no-op — a process's pages are reclaimed only at
- * process exit (see user/libc-glue/syscalls.c). So a thread's stack+TCB are never actually
- * freed: pthread_join can safely read tcb->result after the thread has exited, and a detached
- * thread simply leaks its stack until the process ends. Documented limitation for Phase 4.
+ * STACK / TCB LIFETIME: munmap is now real — it clears the PTEs, frees the backing frames,
+ * AND records the VA for reuse (kernel SYS_munmap + the mmap free-list; see syscalls.c +
+ * kernel/SyscallDispatch.cpp). pthread_join therefore munmaps the joined thread's
+ * map_base/map_size, so a long-running create/join churn recycles the finite (64 MiB) mmap
+ * window instead of exhausting it. (The join handshake below still rides the kernel ctid
+ * wake, so the joiner only munmaps AFTER the thread has exited — its stack/TCB stay live
+ * until then.) LIMITATION: a DETACHED thread cannot unmap its own running stack and nobody
+ * joins it, so its stack+TCB still leak until process exit (the portable fix is musl's
+ * __unmapself i386 trampoline — not vendored here; see docs/en/threads.md).
  */
 #include "pthread_impl.h"
 #include <sys/mman.h>

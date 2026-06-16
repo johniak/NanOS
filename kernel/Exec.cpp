@@ -225,6 +225,11 @@ int forkProcess(arch::TrapFrame* tf) {
 	child->brkBase = parent->brkBase;          // inherit the heap (mmuCopyAddressSpace
 	child->brkCur = parent->brkCur;            // already duplicated the mapped pages)
 	child->brkMax = parent->brkMax;
+	// The mmap window was duplicated frame-by-frame, so the child resumes the bump pointer
+	// where the parent left off (everything below is already mapped). The reclaim free-list
+	// starts EMPTY (zeroed by alloc) — the parent's freed holes are just unallocated VA the
+	// child will bump past, never stale entries pointing into the child's own space.
+	child->mmapNext = parent->mmapNext;
 	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
 	child->kthread = false;
 	for (int i = 0; i < (int) sizeof child->comm; i++)

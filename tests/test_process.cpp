@@ -415,3 +415,71 @@ TEST_CASE("groupHasStopped: true once a member is job-control stopped") {
 	a->stopped = true;
 	CHECK(ProcTable::groupHasStopped(a->pid));
 }
+
+// ---- mmap free-list helpers (VA reclaim for munmap/mmap) ------------------------------
+
+TEST_CASE("mmapFreeFind: first-fit picks the first entry large enough") {
+	MmapFree list[4] = {{0x1000, 0x1000}, {0x4000, 0x4000}, {0x9000, 0x2000}};
+	int count = 3;
+	CHECK(mmapFreeFind(list, count, 0x1000) == 0);   // exact first
+	CHECK(mmapFreeFind(list, count, 0x2000) == 1);   // entry 0 too small -> entry 1
+	CHECK(mmapFreeFind(list, count, 0x4000) == 1);   // entry 1 exact
+	CHECK(mmapFreeFind(list, count, 0x5000) == -1);  // nothing fits
+	CHECK(mmapFreeFind(list, 0, 0x1000) == -1);      // empty list
+}
+
+TEST_CASE("mmapFreeCarve: exact fit removes the entry and compacts") {
+	MmapFree list[4] = {{0x1000, 0x1000}, {0x4000, 0x4000}, {0x9000, 0x2000}};
+	int count = 3;
+	unsigned va = mmapFreeCarve(list, &count, 1, 0x4000);   // exact match on entry 1
+	CHECK(va == 0x4000);
+	CHECK(count == 2);
+	CHECK(list[1].va == 0x9000);   // entry 2 shifted down into slot 1
+	CHECK(list[1].len == 0x2000);
+}
+
+TEST_CASE("mmapFreeCarve: larger entry shrinks from the front") {
+	MmapFree list[4] = {{0x4000, 0x4000}};
+	int count = 1;
+	unsigned va = mmapFreeCarve(list, &count, 0, 0x1000);
+	CHECK(va == 0x4000);           // hands out the original front VA
+	CHECK(count == 1);             // entry stays
+	CHECK(list[0].va == 0x5000);   // remainder starts one page up
+	CHECK(list[0].len == 0x3000);
+}
+
+TEST_CASE("mmapFreeAdd: appends until full, then reports failure") {
+	MmapFree list[2];
+	int count = 0;
+	CHECK(mmapFreeAdd(list, &count, 2, 0x1000, 0x1000));   // distinct, non-adjacent
+	CHECK(mmapFreeAdd(list, &count, 2, 0x9000, 0x1000));
+	CHECK(count == 2);
+	CHECK(!mmapFreeAdd(list, &count, 2, 0x20000, 0x1000)); // list full -> false
+	CHECK(count == 2);
+}
+
+TEST_CASE("mmapFreeAdd: coalesces with an adjacent range on either side") {
+	MmapFree list[4] = {{0x4000, 0x1000}};
+	int count = 1;
+	CHECK(mmapFreeAdd(list, &count, 4, 0x5000, 0x1000));   // touches the top of entry 0
+	CHECK(count == 1);
+	CHECK(list[0].va == 0x4000);
+	CHECK(list[0].len == 0x2000);
+	CHECK(mmapFreeAdd(list, &count, 4, 0x3000, 0x1000));   // touches the bottom of entry 0
+	CHECK(count == 1);
+	CHECK(list[0].va == 0x3000);
+	CHECK(list[0].len == 0x3000);
+}
+
+TEST_CASE("mmap free-list: a freed range is reused by a later same-size request") {
+	// End-to-end of the churn pattern: free a region, then a same-size mmap reuses its VA
+	// instead of bumping (what keeps the finite window alive across create/join).
+	MmapFree list[8];
+	int count = 0;
+	CHECK(mmapFreeAdd(list, &count, 8, 0x50000000, 0x23000));   // ~140 KiB freed on join
+	int fi = mmapFreeFind(list, count, 0x23000);
+	REQUIRE(fi == 0);
+	unsigned va = mmapFreeCarve(list, &count, fi, 0x23000);
+	CHECK(va == 0x50000000);   // next create gets the recycled VA
+	CHECK(count == 0);         // list drained
+}

@@ -828,12 +828,20 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		if (p->mmapNext == 0)
 			p->mmapNext = arch::mmuMmapBase();
 		unsigned bytes = (length + 0xFFFu) & ~0xFFFu;
-		if (p->mmapNext + bytes > arch::mmuMmapMax()) { ret = -12; break; }   // window full
-		unsigned va = p->mmapNext;
+		// Reuse a previously-munmap'd range (first-fit) before extending the bump pointer, so
+		// the finite mmap window survives create/join churn (pthread stacks recycle here).
+		unsigned va;
+		int fi = kernel::mmapFreeFind(p->mmapFree, p->mmapFreeCount, bytes);
+		if (fi >= 0) {
+			va = kernel::mmapFreeCarve(p->mmapFree, &p->mmapFreeCount, fi, bytes);
+		} else {
+			if (p->mmapNext + bytes > arch::mmuMmapMax()) { ret = -12; break; }   // window full
+			va = p->mmapNext;
+			p->mmapNext = va + bytes;
+		}
 		// File-backed must be writable so we can load into it; anonymous honors PROT_WRITE (2).
 		int writable = (fd >= 0) ? 1 : ((prot & 2) != 0);
 		if (arch::mmuMapAnon(space, va, bytes, writable) != 0) { ret = -12; break; }
-		p->mmapNext = va + bytes;
 		if (fd >= 0) {                          // file-backed: eager-read the file into the map
 			g_sys->lseek(fd, (int) offset, 0 /*SEEK_SET*/);
 			unsigned got = 0;
@@ -844,6 +852,33 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			}
 		}
 		ret = (int) va;
+		break;
+	}
+	case SYS_munmap: {
+		// munmap(addr, length): a0 = addr (must be page-aligned), a1 = length (rounded up).
+		// Only ranges inside the anonymous/file mmap window [mmuMmapBase, mmuMmapMax) are
+		// actually torn down — that is where pthread stacks live. A munmap of the brk window
+		// or anything else is a benign no-op (return 0) so we never corrupt other regions.
+		unsigned addr = a0;
+		unsigned length = a1;
+		if (addr & 0xFFFu) { ret = -22; break; }       // -EINVAL: unaligned address (like Linux)
+		if (length == 0) { ret = -22; break; }          // -EINVAL: zero length
+		unsigned len = (length + 0xFFFu) & ~0xFFFu;      // page-round the length up
+		unsigned base = arch::mmuMmapBase(), top = arch::mmuMmapMax();
+		if (addr < base || addr >= top || addr + len > top) { ret = 0; break; }  // outside: no-op
+		Process* p = ProcTable::current();
+		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
+		arch::mmuUnmapAnon(space, addr, len);            // clear PTEs + free the backing frames
+		// Record the VA so a later mmap can reuse it. If the free list is full, degrade:
+		// the frames are already reclaimed; we just leak the VA (logged once).
+		if (!kernel::mmapFreeAdd(p->mmapFree, &p->mmapFreeCount, Process::NMMAPFREE, addr, len)) {
+			static bool warned = false;
+			if (!warned) {
+				warned = true;
+				Console::writeLine("munmap: mmap free-list full, leaking VA (frames reclaimed)");
+			}
+		}
+		ret = 0;
 		break;
 	}
 	case SYS_execve: {

@@ -86,6 +86,18 @@ a thread that has it unblocked. Cancellation is implemented on top of this via a
   common bash-style pattern, which is exercised by `pthrtest`'s fork/exec sub-test).
 - **No `SA_SIGINFO`/`ucontext`** for signal handlers (no siginfo payload, no machine context).
 - **Uniprocessor** — no real parallel speedup (see above).
+- **Detached-thread stacks leak until process exit.** `munmap` is real now (`SYS_munmap`
+  frees the frames *and* recycles the VA via a per-process mmap free-list), so `pthread_join`
+  reclaims a joined thread's stack+TCB and a long create/join churn recycles the finite 64 MiB
+  mmap window. A **detached** thread, however, cannot unmap its own running stack and nobody
+  joins it, so its stack+TCB are reclaimed only at process exit. The portable fix is musl's
+  `__unmapself` (an i386 trampoline that switches to a tiny shared stack, munmaps the dead
+  thread's mapping, then `SYS_exit`s); it is not vendored here. Programs that JOIN their
+  threads (the common case, and what `pthrstress` exercises) reuse VA without bound.
+- **Per-process mmap free-list is fixed-size** (`Process::NMMAPFREE`, 64 entries). If a process
+  munmaps more distinct, non-coalescing ranges than that without re-mmapping, the excess frees
+  still reclaim physical RAM but leak the VA (logged once). Ample for thread churn, where each
+  join frees a region the next create immediately reuses.
 
 ## Follow-up
 

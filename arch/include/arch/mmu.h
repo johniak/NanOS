@@ -83,5 +83,10 @@ uint32_t mmuModuleStride();
 uint32_t mmuMmapBase();
 uint32_t mmuMmapMax();
 int mmuMapAnon(AddressSpace*, uint32_t base, uint32_t bytes, int writable);
+// Tear down a mmap'd range: clear the PTE AND return each backing frame to the frame
+// allocator, for [base, base+bytes) (page-rounded). The inverse of mmuMapAnon; used by
+// SYS_munmap to reclaim physical RAM (the VA reuse is bookkept by the MI free-list). Same
+// kernel-CR3 trap as mmuMapAnon — freeing frames touches arbitrary RAM by identity.
+void mmuUnmapAnon(AddressSpace*, uint32_t base, uint32_t bytes);
 
 }

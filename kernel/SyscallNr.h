@@ -91,6 +91,7 @@
 #define SYS_ioctl 54
 #define SYS_fcntl 55
 #define SYS_mmap2 192
+#define SYS_munmap 91
 #define SYS_stat 106
 #define SYS_lstat 107
 #define SYS_readlink 85

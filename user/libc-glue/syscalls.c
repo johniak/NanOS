@@ -514,10 +514,15 @@ void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
 	return (void*) r;
 }
 
-/* munmap(2): the kernel's mmap eagerly backs mappings with allocated pages and has no unmap
- * syscall yet, so this is a no-op (the region is reclaimed when the process exits). Safe for
- * the short-lived tools that mmap-then-process-then-exit (e.g. wget reading a local file). */
-int munmap(void* addr, size_t length) { (void) addr; (void) length; return 0; }
+/* munmap(2): issue SYS_munmap so the kernel clears the PTEs, frees the backing frames, and
+ * records the VA range for reuse by a later mmap (the mmap window is finite — 64 MiB — so
+ * VA reclaim is what lets long-lived thread create/join churn keep recycling stacks). The
+ * kernel only acts on ranges inside its anonymous mmap window; anything else is a no-op. */
+int munmap(void* addr, size_t length) {
+	int r = sys3(SYS_munmap, (int) addr, (int) length, 0);
+	if (r < 0) { errno = -r; return -1; }
+	return 0;
+}
 
 /* brk(2)/sbrk(2): the heap is a growable high-VA region the kernel maps on demand (see
  * kernel SYS_brk / arch mmuSetUserBrk). brk(0) reports the current break; brk(addr) sets

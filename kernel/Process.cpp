@@ -3,7 +3,47 @@
 
 namespace kernel {
 
+// ---- mmap free-list helpers (pure; host-tested) ----------------------------------------
+// First-fit: the first freed range big enough for `bytes`, or -1.
+int mmapFreeFind(const MmapFree* list, int count, unsigned bytes) {
+	for (int i = 0; i < count; i++)
+		if (list[i].len >= bytes)
+			return i;
+	return -1;
+}
+
+// Carve `bytes` off the front of entry i and return the VA to hand out. Exact fit removes
+// the entry (compacting the array); a larger entry shrinks from the front.
+unsigned mmapFreeCarve(MmapFree* list, int* count, int i, unsigned bytes) {
+	unsigned va = list[i].va;
+	if (list[i].len == bytes) {            // exact: drop the entry, compact the tail down
+		for (int j = i + 1; j < *count; j++)
+			list[j - 1] = list[j];
+		(*count)--;
+	} else {                               // larger: take the front, keep the remainder
+		list[i].va  += bytes;
+		list[i].len -= bytes;
+	}
+	return va;
+}
+
+// Append [va, va+len). Coalesces with an adjacent existing entry (either side) to keep the
+// list compact across churn. Returns false if the list is full (caller leaks the VA).
+bool mmapFreeAdd(MmapFree* list, int* count, int cap, unsigned va, unsigned len) {
+	for (int i = 0; i < *count; i++) {
+		if (list[i].va + list[i].len == va) { list[i].len += len; return true; }  // extend up
+		if (va + len == list[i].va) { list[i].va = va; list[i].len += len; return true; }  // down
+	}
+	if (*count >= cap)
+		return false;
+	list[*count].va = va;
+	list[*count].len = len;
+	(*count)++;
+	return true;
+}
+
 const int ProcTable::MAX;                    // out-of-line definition for ODR-use
+const int Process::NMMAPFREE;                // out-of-line definition for ODR-use
 static const int MAXPROC = ProcTable::MAX;   // single source of truth (see Process.h)
 // Threads have their own pool (clone() makes many non-leader threads). Sized like MAXTASKS
 // (ProcTable::MAX + 8): every process needs a leader plus headroom for the boot kthreads.
@@ -73,6 +113,7 @@ Process* ProcTable::alloc(int parent) {
 			p->stime = 0;
 			p->starttime = (unsigned) Scheduler::ticks();
 			p->mmapNext = 0;         // lazily set to arch::mmuMmapBase() on first mmap
+			p->mmapFreeCount = 0;    // empty reclaim list (no munmap'd ranges yet)
 			p->execed = false;
 			p->task = 0;
 			p->space = 0;

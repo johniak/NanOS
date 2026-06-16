@@ -264,4 +264,20 @@ int mmuMapAnon(AddressSpace* s, uint32_t base, uint32_t bytes, int writable) {
 	return rc;
 }
 
+// Inverse of mmuMapAnon: clear each PTE in [base, base+bytes) and free the backing frame
+// (mirrors the brk-shrink path in mmuSetUserBrk). Same kernel-CR3 trap: freeing frames and
+// touching page tables by identity is only safe under the kernel directory.
+void mmuUnmapAnon(AddressSpace* s, uint32_t base, uint32_t bytes) {
+	uint32_t end = (base + bytes + 0xFFFu) & ~0xFFFu;
+	uint32_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	for (uint32_t va = base; va < end; va += 0x1000) {
+		uint32_t pa = s->impl.translate(va);
+		s->impl.unmap(va);
+		if (pa != 0xFFFFFFFFu)
+			g_fa->free(pa);
+	}
+	kernel::loadCr3(saved);   // CR3 reload flushes the TLB so the cleared PTEs are live
+}
+
 }  // namespace arch

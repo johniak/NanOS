@@ -17,6 +17,22 @@ struct Task;       // scheduler task (Scheduler.h)
 class Syscalls;    // per-process syscall state incl. the fd table (Syscall.h)
 struct Process;
 
+// One freed range in a process's mmap window, recycled by a later mmap before the bump
+// pointer is advanced. munmap appends; mmap first-fits one of these.
+struct MmapFree { unsigned va; unsigned len; };
+
+// Pure mmap free-list helpers (host-tested; no kernel state). The list holds freed
+// [va, va+len) ranges within the mmap window.
+//   mmapFreeFind:  first-fit — index of the first entry with len >= bytes, or -1.
+//   mmapFreeCarve: take `bytes` off the FRONT of entry i, return the VA to use; if the
+//                  entry is fully consumed the array is compacted (*count decremented).
+//                  Precondition: list[i].len >= bytes && bytes is page-rounded.
+//   mmapFreeAdd:   append [va, va+len); coalesces with an adjacent entry if possible.
+//                  Returns false if the list is full (caller leaks the VA, frees frames).
+int      mmapFreeFind(const MmapFree* list, int count, unsigned bytes);
+unsigned mmapFreeCarve(MmapFree* list, int* count, int i, unsigned bytes);
+bool     mmapFreeAdd(MmapFree* list, int* count, int cap, unsigned va, unsigned len);
+
 // One thread of execution within a process (thread group). The Task is the scheduler
 // context; the rest is per-thread state that used to live (implicitly) on the Process.
 struct Thread {
@@ -55,8 +71,17 @@ struct Process {
 	unsigned brkMax;     // hard ceiling (brkBase + cap)
 
 	// mmap bump pointer: the next free VA in the mmap window. 0 until the first mmap, then
-	// initialised to arch::mmuMmapBase() and advanced per mapping. (No unmap reclaim yet.)
+	// initialised to arch::mmuMmapBase() and advanced per mapping.
 	unsigned mmapNext;
+
+	// mmap VA reclaim. munmap records freed ranges here; the next mmap first-fits one of
+	// them before bumping mmapNext, so the finite 64 MiB window is reusable (the pthread
+	// create/join churn frees a ~140 KiB stack the next create reuses). Fixed-size: on a
+	// full list munmap still frees the physical frames but leaks the VA (logged once).
+	// NMMAPFREE * 8 B * ProcTable::MAX(1024) ≈ 0.5 MiB of zero-init .bss — acceptable.
+	static const int NMMAPFREE = 64;
+	MmapFree mmapFree[NMMAPFREE];
+	int      mmapFreeCount;
 
 	// Sessions + process groups (job control). A new process is its own group+session
 	// leader; fork inherits both; setpgid/setsid change them. The tty's foreground process
