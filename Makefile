@@ -121,6 +121,32 @@ wget: bin/libc.ndl bin/libc.ndl.a
 	cp "$(WGET_PORT)/wget.nxe" $(BINFOLDER)wget.nxe
 	@echo "staged $(BINFOLDER)wget.nxe — run 'make image' to install it into /nanos/bin"
 
+# GNU git 2.54.0 (optional, external). Unmodified upstream source built for NanOS via nanos-port's
+# build="make" path (git ships its own Makefile; the cross knobs live in a committed config.mak in
+# the source tree — see $(GIT_PORT)/git-2.54.0/config.mak). Local-only git (no http/curl/openssl);
+# THREADS ON (pack-objects delta search) and run-command's fork both exercised. The single git.nxe
+# bundles all builtins (SKIP_DASHED_BUILT_INS). Same reproducible flow as ping/wget. `make image`
+# never depends on this. Requires `make build` first (refreshes the pthread-enabled libc.ndl).
+GIT_PORT    := $(SDK_WORK)/git-port
+git: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(GIT_PORT)/nxport.toml"      || { echo "git port not found at $(GIT_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	# Refresh the startup objects too: crt0.o carries the main-thread TLS bootstrap
+	# (__nx_init_tls -> set_thread_area), so a stale crt0 leaves %gs:0 unset and the first
+	# errno access faults (cr2=0x1c). The sysroot copy must track this checkout's crt0/nxhdr.
+	cp $(BINFOLDER)crt0.o          "$(SDK_TC)/i686-nanos/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o         "$(SDK_TC)/i686-nanos/lib/nxhdr.o"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(GIT_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(GIT_PORT)/git.nxe" $(BINFOLDER)git.nxe
+	@echo "staged $(BINFOLDER)git.nxe — run 'make image' to install it into /nanos/bin (+ /nanos/libexec/git-core)"
+
 # GNU inetutils SERVICES build (FAZA H): the internet super-server inetd (and, as the build
 # grows, telnetd + the telnet/ifconfig/traceroute clients) from the SAME inetutils source as
 # `make ping`, but configured with servers enabled. Manifest at $(SERVICES_PORT)/nxport.toml;
@@ -269,7 +295,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget inetd httpd udhcpc   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -443,6 +469,18 @@ _image: _all _userland _kext _grub2-image
 	printf "rm /nanos/config/udhcpc.script\nwrite $(BINFOLDER)dhcpcfg.nxe /nanos/config/udhcpc.script\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
 	if [ -f $(BINFOLDER)udhcpc.nxe ]; then \
 	  printf "rm /nanos/bin/udhcpc.nxe\nwrite $(BINFOLDER)udhcpc.nxe /nanos/bin/udhcpc.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; fi
+	# GNU git (optional, external): installed ONLY if `make git` staged bin/git.nxe. The single
+	# binary goes to TWO places: /nanos/bin/git.nxe (the shell runs `git` -> .nxe by name) AND
+	# /nanos/libexec/git-core/git (no extension) — git's compiled exec-path, where run-command
+	# self-execs the literal program "git" for forked subcommands (git gc -> git pack-objects).
+	if [ -f $(BINFOLDER)git.nxe ]; then \
+	  printf "rm /nanos/bin/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/bin/git.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /nanos/libexec\nmkdir /nanos/libexec/git-core\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /nanos/libexec/git-core/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/libexec/git-core/git.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  for c in gc repack pack-objects pack-refs prune prune-packed reflog rerere worktree maintenance commit-graph multi-pack-index fsck update-server-info upload-pack receive-pack; do \
+	    printf "rm /nanos/libexec/git-core/git-%s.nxe\nln /nanos/libexec/git-core/git.nxe /nanos/libexec/git-core/git-%s.nxe\n" "$$c" "$$c" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  done; \
+	  echo "  installed git -> /nanos/bin/git.nxe + /nanos/libexec/git-core/{git,git-<cmd>}.nxe (run-command execs git-<cmd>; libc execve appends .nxe)"; fi
 	# System utilities -> /nanos/bin.
 	for p in $(SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
@@ -851,7 +889,7 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
   $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
   $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o \
-  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o $(BINFOLDER)retarget_lock.o $(LIBC_PTHREAD_OBJS)
+  $(BINFOLDER)crypt.o $(BINFOLDER)tls.o $(BINFOLDER)retarget_lock.o $(BINFOLDER)getdelim.o $(LIBC_PTHREAD_OBJS)
 # Phase 4: the vendored musl pthread internals (user/libc-glue/pthread/, musl 1.2.5),
 # adapted to NanOS syscalls (int 0x80, Linux i386 numbers) + the picolibc TCB. Task 4.1
 # brings in only the futex/clone/TLS primitives (no pthread_create yet); they link into

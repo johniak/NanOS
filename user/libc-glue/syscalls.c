@@ -453,7 +453,23 @@ int putenv(char* str) {
  * returns -1 with errno set. A NULL envp inherits the caller's current environment. */
 int execve(const char* path, char* const argv[], char* const envp[]) {
 	if (!envp) envp = environ;
-	return reterr(sys3(SYS_execve, (int) path, (int) argv, (int) envp));
+	int r = sys3(SYS_execve, (int) path, (int) argv, (int) envp);
+	/* NanOS programs are <name>.nxe. A caller that execs a bare name (e.g. git's run-command
+	 * spawning "git-pack-objects" from GIT_EXEC_PATH) gets -ENOENT for the extensionless path;
+	 * retry once with ".nxe" appended so the .nxe convention is transparent to ported software.
+	 * bash already appends .nxe itself, so its execs hit the first attempt — this only adds the
+	 * fallback for programs that don't know about the extension. */
+	if (r == -2 && path) {                 /* -ENOENT */
+		size_t n = 0; while (path[n]) n++;
+		int hasNxe = n >= 4 && path[n-4] == '.' && path[n-3] == 'n' && path[n-2] == 'x' && path[n-1] == 'e';
+		if (!hasNxe && n + 5 <= 512) {
+			char buf[512];
+			for (size_t i = 0; i < n; i++) buf[i] = path[i];
+			buf[n] = '.'; buf[n+1] = 'n'; buf[n+2] = 'x'; buf[n+3] = 'e'; buf[n+4] = 0;
+			r = sys3(SYS_execve, (int) buf, (int) argv, (int) envp);
+		}
+	}
+	return reterr(r);
 }
 
 /* execv(3): exec with the caller's current environment (picolibc ships only execve). inetd's

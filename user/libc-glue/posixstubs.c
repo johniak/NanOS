@@ -14,6 +14,8 @@
 #include <signal.h>
 #include <pwd.h>
 #include <grp.h>
+#include <stdarg.h>
+#include <sys/statvfs.h>
 #include <sys/utsname.h>
 
 extern char** environ;
@@ -164,6 +166,50 @@ int execvp(const char* file, char* const argv[]) {
 	}
 	errno = ENOENT;
 	return -1;
+}
+
+/* execlp(3): variadic front-end to execvp(3). Collect the NULL-terminated argument list into a
+ * vector on the stack, then delegate (PATH search + execve). Used by `git help` to launch a man/
+ * info viewer; picolibc ships neither execlp nor execvp. */
+int execlp(const char* file, const char* arg0, ...) {
+	char* argv[64];
+	int n = 0;
+	argv[n++] = (char*) arg0;
+	va_list ap;
+	va_start(ap, arg0);
+	while (n < (int) (sizeof argv / sizeof argv[0]) - 1) {
+		char* a = va_arg(ap, char*);
+		argv[n++] = a;
+		if (!a) break;
+	}
+	va_end(ap);
+	argv[n] = 0;   /* guarantee NULL termination if the list overflowed */
+	return execvp(file, argv);
+}
+
+/* pthread_sigmask(3): NanOS keeps a single process-wide signal mask (one kernel mask per
+ * process), so the per-thread mask is the process mask — delegate to sigprocmask(2). git's
+ * run-command.c blocks all signals around fork() and restores afterward through this call. */
+int pthread_sigmask(int how, const sigset_t* set, sigset_t* old) {
+	return sigprocmask(how, set, old);
+}
+
+/* statvfs(3)/fstatvfs(3): NanOS has no statvfs syscall. The only caller is git's diagnostic
+ * dump (`git bugreport`/`git diagnose` -> compat/disk.h get_disk_info), which just prints the
+ * numbers — never on a hot path. Report a plausible, consistent filesystem so the call
+ * succeeds rather than erroring. */
+int statvfs(const char* path, struct statvfs* buf) {
+	(void) path;
+	if (!buf) { errno = EFAULT; return -1; }
+	memset(buf, 0, sizeof *buf);
+	buf->f_bsize  = 4096;
+	buf->f_frsize = 4096;
+	buf->f_namemax = 255;
+	return 0;
+}
+int fstatvfs(int fd, struct statvfs* buf) {
+	(void) fd;
+	return statvfs("/", buf);
 }
 
 /* mkdtemp(3): create a uniquely-named directory from a "...XXXXXX" template. picolibc declares
