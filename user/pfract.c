@@ -83,11 +83,22 @@ int main(void)
 	static const char ramp[] = " .:-=+*#%@";   /* 10 levels: space (far) .. '@' (in set) */
 	const int levels = sizeof(ramp) - 2;        /* highest ramp index (9) */
 
+	/* Start the queue EMPTY (q_next == HEIGHT) so a worker that runs the instant it is created
+	 * finds nothing available and blocks on the condvar predicate instead of grabbing row 0. */
+	q_next = HEIGHT;
+
 	pthread_t w[NWORKERS];
 	for (int i = 0; i < NWORKERS; i++)
-		pthread_create(&w[i], 0, worker, 0);
+		if (pthread_create(&w[i], 0, worker, 0) != 0) {
+			printf("pfract: pthread_create FAILED for worker %d\n", i);
+			fflush(stdout);
+			return 1;
+		}
 
-	/* Fill the queue: every row is "enqueued" by advancing the cap; then close + wake all. */
+	/* Now that the workers exist (and are blocked), enqueue the whole job under the lock: open
+	 * rows 0..HEIGHT-1, mark the queue closed (these HEIGHT rows are the entire job, no more will
+	 * be added), and broadcast to wake the blocked workers. The broadcast happens after the state
+	 * change and under the lock, so there is no lost wakeup. */
 	pthread_mutex_lock(&q_lock);
 	q_next = 0;                                  /* rows 0..HEIGHT-1 are now available */
 	q_closed = 1;

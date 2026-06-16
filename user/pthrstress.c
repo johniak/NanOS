@@ -129,7 +129,9 @@ int main(void)
 				rbad++;
 		for (int i = 0; i < NTHREADS; i++) {
 			void *cr = 0;
-			if (pthread_join(ct[i], &cr) != 0)
+			/* churn_worker(i) returns i + sum(0..199) == i + 19900; validate it so the join's
+			 * return value is actually checked rather than read and discarded. */
+			if (pthread_join(ct[i], &cr) != 0 || (long)cr != (long)i + 19900)
 				rbad++;
 		}
 		if (rbad) {
