@@ -23,6 +23,19 @@ int lstat(const char* path, struct stat* buf);
 int clock_gettime(clockid_t clk, struct timespec* tp);
 int nanosleep(const struct timespec* req, struct timespec* rem);
 
+/* utimensat/futimens sentinels: picolibc defines UTIME_NOW/OMIT only for Cygwin/RTEMS, so they
+ * are absent for i686-elf. Use the real Linux tv_nsec encoding — exactly what the NanOS kernel
+ * recognizes (kernel/Syscall.cpp utimensat). touch.c needs these in a static initializer. */
+#ifndef UTIME_NOW
+#define UTIME_NOW  0x3fffffff
+#endif
+#ifndef UTIME_OMIT
+#define UTIME_OMIT 0x3ffffffe
+#endif
+/* strptime: picolibc declares it only under __XSI_VISIBLE, which the freestanding build doesn't
+ * set; the symbol IS in libc.a. struct tm is complete here (via <time.h> above), so declare it. */
+char* strptime(const char* s, const char* fmt, struct tm* tm);
+
 /* picolibc's <sys/resource.h> ships only getrusage/struct rusage, not the rlimit surface.
  * Mirror the minimal struct the getrlimit/setrlimit glue (posixstubs.c) implements; the SDK
  * sysroot adds the same declarations (+ RLIMIT_*) for external ports. */

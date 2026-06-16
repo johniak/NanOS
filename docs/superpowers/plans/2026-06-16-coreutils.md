@@ -211,17 +211,17 @@ required behavior; note `-P` as a limitation rather than adding `realpath` here.
   Confirm it prints `/disks/main`, 0 faults.
 - [x] Commit `feat: add pwd coreutil`. Tick.
 
-### - [ ] **Task 1.3: `touch`** (depends on Task 0.2)
+### - [x] **Task 1.3: `touch`** (depends on Task 0.2)
 
 **Likely objects:** `eprintf.o`. Source: `touch.c`. Uses `utimensat`/`futimens` + `open(O_CREAT)`.
 
-- [ ] Confirm Task 0.2 is `- [x]` (touch needs the time wrappers). Vendor `touch.c`. Wire it.
-- [ ] `make build`; resolve link errors (e.g. it may want `estrtonum`/`parseoffset` for `-t`/`-d` —
+- [x] Confirm Task 0.2 is `- [x]` (touch needs the time wrappers). Vendor `touch.c`. Wire it.
+- [x] `make build`; resolve link errors (e.g. it may want `estrtonum`/`parseoffset` for `-t`/`-d` —
   vendor those `libutil/*.c` if referenced; plain `touch <file>` needs none beyond eprintf).
-- [ ] `make image`, QEMU:
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "touch /disks/main/tf" "ls -l /disks/main/tf"`.
   Confirm `tf` is created (size 0), 0 faults.
-- [ ] Commit `feat: add touch coreutil`. Tick.
+- [x] Commit `feat: add touch coreutil`. Tick.
 
 ### - [ ] **Task 1.4: `rm`** (depends on Task 0.2)
 

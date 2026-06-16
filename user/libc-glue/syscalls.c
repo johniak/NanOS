@@ -650,6 +650,12 @@ int fstatat(int dirfd, const char* p, struct stat* o, int flags) {
 int utimensat(int dirfd, const char* p, const struct timespec times[2], int flags) {
 	return reterr(sys4(SYS_utimensat, dirfd, (int) p, (int) times, flags));
 }
+/* futimens(fd, times): set the open file's times. Like glibc, this is utimensat with an empty
+ * path on the fd itself (the kernel's AT_EMPTY_PATH handling in resolveAt). */
+int futimens(int fd, const struct timespec times[2]) {
+	static const char empty[1] = { 0 };
+	return reterr(sys4(SYS_utimensat, fd, (int) empty, (int) times, 0));
+}
 /* utimes(timeval[2]): the kernel's utimes takes whole seconds (not a pointer), so extract tv_sec
  * here; NULL -> now via time(). */
 int utimes(const char* p, const struct timeval times[2]) {

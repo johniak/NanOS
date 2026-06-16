@@ -662,6 +662,11 @@ String Syscalls::resolveAt(int dirfd, String path, bool* badfd) {
 		if (badfd) *badfd = true;
 		return resolvePath(path);
 	}
+	// AT_EMPTY_PATH: an empty path operates on the fd's own file. This is how futimens(fd) works
+	// (it is utimensat(fd, "", times, 0)) and lets `touch newfile` set the time on the fd it just
+	// created without a separate path-based call.
+	if (!p || p[0] == 0)
+		return resolvePath(String((char*) fds[dirfd].path));
 	char buf[512];
 	int k = 0;
 	const char* d = (char*) fds[dirfd].path;
