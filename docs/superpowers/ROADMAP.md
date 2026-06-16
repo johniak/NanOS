@@ -5,23 +5,28 @@ True `fork()` needs per-process address spaces → paging → ring 3 → schedul
 
 ## Next up (priority order)
 
-1. **Basic coreutils — the essential file/dir toolkit (FIRST).** Today we have `cat`, `ls`, `free`
-   (and `nsh`/bash), but no way to create/remove/move files from the shell — `touch`, `rm`, `mkdir`
-   are missing (this bit during the git port: `bash: touch: command not found`). The kernel already
-   provides every syscall these need — `mkdir`, `rmdir`, `unlink`, `rename`, `link`, `symlink`,
-   `utimes`/`utime`, plus `open(O_CREAT)`/`truncate`/read/write — via the ext read+write support
-   (see `docs/en/filesystem.md`). So this is **userland-only wiring**, and `cat`/`ls` are already
-   verbatim **sbase** (suckless), which ships all of these — port them the same way (unmodified
-   upstream + the existing libc-glue), build into `bin/`, install under `/nanos/bin`.
+1. **Basic coreutils — the essential file/dir toolkit. ✅ DONE.** The shell can now create, remove,
+   copy, move, and link files (closing the `bash: touch: command not found` gap from the git port).
+   Shipped as in-tree **sbase** ports (verbatim upstream @ commit `c546c3a`, built like `cat`/`ls`,
+   dynamically linked against `libc.ndl`, installed to `/nanos/bin`). Plan + per-task log:
+   `docs/superpowers/plans/2026-06-16-coreutils.md`.
 
-   **Essential set (tier 1 — do these):** `mkdir`, `rmdir`, `rm` (`-r`/`-f`), `touch`, `mv`
-   (`rename`, with a copy+unlink fallback across filesystems), `cp` (`-r`), `ln` (`-s`), `pwd`.
-   **Tier 2 (nice-to-have, same mechanism):** `head`, `tail`, `wc`, `chmod` (`SYS_chmod` exists),
-   `stat`, `true`/`false`, `env`, `basename`/`dirname`.
+   **Tier 1 (shipped):** `mkdir`, `rmdir`, `rm` (`-r`/`-f`), `touch`, `mv`, `cp` (`-r`), `ln`
+   (`-s`), `pwd`. **Tier 2 (shipped):** `chmod`, `wc`, `head`, `tail`, `true`, `false`, `env`,
+   `basename`, `dirname`. (`stat` was dropped — sbase has none and `ls -l` already shows
+   mode/size/owner/mtime.)
 
-   Wire them into the Makefile (an sbase port target like the existing `grep`/`vim` flow, or a
-   small dedicated build) + the `_image` install. Verify in QEMU from bash: `mkdir /disks/main/d`,
-   `touch d/f`, `ls -l d`, `rm d/f`, `rmdir d`.
+   Latent kernel/libc bugs found + fixed along the way (all surfaced by exercising the tools):
+   `chmod`/`chown`/`fchmod`/`fchown` were no-op stubs (now real syscalls); the whole `*at` family +
+   `utimes`/`utimensat`/`futimens` libc wrappers were missing; the `*at` constants mismatched
+   (picolibc newlib values vs the kernel's Linux ABI — kernel now accepts both); `stat` reported
+   `st_ino=1` for every file (now real inodes, also fixing hard-link identity); `mkdir -p` aborted
+   on read-only parents (EEXIST-before-EROFS ordering in SynthFs/Vfs); libc `rename` did a
+   copy+unlink stopgap (now real `SYS_rename`, so `mv` moves directories).
+
+   Limitations (by design): `pwd -P`/`stat` rely on `ls -l`/`getcwd` (no `realpath`); `cp -a` of
+   device/fifo nodes is unsupported (no `mknod` syscall); `touch -d …Z` treats Zulu as UTC
+   (NanOS is UTC-only, no `tm_gmtoff`).
 
 ## Stages
 

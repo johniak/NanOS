@@ -358,19 +358,19 @@ streaming). Sources: `head.c`, `tail.c`.
 
 ## Finish
 
-### - [ ] **Task F.1: Update ROADMAP + ship a combined verification**
+### - [x] **Task F.1: Update ROADMAP + ship a combined verification**
 
-- [ ] Run one combined QEMU smoke covering the tier-1 happy path end-to-end:
+- [x] Run one combined QEMU smoke covering the tier-1 happy path end-to-end:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu-final.png "mkdir /disks/main/demo" "touch /disks/main/demo/a" "cp /disks/main/demo/a /disks/main/demo/b" "ln -s /disks/main/demo/a /disks/main/demo/l" "mv /disks/main/demo/b /disks/main/demo/c" "ls -l /disks/main/demo" "rm -r /disks/main/demo" "ls /disks/main"`.
   Confirm each step works and `demo` is gone at the end, 0 faults.
-- [ ] Edit `docs/superpowers/ROADMAP.md`: mark the "Basic coreutils" item under "Next up" as done
+- [x] Edit `docs/superpowers/ROADMAP.md`: mark the "Basic coreutils" item under "Next up" as done
   (✅), listing which tier-1/tier-2 tools shipped and any limitations (e.g. `mv` rename-only if it
   was blocked, `pwd -P` unsupported, `stat` = use `ls -l`). Move the item out of "Next up" or
   annotate it `DONE`.
-- [ ] Update `docs/en/filesystem.md` only if the `/nanos/bin` utility list is enumerated there
+- [x] Update `docs/en/filesystem.md` only if the `/nanos/bin` utility list is enumerated there
   (add the new tools); otherwise skip.
-- [ ] Commit `docs: mark basic coreutils shipped; record limitations`. Tick.
-- [ ] **(optional) memory:** if the loop has memory access, add/update a project memory note
+- [x] Commit `docs: mark basic coreutils shipped; record limitations`. Tick.
+- [x] **(optional) memory:** if the loop has memory access, add/update a project memory note
   pointing at this plan and the shipped set. Skip if not available.
 
 ---

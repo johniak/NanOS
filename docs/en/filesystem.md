@@ -72,7 +72,9 @@ and the run-by-name PATH are cleanly separated**:
 │   ├── core/
 │   │   ├── kernel.bin         the kernel (loaded by GRUB via multiboot).
 │   │   └── init.nxe           PID 1 — the first user program; execve()s into the shell.
-│   ├── bin/                   SYSTEM utilities (flat, no bundle): nsh, ls, cat, free.
+│   ├── bin/                   SYSTEM utilities (flat, no bundle): nsh, ls, cat, free + the basic
+│   │                          coreutils (mkdir, rmdir, rm, touch, mv, cp, ln, pwd, chmod, wc,
+│   │                          head, tail, true, false, env, basename, dirname) — in-tree sbase.
 │   ├── lib/                   SHARED LIBRARIES (.ndl): libc.ndl, greet.ndl. The dynamic
 │   │                          loader (kernel/DynLoader.cpp) resolves "needed" libraries
 │   │                          here, by name, at exec time.
