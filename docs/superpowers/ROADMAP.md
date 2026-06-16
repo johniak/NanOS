@@ -3,6 +3,26 @@
 Goal: Linux-style multiprocessing with Unix `fork()` and a `task` abstraction.
 True `fork()` needs per-process address spaces → paging → ring 3 → scheduler → fork.
 
+## Next up (priority order)
+
+1. **Basic coreutils — the essential file/dir toolkit (FIRST).** Today we have `cat`, `ls`, `free`
+   (and `nsh`/bash), but no way to create/remove/move files from the shell — `touch`, `rm`, `mkdir`
+   are missing (this bit during the git port: `bash: touch: command not found`). The kernel already
+   provides every syscall these need — `mkdir`, `rmdir`, `unlink`, `rename`, `link`, `symlink`,
+   `utimes`/`utime`, plus `open(O_CREAT)`/`truncate`/read/write — via the ext read+write support
+   (see `docs/en/filesystem.md`). So this is **userland-only wiring**, and `cat`/`ls` are already
+   verbatim **sbase** (suckless), which ships all of these — port them the same way (unmodified
+   upstream + the existing libc-glue), build into `bin/`, install under `/nanos/bin`.
+
+   **Essential set (tier 1 — do these):** `mkdir`, `rmdir`, `rm` (`-r`/`-f`), `touch`, `mv`
+   (`rename`, with a copy+unlink fallback across filesystems), `cp` (`-r`), `ln` (`-s`), `pwd`.
+   **Tier 2 (nice-to-have, same mechanism):** `head`, `tail`, `wc`, `chmod` (`SYS_chmod` exists),
+   `stat`, `true`/`false`, `env`, `basename`/`dirname`.
+
+   Wire them into the Makefile (an sbase port target like the existing `grep`/`vim` flow, or a
+   small dedicated build) + the `_image` install. Verify in QEMU from bash: `mkdir /disks/main/d`,
+   `touch d/f`, `ls -l d`, `rm d/f`, `rmdir d`.
+
 ## Stages
 
 | Stage | What | Status |
