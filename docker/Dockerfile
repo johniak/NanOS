@@ -97,6 +97,32 @@ RUN set -eux; \
     rm /tmp/rustup.sh; \
     rustc --version
 
+# Second cross-toolchain: x86_64-elf (the long-mode port target). Built from the SAME
+# pinned binutils/gcc sources as i686-elf, into the same PREFIX (the triple-prefixed
+# binaries don't collide: x86_64-elf-gcc vs i686-elf-gcc). Appended as a trailing layer
+# so it never invalidates the cached i686-elf toolchain above. ~20-40 min first build
+# (amd64 emulated on Apple Silicon), then cached.
+ARG TARGET64=x86_64-elf
+RUN set -eux; \
+    cd /tmp; \
+    wget -q "https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.xz"; \
+    wget -q "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz"; \
+    tar xf "binutils-${BINUTILS_VERSION}.tar.xz"; \
+    tar xf "gcc-${GCC_VERSION}.tar.xz"; \
+    mkdir build-binutils64; cd build-binutils64; \
+    ../binutils-${BINUTILS_VERSION}/configure \
+        --target="${TARGET64}" --prefix="${PREFIX}" \
+        --with-sysroot --disable-nls --disable-werror; \
+    make -j"$(nproc)"; make install; \
+    mkdir /tmp/build-gcc64; cd /tmp/build-gcc64; \
+    ../gcc-${GCC_VERSION}/configure \
+        --target="${TARGET64}" --prefix="${PREFIX}" \
+        --disable-nls --enable-languages=c,c++ --without-headers \
+        --disable-libssp --disable-libsanitizer; \
+    make -j"$(nproc)" all-gcc all-target-libgcc; \
+    make install-gcc install-target-libgcc; \
+    cd /; rm -rf /tmp/*
+
 # Marker the Makefile checks to know it is running inside the build container.
 RUN touch /etc/nanos-build
 
