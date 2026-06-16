@@ -79,6 +79,12 @@ public:
 	// glue to cancel a waiter on timeout or signal.
 	void remove(FutexWaiter* w);
 
+	// Unlink EVERY waiter owned by task `t` within address space `space`, wherever they sit;
+	// returns how many were removed. The kernel calls this before reaping a thread's kernel
+	// stack (which hosts its FutexWaiter node) during execve sibling-teardown / exit_group, so a
+	// bucket never keeps a pointer into freed memory. A null `t` matches nothing.
+	int removeTask(const void* space, Task* t);
+
 private:
 	static const int NBUCKETS = 64;   // power of two
 	FutexWaiter* buckets_[NBUCKETS];

@@ -120,4 +120,26 @@ void FutexTable::remove(FutexWaiter* w) {
 	}
 }
 
+// Scan every bucket and unlink each waiter whose (space, task) matches — a thread can be parked
+// on any address (its key bucket is unknown to the caller), so we sweep all buckets. Scoped by
+// space too, so a different process that happens to reuse a freed Task* pointer is never touched.
+int FutexTable::removeTask(const void* space, Task* t) {
+	if (!t) return 0;
+	int removed = 0;
+	for (int i = 0; i < NBUCKETS; i++) {
+		FutexWaiter** pp = &buckets_[i];
+		while (*pp) {
+			FutexWaiter* w = *pp;
+			if (w->space == space && w->task == t) {
+				*pp = w->next;       // unlink
+				w->next = 0;
+				removed++;
+			} else {
+				pp = &w->next;
+			}
+		}
+	}
+	return removed;
+}
+
 }  // namespace kernel

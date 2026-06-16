@@ -150,13 +150,48 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		return rc;
 	}
 	unsigned esp = arch::archLoadUser(newSpace, h->loadBase, h->bssEnd, argv, argc, envp, envc);
+
+	// ---- POINT OF NO RETURN ----------------------------------------------------------------
+	// The new image loaded cleanly, so we now commit to replacing the process. POSIX: execve in a
+	// multithreaded process destroys every OTHER thread in the group; the calling thread survives
+	// as the new image's sole (leader) thread. Do this BEFORE dropping the old address space (the
+	// siblings still live in p->space) — and only after a successful load, so a failed execve
+	// returns to a fully intact thread group.
+	Thread* caller = ProcTable::currentThread();
+	Task*   self   = Scheduler::current();
+	// Reap each sibling's scheduler task (kstack/slot) AND freeThread it. Unlike exit_group (which
+	// leaves the thread-list drain to freeSlot at reap time), the process keeps living here, so its
+	// thread list + threadCount must end correct. freeThread unlinks the node it frees, so we can't
+	// hold a `->next` across it: rescan from the head for the next non-caller victim each pass.
+	for (;;) {
+		Thread* victim = 0;
+		for (Thread* th = p->threads; th; th = th->next)
+			if (th != caller) { victim = th; break; }
+		if (!victim)
+			break;
+		if (victim->task) {
+			if (p->task == victim->task) p->task = self;   // never leave p->task on a reaped slot
+			futexRemoveTask(p->space, victim->task);       // evict its futex waiter before its
+			Scheduler::reap(victim->task);                 // kstack (which hosts the node) is freed
+		}
+		ProcTable::freeThread(victim);   // unlink + threadCount-- (the process survives)
+	}
+	// Re-designate the calling thread as the group leader so the post-exec invariants hold (the
+	// common case — exec from a single-threaded process or a freshly-forked child — already had
+	// the caller AS the leader, so this is a no-op there). After the loop the caller is the only
+	// remaining thread, hence the head of p->threads (== leaderThread()); give it the leader tid
+	// (== pid/tgid, what gettid() must report post-exec) and make it the process's primary task.
+	caller->tid = p->pid;
+	p->task = self;
+	p->threadCount = 1;
+
 	if (p->space)
 		arch::mmuFreeAddressSpace((arch::AddressSpace*) p->space);
 	p->space = newSpace;
 	initBrk(p);                              // fresh image -> empty heap
 	ProcTable::setCommand(p, argv, argc);
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
-	sigExecReset(p->leaderThread()->sig, p->psig);   // caught handlers -> default across exec
+	sigExecReset(caller->sig, p->psig);      // caught handlers -> default across exec (calling thread)
 	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
 	kernelSyscalls()->resetForRun();
 
@@ -182,6 +217,10 @@ int forkProcess(arch::TrapFrame* tf) {
 		ProcTable::freeSlot(child);   // releases the process slot AND its leader thread slot
 		return -11;
 	}
+	// The copy duplicates the WHOLE address space, so if the parent was multithreaded the child's
+	// space still contains the sibling threads' user stacks + TLS blocks. That is harmless dead
+	// memory: the child has only one (leader) thread, nothing references those pages, and a child
+	// that forks-then-execs (the bash idiom) drops the whole space at exec anyway.
 	child->space = space;
 	child->brkBase = parent->brkBase;          // inherit the heap (mmuCopyAddressSpace
 	child->brkCur = parent->brkCur;            // already duplicated the mapped pages)
@@ -194,15 +233,21 @@ int forkProcess(arch::TrapFrame* tf) {
 		child->cmdline[i] = parent->cmdline[i];
 	child->pgid = parent->pgid;                // inherit the process group + session
 	child->sid = parent->sid;
+	// POSIX: fork in a multithreaded process duplicates ONLY the calling thread — the child
+	// gets a single leader thread that is a copy of whichever parent thread issued fork(), NOT
+	// necessarily the parent's leader. So the per-thread state (block mask, TLS base) is inherited
+	// from ProcTable::currentThread() (the parent thread now running this syscall), not the leader.
+	Thread* callerThread = ProcTable::currentThread();
 	sigForkInherit(child->psig, parent->psig);                            // dispositions (process-wide)
-	sigForkInherit(child->leaderThread()->sig, parent->leaderThread()->sig);  // block mask (per-thread)
-	// Inherit the TLS base: mmuCopyAddressSpace duplicated the parent's TLS block (the musl/picolibc
-	// TCB) at the SAME virtual address, so the child's %gs:0 must point at it too. Without this the
-	// child runs with GDT TLS base 0 and the first errno/__thread access (now %gs-relative since the
-	// per-thread-errno migration) faults — fatal for a fork-heavy program like bash. The child's own
-	// crt0 re-runs set_thread_area after exec; this keeps TLS valid in the pre-exec window and in
-	// fork-without-exec children (subshells, pipelines, command substitution).
-	child->leaderThread()->tlsBase = parent->leaderThread()->tlsBase;
+	sigForkInherit(child->leaderThread()->sig, callerThread->sig);        // block mask (calling thread)
+	// Inherit the TLS base: mmuCopyAddressSpace duplicated the calling thread's TLS block (the
+	// musl/picolibc TCB) at the SAME virtual address, so the child's %gs:0 must point at it too.
+	// Without this the child runs with GDT TLS base 0 and the first errno/__thread access (now
+	// %gs-relative since the per-thread-errno migration) faults — fatal for a fork-heavy program
+	// like bash. The child's own crt0 re-runs set_thread_area after exec; this keeps TLS valid in
+	// the pre-exec window and in fork-without-exec children (subshells, pipelines, command
+	// substitution). A non-leader thread that forks gets ITS OWN TLS, not the leader's.
+	child->leaderThread()->tlsBase = callerThread->tlsBase;
 
 	Task* t = Scheduler::createBlank(child->pid);   // allocates the child's kernel stack (heap)
 	if (!t) {                                   // out of memory / task table full: fail cleanly,
@@ -388,13 +433,15 @@ void procExitGroup(int code) {
 	Task* self = Scheduler::current();
 	// Reap each sibling task's kernel stack/slot. We do NOT freeThread here: ProcTable::freeSlot
 	// (run when the parent reaps this process) drains the whole thread list, so we only need the
-	// scheduler Task slots gone now. NOTE (DONE_WITH_CONCERNS): a sibling parked on a futex/wait
-	// queue has its waiter node on the kstack we free here — it is left dangling in the queue.
-	// Harmless in the common case (the whole group is dying; nothing wakes it), but a hardening
-	// pass (Task 6.1) should cancel blocked siblings' waiters before reaping.
+	// scheduler Task slots gone now. A sibling parked on a futex has its FutexWaiter node ON the
+	// kstack we are about to free; evict it from the futex table first (Task 6.1 hardening) so the
+	// bucket never holds a pointer into freed memory. (Harmless in practice — the whole group is
+	// dying so nothing would wake it — but it keeps the table strictly consistent.)
 	for (Thread* th = p->threads; th; th = th->next)
-		if (th->task && th->task != self)
+		if (th->task && th->task != self) {
+			futexRemoveTask(p->space, th->task);
 			Scheduler::reap(th->task);
+		}
 	// The calling thread becomes the process's zombie task the parent reaps. If the leader's task
 	// was among those reaped above, repoint p->task at the survivor so waitpid reaps a live slot.
 	p->task = self;

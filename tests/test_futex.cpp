@@ -3,6 +3,37 @@
 
 using namespace kernel;
 
+// removeTask sweeps every bucket and unlinks each waiter owned by (space, task) — the hardening
+// the kernel uses before reaping a thread whose kstack hosts its FutexWaiter (execve / exit_group).
+TEST_CASE("removeTask unlinks every waiter of a task, scoped by space, idempotent on null") {
+	FutexTable ft;
+	void* sp1 = (void*)0x10;
+	void* sp2 = (void*)0x20;        // a different process reusing the same Task* pointer
+	void* A = (void*)0x1000;
+	void* B = (void*)0x2000;
+	Task* t1 = (Task*)0xAAAA;
+	Task* t2 = (Task*)0xBBBB;
+	FutexWaiter a{}, b{}, c{}, d{};
+	a.task = t1;                    // t1, sp1, addr A
+	b.task = t1;                    // t1, sp1, addr B (a thread parked on a different word)
+	c.task = t2;                    // t2, sp1, addr A — must survive
+	d.task = t1;                    // t1 but in sp2 — must survive (scoped by space)
+	ft.enqueue(sp1, A, &a);
+	ft.enqueue(sp1, B, &b);
+	ft.enqueue(sp1, A, &c);
+	ft.enqueue(sp2, A, &d);
+	CHECK(ft.removeTask(sp1, t1) == 2);    // a + b, across two buckets
+	CHECK(ft.count(sp1, A) == 1);          // c remains
+	CHECK(ft.count(sp1, B) == 0);
+	CHECK(ft.count(sp2, A) == 1);          // d untouched — different space
+	CHECK(a.next == (FutexWaiter*)0);      // removed nodes are unlinked
+	// idempotent + null-safe
+	CHECK(ft.removeTask(sp1, t1) == 0);
+	CHECK(ft.removeTask(sp1, (Task*)0) == 0);
+	CHECK(ft.popOne(sp1, A) == &c);        // FIFO/key integrity preserved for the survivors
+	CHECK(ft.popOne(sp2, A) == &d);
+}
+
 TEST_CASE("FUTEX_WAIT returns -EAGAIN when the value already changed") {
 	unsigned word = 7;
 	CHECK(kernel::futexWaitPrecheck(&word, /*expected*/5) == -11);  // 7 != 5 -> -EAGAIN

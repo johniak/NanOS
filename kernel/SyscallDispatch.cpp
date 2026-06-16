@@ -286,6 +286,13 @@ void futexWakeAddr(const void* space, void* uaddr, int n) {
 	futexWakeN(space, uaddr, (unsigned) n, 0, false);
 }
 
+// Kernel-callable: evict every futex waiter owned by task `t` (within `space`) from the table.
+// Called before reaping a thread's kernel stack (execve sibling-teardown / exit_group) so a bucket
+// never keeps a pointer into the freed kstack the FutexWaiter node lived on.
+void futexRemoveTask(const void* space, Task* t) {
+	g_futex.removeTask(space, t);
+}
+
 static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 		unsigned uaddr2, unsigned val3) {
 	int cmd = op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);

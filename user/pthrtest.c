@@ -26,8 +26,35 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <stdio.h>
+#include <string.h>     /* strcmp (fork/exec-mt sentinel) */
+
+/* fork/exec are not in the slim glue headers — declared here as nsh/forkmany do. */
+int  fork(void);
+int  execve(const char *path, char *const argv[], char *const envp[]);
+int  waitpid(int pid, int *status, int options);
+void _exit(int code);
+extern char **environ;
+
+#ifndef WIFEXITED
+#define WIFEXITED(s)   (((s) & 0x7f) == 0)
+#define WEXITSTATUS(s) (((s) >> 8) & 0xff)
+#endif
 
 static void *worker(void *a) { return (void *)((long)a + 1); }
+
+/* ---- fork/exec in a multithreaded process (Task 6.1) ----------------------------------- */
+#define FMT_WORKERS 3
+static volatile int fmt_stop;     /* sibling workers spin until the main thread sets this */
+
+/* A pure spinner: no malloc/stdio, so the process is genuinely multithreaded yet a fork from it
+ * cannot deadlock on a libc lock held by a sibling (bash forks+execs the same way). */
+static void *fmt_spinner(void *a)
+{
+	(void)a;
+	while (!fmt_stop)
+		for (volatile int i = 0; i < 2000; i++) ;
+	return 0;
+}
 
 /* ---- mutex stress ---------------------------------------------------------------------- */
 #define MUTEX_THREADS 4
@@ -218,8 +245,17 @@ static void *cxl_reuse_worker(void *p)
 	return 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+	/* Re-exec entry: a forked child that itself went multithreaded execve'd us with this arg.
+	 * Reaching main here proves execve from a multithreaded process tore down the siblings and
+	 * loaded the fresh (single-threaded) image cleanly. */
+	if (argc > 1 && argv[1] && !strcmp(argv[1], "--fork-mt-exec-child")) {
+		printf("pthrtest: exec-mt child ok\n");
+		fflush(stdout);
+		_exit(0);
+	}
+
 	pthread_t t;
 	void *r;
 
@@ -365,6 +401,45 @@ int main(void)
 		printf("pthrtest: cancel reuse ok\n");
 	else
 		printf("pthrtest: cancel reuse FAIL\n");
+
+	/* fork/exec in a multithreaded process (Task 6.1). Spin up FMT_WORKERS sibling threads so the
+	 * process is genuinely multithreaded, then fork(): POSIX hands the child ONLY the calling
+	 * thread. The child proves it runs correctly single-threaded, THEN spawns threads of its own
+	 * and execve's — which exercises the execve sibling-teardown path (the re-exec'd image reports
+	 * "exec-mt child ok"). The parent waitpid's the child, asserts exit 0, then stops + joins its
+	 * workers. */
+	fmt_stop = 0;
+	pthread_t fw[FMT_WORKERS];
+	for (int i = 0; i < FMT_WORKERS; i++)
+		pthread_create(&fw[i], 0, fmt_spinner, 0);
+	fflush(stdout);                         /* drain buffered output so the fork child can't dup it */
+	int fmt_pid = fork();
+	if (fmt_pid == 0) {
+		/* CHILD: a single-threaded copy of the calling (main) thread. Do real work to prove it is
+		 * alive and correct on its own (the sibling stacks copied into our space are dead memory). */
+		long sum = 0;
+		for (long i = 1; i <= 1000; i++) sum += i;     /* == 500500 */
+		if (sum != 500500)
+			_exit(3);
+		printf("pthrtest: fork-mt child alive\n");
+		fflush(stdout);
+		/* Now make the CHILD itself multithreaded, then execve — exercising sibling teardown. */
+		pthread_t cw[2];
+		pthread_create(&cw[0], 0, fmt_spinner, 0);
+		pthread_create(&cw[1], 0, fmt_spinner, 0);
+		char *cargv[] = { (char *)"pthrtest", (char *)"--fork-mt-exec-child", 0 };
+		execve("/disks/main/apps/pthrtest/pthrtest.nxe", cargv, environ);
+		_exit(127);                          /* execve only returns on failure */
+	}
+	int fmt_st = 0;
+	int fmt_w = waitpid(fmt_pid, &fmt_st, 0);
+	fmt_stop = 1;                            /* release the workers */
+	for (int i = 0; i < FMT_WORKERS; i++)
+		pthread_join(fw[i], 0);
+	if (fmt_pid > 0 && fmt_w == fmt_pid && WIFEXITED(fmt_st) && WEXITSTATUS(fmt_st) == 0)
+		printf("pthrtest: fork-mt ok\n");
+	else
+		printf("pthrtest: fork-mt FAIL pid=%d w=%d st=0x%x\n", fmt_pid, fmt_w, fmt_st);
 
 	return 0;
 }

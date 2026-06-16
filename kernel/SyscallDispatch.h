@@ -11,6 +11,7 @@
 #include "Syscall.h"
 
 namespace kernel {
+struct Task;   // scheduler task (Scheduler.h) — only stored/forwarded across this boundary
 void installSyscalls(Vfs* vfs);
 Syscalls* kernelSyscalls();   // the installed Syscalls instance (0 if not yet installed)
 
@@ -18,4 +19,9 @@ Syscalls* kernelSyscalls();   // the installed Syscalls instance (0 if not yet i
 // A kernel-callable handle on the futex table for the CLONE_CHILD_CLEARTID handshake (a thread
 // exit zeroes the tid word and wakes a joiner). Thin wrapper over the FUTEX_WAKE path.
 void futexWakeAddr(const void* space, void* uaddr, int n);
+
+// Evict every futex waiter owned by task `t` (within address space `space`) from the table.
+// Called before a thread's kernel stack is reaped (execve sibling-teardown / exit_group) so the
+// futex buckets never keep a pointer into the freed kstack the waiter node lived on.
+void futexRemoveTask(const void* space, Task* t);
 }
