@@ -696,11 +696,22 @@ int signalMaskRt(int how, const uint64_t* set, uint64_t* oldset, unsigned sigset
 // layout musl marshals into). NanOS's signal model only honours the handler + restorer (it
 // implies SA_RESTART and runs handlers with the delivered signal blocked), so sa_flags and
 // sa_mask beyond that are accepted but not separately applied — consistent with signal()/
-// signalAction(). SIGCANCEL stays refused for userland, exactly like signalAction.
+// signalAction().
+//
+// UNLIKE signal()/signalAction() and kill()-by-pid (which both refuse SIGCANCEL as
+// kernel-internal), rt_sigaction is the ONE path that ALLOWS installing a handler for
+// SIGCANCEL. This is deliberate: the pthread runtime owns SIGCANCEL (it is the in-process
+// pthread_cancel transport, Task 5.3) and must install a no-op handler so the signal's
+// disposition becomes "run handler / interrupt the syscall" rather than the RT-signal default
+// of terminating the thread. The kernel cannot tell the pthread runtime apart from an app, and
+// a modern threaded libc legitimately owns this signal — this matches the Linux convention.
+// To make a blocked cancellable futex actually return -EINTR (so __syscall_cp can act on the
+// pending cancel) rather than RESTART, SIGCANCEL is FORCED non-restarting here regardless of
+// the requested flags — otherwise cancellation of a thread parked in futex() would deadlock.
 int signalActionRt(int sig, const k_sigaction* act, k_sigaction* old, unsigned sigsetsize) {
 	if (sigsetsize != 8)
 		return -22;   // -EINVAL
-	if (sig <= 0 || sig >= NANOS_NSIG || !sigCanCatch(sig) || sig == SIGCANCEL)
+	if (sig <= 0 || sig >= NANOS_NSIG || !sigCanCatch(sig))
 		return -22;   // -EINVAL
 	Process* p = ProcTable::current();
 	unsigned prev = p->psig.handlers[sig];
@@ -713,6 +724,11 @@ int signalActionRt(int sig, const k_sigaction* act, k_sigaction* old, unsigned s
 		if (handler != kSigDefault && handler != kSigIgnore)
 			p->psig.restart |= sigbit(sig);
 		else
+			p->psig.restart &= ~sigbit(sig);
+		// SIGCANCEL must never restart an interrupted syscall: cancellation relies on the
+		// cancellable futex returning -EINTR so __syscall_cp can run __cancel(). Force the
+		// restart bit clear no matter what flags userland asked for.
+		if (sig == SIGCANCEL)
 			p->psig.restart &= ~sigbit(sig);
 	}
 	if (old) {

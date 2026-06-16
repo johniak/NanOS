@@ -859,6 +859,7 @@ LIBC_PTHREAD_OBJS=$(BINFOLDER)__wait.o $(BINFOLDER)__timedwait.o $(BINFOLDER)__l
   $(BINFOLDER)pthread_self.o $(BINFOLDER)default_attr.o $(BINFOLDER)nanos_glue.o \
   $(BINFOLDER)clone.o $(BINFOLDER)__set_thread_area.o \
   $(BINFOLDER)pthread_create.o $(BINFOLDER)pthread_join.o $(BINFOLDER)pthread_detach.o \
+  $(BINFOLDER)pthread_cancel.o $(BINFOLDER)cancel_impl.o \
   $(BINFOLDER)pthread_attr.o \
   $(BINFOLDER)pthread_mutex_lock.o $(BINFOLDER)pthread_mutex_unlock.o \
   $(BINFOLDER)pthread_mutex_trylock.o $(BINFOLDER)pthread_mutex_timedlock.o \

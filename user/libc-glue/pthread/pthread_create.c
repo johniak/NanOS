@@ -69,11 +69,74 @@ static int start(void *p)
 
 #define ALIGN_DOWN(p, a) ((void *)((uintptr_t)(p) & ~((uintptr_t)(a) - 1)))
 
+/* Kernel SIGCANCEL (kernel/Signal.h). NOT musl's pthread_impl.h SIGCANCEL (33). */
+#define NX_SIGCANCEL 32
+
+/* Kernel-ABI sigaction record (mirror of struct k_sigaction in kernel/SyscallNr.h). */
+struct nx_k_sigaction {
+	void          *handler;
+	unsigned long  flags;
+	void          *restorer;
+	unsigned       mask[2];
+};
+extern void __nx_sigtramp(void);   /* libc sigreturn trampoline (user/libc-glue) */
+
+/* The SIGCANCEL handler is intentionally EMPTY. Its only job is to give SIGCANCEL a "run a
+ * handler" disposition so that delivering it INTERRUPTS a blocked cancellable futex (returning
+ * -EINTR to __syscall_cp) instead of taking the RT-signal default action (terminate the
+ * thread). The actual cancellation work happens back in __syscall_cp/__cancel. */
+static void __nx_cancel_sigcancel(int sig) { (void) sig; }
+
+/* Install the SIGCANCEL no-op handler exactly once, before the first additional thread can run.
+ * Done with a raw rt_sigaction so it does not depend on picolibc's <signal.h> wrappers and so we
+ * can target the kernel's SIGCANCEL (32) directly. flags=0: the kernel forces SIGCANCEL
+ * non-restarting regardless (kernel/Exec.cpp signalActionRt), so an interrupted cancellable
+ * futex returns -EINTR rather than restarting. The restorer is the libc sigreturn trampoline. */
+static void __nx_install_sigcancel(void)
+{
+	struct nx_k_sigaction act = { 0 };
+	act.handler  = (void *) &__nx_cancel_sigcancel;
+	act.flags    = 0;
+	act.restorer = (void *) &__nx_sigtramp;
+	__syscall(SYS_rt_sigaction, NX_SIGCANCEL, &act, 0, 8);
+}
+
+/* Cleanup-handler chain (pthread_cleanup_push/pop). These REAL definitions override the weak
+ * `dummy` no-ops in pthread_cleanup_push.c, linking each __ptcb onto self->cancelbuf so that
+ * __pthread_exit can run them (newest first) on the way out — required by POSIX both for normal
+ * thread return and for cancellation (which exits via __cancel -> __pthread_exit). */
+void __do_cleanup_push(struct __ptcb *cb)
+{
+	pthread_t self = __pthread_self();
+	cb->__next = self->cancelbuf;
+	self->cancelbuf = cb;
+}
+
+void __do_cleanup_pop(struct __ptcb *cb)
+{
+	__pthread_self()->cancelbuf = cb->__next;
+}
+
 _Noreturn void __pthread_exit(void *result)
 {
 	pthread_t self = __pthread_self();
 	self->result = result;
+	/* No more cancellation from here on — we are already leaving. */
 	self->canceldisable = 1;
+	self->cancelasync = 0;
+
+	/* Run pthread_cleanup_push'd handlers, newest first (POSIX). This is the cancellation-
+	 * critical part: a thread cancelled in a cond/sem wait reaches here via __cancel and its
+	 * cleanup handlers (e.g. mutex unlock, resource release) MUST run. Normal thread return
+	 * comes through the same path, so its handlers run too. (TSD destructor sweep stays
+	 * deferred — not needed by the current threaded apps.) */
+	while (self->cancelbuf) {
+		void (*f)(void *) = self->cancelbuf->__f;
+		void *x = self->cancelbuf->__x;
+		self->cancelbuf = self->cancelbuf->__next;
+		f(x);
+	}
+
 	/* Mark exited for introspection/detach symmetry; the join wakeup itself rides the
 	 * kernel's CLONE_CHILD_CLEARTID on &self->tid, not this store. */
 	if (self->detach_state != DT_DETACHED)
@@ -141,6 +204,8 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	 * create-failure rollback below). Leaving locking on after the last thread joins is
 	 * conservatively safe (a redundant uncontended lock), and avoids a class of races around
 	 * turning locking back off; the counter only grows, which is harmless in practice. */
+	if (!libc.threaded)
+		__nx_install_sigcancel();   /* SIGCANCEL disposition must exist before any thread runs */
 	libc.threaded = 1;
 	libc.need_locks = 1;
 	a_inc(&libc.threads_minus_1);

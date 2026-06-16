@@ -64,9 +64,11 @@ hidden long __syscall_cp(syscall_arg_t, syscall_arg_t, syscall_arg_t, syscall_ar
 #define SYS_exit            1
 #define SYS_munmap          91
 #define SYS_clone           120
+#define SYS_rt_sigaction    174
 #define SYS_sched_yield     158
 #define SYS_mmap2           192
 #define SYS_gettid          224
+#define SYS_tkill           238
 #define SYS_futex           240
 #define SYS_set_thread_area 243
 /* Task 4.3: referenced (compile-time) by the robust-mutex registration path in

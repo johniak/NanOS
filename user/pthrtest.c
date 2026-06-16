@@ -12,10 +12,15 @@
  *     consumes them. Exercises pthread_cond_wait's FUTEX_REQUEUE wait/signal sequencing under
  *     real blocking (the buffer is size 1, so every item forces a full wait/signal round-trip).
  *
+ * Phase 5 (Task 5.3) adds pthread_cancel: a thread blocked in a cancellation point is cancelled
+ * and joined with PTHREAD_CANCELED, and its cleanup handler runs.
+ *
  * Expect, in order:
  *     pthrtest: join r=42
  *     pthrtest: counter=40000
  *     pthrtest: condvar ok sum=499500
+ *     ... (rwlock/barrier/once/tlskey/sem) ...
+ *     pthrtest: cancel ok
  */
 #include <pthread.h>
 #include <semaphore.h>
@@ -158,6 +163,34 @@ static void *sem_producer(void *p)
 	return 0;
 }
 
+/* ---- cancellation: a thread blocked in a cancellation point is cancelled ----------------
+ * The cancellation point here is pthread_cond_wait: it routes through __timedwait_cp ->
+ * (__syscall_cp), which honours a pending cancel both at entry and on a SIGCANCEL-driven
+ * -EINTR while parked in the futex. IMPORTANT: picolibc's blocking calls (sleep/read/...) are
+ * NOT routed through __syscall_cp in this hybrid libc, so they are NOT cancellation points —
+ * a futex-based wait (cond/sem) is required to be cancellable. The cleanup handler pushed
+ * before the wait must run on cancellation (POSIX), exiting the thread with PTHREAD_CANCELED. */
+static pthread_mutex_t cxl_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  cxl_cond = PTHREAD_COND_INITIALIZER;
+static volatile int    cxl_ready;
+static volatile int    cxl_cleanup_ran;
+
+static void cxl_cleanup(void *p) { (void)p; cxl_cleanup_ran = 1; }
+
+static void *cxl_worker(void *p)
+{
+	(void)p;
+	pthread_mutex_lock(&cxl_lock);
+	pthread_cleanup_push(cxl_cleanup, 0);
+	cxl_ready = 1;
+	/* Never-signalled condvar: block until cancelled (loop guards against any spurious wake). */
+	while (1)
+		pthread_cond_wait(&cxl_cond, &cxl_lock);
+	pthread_cleanup_pop(0);                 /* never reached: cancellation exits inside the wait */
+	pthread_mutex_unlock(&cxl_lock);
+	return 0;
+}
+
 int main(void)
 {
 	pthread_t t;
@@ -269,6 +302,22 @@ int main(void)
 		printf("pthrtest: sem ok\n");
 	else
 		printf("pthrtest: sem FAIL sum=%ld left=%d\n", sem_sum, sem_left);
+
+	/* cancellation: cancel a thread parked in pthread_cond_wait; it must join as
+	 * PTHREAD_CANCELED and its cleanup handler must have run. */
+	cxl_ready = 0;
+	cxl_cleanup_ran = 0;
+	pthread_t ct;
+	pthread_create(&ct, 0, cxl_worker, 0);
+	while (!cxl_ready) ;                       /* wait until it has entered the critical section */
+	for (volatile long i = 0; i < 5000000L; i++) ;   /* let it actually park in the futex */
+	pthread_cancel(ct);
+	void *cr = 0;
+	pthread_join(ct, &cr);
+	if (cr == PTHREAD_CANCELED && cxl_cleanup_ran)
+		printf("pthrtest: cancel ok\n");
+	else
+		printf("pthrtest: cancel FAIL res=%p cleanup=%d\n", cr, cxl_cleanup_ran);
 
 	return 0;
 }
