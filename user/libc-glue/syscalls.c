@@ -170,29 +170,11 @@ int fchmod(int fd, mode_t m)                { return reterr(sys3(SYS_fchmod, fd,
 int chown(const char* p, uid_t u, gid_t g)  { return reterr(sys3(SYS_chown,  (int) p, (int) u, (int) g)); }
 int lchown(const char* p, uid_t u, gid_t g) { return reterr(sys3(SYS_lchown, (int) p, (int) u, (int) g)); }
 int fchown(int fd, uid_t u, gid_t g)        { return reterr(sys3(SYS_fchown, fd, (int) u, (int) g)); }
-/* rename(2): NanOS has no rename syscall, so do it in userland — copy the old file to the
- * new name, then unlink the old. Both ends are ordinary files (Doom uses it to finalize a
- * savegame from a temp file). Only valid within a writable fs (e.g. /tmp). */
+/* rename(2): a real atomic rename via SYS_rename (ext write support added it). This supersedes
+ * the old userland copy+unlink stopgap, so directories and hard links keep their inode and mv
+ * works for any node type within the filesystem. */
 int rename(const char* oldp, const char* newp) {
-	int in = open(oldp, 0 /*O_RDONLY*/);
-	if (in < 0) return -1;
-	int out = open(newp, 01 | 0100 | 01000 /*O_WRONLY|O_CREAT|O_TRUNC*/, 0644);
-	if (out < 0) { close(in); return -1; }
-	char buf[512];
-	int n;
-	while ((n = read(in, buf, sizeof buf)) > 0) {
-		int off = 0;
-		while (off < n) {
-			int w = write(out, buf + off, n - off);
-			if (w <= 0) { close(in); close(out); return -1; }
-			off += w;
-		}
-	}
-	close(in);
-	close(out);
-	if (n < 0) return -1;
-	unlink(oldp);
-	return 0;
+	return reterr(sys3(SYS_rename, (int) oldp, (int) newp, 0));
 }
 void _exit(int c)                       { sys3(SYS_exit, c, 0, 0); for (;;) {} }
 /* isatty(2): a fd is a terminal iff TCGETS (tcgetattr) succeeds on it — exactly how glibc

@@ -261,23 +261,23 @@ for `ln a b c dir/` form — vendor `libutil/enmasse.c` if the linker asks.
   Confirm `dst` contents = `hi`, recursive copy reproduces the tree, 0 faults.
 - [x] Commit `feat: add cp coreutil (incl -r)`. Tick.
 
-### - [ ] **Task 1.7: `mv`** (depends on Task 0.2, and on `cp`/`rm` objects per sbase `fs.h`)
+### - [x] **Task 1.7: `mv`** (depends on Task 0.2, and on `cp`/`rm` objects per sbase `fs.h`)
 
 **Likely objects:** `eprintf.o recurse.o` and possibly `cp.o`+`rm.o` (sbase `mv` falls back to
 `cp`+`rm` for cross-filesystem moves via `fs.h`). Source: `mv.c`.
 
-- [ ] Vendor `mv.c`. Wire `mv`. For the link rule, start with
+- [x] Vendor `mv.c`. Wire `mv`. For the link rule, start with
   `$(BINFOLDER)mv.o $(BINFOLDER)eprintf.o $(BINFOLDER)recurse.o` and **resolve the undefined refs**:
   if `mv` references `cp`/`rm` (from `fs.h`), add `$(BINFOLDER)cp.o $(BINFOLDER)rm.o` — but those
   `.o` carry their own `main`, so a duplicate-`main` link error means sbase guards them (check the
   source) or you must extract the shared funcs. Read `mv.c`/`fs.h` and follow the linker; if a
   clean link needs source surgery, prefer NanOS-side glue over editing sbase, and if truly blocked,
   mark BLOCKED and ship `mv` as rename-only (note the limitation).
-- [ ] `make build` clean.
-- [ ] `make image`, QEMU:
+- [x] `make build` clean.
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "touch /disks/main/mvsrc" "mv /disks/main/mvsrc /disks/main/mvdst" "ls /disks/main/mvdst" "ls /disks/main/mvsrc"`.
   Confirm `mvdst` exists, `mvsrc` gone (same-FS rename path), 0 faults.
-- [ ] Commit `feat: add mv coreutil`. Tick.
+- [x] Commit `feat: add mv coreutil`. Tick.
 
 ---
 
