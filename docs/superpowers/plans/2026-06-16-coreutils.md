@@ -236,17 +236,17 @@ required behavior; note `-P` as a limitation rather than adding `realpath` here.
   Confirm `rd` is gone, 0 faults. Also test plain `rm /disks/main/<file>` on a regular file.
 - [x] Commit `feat: add rm coreutil (incl -r via sbase recurse)`. Tick.
 
-### - [ ] **Task 1.5: `ln`**
+### - [x] **Task 1.5: `ln`**
 
 **Likely objects:** `eprintf.o`. Source: `ln.c`. Uses `link`/`symlink` (present). May use `enmasse`
 for `ln a b c dir/` form — vendor `libutil/enmasse.c` if the linker asks.
 
-- [ ] Vendor `ln.c` (+ `libutil/enmasse.c` if referenced). Wire it.
-- [ ] `make build`; resolve link errors.
-- [ ] `make image`, QEMU:
+- [x] Vendor `ln.c` (+ `libutil/enmasse.c` if referenced). Wire it.
+- [x] `make build`; resolve link errors.
+- [x] `make image`, QEMU:
   `BOOT_WAIT=30 scripts/qemu-shell.sh /tmp/cu.png "touch /disks/main/orig" "ln -s /disks/main/orig /disks/main/sl" "ls -l /disks/main/sl" "ln /disks/main/orig /disks/main/hl" "ls -l /disks/main/hl"`.
   Confirm the symlink shows `-> /disks/main/orig` and the hard link shares the inode, 0 faults.
-- [ ] Commit `feat: add ln coreutil (symbolic + hard links)`. Tick.
+- [x] Commit `feat: add ln coreutil (symbolic + hard links)`. Tick.
 
 ### - [ ] **Task 1.6: `cp`** (depends on Task 0.2)
 
