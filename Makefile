@@ -348,10 +348,10 @@ test-image:
 	docker build -t $(TEST_IMAGE) -f docker/Dockerfile.test docker/
 
 test: test-image
-	$(TEST_DOCKER_RUN) make _test
+	$(TEST_DOCKER_RUN) make ARCH=$(ARCH) _test
 
 coverage: test-image
-	$(TEST_DOCKER_RUN) make _coverage
+	$(TEST_DOCKER_RUN) make ARCH=$(ARCH) _coverage
 
 clean:
 	$(DOCKER_RUN) make _clean
@@ -1177,16 +1177,29 @@ $(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $
 # memory_manager/string_funcs); Console is stubbed by tests/host_shims.cpp.
 # ----------------------------------------------------------------------------
 HOST_CXX=g++
+# AddressSpace + its paging headers are arch-specific (2-level i686 vs 4-level x86_64).
+# Host-test the variant matching ARCH: the include path picks the right Paging.h/AddressSpace.h,
+# the matching .cpp is compiled, and the OTHER arch's tests are filtered out (their uint32_t vs
+# uint64_t API would not compile against the swapped header). Default ARCH=x86 is unchanged.
+ifeq ($(ARCH),x86_64)
+ARCH_MM_INC=-Iarch/x86_64/mm
+ARCH_ADDRSPACE=arch/x86_64/mm/AddressSpace.cpp
+ARCH_PAGING_TESTS_EXCL=tests/test_addressspace.cpp tests/test_paging.cpp
+else
+ARCH_MM_INC=-Iarch/x86/mm
+ARCH_ADDRSPACE=arch/x86/mm/AddressSpace.cpp
+ARCH_PAGING_TESTS_EXCL=tests/test_addressspace64.cpp tests/test_paging64.cpp
+endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iarch/x86/boot -Iarch/x86/mm -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iarch/x86/boot $(ARCH_MM_INC) -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue
 HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage
 TEST_BIN=/tmp/nanos_tests
-TEST_SRCS=$(wildcard tests/*.cpp)
+TEST_SRCS=$(filter-out $(ARCH_PAGING_TESTS_EXCL),$(wildcard tests/*.cpp))
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
 TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp fs/ext/Crc32c.cpp fs/ext/BlockCache.cpp fs/ext/ExtCsum.cpp fs/ext/ExtAllocator.cpp fs/ext/Journal.cpp kernel/Syscall.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp kernel/Futex.cpp kernel/Csprng.cpp lib/String.cpp
-TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp arch/x86/mm/AddressSpace.cpp
+TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp $(ARCH_ADDRSPACE)
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
 TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
 # NanWM (window server) pure cores — userland C, host-tested as C++ (g++ treats .c as C++).
