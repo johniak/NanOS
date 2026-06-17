@@ -398,6 +398,12 @@ image64:
 run64: image64
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw
 
+# x86_64 minimal userland (Plan 6): build the 64-bit init.nxe in the container (crt0 +
+# nxhdr + libnanos + init, linked at 0x800000, then mknx64 -> v4 .nxe). Host-side wrapper.
+.PHONY: init64
+init64:
+	$(DOCKER_RUN) make ARCH=x86_64 bin/init.nxe
+
 else
 # ============================================================================
 # CONTAINER side (Linux): real compilation, image and ISO creation.
@@ -925,6 +931,38 @@ $(MKNX64): tools/mknx.c kernel/NxFormat.h
 	@mkdir -p $(BINFOLDER)
 	cc -O2 -Wall -DNX_FORCE64 -Ikernel -o $@ tools/mknx.c
 
+ifeq ($(ARCH),x86_64)
+# ----------------------------------------------------------------------------
+# x86_64 minimal in-tree userland (Plan 6): freestanding, SSE ON (decision #3 — SysV AMD64
+# requires SSE for varargs/float; the kernel keeps -mno-sse, see arch/x86_64/arch.mk). Small
+# code model, non-PIC, fixed low base (decision #1). Built by the KERNEL toolchain ($(CROSS)).
+# ----------------------------------------------------------------------------
+UARCHFLAGS64 = -mcmodel=small -fno-pic -mno-red-zone   # SSE intentionally NOT disabled
+# Like the kernel build, NOT -nostdinc: the bare x86_64-elf cross-gcc ships no libc/sysroot, so
+# the only headers it finds are gcc's own freestanding ones (stdint.h — needed by NxFormat.h).
+USER64_CFLAGS = -ffreestanding -nostdlib -Ikernel -Iuser $(UARCHFLAGS64) -Wall
+
+# Build the 64-bit init.nxe: crt0 + nxhdr + libnanos + init, linked at 0x800000, then mknx64.
+bin/init64.elf: user/crt064.o user/nxhdr64.o user/libnanos64.o user/init64.o arch/x86_64/user-nx.ld
+	$(CROSS)gcc -nostdlib -Wl,--emit-relocs -T arch/x86_64/user-nx.ld \
+	  -o $@ user/crt064.o user/nxhdr64.o user/libnanos64.o user/init64.o
+$(BINFOLDER)init.nxe: bin/init64.elf $(MKNX64)
+	$(MKNX64) $< $@
+
+# Object rules for the 64-bit userland (distinct *64.o names avoid clashing with the i686
+# bin/*.o during transition; the 64-suffix convention, like loader64.o in Plan 1).
+user/crt064.o: user/crt064.S
+	nasm -f elf64 $< -o $@
+user/sigtramp64.o: user/sigtramp64.S
+	nasm -f elf64 $< -o $@
+user/nxhdr64.o: user/nxhdr.c
+	$(CROSS)gcc $(USER64_CFLAGS) -c $< -o $@
+user/libnanos64.o: user/libnanos.c
+	$(CROSS)gcc $(USER64_CFLAGS) -c $< -o $@
+user/init64.o: user/init64.c
+	$(CROSS)gcc $(USER64_CFLAGS) -c $< -o $@
+endif
+
 # Generic DYNAMIC link: every program links its objects + the import library (NO static
 # libc) and declares "needed: libc.ndl", so the loader maps libc.ndl and binds its imports
 # by name. `--emit-relocs` keeps the R_386_32 relocations so mknx can build the relocation
@@ -938,7 +976,12 @@ $(BINFOLDER)%.nxe: $(MKNX)
 # imports just the symbols it uses). libc.ndl is a prereq so it is built/shipped. Doom +
 # usedll have explicit rules (extra math / a second needed library).
 DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl
+# init.nxe: the i686 build links it dynamically against libc.ndl (prereqs below + the generic
+# %.nxe recipe). On x86_64 init.nxe is the minimal freestanding build above (explicit recipe);
+# guard the i686 prereqs out so they don't pull the libc.ndl chain into the x86_64 build.
+ifneq ($(ARCH),x86_64)
 $(BINFOLDER)init.nxe:      $(DYN_DEPS) $(BINFOLDER)init.o
+endif
 $(BINFOLDER)nsh.nxe:       $(DYN_DEPS) $(BINFOLDER)nsh.o
 $(BINFOLDER)free.nxe:      $(DYN_DEPS) $(BINFOLDER)free.o
 $(BINFOLDER)cat.nxe:       $(DYN_DEPS) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
