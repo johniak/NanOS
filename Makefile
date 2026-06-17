@@ -454,8 +454,11 @@ _convcheck:
 	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage -C /src . | tar -xf - -C $(KSRC)
 	cd $(KSRC) && $(CXX) -fsyntax-only -Wconversion $(CXXFLAGS) $(FILE)
 
+# -lgcc trails the objects so libgcc helper routines first referenced by an object (e.g.
+# __udivdi3 for 64-bit division on i686 — pulled in by the LP64 widening of Plan 7) resolve.
+# (LDFLAGS also lists -lgcc, but a library only satisfies symbols undefined to its left.)
 $(BINFOLDER)kernel.bin: $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) -lgcc
 
 $(BINFOLDER)%.o: %.cpp
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
