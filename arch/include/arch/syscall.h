@@ -7,17 +7,17 @@
  * kernel/Syscall.h and are MI.
  */
 #pragma once
+#include <stdint.h>
 
 namespace arch { struct TrapFrame; }   // opaque trap frame (passed through for execve/fork)
 
 namespace kernel {
-// MI dispatch: map a syscall number + up to 5 args (x86: ebx/ecx/edx/esi/edi) to a result
-// (negative errno on failure). a3/a4 carry the 4th/5th args for the few syscalls that need
-// them (mmap2). `tf` is the opaque trap frame the arch is returning through — needed by
-// syscalls that rewrite the caller's frame (execve) or fork it. Defined in
+// MI dispatch: nr in rax, up to 6 args in rdi/rsi/rdx/r10/r8/r9 (x86_64) or ebx/.../ebp (i686).
+// Args are uintptr_t so 64-bit user pointers/sizes pass intact; the result is `long` so a 64-bit
+// address (mmap) returns whole. `tf` is the opaque trap frame (execve/fork rewrite it). Defined in
 // kernel/SyscallDispatch.cpp.
-int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, unsigned a4,
-		unsigned a5, arch::TrapFrame* tf);   // a5 (x86: ebp) is the 6th arg for sendto/recvfrom
+long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3,
+		uintptr_t a4, uintptr_t a5, arch::TrapFrame* tf);
 }
 
 namespace arch {
