@@ -102,7 +102,7 @@ public:
 	// Device extensions (override the FileSystem defaults; only char-device nodes honor them).
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
-	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
+	int mmapInfo(String path, uint64_t* physOut, unsigned* lenOut);
 	short pollReady(String path, short events);
 	WaitQueue* waitQueueAt(String path);
 	bool deviceOpen(String path);

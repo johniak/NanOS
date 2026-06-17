@@ -17,7 +17,7 @@ int Fb0Device::ioctl(unsigned cmd, void* arg) {
 	return fbdevIoctl(cmd, arg, m_fb);
 }
 
-int Fb0Device::mmapInfo(unsigned* physOut, unsigned* lenOut) {
+int Fb0Device::mmapInfo(uint64_t* physOut, unsigned* lenOut) {
 	*physOut = m_fb.phys;
 	*lenOut = m_len;
 	return 0;

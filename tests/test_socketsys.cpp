@@ -337,3 +337,17 @@ TEST_CASE("AF_UNIX named over Syscalls: bind/listen/connect/accept + sendto/recv
 
 	sc.close(cli); sc.close(conn); sc.close(srv); sc.close(dup2sock); sc.close(ghost);
 }
+
+// ---- Plan 7: kernelSyscall LP64 ABI signature -------------------------------------------
+// The MI dispatch entry takes pointer-wide args and returns `long` so a 64-bit user pointer
+// passes intact and a 64-bit address (mmap) returns whole. Verified at compile time via
+// decltype (unevaluated — no odr-use, so the host link needs no SyscallDispatch.o).
+#include <arch/syscall.h>
+#include <type_traits>
+TEST_CASE("kernelSyscall ABI is LP64-wide (args uintptr_t, result long)") {
+	using Fn = long (*)(long, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t,
+	                    uintptr_t, arch::TrapFrame*);
+	static_assert(std::is_same<decltype(&kernel::kernelSyscall), Fn>::value,
+	              "kernelSyscall must have the finalized LP64 dispatch signature");
+	CHECK(sizeof(uintptr_t) == sizeof(void*));   // sanity on the host (LP64)
+}

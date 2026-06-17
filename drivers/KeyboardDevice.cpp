@@ -41,7 +41,7 @@ int KeyboardDevice::read(unsigned /*off*/, void* buf, unsigned n) {
 
 int KeyboardDevice::write(unsigned, const void*, unsigned) { return -30; }   // -EROFS
 int KeyboardDevice::ioctl(unsigned, void*) { return -22; }                   // -EINVAL
-int KeyboardDevice::mmapInfo(unsigned*, unsigned*) { return -22; }           // -EINVAL
+int KeyboardDevice::mmapInfo(uint64_t*, unsigned*) { return -22; }           // -EINVAL
 
 namespace { KeyboardDevice* g_kbd = 0; }
 void kbdRegister(KeyboardDevice* k) { g_kbd = k; }

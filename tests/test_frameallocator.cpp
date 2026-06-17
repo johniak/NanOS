@@ -5,7 +5,7 @@
 using namespace kernel;
 
 // Each test gets its own allocator (heap-allocated: the bitmap member is large).
-static FrameAllocator* fresh(uint32_t top) {
+static FrameAllocator* fresh(uint64_t top) {
 	FrameAllocator* fa = new FrameAllocator();
 	fa->init(top);
 	return fa;
@@ -91,5 +91,16 @@ TEST_CASE("free returns a frame to the pool for reuse") {
 TEST_CASE("alloc returns 0 (OOM) when no frame is free") {
 	FrameAllocator* fa = fresh(0x10000);    // all used, nothing freed
 	CHECK(fa->alloc() == 0);
+	delete fa;
+}
+
+TEST_CASE("allocates a frame above 4 GiB without truncating the high bits (LP64)") {
+	// topOfRam = 8 GiB; free a single frame at 5 GiB and allocate it back.
+	const uint64_t FIVE_GIB = 5ull * 1024 * 1024 * 1024;
+	FrameAllocator* fa = fresh(8ull * 1024 * 1024 * 1024);   // 8 GiB
+	fa->markRangeFree(FIVE_GIB, 0x1000);                     // exactly one frame at 5 GiB
+	uint64_t a = fa->alloc();
+	CHECK(a == FIVE_GIB);                                     // NOT (uint32_t) FIVE_GIB == 0x40000000
+	CHECK((a >> 32) != 0);                                    // genuinely a 64-bit address
 	delete fa;
 }

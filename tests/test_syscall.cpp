@@ -52,7 +52,7 @@ struct FbFake : CharDevice {
 	int read(unsigned, void* b, unsigned n) { memset(b, 0xAA, n); return (int) n; }
 	int write(unsigned, const void*, unsigned n) { return (int) n; }
 	int ioctl(unsigned cmd, void*) { lastIoctl = cmd; return 0; }
-	int mmapInfo(unsigned* p, unsigned* l) { *p = 0x1234000; *l = 0x2000; return 0; }
+	int mmapInfo(uint64_t* p, unsigned* l) { *p = 0x1FF000000ull; *l = 0x2000; return 0; }
 };
 }
 
@@ -71,9 +71,9 @@ TEST_CASE("sys ioctl/write/mmapInfo route to a device fd; console fd rejects the
 	CHECK(sc.write(fd, buf, 4) == 4);            // device accepts the write
 	CHECK(sc.ioctl(fd, 0x4600, buf) == 0);
 	CHECK(fb.lastIoctl == 0x4600u);
-	unsigned p = 0, l = 0;
+	uint64_t p = 0; unsigned l = 0;
 	CHECK(sc.mmapInfo(fd, &p, &l) == 0);
-	CHECK(p == 0x1234000u);
+	CHECK(p == 0x1FF000000ull);                  // > 4 GiB, not truncated to 0xFF000000
 	CHECK(l == 0x2000u);
 
 	CHECK(sc.ioctl(1, 0, buf) < 0);              // console fd: unknown ioctl rejected
@@ -442,6 +442,14 @@ TEST_CASE("sys_getdents64 returns -EINVAL when the buffer can't hold one record"
 	int fd = sc.open("/boot/grub", 0);
 	char tiny[8];
 	CHECK(sc.getdents64(fd, tiny, sizeof(tiny)) == -22);   // -EINVAL, not a 0/EOF lie
+}
+
+TEST_CASE("lseek past 4 GiB keeps the full 64-bit offset") {
+	Syscalls sc(mountFixture(), sink);
+	int fd = sc.open(String("/hello.txt"), 0);   // any regular file in the fixture
+	REQUIRE(fd >= 3);
+	long long pos = sc.lseek(fd, 0x100000000ll, SEEK_SET);   // 4 GiB
+	CHECK(pos == 0x100000000ll);                  // not truncated to 0
 }
 
 TEST_CASE("sys_lseek SEEK_CUR/SEEK_END and bad whence/offset") {

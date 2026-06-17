@@ -350,11 +350,11 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (fds[fd].isConsole)
 		// cooked line or raw bytes; 0 = EOF. O_NONBLOCK -> -EAGAIN instead of blocking.
 		return arch::inputRead((char*) buf, n, (fds[fd].flags & O_NONBLOCK) != 0);
-	int r = vfs->read(fds[fd].path, n, fds[fd].offset, buf);
+	int r = vfs->read(fds[fd].path, n, (unsigned) fds[fd].offset, buf);
 	if (r < 0)
 		return r;   // propagate the error (e.g. -EAGAIN would-block, -EIO device error)
 	// r == 0 is true EOF; r > 0 is data. (Filesystems signal EOF as 0, not a negative.)
-	fds[fd].offset += (unsigned) r;
+	fds[fd].offset += (off_t) r;
 	return r;
 }
 
@@ -379,31 +379,31 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 		fds[fd].offset = fds[fd].size;
 	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
 	// (e.g. /dev/fb0) accepts the write.
-	int r = vfs->write(fds[fd].path, n, fds[fd].offset, buf);
+	int r = vfs->write(fds[fd].path, n, (unsigned) fds[fd].offset, buf);
 	if (r > 0) {
-		fds[fd].offset += (unsigned) r;
+		fds[fd].offset += (off_t) r;
 		if (fds[fd].offset > fds[fd].size)   // track growth so SEEK_END/fstat stay correct
 			fds[fd].size = fds[fd].offset;
 	}
 	return r;
 }
 
-int Syscalls::lseek(int fd, int off, int whence) {
+off_t Syscalls::lseek(int fd, off_t off, int whence) {
 	if (!valid(fd))
 		return -EBADF;
-	int base;
+	off_t base;
 	if (whence == SEEK_SET)
 		base = 0;
 	else if (whence == SEEK_CUR)
-		base = (int) fds[fd].offset;
+		base = fds[fd].offset;
 	else if (whence == SEEK_END)
-		base = (int) fds[fd].size;
+		base = fds[fd].size;
 	else
 		return -EINVAL;
-	int pos = base + off;
+	off_t pos = base + off;
 	if (pos < 0)
 		return -EINVAL;
-	fds[fd].offset = (unsigned) pos;
+	fds[fd].offset = pos;
 	return pos;
 }
 
@@ -412,12 +412,13 @@ int Syscalls::lseek(int fd, int off, int whence) {
 static void fillStat(LinuxStat* out, const FileStat& st) {
 	out->st_mode = st.mode ? st.mode
 	             : ((st.type == NODE_DIR) ? 0x41EDu : 0x81A4u);   // 0755 dir / 0644 file
-	out->st_size = st.size;
+	out->st_size = (uint64_t) st.size;
 	out->st_nlink = st.nlink ? st.nlink : 1;
 	out->st_uid = st.uid;
 	out->st_gid = st.gid;
-	out->st_mtime = st.mtime;
-	out->st_ino = st.ino ? st.ino : 1;   // real inode (file identity); 1 only if the fs left it 0
+	out->st_mtime = (int64_t) st.mtime;
+	out->st_ino = st.ino ? (uint64_t) st.ino : 1;   // real inode (file identity); 1 only if the fs left it 0
+	out->st_blocks = ((uint64_t) st.size + 511) / 512;
 }
 
 int Syscalls::stat(String path, LinuxStat* out) {
@@ -453,6 +454,7 @@ int Syscalls::fstat(int fd, LinuxStat* out) {
 		out->st_gid = 0;
 		out->st_mtime = 0;
 		out->st_ino = 0;
+		out->st_blocks = 0;
 		return 0;
 	}
 	FileStat st;
@@ -480,7 +482,7 @@ int Syscalls::getdents64(int fd, void* buf, unsigned n) {
 	char* out = (char*) buf;
 	unsigned pos = 0;
 	int i = (int) fds[fd].offset;          // resume where the previous call stopped
-	for (; i < entries.getCount(); i++) {
+	for (; i < (int) entries.getCount(); i++) {
 		const char* name = entries[i].name;
 		unsigned namelen = (unsigned) strlen(name);
 		unsigned reclen = (19 + namelen + 1 + 7) & ~7u;
@@ -608,12 +610,14 @@ int Syscalls::fchown(int fd, int uid, int gid) {
 	if (!valid(fd) || fds[fd].isConsole) return -9;
 	return vfs->chown(fds[fd].path, (unsigned) uid, (unsigned) gid);
 }
-int Syscalls::truncate(String path, unsigned length) {
-	return vfs->truncate(resolvePath(path), length);
+int Syscalls::truncate(String path, off_t length) {
+	// Vfs::truncate / FileStat.size are still 32-bit; full 64-bit ext file sizes are a
+	// separate functional debt. Here we close the off_t API + stat layout, casting at the seam.
+	return vfs->truncate(resolvePath(path), (unsigned) length);
 }
-int Syscalls::ftruncate(int fd, unsigned length) {
+int Syscalls::ftruncate(int fd, off_t length) {
 	if (!valid(fd) || fds[fd].isConsole) return -9;
-	int r = vfs->truncate(fds[fd].path, length);
+	int r = vfs->truncate(fds[fd].path, (unsigned) length);
 	if (r == 0) fds[fd].size = length;
 	return r;
 }
@@ -954,7 +958,7 @@ int Syscalls::fcntl(int fd, int cmd, int arg) {
 	return -EINVAL;
 }
 
-int Syscalls::mmapInfo(int fd, unsigned* physOut, unsigned* lenOut) {
+int Syscalls::mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut) {
 	if (!valid(fd) || fds[fd].isConsole)
 		return -EBADF;
 	return vfs->mmapInfo(fds[fd].path, physOut, lenOut);
@@ -1037,8 +1041,9 @@ void writeSockaddrLl(void* sa, unsigned* salen, uint16_t proto, int ifx, int pkt
 	if (!sa) { if (salen) *salen = 20; return; }
 	unsigned char t[20]; memset(t, 0, sizeof t);
 	t[0] = SA_AF_PACKET;
-	t[2] = proto & 0xff; t[3] = (proto >> 8) & 0xff;
-	t[4] = ifx & 0xff; t[5] = (ifx >> 8) & 0xff; t[6] = (ifx >> 16) & 0xff; t[7] = (ifx >> 24) & 0xff;
+	t[2] = (unsigned char) (proto & 0xff); t[3] = (unsigned char) ((proto >> 8) & 0xff);
+	t[4] = (unsigned char) (ifx & 0xff); t[5] = (unsigned char) ((ifx >> 8) & 0xff);
+	t[6] = (unsigned char) ((ifx >> 16) & 0xff); t[7] = (unsigned char) ((ifx >> 24) & 0xff);
 	t[8] = 1;                       // hatype ARPHRD_ETHER
 	t[10] = (unsigned char) pkttype;
 	t[11] = 6;                      // halen
@@ -1302,10 +1307,10 @@ int Syscalls::netIoctl(int fd, unsigned cmd, void* arg) {
 		u[0] = 1; u[1] = 0; for (int i = 0; i < 6; i++) u[2 + i] = dev->mac[i]; return 0;
 	case 0x8921:  // SIOCGIFMTU
 		if (!dev) return -ENXIO;
-		{ int m = dev->mtu; u[0]=m&0xff; u[1]=(m>>8)&0xff; u[2]=(m>>16)&0xff; u[3]=(m>>24)&0xff; } return 0;
+		{ int m = dev->mtu; u[0]=(unsigned char)(m&0xff); u[1]=(unsigned char)((m>>8)&0xff); u[2]=(unsigned char)((m>>16)&0xff); u[3]=(unsigned char)((m>>24)&0xff); } return 0;
 	case 0x8933:  // SIOCGIFINDEX -> ifr_ifindex (int at the union offset)
 		if (!dev) return -ENXIO;
-		{ int idx = netIfIndexOf(dev); u[0]=idx&0xff; u[1]=(idx>>8)&0xff; u[2]=(idx>>16)&0xff; u[3]=(idx>>24)&0xff; } return 0;
+		{ int idx = netIfIndexOf(dev); u[0]=(unsigned char)(idx&0xff); u[1]=(unsigned char)((idx>>8)&0xff); u[2]=(unsigned char)((idx>>16)&0xff); u[3]=(unsigned char)((idx>>24)&0xff); } return 0;
 	case 0x890b:    // SIOCADDRT — `arg` is a struct rtentry, not an ifreq
 	case 0x890c: {  // SIOCDELRT
 		// rtentry (i686): rt_pad1(4) rt_dst(16) rt_gateway(16) rt_genmask(16) rt_flags(u16@52).

@@ -15,11 +15,11 @@ void *realloc(void *ptr, size_t size);
 
 // Lay out the kernel byte heap over [base, base+size). Must be called once, before the
 // first malloc (the arch MMU bring-up does this once it knows the top of RAM).
-void heapInit(void *base, unsigned size);
+void heapInit(void *base, size_t size);
 
 // Kernel byte-heap stats (for /proc/meminfo).
-unsigned heapTotalBytes(void);
-unsigned heapFreeBytes(void);
+size_t heapTotalBytes(void);
+size_t heapFreeBytes(void);
 
 
 

@@ -625,7 +625,7 @@ int SynthFs::ioctl(String path, unsigned cmd, void* arg) {
 	return n->dev->ioctl(cmd, arg);
 }
 
-int SynthFs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
+int SynthFs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
 	SynthNode* n = walk((char*) path);
 	if (!n || n->kind != SK_CHARDEV)
 		return -22;            // -EINVAL: not mmappable

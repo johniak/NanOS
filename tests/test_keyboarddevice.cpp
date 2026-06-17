@@ -67,7 +67,7 @@ TEST_CASE("write/ioctl/mmapInfo are unsupported") {
 	KeyboardDevice k;
 	CHECK(k.write(0, "x", 1) < 0);
 	CHECK(k.ioctl(0, 0) < 0);
-	unsigned a, b;
+	uint64_t a; unsigned b;
 	CHECK(k.mmapInfo(&a, &b) < 0);
 }
 

@@ -388,7 +388,7 @@ public:
 		if (!isDirectory(inode))
 			return false;
 		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
-		for (int i = 0; i < entries.getCount(); i++) {
+		for (size_t i = 0; i < entries.getCount(); i++) {
 			const char* en = entries[i].name;   // NUL-terminated entry name
 			int k = 0;
 			while (k < len && en[k] && en[k] == name[k])
@@ -416,7 +416,7 @@ public:
 			return;
 		}
 		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
-		for (int i = 0; i < entries.getCount(); i++)
+		for (size_t i = 0; i < entries.getCount(); i++)
 			Console::writeLine(entries[i].name);
 	}
 
@@ -532,7 +532,7 @@ public:
 		if (!isDirectory(inode))
 			return -1;
 		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
-		for (int i = 0; i < entries.getCount(); i++) {
+		for (size_t i = 0; i < entries.getCount(); i++) {
 			DirEntry de;
 			int n = (int) (unsigned char) entries[i].nameLowLenght;
 			if (n > 255)
@@ -739,7 +739,7 @@ public:
 		if (!isDirectory(inode))
 			return false;
 		List<Ext2DirectoryEntry> entries = getDirectoriesEntries(inode);
-		for (int i = 0; i < entries.getCount(); i++) {
+		for (size_t i = 0; i < entries.getCount(); i++) {
 			const char* en = entries[i].name;
 			int k = 0;
 			while (k < len && en[k] && en[k] == name[k])

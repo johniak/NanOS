@@ -2,8 +2,13 @@
 
 namespace kernel {
 
+// Byte offset of pixel (x,y) within the surface — 64-bit so a large pitch*y never wraps.
+size_t fbByteOffset(const FbSurface& s, uint32_t x, uint32_t y) {
+	return (size_t) y * s.pitch + (size_t) x * (s.bpp / 8);
+}
+
 static inline uint8_t* pixelAt(const FbSurface& s, uint32_t x, uint32_t y) {
-	return s.base + (uint32_t) y * s.pitch + x * (s.bpp / 8);
+	return s.base + fbByteOffset(s, x, y);
 }
 
 void fbPutPixel(const FbSurface& s, uint32_t x, uint32_t y, uint32_t rgb) {
@@ -29,7 +34,7 @@ void fbFillRect(const FbSurface& s, uint32_t x, uint32_t y, uint32_t w, uint32_t
 	// 1024x768 console under emulation.
 	if (s.bpp == 32) {
 		for (uint32_t yy = y; yy < y1; yy++) {
-			uint32_t* row = (uint32_t*) (s.base + (uint32_t) yy * s.pitch) + x;
+			uint32_t* row = (uint32_t*) (s.base + (size_t) yy * s.pitch) + x;
 			for (uint32_t xx = x; xx < x1; xx++)
 				*row++ = rgb;
 		}
@@ -63,8 +68,8 @@ void fbScrollUp(const FbSurface& s, uint32_t pixels, uint32_t bg) {
 	uint32_t wordsPerRow = s.pitch / 4;
 	uint32_t moveRows = s.height - pixels;
 	for (uint32_t y = 0; y < moveRows; y++) {
-		uint32_t* dst = base32 + (uint32_t) y * wordsPerRow;
-		uint32_t* src = base32 + (uint32_t) (y + pixels) * wordsPerRow;
+		uint32_t* dst = base32 + (size_t) y * wordsPerRow;
+		uint32_t* src = base32 + (size_t) (y + pixels) * wordsPerRow;
 		for (uint32_t i = 0; i < wordsPerRow; i++)
 			dst[i] = src[i];
 	}

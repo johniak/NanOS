@@ -12,7 +12,7 @@ int Vfs::mount(String mountpoint, String fstype, BlockDevice* dev,
 	const char* wanted = (char*) fstype;
 	bool autodetect = (strcmp(wanted, "auto") == 0);
 	FileSystemType* type = 0;
-	for (int i = 0; i < types.getCount(); i++) {
+	for (size_t i = 0; i < types.getCount(); i++) {
 		if (autodetect) {
 			if (types[i]->probe(dev, partitionLba)) {
 				type = types[i];
@@ -81,7 +81,7 @@ FileSystem* Vfs::resolve(String path, String& relative) {
 	FileSystem* best = 0;
 	int bestLen = -1;
 	const char* bestMp = 0;
-	for (int i = 0; i < mounts.getCount(); i++) {
+	for (size_t i = 0; i < mounts.getCount(); i++) {
 		const char* mp = mounts[i].mountpoint;
 		int ml = (int) strlen(mp);
 		if (prefixMatches(p, mp) && ml > bestLen) {
@@ -190,7 +190,7 @@ void Vfs::deviceClose(String path) {
 		fs->deviceClose(rel);
 }
 
-int Vfs::mmapInfo(String path, unsigned* physOut, unsigned* lenOut) {
+int Vfs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)

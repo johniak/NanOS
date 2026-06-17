@@ -33,7 +33,7 @@ public:
 	int read(unsigned off, void* buf, unsigned n) override;
 	int write(unsigned off, const void* buf, unsigned n) override;
 	int ioctl(unsigned cmd, void* arg) override;
-	int mmapInfo(unsigned* physOut, unsigned* lenOut) override;
+	int mmapInfo(uint64_t* physOut, unsigned* lenOut) override;
 	short pollReady(short events) override;
 
 	// Consume one raw PS/2 byte; `now_us` stamps any events emitted by a completed packet.

@@ -11,8 +11,8 @@ class RamBlockDevice : public BlockDevice {
 	unsigned byteSize;
 public:
 	RamBlockDevice(const char* name, void* buffer, unsigned byteSize);
-	int readSectors(unsigned lba, unsigned count, void* buf);
-	int writeSectors(unsigned lba, unsigned count, const void* buf);
+	int readSectors(uint64_t lba, unsigned count, void* buf);
+	int writeSectors(uint64_t lba, unsigned count, const void* buf);
 	unsigned sectorSize();
 	const char* name();
 };

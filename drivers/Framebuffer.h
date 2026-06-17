@@ -9,6 +9,7 @@
  */
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 namespace kernel {
 
@@ -18,6 +19,9 @@ struct FbSurface {
 	uint32_t width, height;    // pixels
 	uint8_t  bpp;              // 32 or 24
 };
+
+// Byte offset of pixel (x,y) within the surface — 64-bit (size_t) so a large pitch*y never wraps.
+size_t fbByteOffset(const FbSurface& s, uint32_t x, uint32_t y);
 
 void fbPutPixel(const FbSurface& s, uint32_t x, uint32_t y, uint32_t rgb);
 void fbFillRect(const FbSurface& s, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t rgb);

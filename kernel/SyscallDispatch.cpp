@@ -97,7 +97,9 @@ static bool sockBlock(Syscalls* g, int fd, int* err) {
 
 // Gather a user iovec[] into kdst (cap), or scatter from ksrc into it. Returns total bytes
 // moved. Bounded — fine for our datagram/stream uses (DNS/HTTP); larger is truncated honestly.
-static int iovGather(const unsigned* iov, unsigned iovlen, char* kdst, int cap) {
+// iov entries are pointer-wide (base, len) — uintptr_t so the base address is read at full
+// width on both i686 (32-bit) and x86_64 (64-bit), not truncated through `unsigned`.
+static int iovGather(const uintptr_t* iov, unsigned iovlen, char* kdst, int cap) {
 	int total = 0;
 	for (unsigned i = 0; i < iovlen && total < cap; i++) {
 		const char* base = (const char*) iov[i * 2];
@@ -106,7 +108,7 @@ static int iovGather(const unsigned* iov, unsigned iovlen, char* kdst, int cap) 
 	}
 	return total;
 }
-static void iovScatter(const unsigned* iov, unsigned iovlen, const char* ksrc, int n) {
+static void iovScatter(const uintptr_t* iov, unsigned iovlen, const char* ksrc, int n) {
 	int off = 0;
 	for (unsigned i = 0; i < iovlen && off < n; i++) {
 		char* base = (char*) iov[i * 2];
@@ -115,17 +117,17 @@ static void iovScatter(const unsigned* iov, unsigned iovlen, const char* ksrc, i
 	}
 }
 
-static int socketOp(Syscalls* g, int sub, const unsigned* A) {
+static int socketOp(Syscalls* g, int sub, const uintptr_t* A) {
 	int fd = (int) A[0];
 	switch (sub) {
 	case SC_SOCKET:
 		return g->sockSocket((int) A[0], (int) A[1], (int) A[2]);
 	case SC_BIND:
-		return g->sockBind(fd, (const void*) A[1], A[2]);
+		return g->sockBind(fd, (const void*) A[1], (unsigned) A[2]);
 	case SC_LISTEN:
 		return g->sockListen(fd, (int) A[1]);
 	case SC_SETSOCKOPT:
-		return g->sockSetsockopt(fd, (int) A[1], (int) A[2], (const void*) A[3], A[4]);
+		return g->sockSetsockopt(fd, (int) A[1], (int) A[2], (const void*) A[3], (unsigned) A[4]);
 	case SC_GETSOCKOPT:
 		return g->sockGetsockopt(fd, (int) A[1], (int) A[2], (void*) A[3], (unsigned*) A[4]);
 	case SC_GETSOCKNAME:
@@ -137,7 +139,7 @@ static int socketOp(Syscalls* g, int sub, const unsigned* A) {
 	case SC_SOCKETPAIR:
 		return g->sockSocketpair((int) A[0], (int) A[1], (int) A[2], (int*) A[3]);
 	case SC_CONNECT: {
-		int r = g->sockConnect(fd, (const void*) A[1], A[2]);
+		int r = g->sockConnect(fd, (const void*) A[1], (unsigned) A[2]);
 		if (r != -EINPROGRESS) return r;
 		if (g->nonblock(fd)) return -EINPROGRESS;
 		for (;;) {                                   // blocking connect: wait for the handshake
@@ -156,38 +158,40 @@ static int socketOp(Syscalls* g, int sub, const unsigned* A) {
 		}
 	}
 	case SC_SEND:
-		return g->sockSendto(fd, (const void*) A[1], A[2], (int) A[3], 0, 0);
+		return g->sockSendto(fd, (const void*) A[1], (unsigned) A[2], (int) A[3], 0, 0);
 	case SC_SENDTO:
-		return g->sockSendto(fd, (const void*) A[1], A[2], (int) A[3], (const void*) A[4], A[5]);
+		return g->sockSendto(fd, (const void*) A[1], (unsigned) A[2], (int) A[3], (const void*) A[4], (unsigned) A[5]);
 	case SC_RECV:
 	case SC_RECVFROM: {
 		void* sa = (sub == SC_RECVFROM) ? (void*) A[4] : 0;
 		unsigned* sl = (sub == SC_RECVFROM) ? (unsigned*) A[5] : 0;
 		int flags = (int) A[3];
 		for (;;) {
-			int r = g->sockRecvfrom(fd, (void*) A[1], A[2], flags, sa, sl);
+			int r = g->sockRecvfrom(fd, (void*) A[1], (unsigned) A[2], flags, sa, sl);
 			if (r != -EAGAIN) return r;
 			if (g->nonblock(fd) || (flags & 0x40 /*MSG_DONTWAIT*/)) return -EAGAIN;
 			int e; if (!sockBlock(g, fd, &e)) return e;
 		}
 	}
 	case SC_SENDMSG: {
-		const unsigned* m = (const unsigned*) A[1];   // struct msghdr
+		const uintptr_t* m = (const uintptr_t*) A[1];   // struct msghdr (pointer-wide fields)
 		if (!m) return -EINVAL;
 		static char kbuf[8192];   // restored from 4096 after the user-window move freed kernel BSS
-		int n = iovGather((const unsigned*) m[2], m[3], kbuf, sizeof(kbuf));
-		return g->sockSendto(fd, kbuf, (unsigned) n, (int) A[2], (const void*) m[0], m[1]);
+		int n = iovGather((const uintptr_t*) m[2], (unsigned) m[3], kbuf, sizeof(kbuf));
+		return g->sockSendto(fd, kbuf, (unsigned) n, (int) A[2], (const void*) m[0], (unsigned) m[1]);
 	}
 	case SC_RECVMSG: {
-		unsigned* m = (unsigned*) A[1];
+		uintptr_t* m = (uintptr_t*) A[1];
 		if (!m) return -EINVAL;
 		static char kbuf[8192];   // restored from 4096 after the user-window move freed kernel BSS
 		int flags = (int) A[2];
 		for (;;) {
-			int n = g->sockRecvfrom(fd, kbuf, sizeof(kbuf), flags, (void*) m[0], (unsigned*) &m[1]);
+			unsigned ml = (unsigned) m[1];
+			int n = g->sockRecvfrom(fd, kbuf, sizeof(kbuf), flags, (void*) m[0], &ml);
+			m[1] = ml;
 			if (n == -EAGAIN && !g->nonblock(fd) && !(flags & 0x40)) { int e; if (!sockBlock(g, fd, &e)) return e; continue; }
 			if (n < 0) return n;
-			iovScatter((const unsigned*) m[2], m[3], kbuf, n);
+			iovScatter((const uintptr_t*) m[2], (unsigned) m[3], kbuf, n);
 			m[5] = 0;   // msg_controllen: we produce no ancillary data, so report 0 control bytes
 			            // (Linux overwrites the caller's input length). Leaving it non-zero makes
 			            // CMSG_FIRSTHDR walk the caller's uninitialised cmsg buffer — a garbage
@@ -293,8 +297,8 @@ void futexRemoveTask(const void* space, Task* t) {
 	g_futex.removeTask(space, t);
 }
 
-static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
-		unsigned uaddr2, unsigned val3) {
+static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout,
+		uintptr_t uaddr2, unsigned val3) {
 	int cmd = op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
 	if (!(op & FUTEX_PRIVATE_FLAG))
 		return -ENOSYS;        // process-shared futexes are out of scope
@@ -373,9 +377,9 @@ static int futexSyscall(unsigned uaddr, int op, unsigned val, unsigned timeout,
 
 // MI syscall dispatch: map a syscall number + args to the Syscalls core. The
 // arch trap (int 0x80 on x86) decodes registers and calls this.
-int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, unsigned a4,
-		unsigned a5, arch::TrapFrame* tf) {
-	int ret = -38;   // -ENOSYS
+long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3,
+		uintptr_t a4, uintptr_t a5, arch::TrapFrame* tf) {
+	long ret = -38;   // -ENOSYS
 	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
 	switch (nr) {
 	case SYS_exit:
@@ -396,7 +400,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		break;
 	case SYS_clone:
 		// i386 ABI: a0=flags, a1=child_stack, a2=ptid, a3=tls, a4=ctid.
-		ret = cloneThread(tf, a0, a1, a2, a3, a4);
+		ret = cloneThread(tf, (unsigned) a0, (unsigned) a1, (unsigned) a2, (unsigned) a3, (unsigned) a4);
 		break;
 	case SYS_getpid:
 		ret = ProcTable::current()->pid;
@@ -449,32 +453,32 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = sysGetsid((int) a0);
 		break;
 	case SYS_signal:
-		ret = signalAction((int) a0, a1, a2);   // a1 = handler, a2 = sa_restorer
+		ret = signalAction((int) a0, (unsigned) a1, (unsigned) a2);   // a1 = handler, a2 = sa_restorer
 		break;
 	case SYS_sigprocmask:
-		ret = signalMask((int) a0, a1, (unsigned*) a2);   // legacy single-word form (low 31 signals)
+		ret = signalMask((int) a0, (unsigned) a1, (unsigned*) a2);   // legacy single-word form (low 31 signals)
 		break;
 	case SYS_rt_sigprocmask:
 		// i386: a0=how, a1=set*, a2=oldset*, a3=sigsetsize (must be 8).
-		ret = signalMaskRt((int) a0, (const uint64_t*) a1, (uint64_t*) a2, a3);
+		ret = signalMaskRt((int) a0, (const uint64_t*) a1, (uint64_t*) a2, (unsigned) a3);
 		break;
 	case SYS_rt_sigaction:
 		// i386: a0=sig, a1=act*, a2=old*, a3=sigsetsize (must be 8).
-		ret = signalActionRt((int) a0, (const k_sigaction*) a1, (k_sigaction*) a2, a3);
+		ret = signalActionRt((int) a0, (const k_sigaction*) a1, (k_sigaction*) a2, (unsigned) a3);
 		break;
 	case SYS_rt_sigpending:
 		// i386: a0=set*, a1=sigsetsize (must be 8).
-		ret = signalPendingRt((uint64_t*) a0, a1);
+		ret = signalPendingRt((uint64_t*) a0, (unsigned) a1);
 		break;
 	case SYS_pause:
 		ret = signalPause();           // block until a signal -> -EINTR
 		break;
 	case SYS_sigsuspend:
-		ret = signalSuspend(a0);       // legacy: a0 = wait-mask (single-word sigset)
+		ret = signalSuspend((unsigned) a0);       // legacy: a0 = wait-mask (single-word sigset)
 		break;
 	case SYS_rt_sigsuspend:
 		// i386: a0=mask*, a1=sigsetsize (must be 8).
-		ret = signalSuspendRt((const uint64_t*) a0, a1);
+		ret = signalSuspendRt((const uint64_t*) a0, (unsigned) a1);
 		break;
 	case SYS_sigreturn:
 		ret = signalReturn(tf);   // restores the trap frame; ret = the saved eax
@@ -492,18 +496,18 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			ret = -ERESTARTSYS;
 			break;
 		}
-		ret = g_sys->read(a0, (void*) a1, a2);
+		ret = g_sys->read((int) a0, (void*) a1, (unsigned) a2);
 		// A blocking read on an empty pipe or pty returns -EAGAIN; park on the object's wait
 		// queue (event-driven: the writer wakes us) until data/EOF, or a signal interrupts.
 		// Console blocking happens inside read() itself; an O_NONBLOCK fd returns -EAGAIN.
-		while (ret == -EAGAIN && !g_sys->nonblock(a0)) {
+		while (ret == -EAGAIN && !g_sys->nonblock((int) a0)) {
 			if (hasPendingSignalCurrent()) { ret = -ERESTARTSYS; break; }
-			WaitQueue* wq = g_sys->fdWaitQueue(a0);
+			WaitQueue* wq = g_sys->fdWaitQueue((int) a0);
 			if (wq) Scheduler::sleepOn(wq); else Scheduler::ioWait();
-			ret = g_sys->read(a0, (void*) a1, a2);
+			ret = g_sys->read((int) a0, (void*) a1, (unsigned) a2);
 		}
 		if (ret > 0)                              // we drained bytes -> ring has space: wake writers
-			Scheduler::wakeAll(g_sys->fdWaitQueue(a0));
+			Scheduler::wakeAll(g_sys->fdWaitQueue((int) a0));
 		break;
 	}
 	case SYS_write: {
@@ -514,18 +518,18 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		unsigned done = 0;
 		ret = 0;
 		while (done < a2) {
-			int r = g_sys->write(a0, (const char*) a1 + done, a2 - done);
+			int r = g_sys->write((int) a0, (const char*) a1 + done, (unsigned) (a2 - done));
 			if (r == -EAGAIN) {
-				if (g_sys->nonblock(a0)) { ret = done ? (int) done : -EAGAIN; break; }
+				if (g_sys->nonblock((int) a0)) { ret = done ? (int) done : -EAGAIN; break; }
 				if (hasPendingSignalCurrent()) { ret = done ? (int) done : -ERESTARTSYS; break; }
-				WaitQueue* wq = g_sys->fdWaitQueue(a0);
+				WaitQueue* wq = g_sys->fdWaitQueue((int) a0);
 				if (wq) Scheduler::sleepOn(wq); else Scheduler::ioWait();
 				continue;
 			}
 			if (r < 0) { ret = done ? (int) done : r; break; }
 			done += (unsigned) r;
 			ret = (int) done;
-			Scheduler::wakeAll(g_sys->fdWaitQueue(a0));   // bytes landed -> wake the reader/peer
+			Scheduler::wakeAll(g_sys->fdWaitQueue((int) a0));   // bytes landed -> wake the reader/peer
 		}
 		break;
 	}
@@ -566,29 +570,29 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// a0 = sub-call number, a1 = pointer to its argument array (each entry is 4 bytes).
 		const unsigned* uargs = (const unsigned*) a1;
 		if (!uargs) { ret = -EINVAL; break; }
-		unsigned A[6] = {0,0,0,0,0,0};
+		uintptr_t A[6] = {0,0,0,0,0,0};
 		for (int i = 0; i < 6; i++) A[i] = uargs[i];   // over-reads are harmless (page-resident args)
 		ret = socketOp(g_sys, (int) a0, A);
 		break;
 	}
 	// Direct socket syscalls (Linux >=4.3 i386). a5 (ebp) carries the 6th arg for sendto/recvfrom.
-	case SYS_socket:      { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_SOCKET, A); break; }
-	case SYS_bind:        { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_BIND, A); break; }
-	case SYS_connect:     { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_CONNECT, A); break; }
-	case SYS_listen:      { unsigned A[6] = {a0,a1,0,0,0,0};       ret = socketOp(g_sys, SC_LISTEN, A); break; }
-	case SYS_accept4:     { unsigned A[6] = {a0,a1,a2,a3,0,0};     ret = socketOp(g_sys, SC_ACCEPT4, A); break; }
-	case SYS_getsockname: { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_GETSOCKNAME, A); break; }
-	case SYS_getpeername: { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_GETPEERNAME, A); break; }
-	case SYS_socketpair:  { unsigned A[6] = {a0,a1,a2,a3,0,0};     ret = socketOp(g_sys, SC_SOCKETPAIR, A); break; }
-	case SYS_setsockopt:  { unsigned A[6] = {a0,a1,a2,a3,a4,0};    ret = socketOp(g_sys, SC_SETSOCKOPT, A); break; }
-	case SYS_getsockopt:  { unsigned A[6] = {a0,a1,a2,a3,a4,0};    ret = socketOp(g_sys, SC_GETSOCKOPT, A); break; }
-	case SYS_sendto:      { unsigned A[6] = {a0,a1,a2,a3,a4,a5};   ret = socketOp(g_sys, SC_SENDTO, A); break; }
-	case SYS_recvfrom:    { unsigned A[6] = {a0,a1,a2,a3,a4,a5};   ret = socketOp(g_sys, SC_RECVFROM, A); break; }
-	case SYS_sendmsg:     { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_SENDMSG, A); break; }
-	case SYS_recvmsg:     { unsigned A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_RECVMSG, A); break; }
-	case SYS_shutdown:    { unsigned A[6] = {a0,a1,0,0,0,0};       ret = socketOp(g_sys, SC_SHUTDOWN, A); break; }
+	case SYS_socket:      { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_SOCKET, A); break; }
+	case SYS_bind:        { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_BIND, A); break; }
+	case SYS_connect:     { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_CONNECT, A); break; }
+	case SYS_listen:      { uintptr_t A[6] = {a0,a1,0,0,0,0};       ret = socketOp(g_sys, SC_LISTEN, A); break; }
+	case SYS_accept4:     { uintptr_t A[6] = {a0,a1,a2,a3,0,0};     ret = socketOp(g_sys, SC_ACCEPT4, A); break; }
+	case SYS_getsockname: { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_GETSOCKNAME, A); break; }
+	case SYS_getpeername: { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_GETPEERNAME, A); break; }
+	case SYS_socketpair:  { uintptr_t A[6] = {a0,a1,a2,a3,0,0};     ret = socketOp(g_sys, SC_SOCKETPAIR, A); break; }
+	case SYS_setsockopt:  { uintptr_t A[6] = {a0,a1,a2,a3,a4,0};    ret = socketOp(g_sys, SC_SETSOCKOPT, A); break; }
+	case SYS_getsockopt:  { uintptr_t A[6] = {a0,a1,a2,a3,a4,0};    ret = socketOp(g_sys, SC_GETSOCKOPT, A); break; }
+	case SYS_sendto:      { uintptr_t A[6] = {a0,a1,a2,a3,a4,a5};   ret = socketOp(g_sys, SC_SENDTO, A); break; }
+	case SYS_recvfrom:    { uintptr_t A[6] = {a0,a1,a2,a3,a4,a5};   ret = socketOp(g_sys, SC_RECVFROM, A); break; }
+	case SYS_sendmsg:     { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_SENDMSG, A); break; }
+	case SYS_recvmsg:     { uintptr_t A[6] = {a0,a1,a2,0,0,0};      ret = socketOp(g_sys, SC_RECVMSG, A); break; }
+	case SYS_shutdown:    { uintptr_t A[6] = {a0,a1,0,0,0,0};       ret = socketOp(g_sys, SC_SHUTDOWN, A); break; }
 	case SYS_open:
-		ret = g_sys->open(String((char*) a0), a1);
+		ret = g_sys->open(String((char*) a0), (int) a1);
 		break;
 	case SYS_close: {
 		// Wake anyone blocked on this object after dropping the fd, so a peer reading a pipe
@@ -596,9 +600,9 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// forever. BUT if this was the pipe's last end, close() frees the Pipe (and its embedded
 		// WaitQueue), so `wq` would dangle — skip the wake then. That is always safe: a pipe with
 		// no open ends can have no blocked waiter (a blocked reader/writer holds an end open).
-		WaitQueue* wq = g_sys->fdWaitQueue(a0);
+		WaitQueue* wq = g_sys->fdWaitQueue((int) a0);
 		bool freedShared = false;
-		ret = g_sys->close(a0, &freedShared);
+		ret = g_sys->close((int) a0, &freedShared);
 		if (!freedShared)
 			Scheduler::wakeAll(wq);
 		break;
@@ -643,7 +647,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->ftruncate((int) a0, a1);
 		break;
 	case SYS_utimes:
-		ret = g_sys->utimes(String((char*) a0), a1, a2);
+		ret = g_sys->utimes(String((char*) a0), (unsigned) a1, (unsigned) a2);
 		break;
 	case SYS_access:
 		ret = g_sys->access(String((char*) a0), (int) a1);
@@ -701,7 +705,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->symlinkat(String((char*) a0), (int) a1, String((char*) a2));
 		break;
 	case SYS_readlinkat:
-		ret = g_sys->readlinkat((int) a0, String((char*) a1), (char*) a2, a3);
+		ret = g_sys->readlinkat((int) a0, String((char*) a1), (char*) a2, (unsigned) a3);
 		break;
 	case SYS_fchmodat:
 		ret = g_sys->fchmodat((int) a0, String((char*) a1), (int) a2, (int) a3);
@@ -734,10 +738,10 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		ret = g_sys->chdir(String((char*) a0));
 		break;
 	case SYS_getcwd:
-		ret = g_sys->getcwd((char*) a0, a1);
+		ret = g_sys->getcwd((char*) a0, (unsigned) a1);
 		break;
 	case SYS_lseek:
-		ret = g_sys->lseek(a0, a1, a2);
+		ret = g_sys->lseek((int) a0, (off_t) a1, (int) a2);
 		break;
 	case SYS_stat:
 		ret = g_sys->stat(String((char*) a0), (LinuxStat*) a1);
@@ -747,13 +751,13 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		break;
 	case SYS_readlink:
 		// a0 = path, a1 = buf, a2 = bufsize. Returns byte count (no NUL) or -errno.
-		ret = g_sys->readlink(String((char*) a0), (char*) a1, a2);
+		ret = g_sys->readlink(String((char*) a0), (char*) a1, (unsigned) a2);
 		break;
 	case SYS_fstat:
-		ret = g_sys->fstat(a0, (LinuxStat*) a1);
+		ret = g_sys->fstat((int) a0, (LinuxStat*) a1);
 		break;
 	case SYS_getdents64:
-		ret = g_sys->getdents64(a0, (void*) a1, a2);
+		ret = g_sys->getdents64((int) a0, (void*) a1, (unsigned) a2);
 		break;
 	case SYS_ioctl:
 		// FIONBIO (0x5421): the BSD/Windows way to set/clear non-blocking mode on a descriptor
@@ -766,7 +770,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		}
 		// Network interface ioctls (SIOC*, 0x89xx) on a socket fd -> the net layer (ifconfig/DHCP).
 		if (a1 >= 0x8900 && a1 <= 0x89ff && g_sys->isSocketFd((int) a0)) {
-			ret = g_sys->netIoctl((int) a0, a1, (void*) a2);
+			ret = g_sys->netIoctl((int) a0, (unsigned) a1, (void*) a2);
 			break;
 		}
 		// The console's foreground-process-group ioctls (tcgetpgrp/tcsetpgrp) are job-control
@@ -793,7 +797,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			ret = 0;
 			break;
 		}
-		ret = g_sys->ioctl((int) a0, a1, (void*) a2);
+		ret = g_sys->ioctl((int) a0, (unsigned) a1, (void*) a2);
 		// A successful TCSETS on the console must take effect: drive the line discipline
 		// from the new termios (canonical -> cooked, ICANON cleared -> raw), so tcsetattr()
 		// actually switches input modes (the same mechanism SYS_termmode uses directly).
@@ -809,18 +813,18 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// Three kinds: a device region (e.g. /dev/fb0) mapped to its physical pages; an
 		// anonymous mapping (fd < 0) of fresh zeroed pages; and a file-backed mapping (a
 		// regular-file fd) of zeroed pages eagerly filled from the file. Returns the user VA.
-		unsigned length = a0;
+		unsigned length = (unsigned) a0;
 		int prot = (int) a1;
 		int fd = (int) a3;
-		unsigned offset = a4;
+		unsigned offset = (unsigned) a4;
 		Process* p = ProcTable::current();
 		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
 		if (fd >= 0) {                          // device region? (fb0 etc.)
-			unsigned phys = 0, dlen = 0;
+			uint64_t phys = 0; unsigned dlen = 0;
 			if (g_sys->mmapInfo(fd, &phys, &dlen) >= 0) {
 				unsigned want = (length && length < dlen) ? length : dlen;
-				unsigned va = arch::mmuMapUserFb(space, phys, want);
-				ret = va ? (int) va : -12;   // -ENOMEM
+				unsigned va = arch::mmuMapUserFb(space, (uint32_t) phys, want);   // (uint32_t) until Plan 3 widens mmuMapUserFb fbPhys to 64-bit
+				ret = va ? (long) va : -12;   // -ENOMEM
 				break;
 			}
 		}
@@ -848,12 +852,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 			g_sys->lseek(fd, (int) offset, 0 /*SEEK_SET*/);
 			unsigned got = 0;
 			while (got < length) {
-				int r = g_sys->read(fd, (char*) (va + got), length - got);
+				int r = g_sys->read(fd, (char*) (uintptr_t) (va + got), length - got);
 				if (r <= 0) break;              // EOF or error: leave the rest zero-filled
 				got += (unsigned) r;
 			}
 		}
-		ret = (int) va;
+		ret = (long) va;   // return the full user VA (Plan 3 widens the mmap window to 64-bit)
 		break;
 	}
 	case SYS_munmap: {
@@ -861,8 +865,8 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// Only ranges inside the anonymous/file mmap window [mmuMmapBase, mmuMmapMax) are
 		// actually torn down — that is where pthread stacks live. A munmap of the brk window
 		// or anything else is a benign no-op (return 0) so we never corrupt other regions.
-		unsigned addr = a0;
-		unsigned length = a1;
+		unsigned addr = (unsigned) a0;
+		unsigned length = (unsigned) a1;
 		if (addr & 0xFFFu) { ret = -22; break; }       // -EINVAL: unaligned address (like Linux)
 		if (length == 0) { ret = -22; break; }          // -EINVAL: zero length
 		unsigned len = (length + 0xFFFu) & ~0xFFFu;      // page-round the length up
@@ -912,12 +916,12 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// CURRENT (unchanged) break (glibc's sbrk detects failure by comparing).
 		Process* p = ProcTable::current();
 		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
-		unsigned req = a0;
+		unsigned req = (unsigned) a0;
 		if (req != 0 && req >= p->brkBase && req <= p->brkMax && space) {
 			if (arch::mmuSetUserBrk(space, p->brkCur, req) == 0)
 				p->brkCur = req;
 		}
-		ret = (int) p->brkCur;
+		ret = (long) p->brkCur;
 		break;
 	}
 	case SYS_termmode:
@@ -933,7 +937,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// always seeded, so GRND_NONBLOCK/GRND_RANDOM are safely ignored — we always return the full
 		// count of CSPRNG bytes (the kernel ran csprngKernelSeed() before userspace started).
 		if (a0 == 0) { ret = -EFAULT; break; }
-		csprngBytes((void*) a0, a1);
+		csprngBytes((void*) a0, (unsigned) a1);
 		ret = (int) a1;
 		break;
 	}
@@ -973,7 +977,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 	}
 	case SYS_futex:
 		// a0=uaddr, a1=op, a2=val, a3=timeout (or val2 for REQUEUE), a4=uaddr2, a5=val3.
-		ret = futexSyscall(a0, (int) a1, a2, a3, a4, a5);
+		ret = futexSyscall(a0, (int) a1, (unsigned) a2, a3, a4, (unsigned) a5);
 		break;
 	case SYS_gettid: {
 		// The calling thread's tid (== pid for the leader). Thread tracking is live after
@@ -1002,7 +1006,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		// the kernel zeroes *ptr and futex-wakes it (the pthread_join handshake). Returns tid.
 		Thread* t = ProcTable::currentThread();
 		if (!t) { ret = ProcTable::current()->pid; break; }
-		t->clearTidAddr = a0;
+		t->clearTidAddr = (unsigned) a0;
 		ret = t->tid;
 		break;
 	}

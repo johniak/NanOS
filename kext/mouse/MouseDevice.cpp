@@ -66,7 +66,7 @@ int MouseDevice::read(unsigned, void* buf, unsigned n) {
 
 int MouseDevice::write(unsigned, const void*, unsigned) { return -1; }
 int MouseDevice::ioctl(unsigned, void*) { return -1; }
-int MouseDevice::mmapInfo(unsigned*, unsigned*) { return -1; }
+int MouseDevice::mmapInfo(uint64_t*, unsigned*) { return -1; }
 
 short MouseDevice::pollReady(short events) {
 	return (short) (((events & POLLIN) && m_head != m_tail) ? POLLIN : 0);

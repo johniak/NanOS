@@ -77,14 +77,20 @@ struct Socket;   // net/Socket.h — a socket fd's backing (FAZA 9)
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
+typedef long long off_t;     // 64-bit signed file offset (x86_64 ABI)
+
+// Kernel-internal stat buffer filled by stat/fstat and marshalled to userland by the libc-glue.
+// Field WIDTHS match the x86_64 ABI: 64-bit st_ino/st_size/time. The exact on-wire field ORDER is
+// owned by the userland stat marshaller (user/libc-glue) — coordinate any reorder with Plan 6/8.
 struct LinuxStat {
-	unsigned st_mode;   // S_IFREG (0x8000) / S_IFDIR (0x4000) | perms
-	unsigned st_size;
-	unsigned st_nlink;
-	unsigned st_uid;
-	unsigned st_gid;
-	unsigned st_mtime;
-	unsigned st_ino;
+	uint64_t st_ino;     // 64-bit inode number
+	uint32_t st_mode;    // S_IF* | perms
+	uint32_t st_nlink;
+	uint32_t st_uid;
+	uint32_t st_gid;
+	uint64_t st_size;    // 64-bit off_t
+	uint64_t st_blocks;  // 512-byte block count
+	int64_t  st_mtime;   // 64-bit time_t
 };
 
 // Kernel mirror of picolibc's i686 struct timespec: a 64-bit time_t (tv_sec, 8 bytes
@@ -101,8 +107,8 @@ class Syscalls {
 		bool used;
 		bool isConsole;
 		String path;
-		unsigned offset;
-		unsigned size;
+		off_t offset;       // 64-bit file position
+		off_t size;         // 64-bit cached size
 		unsigned flags;     // file status flags (O_NONBLOCK/O_APPEND); set at open / fcntl(F_SETFL)
 		bool cloexec;       // FD_CLOEXEC: close this fd on execve (fcntl F_SETFD / O_CLOEXEC)
 		Pipe* pipe;         // non-null => this fd is one end of a pipe
@@ -137,7 +143,7 @@ public:
 	int close(int fd, bool* freedShared = nullptr);
 	int read(int fd, void* buf, unsigned n);
 	int write(int fd, const void* buf, unsigned n);
-	int lseek(int fd, int off, int whence);
+	off_t lseek(int fd, off_t off, int whence);
 	int stat(String path, LinuxStat* out);
 	int lstat(String path, LinuxStat* out);                 // stat the link itself (no follow)
 	int readlink(String path, char* buf, unsigned size);    // a symlink's target, or -errno
@@ -156,8 +162,8 @@ public:
 	int chown(String path, int uid, int gid);
 	int lchown(String path, int uid, int gid);
 	int fchown(int fd, int uid, int gid);
-	int truncate(String path, unsigned length);
-	int ftruncate(int fd, unsigned length);
+	int truncate(String path, off_t length);
+	int ftruncate(int fd, off_t length);
 	int utimes(String path, unsigned atime, unsigned mtime);
 	int utime(String path, const void* times);              // struct utimbuf{actime,modtime} or NULL
 	int utimensat(int dirfd, String path, const void* times, int flags);  // timespec[2]/NULL + UTIME_*
@@ -234,7 +240,7 @@ public:
 	// char device's), or 0 for fds that never block this way (regular files; the console, which
 	// blocks inside arch::inputRead). Lets the dispatch sleep event-driven, not per tick.
 	WaitQueue* fdWaitQueue(int fd);
-	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
+	int mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 
 	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
 	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).

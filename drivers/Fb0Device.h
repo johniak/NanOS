@@ -21,7 +21,7 @@ public:
 	int read(unsigned off, void* buf, unsigned n);
 	int write(unsigned off, const void* buf, unsigned n);
 	int ioctl(unsigned cmd, void* arg);
-	int mmapInfo(unsigned* physOut, unsigned* lenOut);
+	int mmapInfo(uint64_t* physOut, unsigned* lenOut);
 };
 
 }  // namespace kernel
