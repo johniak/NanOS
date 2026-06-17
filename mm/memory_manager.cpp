@@ -21,14 +21,15 @@ static kernel::Heap g_heap;
 // Print what + where directly to the console sink (no malloc, no formatting deps) and halt — a
 // clean, located stop beats marching on through corrupted heap metadata.
 static void heapPutStr(const char* s) { for (; *s; s++) arch::consolePutChar(*s); }
-static void heapPutHex(unsigned v) {
+static void heapPutHex(uintptr_t v) {
 	arch::consolePutChar('0'); arch::consolePutChar('x');
-	for (int i = 28; i >= 0; i -= 4) {
-		int d = (v >> i) & 0xF;
+	// Print every nibble of a pointer-wide value (8 hex on i686, 16 on x86_64).
+	for (int i = (int) (sizeof(uintptr_t) * 8) - 4; i >= 0; i -= 4) {
+		int d = (int) ((v >> i) & 0xF);
 		arch::consolePutChar((char) (d < 10 ? '0' + d : 'a' + d - 10));
 	}
 }
-static void heapPanic(const char* what, unsigned off, unsigned hdr, unsigned ftr) {
+static void heapPanic(const char* what, uintptr_t off, uintptr_t hdr, uintptr_t ftr) {
 	arch::cpuDisableInterrupts();
 	heapPutStr("\n*** HEAP CORRUPTION: ");
 	heapPutStr(what);
@@ -39,19 +40,21 @@ static void heapPanic(const char* what, unsigned off, unsigned hdr, unsigned ftr
 	for (;;) arch::cpuHalt();
 }
 
-void heapInit(void* base, unsigned size) {
+void heapInit(void* base, size_t size) {
 	g_heap.init(base, size);
 	kernel::Heap::onCorruption(heapPanic);
 }
 
-unsigned heapTotalBytes(void) { return g_heap.totalBytes(); }
-unsigned heapFreeBytes(void) { return g_heap.freeBytes(); }
+size_t heapTotalBytes(void) { return g_heap.totalBytes(); }
+size_t heapFreeBytes(void)  { return g_heap.freeBytes(); }
 
 void *malloc(size_t size) {
-	return g_heap.alloc((unsigned) size);
+	return g_heap.alloc(size);
 }
 void *calloc(size_t nmeb, size_t size) {
-	unsigned total = (unsigned) nmeb * (unsigned) size;
+	size_t total;
+	if (__builtin_mul_overflow(nmeb, size, &total))
+		return 0;                                  // reject the overflow
 	void* ptr = g_heap.alloc(total);
 	if (ptr)
 		memset(ptr, 0, total);
@@ -61,7 +64,7 @@ void free(void *ptr) {
 	g_heap.free(ptr);
 }
 void *realloc(void *ptr, size_t size) {
-	return g_heap.realloc(ptr, (unsigned) size);
+	return g_heap.realloc(ptr, size);
 }
 
 

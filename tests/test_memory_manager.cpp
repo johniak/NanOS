@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "Heap.h"
+#include "memory_manager.h"
 #include <cstring>
 
 using namespace kernel;
@@ -102,6 +103,15 @@ TEST_CASE("free(NULL) and double-free are ignored (no corruption)") {
 	void* b = h->alloc(64);
 	CHECK(b != nullptr);
 	delete h;
+}
+
+TEST_CASE("calloc rejects a multiplication that would overflow (no silent tiny alloc)") {
+	// nmeb*size overflows size_t itself; calloc must detect the overflow (via
+	// __builtin_mul_overflow) and refuse rather than hand back a wrapped, tiny buffer.
+	// (Host harness links libc calloc, which also rejects this; the kernel build's own
+	// memory_manager.cpp calloc is gated by convcheck.)
+	void* p = calloc((size_t) -1, (size_t) 2);   // (2^64-1) * 2 wraps size_t
+	CHECK(p == nullptr);
 }
 
 TEST_CASE("Heap size API is size_t-wide (no 32-bit truncation of the request)") {
