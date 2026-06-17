@@ -57,6 +57,15 @@ TEST_CASE("fbScrollUp shifts rows up and clears the exposed bottom") {
 	CHECK(*(uint32_t*) (buf + 3 * PITCH) == 0x00DEADu); // bottom cleared
 }
 
+TEST_CASE("row offset uses 64-bit arithmetic (no 32-bit wrap at large pitch*y)") {
+	// pitch chosen so that y*pitch crosses 2^32 for y within height; we only verify the
+	// computed byte offset via fbByteOffset (pure, no real allocation of the surface).
+	FbSurface s{ (uint8_t*) 0, /*pitch*/ 0x01000000u, /*w*/ 0x003FFFFFu, /*h*/ 0x200u, 32 };
+	size_t off = kernel::fbByteOffset(s, 0, 0x101);   // 0x101 * 0x01000000 = 0x1_01000000 (>4 GiB)
+	CHECK(off == (size_t) 0x101 * 0x01000000u);
+	CHECK((off >> 32) != 0);                          // genuinely past 4 GiB
+}
+
 TEST_CASE("fbPutPixel 24bpp writes B,G,R bytes in memory order") {
 	const uint32_t W = 2, H = 1, PITCH = W * 3;
 	unsigned char buf[PITCH * H];
