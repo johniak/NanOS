@@ -33,4 +33,5 @@ ARCH_LINKER=arch/x86_64/linker.ld
 # fault_x86_64/irq_x86_64/irqtest64 have unique basenames already.
 ARCH_SOURCES=loader.o entry64.o AddressSpace.o mmu_x86_64.o \
              Gdt64.o Idt64.o Interrupt64.o isr64.o irq64.o \
-             cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o
+             cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o \
+             ATA64.o Hdd64.o AtaBlockDevice64.o block_x86_64.o

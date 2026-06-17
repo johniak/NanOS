@@ -21,7 +21,6 @@
 #define EXTFILESYSTEM_H_
 
 namespace kernel {
-int ceil(float num);
 
 struct Ext2BaseSuperblockFields {
 	int totalInodes;
@@ -243,9 +242,12 @@ public:
 	}
 
 	void initBgdt() {
-		blockGroupsCount = (int) ceil(
-				((float) baseSuperBlock.totalBlocks)
-						/ ((float) baseSuperBlock.blockInGroup));
+		// Integer ceiling division (groups = ceil(totalBlocks / blockInGroup)). Was a
+		// float ceil(), but the x86_64 kernel builds with -mno-sse (no FP in kernel code),
+		// where returning a float is an error; integer math is exact for these block counts
+		// and identical on i686.
+		blockGroupsCount = (baseSuperBlock.totalBlocks + baseSuperBlock.blockInGroup - 1)
+				/ baseSuperBlock.blockInGroup;
 		blockSize = 1024 << baseSuperBlock.log2BlockSize;
 		// The group descriptor table starts in the block after the superblock:
 		// block 2 for 1 KiB blocks, block 1 otherwise.

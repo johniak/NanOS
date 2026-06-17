@@ -19,6 +19,10 @@ BINFOLDER=bin/
 IMAGE_GRUB2=disk/image-grub2.img
 # Partition starts at LBA 2048 (1MiB offset)
 IMAGE_GRUB2_PART=$(IMAGE_GRUB2)?offset=1048576
+# x86_64 staged GRUB disk image (Plan 5): a separate image carrying the staged ELF64 kernel
+# + an ext4 partition for /disks/main. Same partition layout/offset as the i686 image.
+IMAGE64_GRUB2=disk/image64-grub2.img
+IMAGE64_GRUB2_PART=$(IMAGE64_GRUB2)?offset=1048576
 
 DOCKER_IMAGE=nanos-build
 # Build the image for the host's NATIVE architecture (no --platform): the i686-elf cross
@@ -383,6 +387,17 @@ bringup64:
 	@echo "Booting bin/nanos64.iso — expect the staged banner ('NanOS x86_64 -- staged bring-up') on the VGA console."
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -cdrom $(BINFOLDER)nanos64.iso
 
+# x86_64 staged DISK image (Plan 5): build the staged long-mode kernel (now with the MI storage
+# stack linked in) and install it into a GRUB2 ext4 disk image as /nanos/core/kernel64.bin, with
+# a grub.cfg that multiboots it. Unlike bringup64 (rescue ISO) this boots from a real -drive disk
+# whose ext4 partition the staged kernel mounts at /disks/main and reads/writes.
+.PHONY: image64
+image64:
+	$(DOCKER_RUN) make ARCH=x86_64 _image64
+
+run64: image64
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw
+
 else
 # ============================================================================
 # CONTAINER side (Linux): real compilation, image and ISO creation.
@@ -486,7 +501,10 @@ STAGE64_OBJS=loader64.o entry64.o console_x86_64.o bootinfo_x86_64.o \
              MultibootMmap.o kmain.o KernelStage64.o Console.o memory_manager.o Heap.o \
              string_funcs.o icxxabi.o AddressSpace.o mmu_x86_64.o FrameAllocator.o \
              Gdt64.o Idt64.o Interrupt64.o isr64.o irq64.o \
-             cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o
+             cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o \
+             String.o List.o Vfs.o DeviceManager.o ExtFilesystem.o \
+             Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o \
+             ATA64.o Hdd64.o AtaBlockDevice64.o block_x86_64.o
 STAGE64_PATHS=$(addprefix $(STAGE_BIN),$(STAGE64_OBJS))
 
 # Staged compile rules write into bin/stage64/ (NOT bin/). The stage pattern's stem is shorter
@@ -528,6 +546,26 @@ _bringup64:
 	@cp $(BINFOLDER)kernel64.bin /tmp/iso64/boot/kernel64.bin
 	@printf 'set timeout=0\nset default=0\nmenuentry "nanos64" {\n  multiboot /boot/kernel64.bin\n  boot\n}\n' > /tmp/iso64/boot/grub/grub.cfg
 	grub-mkrescue -o $(BINFOLDER)nanos64.iso /tmp/iso64
+
+# Plan 5: build the staged long-mode kernel (storage stack linked in) and install it into a GRUB2
+# ext4 DISK image. Same case-sensitive-copy build as _bringup64, then: (re)create the disk skeleton
+# (create-grub2-image.sh, IMAGE_PATH overridden to the x86_64 image), point grub.cfg at the staged
+# kernel, and write it to /nanos/core/kernel64.bin. The ext4 partition doubles as /disks/main, which
+# the staged kernel mounts at boot — so /boot/grub/grub.cfg is the very file the read self-test reads.
+_image64:
+	@mkdir -p $(STAGE_BIN)
+	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
+	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage --exclude=tests -C /src . | tar -xf - -C $(KSRC) && \
+	 ln -s /src/$(BINFOLDER) $(KSRC)/bin
+	$(MAKE) -C $(KSRC) _stage64
+	IMAGE_PATH=$(IMAGE64_GRUB2) ./scripts/create-grub2-image.sh
+	# GRUB menuentry -> the staged kernel (GRUB multiboot1 loads the ELF64).
+	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel64.bin\n}\n' > /tmp/grub64.cfg
+	printf "rm /boot/grub/grub.cfg\nwrite /tmp/grub64.cfg /boot/grub/grub.cfg\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Install the staged kernel under /nanos/core (so /nanos exists for the write self-test too).
+	-printf "mkdir /nanos\nmkdir /nanos/core\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	printf "rm /nanos/core/kernel64.bin\nwrite $(BINFOLDER)kernel64.bin /nanos/core/kernel64.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	@echo "x86_64 disk image ready: $(IMAGE64_GRUB2)  (boot: $(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw)"
 
 -include $(OBJECTS:.o=.d)
 

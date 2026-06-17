@@ -5,7 +5,9 @@
 
 set -e
 
-IMAGE_PATH="disk/image-grub2.img"
+# IMAGE_PATH may be overridden in the environment (the x86_64 staged image build reuses this
+# same skeleton at a different path, disk/image64-grub2.img); default = the i686 image.
+IMAGE_PATH="${IMAGE_PATH:-disk/image-grub2.img}"
 OFFSET=1048576   # 2048 sectors * 512 bytes = 1MiB
 SECTORS=522240   # (256MB - 1MB) / 512  — grown from 32MB to fit large apps (NetSurf ~7MB + res)
 
