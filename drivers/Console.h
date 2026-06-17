@@ -10,6 +10,7 @@ namespace kernel{
 		static void write(char c);
 		static void write(int d);
 		static void writeHex(int hex);
+		static void writeHex(unsigned long hex);   // 64-bit-capable on LP64 (addresses)
 		static void write(const char* text);
 		static void writeLine(char c);
 		static void writeLine(const char* line);

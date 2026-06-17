@@ -32,6 +32,22 @@ void Console::writeHex(int hex) {
 	write(ss);
 }
 
+// 64-bit-capable hex (the int overload truncates a 64-bit address). Width follows the
+// platform: 32 bits on i686 (ILP32), 64 bits on x86_64 (LP64). Prints "0x" then the value
+// with no leading zeros (a lone 0 still prints "0x0"). Part of the minimal LP64 fix; the
+// full MI sweep is Plan 7.
+void Console::writeHex(unsigned long v) {
+	write("0x");
+	bool started = false;
+	for (int shift = (int) (sizeof(unsigned long) * 8) - 4; shift >= 0; shift -= 4) {
+		unsigned digit = (unsigned) ((v >> shift) & 0xFUL);
+		if (digit != 0 || started || shift == 0) {
+			write((char) (digit < 10 ? '0' + digit : 'a' + digit - 10));
+			started = true;
+		}
+	}
+}
+
 void Console::writeLine(char line) {
 	write(line);
 	write('\n');
