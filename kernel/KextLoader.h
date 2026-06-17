@@ -23,6 +23,6 @@ int loadKext(Vfs* vfs, const char* path);
 // Host-testable core: relocate + bind an in-memory module image (delta derived from the
 // buffer's address vs the header's preferred base) and return its entry. No VFS, no alloc.
 // Returns 0 and *entryOut on success, <0 on error (same codes as NxeLoader::loadImage).
-int loadKextImage(void* buf, unsigned cap, ExportResolver resolve, unsigned* entryOut);
+int loadKextImage(void* buf, unsigned cap, ExportResolver resolve, nxaddr_t* entryOut);
 
 }  // namespace kernel

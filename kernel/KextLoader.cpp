@@ -21,7 +21,7 @@ static const int MAXKEXT = 16;
 static KextModule g_mods[MAXKEXT];
 static int g_modCount = 0;
 
-int loadKextImage(void* buf, unsigned cap, ExportResolver resolve, unsigned* entryOut) {
+int loadKextImage(void* buf, unsigned cap, ExportResolver resolve, nxaddr_t* entryOut) {
 	if (cap < sizeof(NxHeader))
 		return -1;
 	NxHeader* h = (NxHeader*) buf;
@@ -55,7 +55,7 @@ int loadKext(Vfs* vfs, const char* path) {
 		delete[] raw;
 		return -1;
 	}
-	unsigned entry = 0;
+	nxaddr_t entry = 0;
 	int rc = loadKextImage(buf, cap, kernelResolveSym, &entry);
 	if (rc < 0) {
 		delete[] raw;

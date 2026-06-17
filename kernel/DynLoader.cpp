@@ -63,7 +63,7 @@ LibSet* g_libs = 0;
 void* resolveSym(const char* name, const char* lib) {
 	return (void*) (g_libs ? g_libs->find(name, lib) : 0);
 }
-void onExport(void* ctx, const char* name, unsigned addr) {
+void onExport(void* ctx, const char* name, nxaddr_t addr) {
 	((SymTable*) ctx)->add(name, addr);
 }
 
@@ -143,7 +143,7 @@ int ensureLib(const char* name) {
 		delete[] buf;
 		return -1;
 	}
-	unsigned entry = 0;
+	nxaddr_t entry = 0;
 	rc = NxeLoader::loadImage(buf, cap, base - hdr.loadBase, resolveSym, &entry, onExport, table);
 	if (rc == 0)
 		arch::archLoadModule(g_space, base, buf, imageBytes);
@@ -154,7 +154,7 @@ int ensureLib(const char* name) {
 }  // namespace
 
 int dynLoadProgram(Vfs* vfs, void* exeImage, unsigned exeCap,
-		arch::AddressSpace* space, unsigned* entryOut) {
+		arch::AddressSpace* space, nxaddr_t* entryOut) {
 	LibSet* libs = new LibSet();
 	libs->init();
 	g_libs = libs;

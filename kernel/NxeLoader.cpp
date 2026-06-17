@@ -3,11 +3,12 @@
 
 namespace kernel {
 
-// True if [abs, abs+sz) lies within the loaded image [base, base+len).
-static bool inImage(unsigned abs, unsigned sz, unsigned base, unsigned len) {
+// True if [abs, abs+sz) lies within the loaded image [base, base+len). Addresses are
+// nxaddr_t (64-bit on x86_64), so the arithmetic never truncates a 64-bit fixup site.
+static bool inImage(nxaddr_t abs, nxaddr_t sz, nxaddr_t base, unsigned len) {
 	if (abs < base)
 		return false;
-	unsigned off = abs - base;
+	nxaddr_t off = abs - base;
 	return off + sz <= len && off + sz >= off;
 }
 
@@ -15,13 +16,13 @@ int NxeLoader::forEachNeeded(const void* image, unsigned len, NeededFn fn, void*
 	if (len < sizeof(NxHeader))
 		return -1;
 	const NxHeader* h = (const NxHeader*) image;
-	if (h->magic != NX_MAGIC)
+	if (h->magic != NX_MAGIC || h->version != NX_VERSION)
 		return -1;
 	const char* img = (const char*) image;
-	unsigned base = h->loadBase;
+	nxaddr_t base = h->loadBase;
 	if (!h->neededCount)
 		return 0;
-	if (!inImage(h->neededTable, h->neededCount * sizeof(NxNeeded), base, len))
+	if (!inImage(h->neededTable, (nxaddr_t) h->neededCount * sizeof(NxNeeded), base, len))
 		return -3;
 	const NxNeeded* nd = (const NxNeeded*) (img + (h->neededTable - base));
 	for (unsigned i = 0; i < h->neededCount; i++) {
@@ -33,32 +34,36 @@ int NxeLoader::forEachNeeded(const void* image, unsigned len, NeededFn fn, void*
 	return 0;
 }
 
-int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
-		ExportResolver resolve, unsigned* entryOut, ExportFn onExport, void* ctx) {
+int NxeLoader::loadImage(void* image, unsigned len, nxaddr_t loadDelta,
+		ExportResolver resolve, nxaddr_t* entryOut, ExportFn onExport, void* ctx) {
 	if (len < sizeof(NxHeader))
 		return -1;
 	NxHeader* h = (NxHeader*) image;
-	if (h->magic != NX_MAGIC)
+	// Reject anything that is not our exact format/version (clean cut: the x86_64 loader
+	// never reads a v3 i386 image, and vice versa — addresses would be the wrong width).
+	if (h->magic != NX_MAGIC || h->version != NX_VERSION)
 		return -1;
 	char* img = (char*) image;
-	unsigned base = h->loadBase;
+	nxaddr_t base = h->loadBase;
 
-	// 1) Base relocations: add the load delta to each listed absolute (R_386_32) word.
+	// 1) Base relocations: each listed absolute is an R_X86_64_64 (8-byte) word on x86_64,
+	//    R_386_32 (4-byte) on i386 — nxaddr_t follows the arch, so one line serves both.
 	//    A delta of 0 (loaded at the preferred base) makes this a no-op.
 	if (h->relocCount) {
-		if (!inImage(h->relocTable, h->relocCount * sizeof(NxReloc), base, len))
+		if (!inImage(h->relocTable, (nxaddr_t) h->relocCount * sizeof(NxReloc), base, len))
 			return -3;
 		NxReloc* rel = (NxReloc*) (img + (h->relocTable - base));
 		for (unsigned i = 0; i < h->relocCount; i++) {
-			if (!inImage(rel[i].off, 4, base, len))
+			if (!inImage(rel[i].off, sizeof(nxaddr_t), base, len))
 				return -3;
-			*(unsigned*) (img + (rel[i].off - base)) += loadDelta;
+			*(nxaddr_t*) (img + (rel[i].off - base)) += loadDelta;
 		}
 	}
 
-	// 2) Bind imports: resolve each name and patch its IAT slot.
+	// 2) Bind imports: resolve each name and patch its IAT slot (a function pointer — 8
+	//    bytes on x86_64, 4 on i386).
 	if (h->importCount) {
-		if (!inImage(h->importTable, h->importCount * sizeof(NxImport), base, len))
+		if (!inImage(h->importTable, (nxaddr_t) h->importCount * sizeof(NxImport), base, len))
 			return -3;
 		NxImport* imp = (NxImport*) (img + (h->importTable - base));
 		for (unsigned i = 0; i < h->importCount; i++) {
@@ -79,7 +84,7 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 	// 3) Exports: relocate each exported address and report it. Done before bss-zeroing,
 	//    since the export table/strings can share the bss vaddr range.
 	if (h->exportCount) {
-		if (!inImage(h->exportTable, h->exportCount * sizeof(NxExport), base, len))
+		if (!inImage(h->exportTable, (nxaddr_t) h->exportCount * sizeof(NxExport), base, len))
 			return -3;
 		NxExport* ex = (NxExport*) (img + (h->exportTable - base));
 		for (unsigned i = 0; i < h->exportCount; i++) {
@@ -96,7 +101,7 @@ int NxeLoader::loadImage(void* image, unsigned len, unsigned loadDelta,
 	if (h->bssEnd > h->bssStart) {
 		if (!inImage(h->bssStart, h->bssEnd - h->bssStart, base, len))
 			return -3;
-		memset(img + (h->bssStart - base), 0, h->bssEnd - h->bssStart);
+		memset(img + (h->bssStart - base), 0, (size_t) (h->bssEnd - h->bssStart));
 	}
 
 	if (entryOut)

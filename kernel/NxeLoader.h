@@ -19,8 +19,9 @@ namespace kernel {
 // Resolve an import to an address (0 = not found). `lib` names the source library the
 // import declared (per-DLL namespace); "" means resolve flat across all modules.
 typedef void* (*ExportResolver)(const char* name, const char* lib);
-// Visit one exported symbol (name valid only for the duration of the call).
-typedef void (*ExportFn)(void* ctx, const char* name, unsigned addr);
+// Visit one exported symbol (name valid only for the duration of the call). The address is
+// nxaddr_t (64-bit on x86_64, 32-bit on i386) — it follows the module's address width.
+typedef void (*ExportFn)(void* ctx, const char* name, nxaddr_t addr);
 // Visit one needed-library name (valid only for the duration of the call).
 typedef void (*NeededFn)(void* ctx, const char* name);
 
@@ -38,8 +39,8 @@ public:
 	// preferred base. Applies relocations, binds imports via `resolve` (may be 0 when
 	// importCount==0), visits each export (relocated address) via `onExport` (may be 0),
 	// then zeroes bss. Returns 0 and *entryOut on success, <0 on error.
-	static int loadImage(void* image, unsigned len, unsigned loadDelta,
-			ExportResolver resolve, unsigned* entryOut,
+	static int loadImage(void* image, unsigned len, nxaddr_t loadDelta,
+			ExportResolver resolve, nxaddr_t* entryOut,
 			ExportFn onExport = 0, void* ctx = 0);
 };
 

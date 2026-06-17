@@ -11,6 +11,7 @@
  * kernel/Exec.cpp.
  */
 #pragma once
+#include "NxFormat.h"   // nxaddr_t (module address width: 64-bit on x86_64, 32-bit on i386)
 
 namespace arch { struct AddressSpace; }
 
@@ -81,6 +82,6 @@ private:
 // then bind the executable's imports against it. Returns 0 and *entryOut (the relocated
 // entry) on success, <0 on error. Caller maps the executable image itself (archLoadUser).
 int dynLoadProgram(Vfs* vfs, void* exeImage, unsigned exeCap,
-		arch::AddressSpace* space, unsigned* entryOut);
+		arch::AddressSpace* space, nxaddr_t* entryOut);
 
 }

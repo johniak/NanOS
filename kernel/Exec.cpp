@@ -53,7 +53,7 @@ static const unsigned STAGE_CAP  = 0x800000;   // 8 MiB: matches the per-process
 // applying relocations + zeroing bss. EXEs load at their preferred base, so the delta is
 // 0 and relocation is a no-op. Returns the entry point, or <0 on error. Caller must be on
 // a directory where the staging window 0x800000 is identity-mapped.
-static int loadStaged(unsigned* entryOut) {
+static int loadStaged(nxaddr_t* entryOut) {
 	char* image = (char*) STAGE_BASE;
 	return NxeLoader::loadImage(image, STAGE_CAP, 0, 0, entryOut);   // delta 0, no imports
 }
@@ -71,7 +71,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	if (vfs->read(p, st.size, 0, image) < 0)
 		return -1;
 	NxHeader* h = (NxHeader*) image;
-	unsigned entry = 0;
+	nxaddr_t entry = 0;
 	// A program that imports symbols / needs shared libraries goes through the dynamic
 	// linker (loads its .ndl deps into the new space first); otherwise the simple path.
 	arch::AddressSpace* space = arch::mmuCreateAddressSpace();
@@ -138,7 +138,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		return -1;
 	}
 	NxHeader* h = (NxHeader*) image;
-	unsigned entry = 0;
+	nxaddr_t entry = 0;
 
 	// Load into a fresh space (dynamic linker if the image imports/needs libraries),
 	// then drop the caller's old image.

@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "NxeLoader.h"
 #include <cstring>
+#include <cstdint>
 
 // Kernel modules (.nkext) load through the SAME engine as .nxe/.ndl (NxeLoader::loadImage),
 // but with two properties the existing nxeloader tests don't exercise: they load at a
@@ -36,9 +37,10 @@ static void buildKext(char* buf, unsigned libOff) {
 	h->bssEnd = A(0x160);                  // 32-byte bss
 	h->importTable = A(0x80); h->importCount = 1;
 	h->relocTable = A(0xA0);  h->relocCount = 1;
-	// reloc: fix up the word at 0xB0, which holds an absolute module address (self-pointer).
-	*(unsigned*) (buf + 0xA0) = A(0xB0);   // NxReloc.off
-	*(unsigned*) (buf + 0xB0) = A(0xB0);   // the relocated word (preferred-base value)
+	// reloc: fix up the 8-byte word at 0xB0, which holds an absolute module address
+	// (self-pointer); the R_X86_64_64 fixup site is the full 64-bit word.
+	*(uint64_t*) (buf + 0xA0) = A(0xB0);   // NxReloc.off
+	*(uint64_t*) (buf + 0xB0) = A(0xB0);   // the relocated word (preferred-base value)
 	// import: knx_register_irq, slot at 0xC0, source library at libOff (0 = flat).
 	NxImport* imp = (NxImport*) (buf + 0x80);
 	imp[0].nameOff = A(0xD0);
@@ -52,10 +54,10 @@ static void buildKext(char* buf, unsigned libOff) {
 TEST_CASE("nkext loads at a non-zero delta: relocation shifts module addresses by delta") {
 	char buf[512];
 	buildKext(buf, A(0xE8));               // import scoped to "kernel"
-	unsigned entry = 0;
+	nxaddr_t entry = 0;
 	REQUIRE(NxeLoader::loadImage(buf, 512, DELTA, kernelResolve, &entry) == 0);
 	CHECK(entry == A(0x40) + DELTA);                     // entry relocated
-	CHECK(*(unsigned*) (buf + 0xB0) == A(0xB0) + DELTA); // self-pointer relocated
+	CHECK(*(uint64_t*) (buf + 0xB0) == A(0xB0) + DELTA); // self-pointer relocated (8-byte)
 	CHECK(*(void**) (buf + 0xC0) == (void*) 0x77770000); // kernel import bound
 	CHECK(buf[0x140] == 0);                              // bss zeroed
 	CHECK(buf[0x15F] == 0);
@@ -64,7 +66,7 @@ TEST_CASE("nkext loads at a non-zero delta: relocation shifts module addresses b
 TEST_CASE("nkext import scoped to the wrong/flat namespace does NOT resolve to a kernel symbol") {
 	char buf[512];
 	buildKext(buf, 0);                     // flat import (lib == ""), not "kernel"
-	unsigned entry = 0;
+	nxaddr_t entry = 0;
 	// The resolver only answers for lib=="kernel", so a flat import is unresolved -> -2.
 	CHECK(NxeLoader::loadImage(buf, 512, DELTA, kernelResolve, &entry) == -2);
 }

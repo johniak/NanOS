@@ -1260,7 +1260,11 @@ endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
 HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iarch/x86/boot $(ARCH_MM_INC) -Ikext/mouse -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue
-HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage
+# The host is LP64 (arm64/x86_64) but does not define __x86_64__, so force the v4 64-bit
+# .nx format (nxaddr_t = uint64_t) across the whole host test build. This exercises the
+# x86_64 loader path (R_X86_64_64 fixups, 8-byte IAT slots) and keeps every TU's view of
+# NxFormat.h consistent (NxeLoader.cpp + its test must agree on the loadImage signature).
+HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage -DNX_FORCE64=1
 TEST_BIN=/tmp/nanos_tests
 TEST_SRCS=$(filter-out $(ARCH_PAGING_TESTS_EXCL),$(wildcard tests/*.cpp))
 # Modules under test (grown as layers are added). Header-only modules contribute
