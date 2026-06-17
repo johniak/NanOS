@@ -490,4 +490,7 @@ do krytycznej ścieżki A.
 7. `nano-packages`: utrwalić baseline gałęzi `feat/nap-mvp`, spisać kontrakt z NanOS
    (`NAP_CLIENT`, ścieżki `/disks/main`, default `NAP_REPO`), dodać plan integracji
    x86_64 targetu po Bramce Q2.
-8. Per-strumień: rozpisać Q1 na zadania TDD bite-sized (osobne plany w `plans/`).
+8. ✅ ZROBIONE (2026-06-16): cały backbone x86_64 (nie tylko Q1) rozpisany na pełne plany TDD
+   bite-sized — `plans/2026-06-15-x86_64-plan-{2..8}-*.md` (72 taski / 327 kroków): Plan 2 boot+konsola+MI
+   kmain, 3 paging 4-poziomowy, 4 GDT/IDT/TSS+przerwania, 5 storage, 6 syscalle+userland+.nxe v4,
+   7 sprzątanie MI LP64, 8 SDK `x86_64-nanos`+porty. Plan 1 (fundament) już wykonany.
