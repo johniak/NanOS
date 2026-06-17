@@ -10,23 +10,47 @@
 #include "Kernel.h"
 #include "Console.h"
 #include "memory_manager.h"
+#include "FrameAllocator.h"
 #include <arch/console.h>
 #include <arch/bootinfo.h>
+#include <arch/mmu.h>
 
 namespace kernel {
 
-// A small scratch heap inside the loader's 1 GiB identity map (the kernel lives at 1 MiB and
-// is tiny). 16 MiB base, 1 MiB arena — comfortably within QEMU's 512 MiB and the identity map.
-static const unsigned long STAGE_HEAP_BASE = 0x01000000UL;   // 16 MiB
-static const unsigned      STAGE_HEAP_SIZE = 0x00100000U;    // 1 MiB
+// bootMemForEachUsable callback: open every usable physical RAM range in the frame pool.
+// File-scope static (the contract's UsableRangeCb is a (void* ctx, base, len) function ptr,
+// not a closure).
+static void stageMarkUsable(void*, uint64_t base, uint64_t len) {
+	kernel::g_frames.markRangeFree((uint32_t) base, (uint32_t) len);
+}
 
 void Kernel::start() {
 	Console::clearScreen();
+
+	// --- Plan 3: bring up the kernel's OWN 4-level paging BEFORE the banner, so the banner
+	// proves the kernel survived the CR3 switch. Build the physical frame allocator from the
+	// Multiboot map, then hand it to the arch MMU which builds the kernel PML4 (identity-maps
+	// all RAM + enables NX), carves a real kernel heap off the top of RAM, and loads CR3 —
+	// switching off the Plan-1 temporary 1 GiB map onto our own page tables.
+	// mmuInitKernel ends with `sti`, but this staged bring-up has no IDT yet (Plan 4 installs
+	// the real one). Mask every PIC IRQ first so enabling interrupts can't vector a PIT/keyboard
+	// IRQ through the empty IDT and triple-fault — the kernel then idles with IF=1 but no live
+	// IRQ source. (GRUB leaves the PIC unremapped, so IRQ0 would otherwise hit vector 0x08.)
+	__asm__ __volatile__("outb %0, $0x21" :: "a"((uint8_t) 0xFF));
+	__asm__ __volatile__("outb %0, $0xA1" :: "a"((uint8_t) 0xFF));
+
+	uint32_t topOfRam = (uint32_t) arch::bootMemTop();
+	kernel::g_frames.init(topOfRam);
+	arch::bootMemForEachUsable(0, stageMarkUsable);
+	arch::mmuInitKernel(kernel::g_frames, topOfRam);
+	// CR3 now points at the kernel's own 4-level PML4 (NX enabled), not the Plan-1 temp map.
+
 	Console::writeLine("");
-	Console::writeLine("    NanOS x86_64  --  staged bring-up (Plan 2)");
+	Console::writeLine("    NanOS x86_64  --  staged bring-up (Plan 3)");
 	Console::writeLine("");
 	Console::writeLine("[ OK ] long mode + MI kmain() reached");
 	Console::writeLine("[ OK ] MI Console formatting over the x86_64 VGA sink");
+	Console::writeLine("[ OK ] kernel PML4 active (4-level paging + NX)");
 
 	// Memory map parsed by bootinfo_x86_64 from the Multiboot1 info (64-bit walk).
 	unsigned long top = (unsigned long) arch::bootMemTop();
@@ -51,9 +75,8 @@ void Kernel::start() {
 		Console::writeLine("  Framebuffer: none (VGA text mode)");
 	}
 
-	// Exercise the MI byte heap under LP64 (8-byte pointers): lay out the arena, allocate,
-	// print the (64-bit-capable) pointer, free.
-	heapInit((void*) STAGE_HEAP_BASE, STAGE_HEAP_SIZE);
+	// Exercise the REAL kernel byte heap that mmuInitKernel carved off the top of RAM (no
+	// separate staging arena now): allocate, print the (64-bit-capable) pointer, free.
 	void* p = malloc(128);
 	Console::write("  heap: malloc(128) -> ");
 	Console::writeHex((unsigned long) p);

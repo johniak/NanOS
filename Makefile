@@ -462,7 +462,7 @@ $(BINFOLDER)%.o: %.S
 STAGE_BIN=$(BINFOLDER)stage64/
 STAGE64_OBJS=loader64.o entry64.o console_x86_64.o bringup_stubs64.o bootinfo_x86_64.o \
              MultibootMmap.o kmain.o KernelStage64.o Console.o memory_manager.o Heap.o \
-             string_funcs.o icxxabi.o
+             string_funcs.o icxxabi.o AddressSpace.o mmu_x86_64.o FrameAllocator.o
 STAGE64_PATHS=$(addprefix $(STAGE_BIN),$(STAGE64_OBJS))
 
 # Staged compile rules write into bin/stage64/ (NOT bin/). The stage pattern's stem is shorter
