@@ -18,7 +18,13 @@ align 4
 section .bss
 align 16
 stack_bottom:
-    resb 16384
+    ; 1 MiB kernel stack. The 16 KiB it used to be overflowed: the MI ext driver's
+    ; mount/read/write paths recurse (extent/indirect-block trees, path resolution) with
+    ; several 4 KiB block buffers live per frame, and 64-bit frames are larger than i686's,
+    ; so the chain blew past 16 KiB and ran into .data (clobbering the VGA `videoram`
+    ; pointer just below stack_bottom -> silent output loss, or a return address -> hang).
+    ; The i686 loader reserves ~1.5 MiB for the same reason; match that headroom here.
+    resb 1048576
 stack_top:
 align 4096
 p4_table:                       ; PML4
