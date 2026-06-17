@@ -23,51 +23,72 @@
  */
 #ifndef NXFORMAT_H
 #define NXFORMAT_H
+#include <stdint.h>
 
 #define NX_MAGIC   0x0045584E   /* 'N','X','E',0 little-endian */
-#define NX_VERSION 3
 #define NX_FLAG_DLL 1u          /* header.flags bit 0: module is a shared library */
+
+/* Address width is machine-dependent. On x86_64 (and under -DNX_FORCE64 for the host-
+ * compiled mknx64 / unit tests) the module's absolute addresses are 64-bit and the format
+ * is version 4; on i386 they stay 32-bit and the format is version 3. This is a clean cut
+ * (the x86_64 loader never reads a v3 image at runtime), and i686 keeps building/working
+ * unchanged through the whole transition. Counts are not addresses, so they are a fixed
+ * uint32_t on both sides. */
+#if defined(__x86_64__) || defined(NX_FORCE64)
+#define NX_VERSION 4
+typedef uint64_t nxaddr_t;      /* absolute module addresses are 64-bit on x86_64 */
+#else
+#define NX_VERSION 3
+typedef uint32_t nxaddr_t;      /* i386: 32-bit, identical layout to the historical format */
+#endif
 
 /* An imported symbol: resolve `nameOff` against the exports of the module named `libOff`
  * (per-DLL namespace, the Windows-PE model), then store the address into the IAT slot at
  * `slotAddr`. `libOff` == 0 means "no named library" — resolve flat across all modules. */
 typedef struct {
-	unsigned nameOff;    /* abs address of the import's NUL-terminated name */
-	unsigned slotAddr;   /* abs address of the IAT slot (a function pointer) to patch */
-	unsigned libOff;     /* abs address of the source library's name, or 0 = flat */
+	nxaddr_t nameOff;    /* abs address of the import's NUL-terminated name */
+	nxaddr_t slotAddr;   /* abs address of the IAT slot (a function pointer) to patch */
+	nxaddr_t libOff;     /* abs address of the source library's name, or 0 = flat */
 } NxImport;
 
 /* An exported symbol: `nameOff` is callable at address `addr` once the module is loaded
  * (and relocated). */
 typedef struct {
-	unsigned nameOff;    /* abs address of the export's NUL-terminated name */
-	unsigned addr;       /* abs address of the exported symbol */
+	nxaddr_t nameOff;    /* abs address of the export's NUL-terminated name */
+	nxaddr_t addr;       /* abs address of the exported symbol */
 } NxExport;
 
-/* A base relocation: the 32-bit word at `off` holds an absolute address; the loader adds
- * the load delta to it when the module loads at a non-preferred base. */
+/* A base relocation: the word at `off` holds an absolute address (R_386_32 on i386,
+ * R_X86_64_64 on x86_64); the loader adds the load delta to it when the module loads at a
+ * non-preferred base. */
 typedef struct {
-	unsigned off;        /* abs address of the 32-bit word to fix up */
+	nxaddr_t off;        /* abs address of the word to fix up */
 } NxReloc;
 
 /* A needed shared library: load the .ndl named `nameOff` before resolving imports. */
 typedef struct {
-	unsigned nameOff;    /* abs address of the needed library's NUL-terminated name */
+	nxaddr_t nameOff;    /* abs address of the needed library's NUL-terminated name */
 } NxNeeded;
 
+/* Padding (`_pad`/`_pN`) keeps the 8-byte address fields naturally aligned on x86_64 and
+ * gives a deterministic layout that mknx and the loader must fill identically. On i686
+ * nxaddr_t == uint32_t, so the layout differs from the historical v3 (the pads were added)
+ * — that is fine: i686 mknx and the loader are recompiled from this same header (in-build
+ * agreement, not compatibility with on-disk binaries, which we rebuild anyway). */
 typedef struct {
-	unsigned magic;
-	unsigned version;
-	unsigned flags;        /* NX_FLAG_* */
-	unsigned entry;        /* abs entry address (.nxe only) */
-	unsigned loadBase;     /* preferred base the module was linked at */
-	unsigned imageSize;    /* bytes stored in the file (header + code + data + tables) */
-	unsigned bssStart;     /* abs; zeroed by the loader */
-	unsigned bssEnd;
-	unsigned importTable;  unsigned importCount;   /* NxImport[]  */
-	unsigned exportTable;  unsigned exportCount;   /* NxExport[]  */
-	unsigned relocTable;   unsigned relocCount;    /* NxReloc[]   */
-	unsigned neededTable;  unsigned neededCount;   /* NxNeeded[]  */
+	uint32_t magic;
+	uint32_t version;
+	uint32_t flags;        /* NX_FLAG_* */
+	uint32_t _pad;         /* keep entry 8-aligned on x86_64 */
+	nxaddr_t entry;        /* abs entry address (.nxe only) */
+	nxaddr_t loadBase;     /* preferred base the module was linked at */
+	nxaddr_t imageSize;    /* bytes stored in the file (header + code + data + tables) */
+	nxaddr_t bssStart;     /* abs; zeroed by the loader */
+	nxaddr_t bssEnd;
+	nxaddr_t importTable;  uint32_t importCount;  uint32_t _p0;   /* NxImport[] */
+	nxaddr_t exportTable;  uint32_t exportCount;  uint32_t _p1;   /* NxExport[] */
+	nxaddr_t relocTable;   uint32_t relocCount;   uint32_t _p2;   /* NxReloc[]  */
+	nxaddr_t neededTable;  uint32_t neededCount;  uint32_t _p3;   /* NxNeeded[] */
 } NxHeader;
 
 #endif /* NXFORMAT_H */
