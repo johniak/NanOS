@@ -510,7 +510,8 @@ STAGE64_OBJS=loader64.o entry64.o console_x86_64.o bootinfo_x86_64.o \
              cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o \
              String.o List.o Vfs.o DeviceManager.o ExtFilesystem.o \
              Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o \
-             ATA64.o Hdd64.o AtaBlockDevice64.o block_x86_64.o
+             ATA64.o Hdd64.o AtaBlockDevice64.o block_x86_64.o \
+             syscall_entry64.o usermode_x86_64.o nxjmp64.o NxeLoader.o
 STAGE64_PATHS=$(addprefix $(STAGE_BIN),$(STAGE64_OBJS))
 
 # Staged compile rules write into bin/stage64/ (NOT bin/). The stage pattern's stem is shorter
@@ -571,6 +572,11 @@ _image64:
 	# Install the staged kernel under /nanos/core (so /nanos exists for the write self-test too).
 	-printf "mkdir /nanos\nmkdir /nanos/core\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	printf "rm /nanos/core/kernel64.bin\nwrite $(BINFOLDER)kernel64.bin /nanos/core/kernel64.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Build + install the 64-bit init.nxe (PID 1): the staged kernel loads it from here and runs
+	# it in ring 3. Built in /src directly (the minimal freestanding userland needs no KSRC copy:
+	# no source includes <string.h>, so the case-insensitivity trap does not apply).
+	$(MAKE) ARCH=x86_64 $(BINFOLDER)init.nxe
+	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	@echo "x86_64 disk image ready: $(IMAGE64_GRUB2)  (boot: $(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw)"
 
 -include $(OBJECTS:.o=.d)
