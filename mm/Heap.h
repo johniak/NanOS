@@ -8,14 +8,17 @@
  *
  * Design: boundary-tag blocks (8-byte header + 8-byte footer, both holding size|used)
  * with an explicit doubly-linked free list (first-fit), splitting on alloc and
- * coalescing with both neighbours on free. All internal links are 32-bit OFFSETS from
- * the arena base (not raw pointers), so the same code is correct on the 32-bit kernel
- * and the 64-bit host test harness. Payloads are 8-byte aligned.
+ * coalescing with both neighbours on free. All internal links remain 32-bit OFFSETS
+ * from the arena base (not raw pointers) — kernel arenas never exceed 4 GiB, so this is
+ * a deliberate, documented bound; the same code is correct on the 32-bit kernel and the
+ * 64-bit host test harness. The PUBLIC size API is size_t-wide so an over-large request
+ * is rejected (OOM) rather than silently truncated. Payloads are 8-byte aligned.
  *
  * Pure logic over a caller-supplied arena -> host-testable (tests/test_memory_manager).
  */
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 namespace kernel {
 
@@ -23,21 +26,21 @@ class Heap {
 public:
 	// Lay the arena out as one big free block. base/size need not be aligned; the heap
 	// uses the 8-aligned sub-range. Safe to call once before any alloc.
-	void init(void* base, unsigned size);
+	void init(void* base, size_t size);
 
-	void* alloc(unsigned size);            // 0 on out-of-memory
+	void* alloc(size_t size);              // 0 on out-of-memory
 	void free(void* ptr);                  // ignores 0 and double-frees
-	void* realloc(void* ptr, unsigned size);
+	void* realloc(void* ptr, size_t size);
 
-	unsigned freeBytes() const;            // total free payload bytes (for tests/stats)
-	unsigned totalBytes() const { return m_end; }   // arena size (for /proc/meminfo)
+	size_t freeBytes() const;              // total free payload bytes (for tests/stats)
+	size_t totalBytes() const { return m_end; }   // arena size (for /proc/meminfo)
 
 	// Heap integrity: each block carries a footer mirroring its header (size|used), so a write
 	// that runs past a block — or into a freed block's free-list links — desyncs them. We check
 	// the boundary tags on every alloc/free; on a mismatch we call this hook (the kernel wires it
 	// to a panic that prints the block + halts) instead of corrupting on, turning a silent
 	// heap-smash into a clean, located failure. Null (host tests) = the check is a no-op.
-	typedef void (*CorruptFn)(const char* what, unsigned off, unsigned hdr, unsigned ftr);
+	typedef void (*CorruptFn)(const char* what, uintptr_t off, uintptr_t hdr, uintptr_t ftr);
 	static void onCorruption(CorruptFn fn) { s_corrupt = fn; }
 
 private:

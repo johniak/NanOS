@@ -79,11 +79,14 @@ void Heap::flRemove(unsigned off) {
 	if (n != NIL) setFlPrev(n, p);
 }
 
-void Heap::init(void* base, unsigned size) {
+void Heap::init(void* base, size_t size) {
 	uintptr_t raw = (uintptr_t) base;
 	uintptr_t start = (raw + 7u) & ~(uintptr_t) 7u;   // 8-align the arena start
 	unsigned lost = (unsigned) (start - raw);
-	unsigned usable = (size > lost) ? (size - lost) : 0;
+	size_t avail = (size > lost) ? (size - lost) : 0;
+	if (avail > 0xFFFFFFF8u)                            // arena offsets are 32-bit (see Heap.h): cap
+		avail = 0xFFFFFFF8u;
+	unsigned usable = (unsigned) avail;
 	usable &= ~7u;                                     // whole 8-byte units
 	m_base = (char*) start;
 	m_end = usable;
@@ -116,10 +119,13 @@ bool Heap::checkCanary(unsigned off) const {
 	return true;
 }
 
-void* Heap::alloc(unsigned size) {
-	if (size == 0)
-		size = 1;
-	unsigned userSize = size;
+void* Heap::alloc(size_t size) {
+	unsigned size32 = (unsigned) size;            // arena offsets are 32-bit by design (see Heap.h)
+	if ((size_t) size32 != size)
+		return 0;                                 // request too large for a 32-bit-offset arena -> OOM
+	if (size32 == 0)
+		size32 = 1;
+	unsigned userSize = size32;
 	unsigned need = roundUp8(userSize + REDZONE);      // room for the user data + its red-zone
 	if (need < MIN_PAYLOAD)
 		need = MIN_PAYLOAD;
@@ -183,33 +189,36 @@ void Heap::free(void* ptr) {
 	flInsert(o);
 }
 
-void* Heap::realloc(void* ptr, unsigned size) {
+void* Heap::realloc(void* ptr, size_t size) {
 	if (!ptr)
 		return alloc(size);
 	if (size == 0) {
 		free(ptr);
 		return 0;
 	}
+	unsigned size32 = (unsigned) size;                 // arena offsets are 32-bit by design (see Heap.h)
+	if ((size_t) size32 != size)
+		return 0;                                      // request too large -> OOM
 	unsigned o = (unsigned) ((char*) ptr - m_base - HDR);
 	if (!checkBlock(o))
 		return 0;
 	checkCanary(o);
 	unsigned oldSize = *word(o + 4);
 	unsigned cap = blkSize(o) - OVERHEAD - REDZONE;    // usable bytes (the red-zone is excluded)
-	if (size <= cap) {                                 // fits in place: move the canary to the new end
-		layCanary(o, size);
+	if (size32 <= cap) {                               // fits in place: move the canary to the new end
+		layCanary(o, size32);
 		return ptr;
 	}
 	void* np = alloc(size);
 	if (!np)
 		return 0;
-	memcpy(np, ptr, oldSize < size ? oldSize : size);  // preserve min(old,new) user bytes
+	memcpy(np, ptr, oldSize < size32 ? oldSize : size32);  // preserve min(old,new) user bytes
 	free(ptr);
 	return np;
 }
 
-unsigned Heap::freeBytes() const {
-	unsigned total = 0;
+size_t Heap::freeBytes() const {
+	size_t total = 0;
 	for (unsigned o = m_freeHead; o != NIL; o = flNext(o))
 		total += blkSize(o) - OVERHEAD;
 	return total;

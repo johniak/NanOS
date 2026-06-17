@@ -104,6 +104,17 @@ TEST_CASE("free(NULL) and double-free are ignored (no corruption)") {
 	delete h;
 }
 
+TEST_CASE("Heap size API is size_t-wide (no 32-bit truncation of the request)") {
+	static char arena[1 << 20];
+	kernel::Heap h; h.init(arena, sizeof arena);
+	// A request whose low 32 bits are small but which is huge as size_t must NOT wrap to a
+	// tiny allocation. On a 1 MiB arena it simply fails (returns 0), never succeeds by truncation.
+	size_t huge = (size_t) 1 << 40;            // 1 TiB; (unsigned) huge == 0
+	CHECK(h.alloc(huge) == nullptr);
+	// totalBytes/freeBytes are size_t and report the real arena, not a narrowed value.
+	CHECK(h.totalBytes() >= (sizeof arena) - 64);
+}
+
 TEST_CASE("alloc returns 0 when the arena is exhausted") {
 	Heap* h = fresh(4096);
 	void* big = h->alloc(8192);         // larger than the arena
