@@ -373,7 +373,7 @@ check-arch:
 .PHONY: bringup64
 bringup64:
 	$(DOCKER_RUN) make ARCH=x86_64 _bringup64
-	@echo "Booting bin/nanos64.iso — expect 'NanOS x86_64 long mode OK' on the VGA console."
+	@echo "Booting bin/nanos64.iso — expect the staged banner ('NanOS x86_64 -- staged bring-up') on the VGA console."
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -cdrom $(BINFOLDER)nanos64.iso
 
 else
@@ -453,18 +453,48 @@ $(BINFOLDER)%.o: %.s
 $(BINFOLDER)%.o: %.S
 	nasm -f $(ASM_FMT) $< -o $@
 
-# Minimal long-mode bring-up link (Plan 1): ONLY the boot trampoline + 64-bit C entry,
-# bypassing MI_SOURCES. loader.S / entry64.cpp don't include <string.h>, so they compile
-# directly in /src without the case-insensitive-FS copy dance. Explicit recipe with a
-# distinct loader64.o name (NOT the generic loader.o) so the x86_64 elf64 object never
-# collides with / poisons the i686 bin/loader.o in the shared bin/ dir. Then wrap the
-# ELF64 in a tiny GRUB rescue ISO (multiboot1 menuentry) — the boot path QEMU -cdrom
-# uses, since QEMU's own -kernel multiboot loader can't take an ELF64 image.
+# ---- x86_64 Plan 2 staged bring-up ------------------------------------------------------
+# The staged image links a MINIMAL slice of MI + x86_64 MD (Console + memory_manager +
+# bootinfo + a staged Kernel::start) — NOT the full kernel. Its objects are elf64 and MUST NOT
+# share bin/ with the i686 elf32 objects of the SAME basename (Console.o, memory_manager.o,
+# string_funcs.o, kmain.o, ...), so they build into a SEPARATE dir bin/stage64/. That also
+# sidesteps stale-mtime format mismatches when switching ARCH between full builds.
+STAGE_BIN=$(BINFOLDER)stage64/
+STAGE64_OBJS=loader64.o entry64.o console_x86_64.o bringup_stubs64.o bootinfo_x86_64.o \
+             MultibootMmap.o kmain.o KernelStage64.o Console.o memory_manager.o Heap.o \
+             string_funcs.o icxxabi.o
+STAGE64_PATHS=$(addprefix $(STAGE_BIN),$(STAGE64_OBJS))
+
+# Staged compile rules write into bin/stage64/ (NOT bin/). The stage pattern's stem is shorter
+# than the generic bin/%.o pattern's for a bin/stage64/X.o target, so make prefers it.
+$(STAGE_BIN)%.o: %.cpp
+	@mkdir -p $(STAGE_BIN)
+	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
+# loader64.o from loader.S: the source basename is `loader`, but the 64-suffixed object keeps
+# the elf64 boot object from ever colliding with i686's bin/loader.o (an explicit recipe, not
+# the generic %.S rule, because basenames differ).
+$(STAGE_BIN)loader64.o: arch/x86_64/boot/loader.S
+	@mkdir -p $(STAGE_BIN)
+	nasm -f $(ASM_FMT) $< -o $@
+
+# Link the staged set. -lgcc covers any compiler helper routines ($(LD) = $(CROSS)gcc).
+_stage64: $(STAGE64_PATHS)
+	$(LD) -T$(ARCH_LINKER) -nostdlib -nostartfiles -o $(BINFOLDER)kernel64.bin $(STAGE64_PATHS) -lgcc
+
+-include $(STAGE64_PATHS:.o=.d)
+
+# Plan 2: build the STAGED long-mode kernel (MI Console + memory_manager + bootinfo + staged
+# Kernel::start), then wrap it in the GRUB rescue ISO. Sources are compiled from a
+# case-sensitive copy ($(KSRC)) because Console/memory_manager #include <string.h> (the
+# bind-mounted macOS FS is case-insensitive, where it would collide with lib/String.h). The
+# objects land in /src/bin/stage64 via the $(KSRC)/bin -> /src/bin symlink, isolated from the
+# i686 elf32 objects in /src/bin.
 _bringup64:
-	@mkdir -p $(BINFOLDER)
-	nasm -f $(ASM_FMT) arch/x86_64/boot/loader.S -o $(BINFOLDER)loader64.o
-	$(CXX) -c $(CXXFLAGS) arch/x86_64/boot/entry64.cpp -o $(BINFOLDER)entry64.o
-	$(LD) -T$(ARCH_LINKER) -nostdlib -nostartfiles -o $(BINFOLDER)kernel64.bin $(BINFOLDER)loader64.o $(BINFOLDER)entry64.o
+	@mkdir -p $(STAGE_BIN)
+	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
+	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage --exclude=tests -C /src . | tar -xf - -C $(KSRC) && \
+	 ln -s /src/$(BINFOLDER) $(KSRC)/bin
+	$(MAKE) -C $(KSRC) _stage64
 	@rm -rf /tmp/iso64 && mkdir -p /tmp/iso64/boot/grub
 	@cp $(BINFOLDER)kernel64.bin /tmp/iso64/boot/kernel64.bin
 	@printf 'set timeout=0\nset default=0\nmenuentry "nanos64" {\n  multiboot /boot/kernel64.bin\n  boot\n}\n' > /tmp/iso64/boot/grub/grub.cfg
