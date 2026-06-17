@@ -25,16 +25,44 @@
 
 #include "NxFormat.h"   /* compiled with -Ikernel */
 
-/* ---- minimal ELF32 ---- */
+/* ---- minimal ELF, width selected by -DNX_FORCE64 ----
+ * Under -DNX_FORCE64 (the mknx64 build) we parse ELF64 and the x86_64 relocation types;
+ * without it we parse the historical ELF32 / R_386_* (i686). The generic `Elf_*` names and
+ * `R_*` / `EM_TARGET` / `ELF_R_*` macros below let the body stay identical across both. */
+#if defined(NX_FORCE64)
+typedef struct { unsigned char e_ident[16]; uint16_t e_type, e_machine; uint32_t e_version;
+	uint64_t e_entry, e_phoff, e_shoff; uint32_t e_flags; uint16_t e_ehsize, e_phentsize,
+	e_phnum, e_shentsize, e_shnum, e_shstrndx; } Elf_Ehdr;
+typedef struct { uint32_t sh_name, sh_type; uint64_t sh_flags, sh_addr, sh_offset, sh_size;
+	uint32_t sh_link, sh_info; uint64_t sh_addralign, sh_entsize; } Elf_Shdr;
+typedef struct { uint32_t st_name; unsigned char st_info, st_other; uint16_t st_shndx;
+	uint64_t st_value, st_size; } Elf_Sym;
+typedef struct { uint64_t r_offset, r_info; } Elf_Rel;             /* SHT_REL  (no addend) */
+typedef struct { uint64_t r_offset, r_info, r_addend; } Elf_Rela; /* SHT_RELA (with addend) */
+#define SHT_RELA_T   4
+#define R_ABS64      1     /* R_X86_64_64  — 8-byte absolute: a base-reloc site */
+#define R_PC32       2     /* R_X86_64_PC32 — RIP-relative: NOT relocated (position-indep.) */
+#define R_ABS32S     11    /* R_X86_64_32S — forces image into low 2 GiB; never a base-reloc */
+#define EM_TARGET    62    /* EM_X86_64 */
+#define ELF_R_TYPE(i) ((uint32_t)((i) & 0xffffffff))
+#define ELF_R_SYM(i)  ((uint32_t)((i) >> 32))
+#define ELF_ST_BIND(i) ((i) >> 4)
+#else
 typedef struct { unsigned char e_ident[16]; uint16_t e_type, e_machine; uint32_t e_version,
 	e_entry, e_phoff, e_shoff, e_flags; uint16_t e_ehsize, e_phentsize, e_phnum,
-	e_shentsize, e_shnum, e_shstrndx; } Elf32_Ehdr;
+	e_shentsize, e_shnum, e_shstrndx; } Elf_Ehdr;
 typedef struct { uint32_t sh_name, sh_type, sh_flags, sh_addr, sh_offset, sh_size,
-	sh_link, sh_info, sh_addralign, sh_entsize; } Elf32_Shdr;
+	sh_link, sh_info, sh_addralign, sh_entsize; } Elf_Shdr;
 typedef struct { uint32_t st_name, st_value, st_size; unsigned char st_info, st_other;
-	uint16_t st_shndx; } Elf32_Sym;
-typedef struct { uint32_t r_offset, r_info; } Elf32_Rel;
-
+	uint16_t st_shndx; } Elf_Sym;
+typedef struct { uint32_t r_offset, r_info; } Elf_Rel;
+#define R_ABS64      1     /* R_386_32 */
+#define R_PC32       2     /* R_386_PC32 */
+#define EM_TARGET    3     /* EM_386 */
+#define ELF_R_TYPE(i) ((i) & 0xff)
+#define ELF_R_SYM(i)  ((i) >> 8)
+#define ELF_ST_BIND(i) ((i) >> 4)
+#endif
 #define SHT_PROGBITS 1
 #define SHT_SYMTAB   2
 #define SHT_STRTAB   3
@@ -42,37 +70,30 @@ typedef struct { uint32_t r_offset, r_info; } Elf32_Rel;
 #define SHT_NOBITS   8
 #define SHF_ALLOC    2
 #define SHF_EXECINSTR 4
-#define R_386_32     1
-#define R_386_PC32   2
-#define EM_386       3
 #define STB_GLOBAL   1
 #define STB_WEAK     2
-#define ELF32_R_TYPE(i) ((i) & 0xff)
-#define ELF32_R_SYM(i)  ((i) >> 8)
 #define SHN_UNDEF    0
 #define SHN_ABS      0xfff1
-#define ELF32_ST_BIND(i) ((i) >> 4)
-#define ELF32_ST_TYPE(i) ((i) & 0xf)
 
 static unsigned char* g_elf;
 static long g_elfLen;
-static Elf32_Ehdr* g_eh;
-static Elf32_Shdr* g_sh;     /* section headers */
+static Elf_Ehdr* g_eh;
+static Elf_Shdr* g_sh;     /* section headers */
 static int g_nsh;
 
 static void die(const char* m) { fprintf(stderr, "mknx: %s\n", m); exit(1); }
 
-static Elf32_Shdr* sh(int i) { return &g_sh[i]; }
+static Elf_Shdr* sh(int i) { return &g_sh[i]; }
 
 /* Section flags of a defined symbol's section, or 0 if undefined/special (ABS/COMMON).
  * Used to classify symbols by their section rather than st_type, since picolibc's
  * assembly routines (memcpy/strlen/...) are global but STT_NOTYPE. */
-static unsigned symSecFlags(Elf32_Sym* s) {
+static unsigned symSecFlags(Elf_Sym* s) {
 	if (s->st_shndx == 0 || s->st_shndx >= g_nsh) return 0;
 	return g_sh[s->st_shndx].sh_flags;
 }
-static const char* shname(Elf32_Shdr* s) {
-	Elf32_Shdr* str = sh(g_eh->e_shstrndx);
+static const char* shname(Elf_Shdr* s) {
+	Elf_Shdr* str = sh(g_eh->e_shstrndx);
 	return (const char*) (g_elf + str->sh_offset + s->sh_name);
 }
 
@@ -82,7 +103,9 @@ static void bput(Buf* b, const void* d, unsigned n) {
 	if (b->len + n > b->cap) { b->cap = (b->len + n) * 2 + 64; b->p = realloc(b->p, b->cap); }
 	memcpy(b->p + b->len, d, n); b->len += n;
 }
-static unsigned bu32(Buf* b, unsigned v) { unsigned o = b->len; bput(b, &v, 4); return o; }
+/* Append a machine-width address (4 bytes on i386, 8 on x86_64): used for the reloc table,
+ * whose entries are NxReloc { nxaddr_t off }. */
+static nxaddr_t bu64(Buf* b, nxaddr_t v) { unsigned o = b->len; bput(b, &v, sizeof v); return o; }
 
 /* Add `lib` to the needed-library list unless already present (by name). The list is small
  * (one entry per distinct import library, typically just "libc.ndl"), so a linear scan is fine. */
@@ -119,40 +142,40 @@ int main(int argc, char** argv) {
 	if (fread(g_elf, 1, g_elfLen, f) != (size_t) g_elfLen) die("short read");
 	fclose(f);
 
-	g_eh = (Elf32_Ehdr*) g_elf;
+	g_eh = (Elf_Ehdr*) g_elf;
 	if (memcmp(g_eh->e_ident, "\177ELF", 4) != 0) die("not an ELF");
-	if (g_eh->e_machine != EM_386) die("not i386");
-	g_sh = (Elf32_Shdr*) (g_elf + g_eh->e_shoff);
+	if (g_eh->e_machine != EM_TARGET) die("wrong machine (expected EM_TARGET)");
+	g_sh = (Elf_Shdr*) (g_elf + g_eh->e_shoff);
 	g_nsh = g_eh->e_shnum;
 
 	/* 1) Image extent: loadBase = min SHF_ALLOC vaddr; bssStart = end of allocated
 	 *    PROGBITS; bssEnd = end of all allocated sections (incl NOBITS .bss). */
-	uint32_t loadBase = 0xFFFFFFFFu, bssStart = 0, bssEnd = 0;
+	nxaddr_t loadBase = (nxaddr_t) -1, bssStart = 0, bssEnd = 0;
 	for (int i = 0; i < g_nsh; i++) {
-		Elf32_Shdr* s = sh(i);
+		Elf_Shdr* s = sh(i);
 		if (!(s->sh_flags & SHF_ALLOC) || s->sh_size == 0) continue;
 		if (s->sh_addr < loadBase) loadBase = s->sh_addr;
-		uint32_t end = s->sh_addr + s->sh_size;
+		nxaddr_t end = s->sh_addr + s->sh_size;
 		if (end > bssEnd) bssEnd = end;
 		if (s->sh_type != SHT_NOBITS && end > bssStart) bssStart = end;
 	}
-	if (loadBase == 0xFFFFFFFFu) die("no allocatable sections");
-	uint32_t imageSize = bssStart - loadBase;
+	if (loadBase == (nxaddr_t) -1) die("no allocatable sections");
+	nxaddr_t imageSize = bssStart - loadBase;
 
 	/* Flat load image [loadBase, bssStart): copy each allocated PROGBITS section. */
 	unsigned char* image = calloc(1, imageSize);
 	for (int i = 0; i < g_nsh; i++) {
-		Elf32_Shdr* s = sh(i);
+		Elf_Shdr* s = sh(i);
 		if ((s->sh_flags & SHF_ALLOC) && s->sh_type == SHT_PROGBITS && s->sh_size)
 			memcpy(image + (s->sh_addr - loadBase), g_elf + s->sh_offset, s->sh_size);
 	}
 
 	/* Locate symtab + its strtab (for exports). */
-	Elf32_Sym* sym = 0; int nsym = 0; const char* symstr = 0;
+	Elf_Sym* sym = 0; int nsym = 0; const char* symstr = 0;
 	for (int i = 0; i < g_nsh; i++)
 		if (sh(i)->sh_type == SHT_SYMTAB) {
-			sym = (Elf32_Sym*) (g_elf + sh(i)->sh_offset);
-			nsym = sh(i)->sh_size / sizeof(Elf32_Sym);
+			sym = (Elf_Sym*) (g_elf + sh(i)->sh_offset);
+			nsym = sh(i)->sh_size / sizeof(Elf_Sym);
 			symstr = (const char*) (g_elf + sh(sh(i)->sh_link)->sh_offset);
 		}
 
@@ -175,7 +198,7 @@ int main(int argc, char** argv) {
 		int nDone = 0;
 		char path[1024];
 		for (int i = 0; i < nsym; i++) {
-			int bind = ELF32_ST_BIND(sym[i].st_info);
+			int bind = ELF_ST_BIND(sym[i].st_info);
 			if (bind != STB_GLOBAL && bind != STB_WEAK) continue;
 			unsigned flags = symSecFlags(&sym[i]);
 			if (!(flags & SHF_ALLOC)) continue;            /* defined, in a loaded section */
@@ -211,28 +234,46 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
-	/* 2) Relocations: R_386_32 sites in allocated target sections -> NxReloc[]. We keep
-	 *    only relocations whose symbol is DEFINED in this module (section-relative): those
-	 *    hold a module address that shifts with the load base. A reloc against an
-	 *    undefined/weak symbol (resolved to 0) or an ABSOLUTE symbol (a fixed constant, not
-	 *    a module address) must NOT be delta-adjusted — doing so would turn e.g. a NULL
-	 *    function pointer into `delta` and crash on the first call. */
+	/* 2) Base relocations. On x86_64 the linker emits SHT_RELA (with addend); on i386 SHT_REL.
+	 *    We record ONLY R_X86_64_64 / R_386_32 sites against a DEFINED (section-relative)
+	 *    symbol — those hold a module address (8 bytes on x86_64, 4 on i386) that shifts with
+	 *    the load base. R_X86_64_PC32 / R_386_PC32 is RIP-/PC-relative (position-independent)
+	 *    and is never relocated. R_X86_64_32S appears in small-model non-PIC code and is NOT a
+	 *    base-reloc, but its presence is exactly why the image MUST load in the low 2 GiB —
+	 *    which our fixed base 0x800000 guarantees. A reloc against an undefined/weak symbol
+	 *    (resolved to 0) or an ABSOLUTE symbol (a fixed constant) must NOT be delta-adjusted —
+	 *    doing so would turn e.g. a NULL function pointer into `delta` and crash on first use. */
 	Buf relocs = {0};
 	unsigned relocCount = 0;
 	for (int i = 0; i < g_nsh; i++) {
-		Elf32_Shdr* s = sh(i);
-		if (s->sh_type != SHT_REL) continue;
-		Elf32_Shdr* tgt = sh(s->sh_info);
+		Elf_Shdr* s = sh(i);
+		int isRela = 0;
+#if defined(NX_FORCE64)
+		isRela = (s->sh_type == SHT_RELA_T);
+#endif
+		if (s->sh_type != SHT_REL && !isRela) continue;
+		Elf_Shdr* tgt = sh(s->sh_info);
 		if (!(tgt->sh_flags & SHF_ALLOC)) continue;
-		Elf32_Sym* rsym = (Elf32_Sym*) (g_elf + sh(s->sh_link)->sh_offset);   // this rel's symtab
-		Elf32_Rel* r = (Elf32_Rel*) (g_elf + s->sh_offset);
-		int n = s->sh_size / sizeof(Elf32_Rel);
+		Elf_Sym* rsym = (Elf_Sym*) (g_elf + sh(s->sh_link)->sh_offset);   // this rel's symtab
+		unsigned char* rbase = g_elf + s->sh_offset;
+		unsigned esz = isRela ? sizeof(Elf_Rel) : sizeof(Elf_Rel);
+#if defined(NX_FORCE64)
+		if (isRela) esz = sizeof(Elf_Rela);
+#endif
+		int n = (int) (s->sh_size / esz);
 		for (int j = 0; j < n; j++) {
-			if (ELF32_R_TYPE(r[j].r_info) != R_386_32) continue;
-			if (r[j].r_offset < loadBase || r[j].r_offset >= bssStart) continue;
-			uint16_t shndx = rsym[ELF32_R_SYM(r[j].r_info)].st_shndx;
+			uint64_t r_off, r_info;
+#if defined(NX_FORCE64)
+			if (isRela) { Elf_Rela* r = (Elf_Rela*) (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
+			else        { Elf_Rel*  r = (Elf_Rel*)  (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
+#else
+			{ Elf_Rel* r = (Elf_Rel*) (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
+#endif
+			if (ELF_R_TYPE(r_info) != R_ABS64) continue;            // only the absolute fixup
+			if (r_off < loadBase || r_off >= bssStart) continue;
+			uint16_t shndx = rsym[ELF_R_SYM(r_info)].st_shndx;
 			if (shndx == SHN_UNDEF || shndx == SHN_ABS) continue;   // not a module address
-			bu32(&relocs, r[j].r_offset);
+			bu64(&relocs, r_off);                                   // nxaddr_t-wide reloc entry
 			relocCount++;
 		}
 	}
@@ -244,7 +285,7 @@ int main(int argc, char** argv) {
 	unsigned exportCount = 0;
 	if (isDll && sym) {
 		for (int i = 0; i < nsym; i++) {
-			int bind = ELF32_ST_BIND(sym[i].st_info);
+			int bind = ELF_ST_BIND(sym[i].st_info);
 			if (bind != STB_GLOBAL && bind != STB_WEAK) continue;   /* weak: stdin/out/err */
 			if (!(symSecFlags(&sym[i]) & SHF_ALLOC)) continue;   /* defined, in a loaded section */
 			const char* nm = symstr + sym[i].st_name;
@@ -269,7 +310,7 @@ int main(int argc, char** argv) {
 	unsigned importCount = 0;
 	if (sym) {
 		for (int i = 0; i < nsym; i++) {
-			if (ELF32_ST_BIND(sym[i].st_info) != STB_GLOBAL) continue;
+			if (ELF_ST_BIND(sym[i].st_info) != STB_GLOBAL) continue;
 			if (sym[i].st_shndx == 0) continue;
 			const char* nm = symstr + sym[i].st_name;
 			if (strncmp(nm, "__imp_", 6) != 0 || !nm[6]) continue;
@@ -296,46 +337,71 @@ int main(int argc, char** argv) {
 			importCount++;
 		}
 	}
-	/* 4b) Auto-import (Windows/MinGW style): an R_386_32 site against an UNDEFINED named symbol
-	 *     is a direct reference to imported DATA (stdout/errno/_ctype_b/...). Emit it as an
-	 *     NxImport whose slot IS the reference site, so the loader patches the site with the
-	 *     symbol's address at load — no dllimport shim needed in the source. (Function calls are
-	 *     R_386_PC32 and resolved via the import-library thunks, so they never reach here.) */
+	/* 4b) Auto-import (Windows/MinGW style): an absolute (R_386_32 / R_X86_64_64) site against
+	 *     an UNDEFINED named symbol is a direct reference to imported DATA (stdout/errno/
+	 *     _ctype_b/...). Emit it as an NxImport whose slot IS the reference site, so the loader
+	 *     patches the site with the symbol's address at load — no dllimport shim needed in the
+	 *     source. (Function calls are PC32/RIP-relative and resolved via the import-library
+	 *     thunks, so they never reach here.) On x86_64 these come from SHT_RELA (with addend);
+	 *     on i386 from SHT_REL — both handled. */
 	int missingFns = 0;
 	for (int i = 0; i < g_nsh; i++) {
-		Elf32_Shdr* s = sh(i);
-		if (s->sh_type != SHT_REL) continue;
-		Elf32_Shdr* tgt = sh(s->sh_info);
+		Elf_Shdr* s = sh(i);
+		int isRela = 0;
+#if defined(NX_FORCE64)
+		isRela = (s->sh_type == SHT_RELA_T);
+#endif
+		if (s->sh_type != SHT_REL && !isRela) continue;
+		Elf_Shdr* tgt = sh(s->sh_info);
 		if (!(tgt->sh_flags & SHF_ALLOC)) continue;
-		Elf32_Sym* rsym = (Elf32_Sym*) (g_elf + sh(s->sh_link)->sh_offset);
+		Elf_Sym* rsym = (Elf_Sym*) (g_elf + sh(s->sh_link)->sh_offset);
 		const char* rstr = (const char*) (g_elf + sh(sh(s->sh_link)->sh_link)->sh_offset);
-		Elf32_Rel* r = (Elf32_Rel*) (g_elf + s->sh_offset);
-		int n = s->sh_size / sizeof(Elf32_Rel);
+		unsigned char* rbase = g_elf + s->sh_offset;
+		unsigned esz = sizeof(Elf_Rel);
+#if defined(NX_FORCE64)
+		if (isRela) esz = sizeof(Elf_Rela);
+#endif
+		int n = (int) (s->sh_size / esz);
 		for (int j = 0; j < n; j++) {
-			if (ELF32_R_TYPE(r[j].r_info) != R_386_32) continue;
-			if (r[j].r_offset < loadBase || r[j].r_offset >= bssStart) continue;
-			Elf32_Sym* y = &rsym[ELF32_R_SYM(r[j].r_info)];
+			uint64_t r_off, r_info;
+#if defined(NX_FORCE64)
+			if (isRela) { Elf_Rela* r = (Elf_Rela*) (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
+			else        { Elf_Rel*  r = (Elf_Rel*)  (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
+#else
+			{ Elf_Rel* r = (Elf_Rel*) (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
+#endif
+			if (ELF_R_TYPE(r_info) != R_ABS64) continue;
+			if (r_off < loadBase || r_off >= bssStart) continue;
+			Elf_Sym* y = &rsym[ELF_R_SYM(r_info)];
 			if (y->st_shndx != SHN_UNDEF) continue;          /* only unresolved (imported) symbols */
 			/* Only STRONG undefined symbols are imports; a WEAK undefined data ref is an optional
 			 * symbol meant to read 0 (leave it 0 — don't try to resolve it at load). */
-			if (ELF32_ST_BIND(y->st_info) != STB_GLOBAL) continue;
+			if (ELF_ST_BIND(y->st_info) != STB_GLOBAL) continue;
 			const char* nm = rstr + y->st_name;
 			if (!nm[0] || !strncmp(nm, "__imp_", 6)) continue;
 			unsigned nameOff = strs.len;
 			bput(&strs, nm, strlen(nm) + 1);
-			NxImport im2 = { nameOff, r[j].r_offset, 0 };    /* slot = the reloc site; flat resolve */
+			NxImport im2 = { nameOff, r_off, 0 };            /* slot = the reloc site; flat resolve */
 			bput(&imports, &im2, sizeof im2);
 			importCount++;
 		}
-		/* Safety: a STRONG undefined symbol called via R_386_PC32 is a genuinely MISSING function
-		 * (not a data import). --unresolved-symbols=ignore-all let the link pass, so we catch it
-		 * HERE and fail the build — otherwise it would crash at runtime calling address 0. (A WEAK
-		 * undefined function is an optional ref meant to test 0, so it is left alone.) */
+		/* Safety: a STRONG undefined symbol called via PC32 (R_386_PC32 / R_X86_64_PC32) is a
+		 * genuinely MISSING function (not a data import). --unresolved-symbols=ignore-all let the
+		 * link pass, so we catch it HERE and fail the build — otherwise it would crash at runtime
+		 * calling address 0. (A WEAK undefined function is an optional ref meant to test 0, left
+		 * alone.) */
 		for (int j = 0; j < n; j++) {
-			if (ELF32_R_TYPE(r[j].r_info) != R_386_PC32) continue;
-			Elf32_Sym* y = &rsym[ELF32_R_SYM(r[j].r_info)];
+			uint64_t r_info;
+#if defined(NX_FORCE64)
+			if (isRela) r_info = ((Elf_Rela*) (rbase + (size_t) j * esz))->r_info;
+			else        r_info = ((Elf_Rel*)  (rbase + (size_t) j * esz))->r_info;
+#else
+			r_info = ((Elf_Rel*) (rbase + (size_t) j * esz))->r_info;
+#endif
+			if (ELF_R_TYPE(r_info) != R_PC32) continue;
+			Elf_Sym* y = &rsym[ELF_R_SYM(r_info)];
 			if (y->st_shndx != SHN_UNDEF) continue;
-			if (ELF32_ST_BIND(y->st_info) != STB_GLOBAL) continue;
+			if (ELF_ST_BIND(y->st_info) != STB_GLOBAL) continue;
 			const char* nm = rstr + y->st_name;
 			if (nm[0]) { fprintf(stderr, "mknx: error: undefined function '%s'\n", nm); missingFns++; }
 		}
@@ -355,12 +421,12 @@ int main(int argc, char** argv) {
 	 * mapped at runtime. Table fields in the header are absolute vaddrs (loadBase + file
 	 * offset). String offsets recorded above are relative to the string pool start; fix
 	 * them to absolute vaddrs now. */
-	uint32_t cur = bssStart;                 /* vaddr cursor for appended tables */
-	uint32_t impAddr = cur; cur += imports.len;
-	uint32_t expAddr = cur; cur += exports.len;
-	uint32_t relAddr = cur; cur += relocs.len;
-	uint32_t needAddr = cur; cur += needed.len;
-	uint32_t strAddr = cur; cur += strs.len;
+	nxaddr_t cur = bssStart;                 /* vaddr cursor for appended tables */
+	nxaddr_t impAddr = cur; cur += imports.len;
+	nxaddr_t expAddr = cur; cur += exports.len;
+	nxaddr_t relAddr = cur; cur += relocs.len;
+	nxaddr_t needAddr = cur; cur += needed.len;
+	nxaddr_t strAddr = cur; cur += strs.len;
 
 	/* Fix import/export/needed nameOff (string-pool-relative -> absolute vaddr); libOff 0
 	 * stays 0 (flat-resolved import). */

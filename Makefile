@@ -918,6 +918,13 @@ $(MKNX): tools/mknx.c kernel/NxFormat.h
 	@mkdir -p $(BINFOLDER)
 	cc -O2 -Wall -Ikernel -o $@ tools/mknx.c
 
+# 64-bit variant: same source, -DNX_FORCE64 selects the ELF64 / R_X86_64_* path and the
+# v4 .nxe layout (64-bit nxaddr_t). Host-native cc, just like mknx.
+MKNX64=$(BINFOLDER)mknx64
+$(MKNX64): tools/mknx.c kernel/NxFormat.h
+	@mkdir -p $(BINFOLDER)
+	cc -O2 -Wall -DNX_FORCE64 -Ikernel -o $@ tools/mknx.c
+
 # Generic DYNAMIC link: every program links its objects + the import library (NO static
 # libc) and declares "needed: libc.ndl", so the loader maps libc.ndl and binds its imports
 # by name. `--emit-relocs` keeps the R_386_32 relocations so mknx can build the relocation
