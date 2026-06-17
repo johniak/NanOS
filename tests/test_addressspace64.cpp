@@ -225,6 +225,65 @@ TEST_CASE("copyUserWindowFrom on an empty user window copies nothing") {
 	CHECK(m->allocCount == before);
 }
 
+TEST_CASE("copyUserWindowFrom returns false on OOM mid-copy and the partial state is reclaimable") {
+	FakeMem* m = makeMem();
+	// Parent: two user pages backed by distinct frames (same PD entry -> same PT).
+	// 0x400000 -> PT slot 0, 0x402000 -> PT slot 2 (both pdIndex 2), so the child's copy
+	// walks the SAME source PT and hits two present entries in slot order (0 then 2).
+	AddressSpace parent(envOf(m));
+	uint64_t pf1 = fakeAlloc(m), pf2 = fakeAlloc(m);
+	memset(fakeP2V(m, pf1), 0xAA, FRAME_SIZE);
+	memset(fakeP2V(m, pf2), 0xBB, FRAME_SIZE);
+	parent.map(0x400000, pf1, PTE_PRESENT | PTE_RW | PTE_USER);
+	parent.map(0x402000, pf2, PTE_PRESENT | PTE_RW | PTE_USER);
+
+	AddressSpace child(envOf(m));
+	child.adoptKernelDirectory(parent.directoryPhys(), 0x400000);   // share + privatize window
+
+	// After adopt the child owns a private PML4->PDPT->PD chain with PD[2] cleared. The copy of
+	// the FIRST present page (slot 0) allocates 2 frames: one fresh data frame + one fresh leaf
+	// PT (PD[2] was cleared, so map() must build the PT). The SECOND page (slot 2) then tries to
+	// allocate its data frame and must hit OOM. So N = 2: cap = baseline + 2.
+	int baseline = m->allocCount;
+	m->cap = baseline + 2;
+	CHECK(child.copyUserWindowFrom(parent, 0x400000) == false);     // 2nd frame alloc -> 0 -> false
+	CHECK(m->allocCount == baseline + 2);                           // 1st frame + fresh PT landed
+
+	// Teardown reclaims the partial state: with the cap lifted, freeUserWindow frees the leaf PT
+	// plus the one frame copied before the OOM, returning allocCount to its post-adopt baseline.
+	// (The PML4/PDPT/PD privatized by adopt are intentionally NOT freed by freeUserWindow.)
+	m->cap = 0;
+	child.freeUserWindow(0x400000);
+	CHECK(m->allocCount == baseline);                               // PT + copied frame reclaimed
+	CHECK(child.translate(0x400000) == NOPE);                       // PD entry cleared, no leak
+}
+
+TEST_CASE("map propagates and fork preserves the NX bit") {
+	FakeMem* m = makeMem();
+	AddressSpace parent(envOf(m));
+	uint64_t pf = fakeAlloc(m);
+	parent.map(0x400000, pf, PTE_PRESENT | PTE_RW | PTE_USER | PTE_NX);
+
+	AddressSpace child(envOf(m));
+	child.adoptKernelDirectory(parent.directoryPhys(), 0x400000);
+	CHECK(child.copyUserWindowFrom(parent, 0x400000));
+
+	// The copied PTE carries NX through the fork copy, with the low control flags preserved.
+	uint64_t e = rawPte(m, child, 0x400000);
+	CHECK((e & PTE_NX) != 0);
+	CHECK((e & FLAG_MASK) == (PTE_PRESENT | PTE_RW | PTE_USER));
+}
+
+TEST_CASE("translate returns the sentinel when the PDPT exists but the PD slot is empty") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	as.map(0x400000, 0xAB000, PTE_PRESENT | PTE_RW);   // builds PML4[0]->PDPT[0]->PD[2]->PT
+	// 0x600000 shares the same PML4+PDPT entry but a different, never-mapped PD entry.
+	CHECK(pdptIndex(0x600000) == pdptIndex(0x400000)); // same 1 GiB PDPT region
+	CHECK(pdIndex(0x600000) != pdIndex(0x400000));     // different (empty) PD slot
+	CHECK(as.translate(0x600000) == NOPE);             // walk stops at the missing PD entry
+}
+
 TEST_CASE("dropPde privatizes the path and unmaps just that PD-entry region") {
 	FakeMem* m = makeMem();
 	AddressSpace kern(envOf(m));
