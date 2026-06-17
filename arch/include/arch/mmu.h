@@ -15,6 +15,22 @@ namespace arch {
 
 enum PageFlags { PAGE_PRESENT = 1, PAGE_WRITE = 2, PAGE_USER = 4 };
 
+// VA window layout — the SINGLE source of truth for both the MD mmu impl and MI staging
+// (Exec). All bases are low (< 2 GiB) so bit 47 = 0 and they are canonical by construction
+// (spec §1/§8). Started from the i686 offsets to keep the x86_64 port minimal; the full
+// 128 TiB user split is deferred. On i686 these same values fit uint32_t — the constants are
+// arch-neutral, only the page-table format differs.
+constexpr uint64_t VA_USER_BASE     = 0x800000;     // program image + user stack
+constexpr uint64_t VA_USER_END      = 0x1000000;    // exclusive (16 MiB): window = [0x800000, 0x1000000)
+constexpr uint64_t VA_MODULE_BASE   = 0x40000000;   // .ndl load band (1 GiB)
+constexpr uint64_t VA_MODULE_STRIDE = 0x00400000;   // per-module spacing (4 MiB)
+constexpr uint64_t VA_MODULE_MAX    = 0x48000000;   // +128 MiB (32 modules)
+constexpr uint64_t VA_HEAP_BASE     = 0x48000000;   // brk/sbrk anonymous heap
+constexpr uint64_t VA_HEAP_MAX      = 0x4C000000;   // +64 MiB
+constexpr uint64_t VA_MMAP_BASE     = 0x50000000;   // anonymous/file-backed mmap
+constexpr uint64_t VA_MMAP_MAX      = 0x54000000;   // +64 MiB
+constexpr uint64_t VA_FB_BASE       = 0x58000000;   // user framebuffer window (1.375 GiB)
+
 // Build the kernel page tables (identity-map all RAM), reserve the arch windows,
 // load the directory and enable paging.
 void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam);

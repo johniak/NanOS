@@ -22,4 +22,6 @@ ARCH_LINKER=arch/x86_64/linker.ld
 
 # Plan 1 bring-up: only the boot trampoline + a 64-bit C entry stub. The full MD set
 # (Gdt/Idt/interrupts/paging/drivers) is filled in by later plans.
-ARCH_SOURCES=loader.o entry64.o
+# Plan 3 adds the paging layer (AddressSpace + the <arch/mmu.h> impl). loader.o/entry64.o stay
+# from Plan 1; Plan 2's console/multiboot objects (if already present) are listed by that plan.
+ARCH_SOURCES=loader.o entry64.o AddressSpace.o mmu_x86_64.o
