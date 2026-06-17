@@ -8,6 +8,131 @@
 #ifndef SYSCALLNR_H_
 #define SYSCALLNR_H_
 
+#if defined(__x86_64__)
+/* ---- Linux x86_64 ABI (arch/x86/entry/syscalls/syscall_64.tbl) ---------------------- */
+#define SYS_read 0
+#define SYS_write 1
+#define SYS_open 2
+#define SYS_close 3
+#define SYS_stat 4
+#define SYS_fstat 5
+#define SYS_lstat 6
+#define SYS_poll 7
+#define SYS_lseek 8
+#define SYS_mmap 9          /* x86_64 has ONE mmap (no mmap2); off is in BYTES */
+#define SYS_mmap2 SYS_mmap  /* libc-glue calls SYS_mmap2 by name — alias to the real number */
+#define SYS_munmap 11
+#define SYS_brk 12
+#define SYS_rt_sigaction 13
+#define SYS_rt_sigprocmask 14
+#define SYS_rt_sigreturn 15
+#define SYS_sigreturn SYS_rt_sigreturn   /* x86_64 has only rt_sigreturn */
+#define SYS_ioctl 16
+#define SYS_pread64 17
+#define SYS_pwrite64 18
+#define SYS_access 21
+#define SYS_pipe 22
+#define SYS__newselect 23   /* x86_64 select */
+#define SYS_select 23
+#define SYS_dup 32
+#define SYS_dup2 33
+#define SYS_pause 34
+#define SYS_nanosleep 35
+#define SYS_getpid 39
+#define SYS_socket 41
+#define SYS_connect 42
+#define SYS_accept4 288     /* x86_64: accept=43, accept4=288 (we use accept4) */
+#define SYS_sendto 44
+#define SYS_recvfrom 45
+#define SYS_sendmsg 46
+#define SYS_recvmsg 47
+#define SYS_shutdown 48
+#define SYS_bind 49
+#define SYS_listen 50
+#define SYS_getsockname 51
+#define SYS_getpeername 52
+#define SYS_socketpair 53
+#define SYS_setsockopt 54
+#define SYS_getsockopt 55
+#define SYS_clone 56
+#define SYS_fork 57
+#define SYS_execve 59
+#define SYS_exit 60
+#define SYS_waitpid 61      /* x86_64 has wait4=61; our dispatch treats it as waitpid */
+#define SYS_kill 62
+#define SYS_fcntl 72
+#define SYS_fsync 74
+#define SYS_fdatasync 75
+#define SYS_truncate 76
+#define SYS_ftruncate 77
+#define SYS_getdents64 217
+#define SYS_chdir 80
+#define SYS_fchdir 81
+#define SYS_rename 82
+#define SYS_mkdir 83
+#define SYS_rmdir 84
+#define SYS_creat 85
+#define SYS_link 86
+#define SYS_unlink 87
+#define SYS_symlink 88
+#define SYS_readlink 89
+#define SYS_chmod 90
+#define SYS_fchmod 91
+#define SYS_chown 92
+#define SYS_fchown 93
+#define SYS_lchown 94
+#define SYS_umask 95
+#define SYS_gettimeofday 96
+#define SYS_getppid 110
+#define SYS_setsid 112
+#define SYS_setpgid 109
+#define SYS_getpgrp 111
+#define SYS_getpgid 121
+#define SYS_getsid 124
+#define SYS_getuid 102
+#define SYS_getgid 104
+#define SYS_setuid 105
+#define SYS_setgid 106
+#define SYS_geteuid 107
+#define SYS_getegid 108
+#define SYS_sigprocmask SYS_rt_sigprocmask
+#define SYS_rt_sigpending 127
+#define SYS_rt_sigsuspend 130
+#define SYS_sigsuspend SYS_rt_sigsuspend
+#define SYS_utime 132
+#define SYS_statfs 137
+#define SYS_fstatfs 138
+#define SYS_gettid 186
+#define SYS_futex 202
+#define SYS_set_thread_area 205   /* unused on x86_64 (TLS via arch_prctl); kept for the dispatch */
+#define SYS_getrandom 318
+#define SYS_clock_gettime 228
+#define SYS_set_tid_address 218
+#define SYS_tkill 200
+#define SYS_tgkill 234
+#define SYS_exit_group 231
+#define SYS_utimes 235
+#define SYS_utimensat 280
+#define SYS_openat 257
+#define SYS_mkdirat 258
+#define SYS_unlinkat 263
+#define SYS_renameat 264
+#define SYS_renameat2 316
+#define SYS_linkat 265
+#define SYS_symlinkat 266
+#define SYS_readlinkat 267
+#define SYS_fchmodat 268
+#define SYS_fchownat 260
+#define SYS_faccessat 269
+#define SYS_fstatat64 262    /* x86_64 newfstatat */
+#define SYS_sync 162
+#define SYS_reboot 169
+#define SYS_arch_prctl 158   /* NEW on x86_64: TLS base (ARCH_SET_FS) — see %fs.base path */
+#define SYS_pselect6 270
+/* NanOS-private (outside the Linux range). */
+#define SYS_termmode 1000
+#else
+/* ---- existing Linux i386 ABI (unchanged) -------------------------------------------- */
 #define SYS_exit 1
 #define SYS_fork 2
 #define SYS_clone 120        /* thread/process creation (pthread keystone) */
@@ -156,6 +281,11 @@
 #define SC_RECVMSG 17
 #define SC_ACCEPT4 18
 
+/* NanOS-private numbers (outside the Linux i386 range, so they never collide with
+ * a Linux number we might add later). */
+#define SYS_termmode 501  /* console input mode: 0 = cooked (line), 1 = raw (keys) */
+#endif
+
 /* The kernel-ABI sigaction layout that rt_sigaction(2) reads/writes (Linux i386 "new"
  * struct, also what musl marshals into). Field order/sizes are load-bearing: sa_mask is a
  * 64-bit signal mask (two 32-bit words on i386) and sits last for extensibility. Shared with
@@ -166,9 +296,5 @@ struct k_sigaction {
 	void*         k_sa_restorer;   /* sigreturn trampoline (libc __nx_sigtramp) */
 	unsigned      k_sa_mask[2];    /* 64-bit blocked-during-handler mask (low word first) */
 };
-
-/* NanOS-private numbers (outside the Linux i386 range, so they never collide with
- * a Linux number we might add later). */
-#define SYS_termmode 501  /* console input mode: 0 = cooked (line), 1 = raw (keys) */
 
 #endif /* SYSCALLNR_H_ */
