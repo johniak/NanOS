@@ -52,7 +52,7 @@ struct FbFake : CharDevice {
 	int read(unsigned, void* b, unsigned n) { memset(b, 0xAA, n); return (int) n; }
 	int write(unsigned, const void*, unsigned n) { return (int) n; }
 	int ioctl(unsigned cmd, void*) { lastIoctl = cmd; return 0; }
-	int mmapInfo(unsigned* p, unsigned* l) { *p = 0x1234000; *l = 0x2000; return 0; }
+	int mmapInfo(uint64_t* p, unsigned* l) { *p = 0x1FF000000ull; *l = 0x2000; return 0; }
 };
 }
 
@@ -71,9 +71,9 @@ TEST_CASE("sys ioctl/write/mmapInfo route to a device fd; console fd rejects the
 	CHECK(sc.write(fd, buf, 4) == 4);            // device accepts the write
 	CHECK(sc.ioctl(fd, 0x4600, buf) == 0);
 	CHECK(fb.lastIoctl == 0x4600u);
-	unsigned p = 0, l = 0;
+	uint64_t p = 0; unsigned l = 0;
 	CHECK(sc.mmapInfo(fd, &p, &l) == 0);
-	CHECK(p == 0x1234000u);
+	CHECK(p == 0x1FF000000ull);                  // > 4 GiB, not truncated to 0xFF000000
 	CHECK(l == 0x2000u);
 
 	CHECK(sc.ioctl(1, 0, buf) < 0);              // console fd: unknown ioctl rejected

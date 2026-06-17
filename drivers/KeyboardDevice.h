@@ -33,7 +33,7 @@ public:
 	int read(unsigned off, void* buf, unsigned n);
 	int write(unsigned off, const void* buf, unsigned n);   // unsupported
 	int ioctl(unsigned cmd, void* arg);                     // unsupported
-	int mmapInfo(unsigned* physOut, unsigned* lenOut);      // unsupported
+	int mmapInfo(uint64_t* physOut, unsigned* lenOut);      // unsupported
 	// poll(): readable when an event is queued (so the terminal emulator's poll loop
 	// doesn't spin reading an empty device).
 	short pollReady(short events) {

@@ -954,7 +954,7 @@ int Syscalls::fcntl(int fd, int cmd, int arg) {
 	return -EINVAL;
 }
 
-int Syscalls::mmapInfo(int fd, unsigned* physOut, unsigned* lenOut) {
+int Syscalls::mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut) {
 	if (!valid(fd) || fds[fd].isConsole)
 		return -EBADF;
 	return vfs->mmapInfo(fds[fd].path, physOut, lenOut);

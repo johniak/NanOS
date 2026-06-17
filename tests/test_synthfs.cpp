@@ -175,7 +175,7 @@ struct FakeDev : CharDevice {
 	int read(unsigned, void* b, unsigned n) { memset(b, 0x7E, n); return (int) n; }
 	int write(unsigned, const void*, unsigned n) { return (int) n; }
 	int ioctl(unsigned cmd, void*) { lastCmd = (int) cmd; return 0; }
-	int mmapInfo(unsigned* p, unsigned* l) { *p = 0xABC000; *l = 0x1000; return 0; }
+	int mmapInfo(uint64_t* p, unsigned* l) { *p = 0xABC000; *l = 0x1000; return 0; }
 };
 }
 
@@ -190,7 +190,7 @@ TEST_CASE("SynthFs SK_CHARDEV routes read/write/ioctl/mmapInfo to the device") {
 	CHECK(fs.write("/dev/fb0", 4, 0, buf) == 4);
 	CHECK(fs.ioctl("/dev/fb0", 0x4600, buf) == 0);
 	CHECK(dev.lastCmd == 0x4600);
-	unsigned p = 0, l = 0;
+	uint64_t p = 0; unsigned l = 0;
 	CHECK(fs.mmapInfo("/dev/fb0", &p, &l) == 0);
 	CHECK(p == 0xABC000u);
 	CHECK(l == 0x1000u);

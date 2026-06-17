@@ -234,7 +234,7 @@ public:
 	// char device's), or 0 for fds that never block this way (regular files; the console, which
 	// blocks inside arch::inputRead). Lets the dispatch sleep event-driven, not per tick.
 	WaitQueue* fdWaitQueue(int fd);
-	int mmapInfo(int fd, unsigned* physOut, unsigned* lenOut);   // for SYS_mmap of a device
+	int mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 
 	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
 	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).

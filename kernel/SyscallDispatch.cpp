@@ -816,7 +816,7 @@ int kernelSyscall(int nr, unsigned a0, unsigned a1, unsigned a2, unsigned a3, un
 		Process* p = ProcTable::current();
 		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
 		if (fd >= 0) {                          // device region? (fb0 etc.)
-			unsigned phys = 0, dlen = 0;
+			uint64_t phys = 0; unsigned dlen = 0;
 			if (g_sys->mmapInfo(fd, &phys, &dlen) >= 0) {
 				unsigned want = (length && length < dlen) ? length : dlen;
 				unsigned va = arch::mmuMapUserFb(space, phys, want);

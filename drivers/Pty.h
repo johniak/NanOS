@@ -94,7 +94,7 @@ public:
 			return -EINVAL;
 		return m_pty->ioctl(cmd, arg);
 	}
-	int mmapInfo(unsigned*, unsigned*) { return -1; }
+	int mmapInfo(uint64_t*, unsigned*) { return -1; }
 	short pollReady(short events) {
 		short r = events & POLLOUT;                 // master write never blocks
 		if ((events & POLLIN) && m_pty->masterReadable()) r |= POLLIN;
@@ -112,7 +112,7 @@ public:
 	int read(unsigned, void* b, unsigned n) { return m_pty->slaveRead(b, n); }
 	int write(unsigned, const void* b, unsigned n) { return m_pty->slaveWrite(b, n); }
 	int ioctl(unsigned cmd, void* arg) { return m_pty->ioctl(cmd, arg); }
-	int mmapInfo(unsigned*, unsigned*) { return -1; }
+	int mmapInfo(uint64_t*, unsigned*) { return -1; }
 	short pollReady(short events) {
 		short r = events & POLLOUT;
 		if ((events & POLLIN) && m_pty->slaveReadable()) r |= POLLIN;

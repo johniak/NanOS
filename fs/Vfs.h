@@ -57,7 +57,7 @@ public:
 	// (ext2/ext4) need not implement them; SynthFs overrides them for char devices.
 	virtual int write(String, unsigned, unsigned, const void*) { return -30; }  // -EROFS
 	virtual int ioctl(String, unsigned, void*) { return -22; }                  // -EINVAL
-	virtual int mmapInfo(String, unsigned*, unsigned*) { return -22; }          // -EINVAL
+	virtual int mmapInfo(String, uint64_t*, unsigned*) { return -22; }          // -EINVAL
 	// poll() readiness for a path: return the ready subset of `events`. Default = ready
 	// (ordinary files don't block); SynthFs forwards to the char device.
 	virtual short pollReady(String, short events) { return events; }
@@ -131,7 +131,7 @@ public:
 	int readdir(String path, List<DirEntry>& out);
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
-	int mmapInfo(String path, unsigned* physOut, unsigned* lenOut);
+	int mmapInfo(String path, uint64_t* physOut, unsigned* lenOut);
 	short pollReady(String path, short events);
 	WaitQueue* waitQueueAt(String path);   // the char device's block wait list for `path`, or 0
 	bool deviceOpen(String path);          // true if `path` is a char device (bumps its open count)

@@ -6,6 +6,7 @@
  * SK_CHARDEV hold a CharDevice*; /dev/fb0 is the first one.
  */
 #pragma once
+#include <stdint.h>
 
 namespace kernel {
 
@@ -31,8 +32,9 @@ struct CharDevice {
 	virtual int write(unsigned off, const void* buf, unsigned n) = 0;
 	virtual int ioctl(unsigned cmd, void* arg) = 0;
 	// Report the device's physical region for mmap (phys base + byte length).
-	// Returns 0 on success, <0 if the device is not mmappable.
-	virtual int mmapInfo(unsigned* physOut, unsigned* lenOut) = 0;
+	// Returns 0 on success, <0 if the device is not mmappable. physOut is 64-bit so an
+	// MMIO/framebuffer region above 4 GiB is reported without losing the high bits.
+	virtual int mmapInfo(uint64_t* physOut, unsigned* lenOut) = 0;
 	// poll() readiness: return the subset of `events` (POLLIN/POLLOUT bits) ready now.
 	// Default = always ready (suits mmap devices like /dev/fb0); streaming devices (pty,
 	// keyboard) override to report buffer state.
