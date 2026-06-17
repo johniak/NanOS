@@ -13,7 +13,7 @@
 
 class String {
 	char* textArray;
-	int length;
+	size_t length;
 public:
 	String();
 	String(const char* text) {
@@ -59,7 +59,7 @@ public:
 	}
 
 	void append(const String& str) {
-		int totalLenght = length + str.length;
+		size_t totalLenght = length + str.length;
 		// realloc handles textArray==0 (acts as malloc) and frees the old buffer itself,
 		// so there is no separate free() (that was a double-free under a real allocator).
 		textArray = (char*) realloc(textArray, totalLenght + 1);
@@ -69,7 +69,7 @@ public:
 		length = totalLenght;
 	}
 
-	int getLenght() {
+	size_t getLenght() {       // keep the (historic) name; widen the type
 		return length;
 	}
 	char* itoa(int value, int base) {
@@ -109,13 +109,12 @@ public:
 	}
 
 	int indexOf(String str, int start) {
-		if (start >= length)
+		if ((size_t) start >= length)
 			return -1;
 		char* ptr = strstr(textArray + start, str.textArray);
 		if (ptr == 0)
 			return -1;
-		int count = ptr - textArray;
-		return count;
+		return (int) (ptr - textArray);
 	}
 	int compareTo(String str){
 		return strcmp(textArray,str.textArray);

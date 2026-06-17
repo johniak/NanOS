@@ -15,9 +15,9 @@
 template<class T>
 class List {
 	T* array;
-	int capacity;
-	int capacityInc;
-	int count;
+	size_t capacity;
+	size_t capacityInc;
+	size_t count;
 public:
 	List() :
 			capacity(10), capacityInc(10), count(0) {
@@ -29,7 +29,7 @@ public:
 	void add(T item) {
 		insert(count, item);
 	}
-	void insert(int index, T item) {
+	void insert(size_t index, T item) {
 		if (count + 1 > capacity) {
 			increaseCapacity();
 		}
@@ -45,21 +45,23 @@ public:
 		// here was a double free.
 		array = (T*) realloc((void*) array, capacity * sizeof(T));
 	}
-	void removeAt(int index) {
-		if (index < count - 1) {
+	void removeAt(size_t index) {
+		// (count - index - 1) is the number of trailing elements to shift left; the
+		// old (count - index + 1) over-copied by two slots (an off-by-one bug).
+		if (index + 1 < count) {
 			memcpy(array + index, array + index + 1,
-					(count - index + 1) * sizeof(T));
+					(count - index - 1) * sizeof(T));
 			count--;
 			return;
 		}
-		if (index == count - 1) {
+		if (index + 1 == count) {
 			count--;
 		}
 	}
-	int getCount() {
+	size_t getCount() {
 		return count;
 	}
-	T& operator[](const int index) {
+	T& operator[](size_t index) {
 		return array[index];
 	}
 	virtual ~List() {
