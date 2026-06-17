@@ -34,12 +34,18 @@ void Gdt64::initialize() {
 
     // Code: present, ring/DPL, exec/read. flags = G | L (0xA0): L=1 marks a 64-bit code
     // segment (D/B must be 0). Data: present, write. Data segments ignore the L bit.
-    setCodeData(table.kcode, 0x9A, 0xA0);   // 0x08 ring-0 code64
-    setCodeData(table.kdata, 0x92, 0x00);   // 0x10 ring-0 data64
-    setCodeData(table.ucode, 0xFA, 0xA0);   // 0x18 ring-3 code64 (DPL=3)
-    setCodeData(table.udata, 0xF2, 0x00);   // 0x20 ring-3 data64 (DPL=3)
+    setCodeData(table.kcode,   0x9A, 0xA0);   // 0x08 ring-0 code64           (SYSCALL CS)
+    setCodeData(table.kdata,   0x92, 0x00);   // 0x10 ring-0 data64           (SYSCALL SS)
+    // 0x18 user code32 placeholder (DPL3): SYSRET derives the user selectors from this base
+    // (STAR[63:48]=0x18) and never loads 0x18 itself in long mode. Built as a present DPL3
+    // 32-bit code segment (D=1, not L) per the OSDev "SYSRET" convention. flags 0xCF = G|D
+    // + limit 19:16; setCodeData zeroes base/limit, so set the full limit so it is well-formed.
+    setCodeData(table.ucode32, 0xFA, 0xCF);   // 0x18 ring-3 code32 placeholder (DPL=3)
+    table.ucode32.limit_lo = 0xFFFF;          // full 4 GiB limit (cosmetic; never loaded)
+    setCodeData(table.udata,   0xF2, 0x00);   // 0x20 ring-3 data   (DPL=3)   -> SYSRET SS 0x23
+    setCodeData(table.ucode,   0xFA, 0xA0);   // 0x28 ring-3 code64 (L=1,DPL3)-> SYSRET CS 0x2B
 
-    // TSS @ 0x28. Point IST1 at a dedicated stack so #DF always lands on solid ground; mark
+    // TSS @ 0x30. Point IST1 at a dedicated stack so #DF always lands on solid ground; mark
     // "no I/O bitmap". rsp0 is filled by setKernelStack before the first ring3->ring0 trap.
     g_tss64.ist1 = (uint64_t) (g_dfStack + sizeof(g_dfStack));
     g_tss64.iomap_base = sizeof(Tss64);
@@ -69,6 +75,6 @@ void Gdt64::initialize() {
 
 void Gdt64::setKernelStack(uint64_t rsp0) { g_tss64.rsp0 = rsp0; }
 
-void Gdt64::loadTss() { __asm__ __volatile__("ltr %0" : : "r"((uint16_t) 0x28)); }
+void Gdt64::loadTss() { __asm__ __volatile__("ltr %0" : : "r"((uint16_t) 0x30)); }
 
 }  // namespace kernel
