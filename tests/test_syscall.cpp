@@ -444,6 +444,14 @@ TEST_CASE("sys_getdents64 returns -EINVAL when the buffer can't hold one record"
 	CHECK(sc.getdents64(fd, tiny, sizeof(tiny)) == -22);   // -EINVAL, not a 0/EOF lie
 }
 
+TEST_CASE("lseek past 4 GiB keeps the full 64-bit offset") {
+	Syscalls sc(mountFixture(), sink);
+	int fd = sc.open(String("/hello.txt"), 0);   // any regular file in the fixture
+	REQUIRE(fd >= 3);
+	long long pos = sc.lseek(fd, 0x100000000ll, SEEK_SET);   // 4 GiB
+	CHECK(pos == 0x100000000ll);                  // not truncated to 0
+}
+
 TEST_CASE("sys_lseek SEEK_CUR/SEEK_END and bad whence/offset") {
 	Syscalls sc(mountFixture(), sink);
 	int fd = sc.open("/hello.txt", 0);          // size 18
