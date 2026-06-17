@@ -14,6 +14,9 @@
 #include <arch/console.h>
 #include <arch/bootinfo.h>
 #include <arch/mmu.h>
+#include <arch/cpu.h>             // arch::cpuInit / cpuEnableInterrupts / cpuHalt
+
+namespace kernel { void irqSelfTest(); }   // arch/x86_64/cpu/irqtest64.cpp
 
 namespace kernel {
 
@@ -32,10 +35,11 @@ void Kernel::start() {
 	// Multiboot map, then hand it to the arch MMU which builds the kernel PML4 (identity-maps
 	// all RAM + enables NX), carves a real kernel heap off the top of RAM, and loads CR3 —
 	// switching off the Plan-1 temporary 1 GiB map onto our own page tables.
-	// mmuInitKernel ends with `sti`, but this staged bring-up has no IDT yet (Plan 4 installs
-	// the real one). Mask every PIC IRQ first so enabling interrupts can't vector a PIT/keyboard
-	// IRQ through the empty IDT and triple-fault — the kernel then idles with IF=1 but no live
-	// IRQ source. (GRUB leaves the PIC unremapped, so IRQ0 would otherwise hit vector 0x08.)
+	// mmuInitKernel ends with `sti`, but there is still no IDT at this point (Plan 4 installs the
+	// real one below via cpuInit). Mask every PIC IRQ first so enabling interrupts during paging
+	// bring-up can't vector a PIT/keyboard IRQ through the empty IDT and triple-fault. (GRUB
+	// leaves the PIC unremapped, so IRQ0 would otherwise hit vector 0x08.) cpuInit() re-remaps the
+	// PIC afterwards, and we then unmask exactly IRQ0+IRQ1 for the self-test.
 	__asm__ __volatile__("outb %0, $0x21" :: "a"((uint8_t) 0xFF));
 	__asm__ __volatile__("outb %0, $0xA1" :: "a"((uint8_t) 0xFF));
 
@@ -88,11 +92,23 @@ void Kernel::start() {
 	Console::writeHex((unsigned long) 0x123456789ABCUL);
 	Console::writeLine("");
 
+	// Plan 4: real GDT/IDT/TSS + PIC remap, then install the bring-up IRQ handlers and enable
+	// interrupts. cpuInit()'s PIC remap leaves all lines unmasked; narrow that to exactly IRQ0
+	// (PIT) + IRQ1 (keyboard) — master mask 0xFC (bits 0,1 clear), slave fully masked 0xFF — so
+	// only the two self-test sources fire. After sti the PIT heartbeat ('.') and keyboard echo
+	// are live.
+	arch::cpuInit();
+	__asm__ __volatile__("outb %0, $0x21" :: "a"((uint8_t) 0xFC));
+	__asm__ __volatile__("outb %0, $0xA1" :: "a"((uint8_t) 0xFF));
+	kernel::irqSelfTest();
+	arch::cpuEnableInterrupts();   // sti
+	Console::writeLine("[ OK ] interrupts live: PIT IRQ0 heartbeat + keyboard IRQ1 echo");
+
 	Console::writeLine("");
 	Console::writeLine("[ idle ] staged kernel parked (hlt loop)");
 
 	for (;;)
-		__asm__ __volatile__("hlt");
+		arch::cpuHalt();
 }
 
 }  // namespace kernel
