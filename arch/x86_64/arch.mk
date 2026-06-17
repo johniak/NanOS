@@ -16,6 +16,10 @@ QEMU_CPU ?= -cpu qemu64
 # fine while the kernel lives low (@ 0x100000, < 2 GiB).
 KARCHFLAGS ?= -mno-red-zone -mno-sse -mno-mmx -mno-80387
 
+# -Wconversion gate (Plan 7 enables it in its final task). Empty until the MI sweep is clean,
+# so intermediate Plan-7 commits don't fail the x86_64 build on not-yet-swept files.
+KWFLAGS ?=
+
 ARCH_VPATH=arch/x86_64/boot:arch/x86_64/cpu:arch/x86_64/mm:arch/x86_64/drivers:arch/x86_64/io
 ARCH_INCLUDES=-Iarch/x86_64/boot -Iarch/x86_64/cpu -Iarch/x86_64/mm -Iarch/x86_64/drivers -Iarch/x86_64/io
 ARCH_LINKER=arch/x86_64/linker.ld

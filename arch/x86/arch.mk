@@ -15,6 +15,10 @@ QEMU       ?= qemu-system-i386
 QEMU_CPU   ?= -cpu Nehalem
 KARCHFLAGS ?=
 
+# -Wconversion gate flags. Empty for i686 (kept green during the transition); the x86_64
+# arch.mk turns the gate on (Plan 7) so LP64 truncations fail the build.
+KWFLAGS ?=
+
 # The CPU/boot/asm sources now live under arch/x86/{boot,cpu,drivers}; the
 # mm/multiboot and remaining PC-driver sources migrate here in later steps (until
 # then they are found via the MI VPATH dirs: mm/, drivers/, kernel/).

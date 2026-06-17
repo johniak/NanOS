@@ -366,6 +366,13 @@ check-arch:
 	   echo "FAIL: machine-dependent reference in MI layer (above)"; exit 1; \
 	 else echo "OK: MI layer is arch-clean."; fi
 
+# Per-file LP64 truncation check with the x86_64 toolchain. MI files include only the arch
+# CONTRACTS (arch/include) + the freestanding <...> headers, so a single MI TU compiles without
+# the rest of arch/x86_64 (filled in by Plans 2-6). Usage:  make convcheck FILE=mm/FrameAllocator.cpp
+.PHONY: convcheck
+convcheck:
+	$(DOCKER_RUN) make ARCH=x86_64 _convcheck FILE=$(FILE)
+
 # x86_64 bring-up (Plan 1): build the minimal long-mode boot image + a tiny GRUB rescue
 # ISO in the container, then boot it natively. QEMU's -kernel (multiboot1) loader rejects
 # ELF64 ("give a 32bit one"), so we boot through GRUB, whose multiboot1 loader DOES accept
@@ -412,7 +419,7 @@ UOPTFLAGS=-O2 -fno-strict-aliasing -fno-delete-null-pointer-checks
 # layer before the kernel can take -O2; it is independent of the GUI work, where no kernel code is hot.
 KOPTFLAGS=
 
-CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KARCHFLAGS) $(KOPTFLAGS)
+CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KARCHFLAGS) $(KWFLAGS) $(KOPTFLAGS)
 LDFLAGS=-T$(ARCH_LINKER) -nostdlib -nostartfiles -lgcc
 ASFLAGS=
 
@@ -437,6 +444,15 @@ _all:
 	$(MAKE) -C $(KSRC) _compile
 
 _compile: $(BINFOLDER)kernel.bin
+
+# Syntax-only -Wconversion check of ONE MI source, compiled from a case-sensitive copy (the
+# macOS bind mount collides string.h/String.h). Reports warnings for $(FILE) only; sibling
+# headers' own warnings are addressed by their own Plan-7 tasks. The final gate (KWFLAGS) is
+# what turns these into hard errors across the whole build.
+_convcheck:
+	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
+	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage -C /src . | tar -xf - -C $(KSRC)
+	cd $(KSRC) && $(CXX) -fsyntax-only -Wconversion $(CXXFLAGS) $(FILE)
 
 $(BINFOLDER)kernel.bin: $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
