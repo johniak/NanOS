@@ -60,8 +60,13 @@ public:
 				for (int i = 0; i < h->entries; i++) {
 					unsigned start = ex[i].fileBlock;
 					unsigned end = start + ex[i].len;
-					if (fileBlockIndex >= start && fileBlockIndex < end)
-						return ex[i].startLo + (fileBlockIndex - start);
+					if (fileBlockIndex >= start && fileBlockIndex < end) {
+						// ext4 physical block is 48-bit (startHi:startLo). We combine both, but the
+						// block cache / resolveBlock return are still 32-bit block-addressed — a
+						// conscious cap (~16 TiB at 4 KiB blocks) ample for our images. Documented limit.
+						uint64_t phys = ((uint64_t) ex[i].startHi << 32) | (uint64_t) ex[i].startLo;
+						return (unsigned) (phys + (fileBlockIndex - start));
+					}
 				}
 				return 0;
 			}

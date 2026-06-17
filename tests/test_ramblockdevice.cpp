@@ -1,8 +1,21 @@
 #include "doctest.h"
 #include "RamBlockDevice.h"
 #include <cstring>
+#include <cstdint>
 
 using namespace kernel;
+
+TEST_CASE("BlockDevice::readSectors carries a 64-bit lba without truncation") {
+	struct Spy : kernel::BlockDevice {
+		uint64_t seen = 0;
+		int readSectors(uint64_t lba, unsigned, void*) override { seen = lba; return 0; }
+		int writeSectors(uint64_t, unsigned, const void*) override { return 0; }
+		unsigned sectorSize() override { return 512; }
+		const char* name() override { return "spy"; }
+	} dev;
+	dev.readSectors(0x1234ABCDEull, 1, nullptr);     // lba > 4 G sectors
+	CHECK(dev.seen == 0x1234ABCDEull);
+}
 
 TEST_CASE("RamBlockDevice reports its geometry and name") {
 	char backing[512 * 2] = {0};
