@@ -180,4 +180,7 @@ void archFrameToUser(TrapFrame* tf, uint32_t entry, uint32_t userEsp) {
 	r->eax = 0;
 }
 
+// i686 keeps the user thread pointer in a GDT %gs entry, not an MSR — no-op here.
+void archSetUserFsBase(uint64_t) {}
+
 }  // namespace arch
