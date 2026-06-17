@@ -35,3 +35,7 @@ ARCH_SOURCES=loader.o entry64.o AddressSpace.o mmu_x86_64.o \
              Gdt64.o Idt64.o Interrupt64.o isr64.o irq64.o \
              cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o \
              ATA64.o Hdd64.o AtaBlockDevice64.o block_x86_64.o
+
+# Plan 6 adds the ring-3 path: syscall trap (MSR init + entry stub), usermode enter,
+# the exit() longjmp. Append to whatever Plans 2-5 already listed.
+ARCH_SOURCES += syscall_x86_64.o syscall_entry64.o usermode_x86_64.o nxjmp64.o
