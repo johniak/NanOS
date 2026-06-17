@@ -24,4 +24,9 @@ ARCH_LINKER=arch/x86_64/linker.ld
 # (Gdt/Idt/interrupts/paging/drivers) is filled in by later plans.
 # Plan 3 adds the paging layer (AddressSpace + the <arch/mmu.h> impl). loader.o/entry64.o stay
 # from Plan 1; Plan 2's console/multiboot objects (if already present) are listed by that plan.
-ARCH_SOURCES=loader.o entry64.o AddressSpace.o mmu_x86_64.o
+# Plan 4 adds the GDT/IDT/TSS + interrupt path. The 64-suffixed objects (Gdt64/Idt64/
+# Interrupt64/isr64/irq64) avoid colliding with i686's same-named bin/*.o; cpu_x86_64/
+# fault_x86_64/irq_x86_64/irqtest64 have unique basenames already.
+ARCH_SOURCES=loader.o entry64.o AddressSpace.o mmu_x86_64.o \
+             Gdt64.o Idt64.o Interrupt64.o isr64.o irq64.o \
+             cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o

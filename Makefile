@@ -460,9 +460,14 @@ $(BINFOLDER)%.o: %.S
 # string_funcs.o, kmain.o, ...), so they build into a SEPARATE dir bin/stage64/. That also
 # sidesteps stale-mtime format mismatches when switching ARCH between full builds.
 STAGE_BIN=$(BINFOLDER)stage64/
-STAGE64_OBJS=loader64.o entry64.o console_x86_64.o bringup_stubs64.o bootinfo_x86_64.o \
+# Plan 4 brings in the real cpu_x86_64.o (full <arch/cpu.h> impl), which supersedes the Plan-2
+# bringup_stubs64.o shim (cpuDisableInterrupts/cpuHalt) — so bringup_stubs64.o is dropped here to
+# avoid a duplicate-symbol clash at link.
+STAGE64_OBJS=loader64.o entry64.o console_x86_64.o bootinfo_x86_64.o \
              MultibootMmap.o kmain.o KernelStage64.o Console.o memory_manager.o Heap.o \
-             string_funcs.o icxxabi.o AddressSpace.o mmu_x86_64.o FrameAllocator.o
+             string_funcs.o icxxabi.o AddressSpace.o mmu_x86_64.o FrameAllocator.o \
+             Gdt64.o Idt64.o Interrupt64.o isr64.o irq64.o \
+             cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o
 STAGE64_PATHS=$(addprefix $(STAGE_BIN),$(STAGE64_OBJS))
 
 # Staged compile rules write into bin/stage64/ (NOT bin/). The stage pattern's stem is shorter
@@ -474,6 +479,11 @@ $(STAGE_BIN)%.o: %.cpp
 # the elf64 boot object from ever colliding with i686's bin/loader.o (an explicit recipe, not
 # the generic %.S rule, because basenames differ).
 $(STAGE_BIN)loader64.o: arch/x86_64/boot/loader.S
+	@mkdir -p $(STAGE_BIN)
+	nasm -f $(ASM_FMT) $< -o $@
+# Staged NASM rule: isr64.S -> bin/stage64/isr64.o, irq64.S -> bin/stage64/irq64.o (basenames
+# are unique, so this generic staged .S pattern doesn't collide with the loader64 recipe).
+$(STAGE_BIN)%.o: %.S
 	@mkdir -p $(STAGE_BIN)
 	nasm -f $(ASM_FMT) $< -o $@
 
