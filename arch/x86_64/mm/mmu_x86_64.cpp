@@ -52,7 +52,9 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
 	// Re-reserve the windows the frame pool must never hand out.
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint32_t) (uintptr_t) &end - 0x100000); // kernel image
-	fa.markRangeUsed((uint32_t) VA_USER_BASE, 0x800000);            // exec staging window (8 MiB)
+	fa.markRangeUsed((uint32_t) VA_USER_BASE, 0x2000000);          // exec staging window (32 MiB — must
+	                                                               // cover the largest staged .nxe; see
+	                                                               // kernel/Exec.cpp STAGE_CAP)
 	// Kernel byte heap: carve ~25% off the TOP of RAM, clamped to [8 MiB, 256 MiB]; the rest
 	// (below) is the frame pool for page tables + user pages.
 	uint32_t heapSize = topOfRam / 4u;

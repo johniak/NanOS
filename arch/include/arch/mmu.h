@@ -21,7 +21,11 @@ enum PageFlags { PAGE_PRESENT = 1, PAGE_WRITE = 2, PAGE_USER = 4 };
 // 128 TiB user split is deferred. On i686 these same values fit uint32_t — the constants are
 // arch-neutral, only the page-table format differs.
 constexpr uint64_t VA_USER_BASE     = 0x800000;     // program image + user stack
-constexpr uint64_t VA_USER_END      = 0x1000000;    // exclusive (16 MiB): window = [0x800000, 0x1000000)
+// Window enlarged 16 MiB -> 64 MiB (x86_64 only; i686 keeps its own 8 MiB window in arch/x86).
+// A 64-bit .nxe is roughly twice its i686 size, so big apps (e.g. NetSurf, ~16 MiB image+bss)
+// overflowed the old 8 MiB window. The band up to VA_MODULE_BASE (1 GiB) is otherwise unused, so
+// this is free VA. The image loads at VA_USER_BASE growing up; the user stack sits at the top.
+constexpr uint64_t VA_USER_END      = 0x4000000;    // exclusive (64 MiB): window = [0x800000, 0x4000000)
 constexpr uint64_t VA_MODULE_BASE   = 0x40000000;   // .ndl load band (1 GiB)
 constexpr uint64_t VA_MODULE_STRIDE = 0x00400000;   // per-module spacing (4 MiB)
 constexpr uint64_t VA_MODULE_MAX    = 0x48000000;   // +128 MiB (32 modules)

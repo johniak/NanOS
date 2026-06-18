@@ -16,10 +16,12 @@
 namespace arch { void syscallSetKernelStack(uint64_t top); }   // syscall_x86_64.cpp
 
 namespace {
-// User window mirrors i686 but in 64-bit low-canonical VA: image at loadBase=0x800000,
-// stack at the top of the 8 MiB window. (Plan 3's mmu_x86_64 reserves this band.)
-const uint64_t USER_STACK_TOP = 0x1000000;
-const uint64_t USER_STACK_BOT = 0xF80000;   // 512 KiB stack
+// User window: image at loadBase=0x800000 growing up; stack at the top of the user window
+// (VA_USER_END, now 64 MiB — see arch/mmu.h). The 512 KiB stack stays within buildUserStack64's
+// stackFrames[128] (128 pages); the larger window only gives the IMAGE more room (big 64-bit
+// .nxe like NetSurf), not the stack.
+const uint64_t USER_STACK_TOP = arch::VA_USER_END;
+const uint64_t USER_STACK_BOT = arch::VA_USER_END - 0x80000;   // 512 KiB stack
 
 const uint32_t IA32_FS_BASE = 0xC0000100;
 inline void wrmsr(uint32_t msr, uint64_t v) {

@@ -158,11 +158,13 @@ static void stageMarkUsable(void*, uint64_t base, uint64_t len) {
 }
 
 // ---- Staged ring-3 launch (Plan 6 Tasks 11+13) ----------------------------------------------
-// The staging/user window: VA_USER_BASE (0x800000) .. VA_USER_END (0x1000000). The .nxe is read
-// here under the kernel directory (where 0x800000 is identity-mapped), validated/relocated by
-// NxeLoader, then archLoadUser copies it into the process's private USER frames at the same VA.
+// The staging window starts at VA_USER_BASE (0x800000); the user VA window is [VA_USER_BASE,
+// VA_USER_END) (now 64 MiB — see arch/mmu.h). The .nxe is read here under the kernel directory
+// (where 0x800000 is identity-mapped), validated/relocated by NxeLoader, then archLoadUser copies
+// it into the process's private USER frames at the same VA. STAGE_CAP matches kernel/Exec.cpp (32
+// MiB) and the 32 MiB staging band reserved in mmu_x86_64.cpp.
 static const unsigned STAGE_BASE = 0x800000;
-static const unsigned STAGE_CAP  = 0x800000;   // 8 MiB — the whole user window
+static const unsigned STAGE_CAP  = 0x2000000;  // 32 MiB
 
 // Minimal staged fd table for init.nxe. 0/1/2 are the console; >= 3 are files open on the Vfs.
 struct StageFd { bool used; String path; unsigned off; };

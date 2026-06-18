@@ -47,7 +47,14 @@ static void initBrk(Process* p) {
 // and callers reject an oversize file BEFORE the read, so a large .nxe can never corrupt RAM.
 // Base raised 0x400000 -> 0x800000 to give the kernel image headroom (must match user/nx.ld).
 static const unsigned STAGE_BASE = 0x800000;
-static const unsigned STAGE_CAP  = 0x800000;   // 8 MiB: matches the per-process user window
+#if defined(__x86_64__)
+// x86_64: 32 MiB. A 64-bit .nxe is ~2x its i686 size, so big apps (NetSurf ~16 MiB image+bss,
+// file ~8.3 MiB) overflowed 8 MiB. The mmu reserves a matching 32 MiB staging band at VA_USER_BASE
+// (arch/x86_64/mm/mmu_x86_64.cpp) and the user VA window was widened to 64 MiB (arch/mmu.h).
+static const unsigned STAGE_CAP  = 0x2000000;  // 32 MiB
+#else
+static const unsigned STAGE_CAP  = 0x800000;   // 8 MiB: matches the i686 per-process user window
+#endif
 
 // Load a .nxe image (already staged at the load base in the kernel identity window),
 // applying relocations + zeroing bss. EXEs load at their preferred base, so the delta is
