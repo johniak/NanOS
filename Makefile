@@ -272,21 +272,46 @@ httpd: bin/libc.ndl bin/libc.ndl.a
 # TLS/SSH plan). Built by the nanos-sdk from $(OPENSSL_PORT)/nxport.toml (own Perl Configure via
 # hooks/pre_configure.sh, no-asm/no-threads/no-shared, seed=/dev/urandom). post_build installs
 # libcrypto.a/libssl.a + headers into the SDK sysroot for the downstream TLS/SSH ports. Same
-# reproducible flow as ping/wget/httpd. `make image` never depends on this.
+# reproducible flow as ping/wget/httpd. `make image`/`make image64` never depends on this.
+#
+# ARCH-AWARE (mirrors `make ping`): for ARCH=x86_64 the port targets the x86_64-nanos sysroot,
+# sets NX_HOST=x86_64-nanos (pre_configure picks the custom 64-bit-limb `nanos-x86_64` Configure
+# target + the LP64/non-PIC small-model cflags + the nx-dllimport.h data-import shim) and NX_LP64=1.
+# The in-tree x86_64 crt0/nxhdr/mknx the toolchain default-links are refreshed first (like ping).
+# i686 is unchanged (generic `gcc` target, absolute relocs, no shim).
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
+ifeq ($(ARCH),x86_64)
+OPENSSL_TRIPLE  := x86_64-nanos
+OPENSSL_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
+OPENSSL_PREREQ   = $(NXPORT_PREREQ)
+OPENSSL_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(OPENSSL_TRIPLE)-mknx"
+else
+OPENSSL_TRIPLE  := i686-nanos
+OPENSSL_PORT_ENV =
+OPENSSL_PREREQ   = @true
+OPENSSL_STARTUP  = true
+endif
 openssl: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(OPENSSL_TRIPLE)/include" || { echo "nanos-sdk $(OPENSSL_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(OPENSSL_PORT)/nxport.toml"   || { echo "openssl port not found at $(OPENSSL_PORT)/nxport.toml"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(OPENSSL_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(OPENSSL_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(OPENSSL_TRIPLE)/include/SyscallNr.h"
+	# The dllimport shim (stdin/stdout/stderr/environ/_ctype_b -> libc.ndl IAT slots). x86_64
+	# code references these DATA exports RIP-relative (R_X86_64_PC32), which mknx can't auto-import;
+	# pre_configure -include's it into every TU via CFLAGS (OpenSSL's make build has no autotools
+	# config.h to append to). i686 uses absolute relocs and skips it (NX_HOST != x86_64-nanos).
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(OPENSSL_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/libc.ndl"
+	$(OPENSSL_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(OPENSSL_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -e SDK=/sdk $(OPENSSL_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(OPENSSL_PORT)/openssl.nxe" $(BINFOLDER)openssl.nxe
-	@echo "staged $(BINFOLDER)openssl.nxe — run 'make image' to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)openssl.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
 
 # Dropbear (optional, external): small SSH-2 server (dropbear) + keygen (dropbearkey) + client
 # (dbclient) — FAZA 4/5 of the TLS/SSH plan. Bundles its own crypto, runs as root without privsep.
@@ -747,6 +772,20 @@ _image64: _all _userland64 _kext
 	# Mirrors the i686 _image population.
 	if [ -f $(BINFOLDER)ping.nxe ]; then \
 	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# openssl (optional, external): OpenSSL CLI built by `make ARCH=x86_64 openssl` (the nanos-sdk
+	# port), staged into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	# Mirrors the i686 _image population.
+	if [ -f $(BINFOLDER)openssl.nxe ]; then \
+	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# CA trust store + config (Mozilla bundle): OpenSSL's compiled OPENSSLDIR is /disks/main/nanos/ssl;
+	# ship cert.pem + openssl.cnf there so the TLS clients can verify chains without a per-command
+	# -CAfile and the CLI finds its config. Mirrors the i686 _image population. Skipped if absent.
+	if [ -f disk-content/ssl/cert.pem ]; then \
+	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
 	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
