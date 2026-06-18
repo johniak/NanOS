@@ -352,23 +352,49 @@ openssl: bin/libc.ndl bin/libc.ndl.a
 # (dbclient) — FAZA 4/5 of the TLS/SSH plan. Bundles its own crypto, runs as root without privsep.
 # Built by the nanos-sdk from $(DROPBEAR_PORT)/nxport.toml. Same reproducible flow. `make image`
 # installs them; the host reaches sshd via hostfwd 2222->22.
+#
+# ARCH-AWARE (mirrors `make openssl`): for ARCH=x86_64 the port targets the x86_64-nanos sysroot,
+# sets NX_HOST=x86_64-nanos (configure --host / CC / mknx) + NX_LP64=1 (8-byte long/ptr/size_t in
+# the cross-cache). The arch CFLAGS/LDFLAGS are passed in the ENVIRONMENT (the manifest no longer
+# pins them as configure args): both arches force non-PIC fixed-base ET_EXEC (-fno-pie -fno-PIC /
+# -no-pie); x86_64 adds the LP64 small-model/no-red-zone flags + -include nx-dllimport.h (so the
+# stdio/errno DATA exports referenced RIP-relative are redirected through libc.ndl's import table).
+# The in-tree x86_64 crt0/nxhdr/mknx the toolchain default-links are refreshed first (like ping).
+# i686 keeps the original 32-bit flags (generic gcc, absolute relocs, no shim).
 DROPBEAR_PORT := $(SDK_WORK)/dropbear-port
+ifeq ($(ARCH),x86_64)
+DROPBEAR_TRIPLE   := x86_64-nanos
+DROPBEAR_PORT_ENV  = -e NX_HOST=x86_64-nanos -e NX_LP64=1 \
+  -e 'CFLAGS=-Os -fno-pie -fno-PIC -mcmodel=small -mno-red-zone -include nx-dllimport.h' \
+  -e 'LDFLAGS=-no-pie'
+DROPBEAR_PREREQ    = $(NXPORT_PREREQ)
+DROPBEAR_STARTUP   = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(DROPBEAR_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(DROPBEAR_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(DROPBEAR_TRIPLE)-mknx"
+else
+DROPBEAR_TRIPLE   := i686-nanos
+DROPBEAR_PORT_ENV  = -e 'CFLAGS=-Os -fno-pie -fno-PIC' -e 'LDFLAGS=-no-pie'
+DROPBEAR_PREREQ    = @true
+DROPBEAR_STARTUP   = true
+endif
 dropbear: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include" || { echo "nanos-sdk $(DROPBEAR_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(DROPBEAR_PORT)/nxport.toml"   || { echo "dropbear port not found at $(DROPBEAR_PORT)/nxport.toml"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(DROPBEAR_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(DROPBEAR_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(DROPBEAR_TRIPLE)/lib/libc.ndl"
+	$(DROPBEAR_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(DROPBEAR_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -e SDK=/sdk $(DROPBEAR_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(DROPBEAR_PORT)/dropbear.nxe" $(BINFOLDER)dropbear.nxe
 	@for b in dropbearkey dbclient; do \
 	  test -f "$(DROPBEAR_PORT)/$$b.nxe" && cp "$(DROPBEAR_PORT)/$$b.nxe" $(BINFOLDER)$$b.nxe && echo "  staged $$b.nxe" || true; \
 	done
-	@echo "staged $(BINFOLDER)dropbear.nxe (+ dropbearkey/dbclient) — run 'make image' to install"
+	@echo "staged $(BINFOLDER)dropbear.nxe (+ dropbearkey/dbclient) — run 'make image' (i686) or 'make image64' (x86_64) to install"
 
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
@@ -635,7 +661,7 @@ image64:
 	$(DOCKER_RUN) make ARCH=x86_64 _image64
 
 run64: image64
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
 
 # x86_64 minimal userland (Plan 6): build the 64-bit init.nxe in the container (crt0 +
 # nxhdr + libnanos + init, linked at 0x800000, then mknx64 -> v4 .nxe). Host-side wrapper.
@@ -884,6 +910,14 @@ _image64: _all _userland64 _kext
 	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
+	# tmpfs at boot, see Kernel.cpp populateEtc). /etc/shells in particular lists the valid login
+	# shells: dropbear's getusershell() rejects an SSH login whose passwd shell isn't there. Mirrors
+	# the i686 _image etc population.
+	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells; do \
+	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	done
 	# GNU bash (optional): installed as an /apps/bash bundle + a /bin/bash.nxe symlink ONLY if
 	# `make ARCH=x86_64 bash` staged bin/bash.nxe. passwd's login shell is /disks/main/bin/bash.nxe,
 	# so this is what PID 1 execve()s. Mirrors the i686 _image bash population. Skipped silently
@@ -922,6 +956,17 @@ _image64: _all _userland64 _kext
 	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# Dropbear SSH (optional, external): server + keygen + client -> /nanos/bin, installed only if
+	# `make ARCH=x86_64 dropbear` staged them. init's start_sshd() generates a persistent ed25519
+	# host key under /nanos/config on first boot and launches `dropbear -r .. -p 22`; login is the
+	# passwd shell (bash) over the kernel PTY. Also create root's home + .ssh (pubkey authorized_keys
+	# location). Mirrors the i686 _image dropbear population. The host reaches sshd via hostfwd 2222->22.
+	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
+	  for b in dropbear dropbearkey dbclient; do \
+	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  done; \
+	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	fi
 	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
 	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
