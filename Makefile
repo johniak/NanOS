@@ -621,19 +621,25 @@ _bringup64:
 # mounts at boot; init.nxe (PID 1) is installed at /nanos/core/init.nxe — the exact path
 # kernel/Kernel.cpp execs. (The staged kernel + its disk path are retired here; bringup64
 # remains as the staged rescue-ISO smoke target.)
-_image64: _all
+_image64: _all _userland64
 	IMAGE_PATH=$(IMAGE64_GRUB2) ./scripts/create-grub2-image.sh
 	# GRUB menuentry -> the real kernel (GRUB multiboot1 loads the ELF64).
 	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel.bin\n}\n' > /tmp/grub64.cfg
 	printf "rm /boot/grub/grub.cfg\nwrite /tmp/grub64.cfg /boot/grub/grub.cfg\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# Install the real kernel under /nanos/core (so /nanos exists for the write self-test too).
-	-printf "mkdir /nanos\nmkdir /nanos/core\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,config}.
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/config\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# Build + install the 64-bit init.nxe (PID 1): the kernel execs /disks/main/nanos/core/init.nxe
-	# and runs it in ring 3. Built in /src directly (the minimal freestanding userland needs no KSRC
-	# copy: no source includes <string.h>, so the case-insensitivity trap does not apply).
-	$(MAKE) ARCH=x86_64 $(BINFOLDER)init.nxe
+	# PID 1: the real user/init.c (dynamically linked against libc.ndl), which execve()s the
+	# login shell. The kernel execs /disks/main/nanos/core/init.nxe and runs it in ring 3.
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# The shared C library the dynamic loader binds every program against -> /nanos/lib.
+	printf "rm /nanos/lib/libc.ndl\nwrite $(BINFOLDER)libc.ndl /nanos/lib/libc.ndl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# The shell + the sbase coreutils -> /nanos/bin (nsh resolves a bare command name here first).
+	for p in $(X64_SYS_PROGS); do \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	done
+	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
+	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
 	e2fsck -fy "$(IMAGE64_GRUB2_PART)" || true
@@ -1012,8 +1018,12 @@ $(MKNX64): tools/mknx.c kernel/NxFormat.h
 # they produce the right format for the active ARCH.
 ifeq ($(ARCH),x86_64)
 MKNX_TOOL=$(MKNX64)
+# Userland linker script: x86_64 programs use the elf64-x86-64 variant (OUTPUT_FORMAT +
+# the low fixed base for R_X86_64_32S); i686 uses the original 32-bit script.
+USER_NX_LD=arch/x86_64/user-nx.ld
 else
 MKNX_TOOL=$(MKNX)
+USER_NX_LD=user/nx.ld
 endif
 
 ifeq ($(ARCH),x86_64)
@@ -1027,12 +1037,15 @@ UARCHFLAGS64 = -mcmodel=small -fno-pic -mno-red-zone   # SSE intentionally NOT d
 # the only headers it finds are gcc's own freestanding ones (stdint.h — needed by NxFormat.h).
 USER64_CFLAGS = -ffreestanding -nostdlib -Ikernel -Iuser $(UARCHFLAGS64) -Wall
 
-# Build the 64-bit init.nxe: crt0 + nxhdr + libnanos + init, linked at 0x800000, then mknx64.
+# The minimal freestanding 64-bit init (Plan 6) is retired here: now that the full 64-bit
+# libc.ndl works in ring 3 (Plan 10 10a/10b), x86_64 builds the REAL user/init.c — the same
+# dynamically-linked PID 1 the i686 build runs, which execve()s the login shell. init.nxe
+# therefore falls through to the generic dynamic prereq + %.nxe recipe below (arch-selected
+# MKNX_TOOL + USER_NX_LD), exactly like nsh and the coreutils. The crt0/sigtramp/pthread .s
+# overrides below stay — they are the 64-bit C-library startup the dynamic build links.
 bin/init64.elf: user/crt064.o user/nxhdr64.o user/libnanos64.o user/init64.o arch/x86_64/user-nx.ld
 	$(CROSS)gcc -nostdlib -Wl,--emit-relocs -T arch/x86_64/user-nx.ld \
 	  -o $@ user/crt064.o user/nxhdr64.o user/libnanos64.o user/init64.o
-$(BINFOLDER)init.nxe: bin/init64.elf $(MKNX64)
-	$(MKNX64) $< $@
 
 # Object rules for the 64-bit userland (distinct *64.o names avoid clashing with the i686
 # bin/*.o during transition; the 64-suffix convention, like loader64.o in Plan 1).
@@ -1080,21 +1093,19 @@ endif
 # libc) and declares "needed: libc.ndl", so the loader maps libc.ndl and binds its imports
 # by name. `--emit-relocs` keeps the R_386_32 relocations so mknx can build the relocation
 # table (the .nxe loads at any base). Each program below just declares its object prereqs.
-$(BINFOLDER)%.nxe: $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(@:.nxe=.elf) $(filter %.o,$^) $(filter %.a,$^) -lgcc
-	$(MKNX) $(@:.nxe=.elf) $@ --need libc.ndl
+$(BINFOLDER)%.nxe: $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(@:.nxe=.elf) $(filter %.o,$^) $(filter %.a,$^) -lgcc
+	$(MKNX_TOOL) $(@:.nxe=.elf) $@ --need libc.ndl
 
 # Per-program object sets: DYN_GLUE (crt0+nxhdr) + program objects + the libc import
 # library (an ARCHIVE — the linker pulls only the members the program references, so it
 # imports just the symbols it uses). libc.ndl is a prereq so it is built/shipped. Doom +
 # usedll have explicit rules (extra math / a second needed library).
 DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl
-# init.nxe: the i686 build links it dynamically against libc.ndl (prereqs below + the generic
-# %.nxe recipe). On x86_64 init.nxe is the minimal freestanding build above (explicit recipe);
-# guard the i686 prereqs out so they don't pull the libc.ndl chain into the x86_64 build.
-ifneq ($(ARCH),x86_64)
+# init.nxe links dynamically against libc.ndl (prereqs here + the generic %.nxe recipe) on
+# BOTH arches now: x86_64's full libc.ndl works in ring 3, so PID 1 is the real user/init.c
+# that execve()s the shell (the minimal freestanding init64 is retired).
 $(BINFOLDER)init.nxe:      $(DYN_DEPS) $(BINFOLDER)init.o
-endif
 $(BINFOLDER)nsh.nxe:       $(DYN_DEPS) $(BINFOLDER)nsh.o
 $(BINFOLDER)free.nxe:      $(DYN_DEPS) $(BINFOLDER)free.o
 $(BINFOLDER)cat.nxe:       $(DYN_DEPS) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
@@ -1315,6 +1326,16 @@ $(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX)
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
 _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
+
+# x86_64 in-tree userland subset (Plan 10 Task 7): the shell + the sbase coreutils + init,
+# all dynamically linked against the 64-bit libc.ndl (the same dynamic path as i686, via the
+# arch-selected MKNX_TOOL/USER_NX_LD). The full USER_PROGS set (NanWM, Rust demo, Doom, the
+# pthread/net stress tools) is NOT built here — those are later ports; this is the first
+# interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
+# rest to /nanos/bin (see _image64). free is a system util like the coreutils.
+X64_SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free
+X64_USER_PROGS=init $(X64_SYS_PROGS)
+_userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl
 
 # ----------------------------------------------------------------------------
 # Kernel modules (nkext): loadable drivers built SEPARATELY from kernel.bin, shipped to
