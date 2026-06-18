@@ -573,6 +573,56 @@ libpng: bin/libc.ndl bin/libc.ndl.a
 	  -w /work/port nanos-sdk-dev:latest sh -c '$(LIBPNG_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	@echo "installed libpng16.a + png.h/pngconf.h/pnglibconf.h into the $(LIBPNG_TRIPLE) sysroot ($(SDK_TC)/$(LIBPNG_TRIPLE)) — link downstream ports with -lpng16 -lz"
 
+# libjpeg-turbo 3.0.3 (optional, external): a static-library port — libjpeg.a + libturbojpeg.a +
+# headers (jpeglib.h / jconfig.h / jmorecfg.h / jerror.h / turbojpeg.h) installed into the SDK
+# sysroot, NOT an app (no .nxe, nothing on the disk image). It is the JPEG image codec dependency
+# that unblocks the NetSurf port (image/jpeg). Built by the nanos-sdk from $(LIBJPEG_PORT)/
+# nxport.toml the same way as `make libpng`, except libjpeg-turbo is a CMake project (build="cmake"):
+# the driver runs cmake in build-nanos/ with -DCMAKE_TOOLCHAIN_FILE=toolchain-nanos.cmake (now itself
+# NX_HOST-aware), install="sysroot" makes the driver skip mknx (a library has no app binary), and
+# hooks/post_build.sh `cmake --install`s libjpeg.a + libturbojpeg.a + headers into the per-arch
+# sysroot. SIMD is off (-DWITH_SIMD=OFF in the manifest) so the portable C codec is used — matches
+# the i686 port and avoids the hand-written NASM SIMD path that has no NanOS ABI. `make image`/
+# `make image64` never depends on this.
+#
+# ARCH-AWARE (mirrors `make libpng`/`make ncurses`): for ARCH=x86_64 the port targets the x86_64-nanos
+# sysroot and sets NX_HOST=x86_64-nanos + NX_LP64=1. Unlike the autotools ports (which pass the ABI
+# cflags via -e CFLAGS), the CMake ABI/cflags + the nx-dllimport.h DATA-import shim are injected by
+# the NX_HOST-aware cmake toolchain file itself (CMAKE_C_FLAGS_INIT for x86_64), so a downstream app
+# linking libjpeg.a binds picolibc's `stderr` (jerror.c's default handlers) through the libc.ndl IAT.
+# The in-tree x86_64 crt0/nxhdr/libc/mknx are refreshed first (cmake links the cjpeg/djpeg helper
+# binaries). i686 is unchanged (generic cross gcc, absolute relocs, no shim, no extra CFLAGS).
+LIBJPEG_PORT := $(SDK_WORK)/libjpeg-port
+ifeq ($(ARCH),x86_64)
+LIBJPEG_TRIPLE := x86_64-nanos
+LIBJPEG_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
+LIBJPEG_PREREQ   = $(NXPORT_PREREQ)
+LIBJPEG_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(LIBJPEG_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(LIBJPEG_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(LIBJPEG_TRIPLE)-mknx"
+else
+LIBJPEG_TRIPLE := i686-nanos
+LIBJPEG_PORT_ENV =
+LIBJPEG_PREREQ   = @true
+LIBJPEG_STARTUP  = true
+endif
+libjpeg: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include" || { echo "nanos-sdk $(LIBJPEG_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(LIBJPEG_PORT)/nxport.toml" || { echo "libjpeg port not found at $(LIBJPEG_PORT)/nxport.toml"; exit 1; }
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(LIBJPEG_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include/SyscallNr.h"
+	# The dllimport shim (stderr/errno -> libc.ndl IAT slots). x86_64 lib objects reference these DATA
+	# exports RIP-relative (R_X86_64_PC32); the cmake toolchain file -include's it for x86_64 only.
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(LIBJPEG_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(LIBJPEG_TRIPLE)/lib/libc.ndl"
+	$(LIBJPEG_STARTUP)
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(LIBJPEG_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk $(LIBJPEG_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	@echo "installed libjpeg.a + libturbojpeg.a + headers into the $(LIBJPEG_TRIPLE) sysroot ($(SDK_TC)/$(LIBJPEG_TRIPLE)) — link downstream ports with -ljpeg"
+
 # NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
 # libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke NanWM
 # libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
@@ -620,7 +670,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
