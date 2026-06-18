@@ -60,7 +60,25 @@ hidden long __syscall_cp(syscall_arg_t, syscall_arg_t, syscall_arg_t, syscall_ar
 #define __syscall_cp(...) __SYSCALL_DISP(__syscall_cp,__VA_ARGS__)
 #define syscall_cp(...) __syscall_ret(__syscall_cp(__VA_ARGS__))
 
-/* Linux i386 numbers used by the vendored pthread core (== NanOS syscall numbers). */
+/* Syscall numbers used by the vendored pthread core (== NanOS syscall numbers, kernel/
+ * SyscallNr.h). Arch-selected: x86_64 (the `syscall` insn path) uses the Linux x86_64 numbers;
+ * i386 (`int $128`) keeps the Linux i386 numbers verbatim. SYS_exit in particular MUST be the
+ * right number — pthread_create.c's thread-exit issues __syscall(SYS_exit, 0), which is 60 on
+ * x86_64 (1 there is write(2)). clone/set_thread_area are issued from the arch .s only. */
+#if defined(__x86_64__)
+#define SYS_exit            60
+#define SYS_munmap          11
+#define SYS_clone           56
+#define SYS_rt_sigaction    13
+#define SYS_sched_yield     24
+#define SYS_mmap            9
+#define SYS_gettid          186
+#define SYS_tkill           200
+#define SYS_futex           202
+#define SYS_set_thread_area 205   /* unused on x86_64 (TLS via arch_prctl); kept for completeness */
+/* Compile-time link-completeness only (robust-mutex path); NanOS implements no robust list. */
+#define SYS_set_robust_list 273
+#else
 #define SYS_exit            1
 #define SYS_munmap          91
 #define SYS_clone           120
@@ -76,5 +94,6 @@ hidden long __syscall_cp(syscall_arg_t, syscall_arg_t, syscall_arg_t, syscall_ar
  * non-robust mutex never reaches that path, so this is link-completeness only — if it ever
  * executed, the kernel would return -ENOSYS for the unknown number. */
 #define SYS_set_robust_list 311
+#endif
 
 #endif

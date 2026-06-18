@@ -30,9 +30,16 @@
  * struct pthread MUST agree — self@0, tid@24, errno_val@28 — or musl and picolibc would see
  * DIFFERENT errno cells. Lock it at compile time: a musl bump, or a TLS_ABOVE_TP / CANARY_PAD
  * config that shifted these, fails the build here instead of silently desyncing errno. */
-_Static_assert(offsetof(struct pthread, self) == 0,        "TCB self must be at %gs:0");
+_Static_assert(offsetof(struct pthread, self) == 0,        "TCB self must be at <tp>:0");
+#if defined(__x86_64__)
+/* 64-bit pointers push the Part-1 fields out: self@0 dtv@8 prev@16 next@24 sysinfo@32
+ * canary@40, so tid@48 / errno_val@52 — matching nx-tcb.h's x86_64 layout (%fs:0). */
+_Static_assert(offsetof(struct pthread, tid) == 48,        "TCB tid offset drifted from nx-tcb.h");
+_Static_assert(offsetof(struct pthread, errno_val) == 52,  "musl errno_val must match picolibc errno at %fs+52");
+#else
 _Static_assert(offsetof(struct pthread, tid) == 24,        "TCB tid offset drifted from nx-tcb.h");
 _Static_assert(offsetof(struct pthread, errno_val) == 28,  "musl errno_val must match picolibc errno at %gs+28");
+#endif
 
 /* musl's process-global libc state. Hidden to match the `extern hidden` decl in libc.h. */
 struct __libc __libc;

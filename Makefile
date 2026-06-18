@@ -810,12 +810,22 @@ _clean:
 # linker script/base 0x400000, NOT in kernel SOURCES). picolibc headers come via
 # -isystem; SyscallNr.h via -Ikernel. No <string.h> clash (lib/ is not on the path).
 # ----------------------------------------------------------------------------
+# picolibc + the userland codegen flags are arch-selected: i686 uses the 32-bit sysroot and
+# the plain (no extra arch) flags; x86_64 uses the 64-bit sysroot built into nanos-build
+# (commit 170f150) and the SysV-AMD64 userland flags (SSE on for varargs/float, small code
+# model + non-PIC for the fixed low base, no red zone). i686 is unchanged below.
+ifeq ($(ARCH),x86_64)
+PICOLIBC=/opt/picolibc/x86_64-elf
+USER_ARCHFLAGS=-mcmodel=small -mno-red-zone
+else
 PICOLIBC=/opt/picolibc/i686-elf
+USER_ARCHFLAGS=
+endif
 SBASE=user/third_party/sbase
 # kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
 # new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
 # bind mount (kernel/Signal.h == <signal.h> under -I, which broke the userland build).
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector $(UOPTFLAGS)
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
 # the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
@@ -884,10 +894,10 @@ $(BINFOLDER)%.o: $(SBASE)/libutf/%.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/%.S
 	@mkdir -p $(BINFOLDER)
-	nasm -f elf $< -o $@
+	nasm -f $(ASM_FMT) $< -o $@
 $(BINFOLDER)%.o: user/libc-glue/%.S
 	@mkdir -p $(BINFOLDER)
-	nasm -f elf $< -o $@
+	nasm -f $(ASM_FMT) $< -o $@
 # Vendored musl pthread internals (user/libc-glue/pthread). Compiled with the musl internal
 # headers (pthread_impl.h/atomic.h/syscall.h/...) on the include path AHEAD of nothing else
 # that defines them, and the weak_alias/hidden compat macros force-included. The .s files are
@@ -956,6 +966,15 @@ $(MKNX64): tools/mknx.c kernel/NxFormat.h
 	@mkdir -p $(BINFOLDER)
 	cc -O2 -Wall -DNX_FORCE64 -Ikernel -o $@ tools/mknx.c
 
+# Arch-selected mknx for the libc.ndl chain: i686 emits the 32-bit (R_386_32) format, x86_64
+# the ELF64 (R_X86_64_*) v4 layout. The shared-library rules below reference $(MKNX_TOOL) so
+# they produce the right format for the active ARCH.
+ifeq ($(ARCH),x86_64)
+MKNX_TOOL=$(MKNX64)
+else
+MKNX_TOOL=$(MKNX)
+endif
+
 ifeq ($(ARCH),x86_64)
 # ----------------------------------------------------------------------------
 # x86_64 minimal in-tree userland (Plan 6): freestanding, SSE ON (decision #3 — SysV AMD64
@@ -986,6 +1005,34 @@ user/libnanos64.o: user/libnanos.c
 	$(CROSS)gcc $(USER64_CFLAGS) -c $< -o $@
 user/init64.o: user/init64.c
 	$(CROSS)gcc $(USER64_CFLAGS) -c $< -o $@
+
+# The DYN_GLUE / libc.ndl chain wants bin/crt0.o (and bin/nxhdr.o) as ELF64. crt0.o carries
+# the main-thread TLS bootstrap (calls __nx_init_tls before main, see user/crt064.S) and must
+# be assembled from the 64-bit startup; an explicit rule overrides the generic user/%.S
+# pattern (which would wrongly assemble the i686 user/crt0.S as elf64). nxhdr.o builds from
+# user/nxhdr.c via the generic user/%.c rule (USER_CFLAGS is now the x86_64 picolibc set), so
+# it needs no override here.
+$(BINFOLDER)crt0.o: user/crt064.S
+	@mkdir -p $(BINFOLDER)
+	nasm -f elf64 $< -o $@
+
+# The signal trampoline is arch-specific: bin/sigtramp.o (in LIBC_GLUE_OBJS) is the 64-bit
+# __nx_sigtramp from user/sigtramp64.S, overriding the generic user/%.S pattern (which would
+# wrongly take the [BITS 32] user/sigtramp.S). Same exported symbol (__nx_sigtramp).
+$(BINFOLDER)sigtramp.o: user/sigtramp64.S
+	@mkdir -p $(BINFOLDER)
+	nasm -f elf64 $< -o $@
+
+# The two arch-specific musl pthread .s files have x86_64 variants (clone64.s /
+# __set_thread_area64.s — the `syscall` insn + arch_prctl FS install). Explicit rules override
+# the generic user/libc-glue/pthread/%.s pattern (which would assemble the i386 register-32 .s
+# as 64-bit and fail). Assembled by the GNU-as path ($(CXX) -c), like the i686 .s files.
+$(BINFOLDER)clone.o: user/libc-glue/pthread/clone64.s
+	@mkdir -p $(BINFOLDER)
+	$(CXX) -c $< -o $@
+$(BINFOLDER)__set_thread_area.o: user/libc-glue/pthread/__set_thread_area64.s
+	@mkdir -p $(BINFOLDER)
+	$(CXX) -c $< -o $@
 endif
 
 # Generic DYNAMIC link: every program links its objects + the import library (NO static
@@ -1179,18 +1226,18 @@ $(BINFOLDER)libc.elf: $(BINFOLDER)nxhdr.o $(LIBC_GLUE_OBJS) Makefile
 	comm -23 $(BINFOLDER)pico.syms $(BINFOLDER)glue.syms | sed 's/^/-Wl,--undefined=/' > $(BINFOLDER)libc.undef
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o \
 	  $(LIBC_GLUE_OBJS) @$(BINFOLDER)libc.undef -L$(PICOLIBC)/lib -lc -lgcc
-$(BINFOLDER)libc.ndl: $(BINFOLDER)libc.elf $(MKNX)
-	$(MKNX) $(BINFOLDER)libc.elf $@ --dll --export-all
+$(BINFOLDER)libc.ndl: $(BINFOLDER)libc.elf $(MKNX_TOOL)
+	$(MKNX_TOOL) $(BINFOLDER)libc.elf $@ --dll --export-all
 
 # Import library libc.ndl.a: an ARCHIVE with ONE member per export — a `name: jmp
 # [__imp_name]` thunk + IAT slot for each function, a slot-only member for each data symbol
 # (stdout/errno, reached via nx-dllimport.h). A program links the archive instead of static
 # picolibc; the linker pulls ONLY referenced members, so the program imports just what it
 # uses (not all ~130 symbols). mknx writes one .s per symbol into a dir; we assemble + ar.
-$(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX)
+$(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX_TOOL)
 	rm -rf $(BINFOLDER)libimp && mkdir -p $(BINFOLDER)libimp
-	$(MKNX) $(BINFOLDER)libc.elf $(BINFOLDER)libimp --implib --export-all --soname libc.ndl
-	for f in $(BINFOLDER)libimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
+	$(MKNX_TOOL) $(BINFOLDER)libc.elf $(BINFOLDER)libimp --implib --export-all --soname libc.ndl
+	for f in $(BINFOLDER)libimp/*.s; do nasm -f $(ASM_FMT) "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libimp/*.o
 
 # ---- libnw.ndl: the shared window-client library (the user32/gdi32 of NanWM) ----
