@@ -20,6 +20,11 @@ struct CharDevice;   // a writable/ioctl/mmappable device node (drivers/CharDevi
 // A generated file: fill up to n bytes at logical offset off; return bytes produced.
 typedef int (*SynthGen)(unsigned off, void* buf, unsigned n);
 
+// Optional write sink for a generated file: consume n bytes at offset off; return bytes
+// accepted (or a negative errno). Lets a SK_GEN node be writable (e.g. /dev/random and
+// /dev/urandom, where a write mixes the supplied bytes into the entropy pool, Linux-style).
+typedef int (*SynthWrite)(unsigned off, const void* buf, unsigned n);
+
 // Render an uptime string ("uptime: <s> s (<ticks> ticks)\n") into buf; returns its
 // length. Free function so it is host-testable; used by the /proc/uptime generator.
 int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz);
@@ -62,6 +67,7 @@ struct SynthNode {
 	const char* data;       // SK_STATIC
 	unsigned len;
 	SynthGen gen;           // SK_GEN
+	SynthWrite genWrite;    // SK_GEN: optional write sink (0 -> writes return -EROFS)
 	CharDevice* dev;        // SK_CHARDEV
 	unsigned perms;         // permission bits (type bits added by stat)
 };
@@ -82,7 +88,7 @@ public:
 
 	SynthNode* addDir(SynthNode* parent, const char* name);
 	void addStatic(SynthNode* parent, const char* name, const char* data, unsigned len);
-	void addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms);
+	SynthNode* addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms);
 	void addChar(SynthNode* parent, const char* name, CharDevice* dev, unsigned perms);
 	void addVolume(const char* name);     // marker dir under /disks
 

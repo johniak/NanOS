@@ -184,6 +184,7 @@ SynthNode* SynthFs::mk(SynthKind kind, const char* name, unsigned perms) {
 	n->data = 0;
 	n->len = 0;
 	n->gen = 0;
+	n->genWrite = 0;
 	n->dev = 0;
 	n->perms = perms;
 	return n;
@@ -217,10 +218,11 @@ void SynthFs::addStatic(SynthNode* parent, const char* name, const char* data, u
 	addChild(parent, n);
 }
 
-void SynthFs::addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms) {
+SynthNode* SynthFs::addGen(SynthNode* parent, const char* name, SynthGen g, unsigned perms) {
 	SynthNode* n = mk(SK_GEN, name, perms);
 	n->gen = g;
 	addChild(parent, n);
+	return n;
 }
 
 void SynthFs::addChar(SynthNode* parent, const char* name, CharDevice* dev, unsigned perms) {
@@ -242,12 +244,30 @@ static int gen_zero(unsigned, void* buf, unsigned n) {
 	return (int) n;
 }
 
+// Write sink for /dev/null and /dev/zero: silently accept and discard everything, reporting all
+// bytes written (the canonical "bit bucket" — writing to /dev/null must SUCCEED). Without this a
+// write returns -EROFS, which makes a stdio flush spin and hangs any program that redirects its
+// output there (e.g. daemon()'s fd0/1/2 -> /dev/null, or `cmd >/dev/null`).
+static int gen_discard_write(unsigned, const void*, unsigned n) {
+	return (int) n;
+}
+
 // /dev/random and /dev/urandom both draw from the one kernel CSPRNG (kernel/Csprng.*), seeded at
 // boot from RDRAND + RDTSC jitter + the RTC. They are identical here: our CSPRNG never blocks and
 // is always seeded by the time userspace runs, so there is no random/urandom distinction to make
 // (the same stance Linux took in 5.6+ — getrandom never blocks once the pool is initialised).
 static int gen_random(unsigned, void* buf, unsigned n) {
 	csprngBytes(buf, n);
+	return (int) n;
+}
+
+// Write side of /dev/random and /dev/urandom: mix the caller-supplied bytes into the CSPRNG
+// pool and report them all accepted, matching Linux (where writing to /dev/[u]random adds to
+// the entropy pool and succeeds). Without this a write returns -EROFS, and programs that seed
+// the kernel pool by writing back to /dev/urandom (e.g. Dropbear's seedrandom) get an error
+// that stdio's flush spins on — so making the node writable is the correct fix, not a stub.
+static int gen_random_write(unsigned, const void* buf, unsigned n) {
+	csprngReseed(buf, n);
 	return (int) n;
 }
 
@@ -398,10 +418,11 @@ SynthFs::SynthFs() {
 	m_proc = addDir(root, "proc");
 	addDir(root, "tmp");        // marker so `ls /` shows /tmp; the tmpfs mounts over it
 
-	addGen(m_dev, "null", gen_null, 0666);
-	addGen(m_dev, "zero", gen_zero, 0666);
-	addGen(m_dev, "random", gen_random, 0444);
-	addGen(m_dev, "urandom", gen_random, 0444);   // same CSPRNG source as /dev/random
+	addGen(m_dev, "null", gen_null, 0666)->genWrite = gen_discard_write;   // writes discarded (bit bucket)
+	addGen(m_dev, "zero", gen_zero, 0666)->genWrite = gen_discard_write;
+	// /dev/[u]random are crw-rw-rw- (0666) like Linux and accept writes (mixed into the pool).
+	addGen(m_dev, "random", gen_random, 0666)->genWrite = gen_random_write;
+	addGen(m_dev, "urandom", gen_random, 0666)->genWrite = gen_random_write;   // same CSPRNG source
 	addGen(m_proc, "uptime", gen_uptime, 0444);
 	addGen(m_proc, "meminfo", gen_meminfo, 0444);
 	addGen(m_proc, "stat", gen_stat, 0444);
@@ -613,6 +634,8 @@ int SynthFs::write(String path, unsigned size, unsigned off, const void* buf) {
 	SynthNode* n = walk((char*) path);
 	if (!n)
 		return -2;             // -ENOENT
+	if (n->kind == SK_GEN && n->genWrite)
+		return n->genWrite(off, buf, size);   // writable generated node (e.g. /dev/[u]random)
 	if (n->kind != SK_CHARDEV)
 		return -30;            // -EROFS: the synthetic tree is otherwise read-only
 	return n->dev->write(off, buf, size);

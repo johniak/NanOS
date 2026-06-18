@@ -200,10 +200,18 @@ TEST_CASE("SynthFs SK_CHARDEV routes read/write/ioctl/mmapInfo to the device") {
 	REQUIRE(fs.readdir("/dev", e) == 0);
 	CHECK(listed(e, "fb0"));
 
-	// A non-device node: write is -EROFS, ioctl/mmap are -EINVAL.
-	CHECK(fs.write("/dev/zero", 4, 0, buf) == -30);
+	// A plain read-only generated node (no write sink): write is -EROFS, ioctl/mmap are -EINVAL.
+	CHECK(fs.write("/proc/uptime", 4, 0, buf) == -30);
 	CHECK(fs.ioctl("/dev/zero", 0, buf) < 0);
 	CHECK(fs.mmapInfo("/dev/zero", &p, &l) < 0);
+
+	// The stream devices have a write sink: writing to them SUCCEEDS (accepts all bytes), the way
+	// /dev/null is a bit bucket and writing to /dev/[u]random mixes into the entropy pool. Without
+	// this, a write returns -EROFS and a stdio flush to one of them spins (e.g. Dropbear hangs).
+	CHECK(fs.write("/dev/null", 4, 0, buf) == 4);
+	CHECK(fs.write("/dev/zero", 4, 0, buf) == 4);
+	CHECK(fs.write("/dev/random", 4, 0, buf) == 4);
+	CHECK(fs.write("/dev/urandom", 4, 0, buf) == 4);
 }
 
 // ---- dynamic /proc (live process table) -----------------------------------
