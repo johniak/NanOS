@@ -1026,6 +1026,14 @@ _image64: _all _userland64 _kext
 	for p in $(X64_SYS_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
+	# NanWM compositor (a system GUI program) -> /nanos/bin, and the NanWM client shared libs
+	# (libnw.ndl / libnwui.ndl) -> /nanos/lib (the NetSurf libnsfb backend binds libnw.ndl at load).
+	for p in $(X64_GUI_PROGS); do \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	done
+	for l in $(X64_GUI_LIBS); do \
+	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
@@ -1117,6 +1125,27 @@ _image64: _all _userland64 _kext
 	  printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
+	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
+	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
+	# res/ is installed recursively (dirs first top-down, then files). Built by `make ARCH=x86_64
+	# netsurf` (the netsurf-nanos port stack); launch inside NanWM. Skipped if bin/netsurf.nxe absent.
+	# Mirrors the i686 _image netsurf population.
+	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
+	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  if [ -d $(BINFOLDER)netsurf-res ]; then \
+	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
+	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	    done; \
+	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
+	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	    done; \
+	  fi; \
 	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
@@ -1778,13 +1807,13 @@ $(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX_TOOL)
 LIBNW_OBJS=$(BINFOLDER)libnw.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
 $(BINFOLDER)libnw.elf: $(BINFOLDER)nxhdr.o $(LIBNW_OBJS) $(BINFOLDER)libc.ndl.a
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNW_OBJS) $(BINFOLDER)libc.ndl.a -lgcc
-$(BINFOLDER)libnw.ndl: $(BINFOLDER)libnw.elf $(MKNX)
-	$(MKNX) $(BINFOLDER)libnw.elf $@ --dll --export-all --need libc.ndl
+$(BINFOLDER)libnw.ndl: $(BINFOLDER)libnw.elf $(MKNX_TOOL)
+	$(MKNX_TOOL) $(BINFOLDER)libnw.elf $@ --dll --export-all --need libc.ndl
 # Import library libnw.ndl.a (clients link this; the nw_* thunks bind to libnw.ndl at load).
-$(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX)
+$(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX_TOOL)
 	rm -rf $(BINFOLDER)libnwimp && mkdir -p $(BINFOLDER)libnwimp
-	$(MKNX) $(BINFOLDER)libnw.elf $(BINFOLDER)libnwimp --implib --export-all --soname libnw.ndl
-	for f in $(BINFOLDER)libnwimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
+	$(MKNX_TOOL) $(BINFOLDER)libnw.elf $(BINFOLDER)libnwimp --implib --export-all --soname libnw.ndl
+	for f in $(BINFOLDER)libnwimp/*.s; do nasm -f $(ASM_FMT) "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwimp/*.o
 
 # ---- libnwui.ndl: the UI toolkit (the comctl32 of NanWM) ----
@@ -1794,12 +1823,12 @@ $(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX)
 LIBNWUI_OBJS=$(BINFOLDER)nwui_core.o $(BINFOLDER)nwui_paint.o $(BINFOLDER)nwui.o
 $(BINFOLDER)libnwui.elf: $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-$(BINFOLDER)libnwui.ndl: $(BINFOLDER)libnwui.elf $(MKNX)
-	$(MKNX) $(BINFOLDER)libnwui.elf $@ --dll --export-all --need libnw.ndl --need libc.ndl
-$(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX)
+$(BINFOLDER)libnwui.ndl: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
+	$(MKNX_TOOL) $(BINFOLDER)libnwui.elf $@ --dll --export-all --need libnw.ndl --need libc.ndl
+$(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
 	rm -rf $(BINFOLDER)libnwuiimp && mkdir -p $(BINFOLDER)libnwuiimp
-	$(MKNX) $(BINFOLDER)libnwui.elf $(BINFOLDER)libnwuiimp --implib --export-all --soname libnwui.ndl
-	for f in $(BINFOLDER)libnwuiimp/*.s; do nasm -f elf "$$f" -o "$${f%.s}.o"; done
+	$(MKNX_TOOL) $(BINFOLDER)libnwui.elf $(BINFOLDER)libnwuiimp --implib --export-all --soname libnwui.ndl
+	for f in $(BINFOLDER)libnwuiimp/*.s; do nasm -f $(ASM_FMT) "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwuiimp/*.o
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
@@ -1812,8 +1841,12 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
 X64_SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free
-X64_USER_PROGS=init $(X64_SYS_PROGS)
-_userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl
+# NanWM compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
+# clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
+X64_GUI_PROGS=nwm
+X64_GUI_LIBS=libnw.ndl libnwui.ndl
+X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS)
+_userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))
 
 # ----------------------------------------------------------------------------
 # Kernel modules (nkext): loadable drivers built SEPARATELY from kernel.bin, shipped to
