@@ -292,6 +292,52 @@ int sigsuspend(const sigset_t* mask) {
 	return reterr(sys3(SYS_rt_sigsuspend, mask ? (int) &kmask : 0, 8, 0));
 }
 
+/* sigpending(2): the set of signals pending (but blocked) for the caller. Routed through
+ * SYS_rt_sigpending (mask by pointer + 8-byte sigsetsize). picolibc's sigset_t is a single
+ * 32-bit word and apps only inspect signals 1..31, so the 64-bit kernel mask is narrowed
+ * back into it. NULL set is a no-op success. (Previously undefined -> resolved-to-0; an app
+ * like vim that references &sigpending then crashed.) */
+int sigpending(sigset_t* set) {
+	uint64_t kset = 0;
+	int r = sys3(SYS_rt_sigpending, (int) &kset, 8, 0);
+	if (r < 0) { errno = -r; return -1; }
+	if (set) *set = (sigset_t) (unsigned) kset;
+	return 0;
+}
+
+/* setitimer(2)/getitimer(2): only ITIMER_REAL is implemented in the kernel — a per-process
+ * wall-clock timer that fires SIGALRM and re-arms from the interval. The platform
+ * `struct itimerval` is marshalled into the kernel-ABI `struct k_itimerval` (same pattern as
+ * sigaction/k_sigaction), so the kernel never depends on the libc timeval layout. ITIMER_REAL
+ * is what alarm() and editors' (vim's) terminal-response timeouts need. */
+static void itv_to_kernel(const struct itimerval* s, struct k_itimerval* d) {
+	d->it_interval_sec  = (long) s->it_interval.tv_sec;
+	d->it_interval_usec = (long) s->it_interval.tv_usec;
+	d->it_value_sec     = (long) s->it_value.tv_sec;
+	d->it_value_usec    = (long) s->it_value.tv_usec;
+}
+static void itv_from_kernel(struct itimerval* d, const struct k_itimerval* s) {
+	d->it_interval.tv_sec  = (time_t) s->it_interval_sec;
+	d->it_interval.tv_usec = (suseconds_t) s->it_interval_usec;
+	d->it_value.tv_sec     = (time_t) s->it_value_sec;
+	d->it_value.tv_usec    = (suseconds_t) s->it_value_usec;
+}
+int setitimer(int which, const struct itimerval* nval, struct itimerval* oval) {
+	struct k_itimerval kn, ko;
+	if (nval) itv_to_kernel(nval, &kn);
+	int r = sys3(SYS_setitimer, which, nval ? (int) &kn : 0, oval ? (int) &ko : 0);
+	if (r < 0) { errno = -r; return -1; }
+	if (oval) itv_from_kernel(oval, &ko);
+	return 0;
+}
+int getitimer(int which, struct itimerval* oval) {
+	struct k_itimerval ko;
+	int r = sys3(SYS_getitimer, which, oval ? (int) &ko : 0, 0);
+	if (r < 0) { errno = -r; return -1; }
+	if (oval) itv_from_kernel(oval, &ko);
+	return 0;
+}
+
 /* getrandom(2): fill buf with CSPRNG bytes from the kernel (kernel/Csprng.*, seeded at boot from
  * RDRAND+RDTSC-jitter+RTC). The kernel never blocks and ignores the flags (always seeded), so it
  * returns the full count; we surface that count like Linux. This is the seam OpenSSL/picolibc use

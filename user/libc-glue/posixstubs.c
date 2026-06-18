@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <sys/statvfs.h>
 #include <sys/utsname.h>
+#include <sys/time.h>   /* setitimer/getitimer: alarm() is implemented over ITIMER_REAL */
 
 extern char** environ;
 
@@ -233,9 +234,18 @@ char* mkdtemp(char* tmpl) {
 	return 0;
 }
 
-/* alarm/sleep: no SIGALRM timer, so alarm is a no-op (returns 0 = none pending). sleep and
- * usleep block via nanosleep (declared in <time.h> through the glue). */
-unsigned alarm(unsigned sec) { (void) sec; return 0; }
+/* alarm(2): arm a one-shot ITIMER_REAL for `sec` seconds (0 cancels), returning the seconds
+ * left on any previously-set alarm — the standard implementation over setitimer/getitimer
+ * (now that the kernel has a real interval timer that fires SIGALRM). */
+unsigned alarm(unsigned sec) {
+	struct itimerval nv, ov;
+	nv.it_interval.tv_sec = 0; nv.it_interval.tv_usec = 0;   /* one-shot */
+	nv.it_value.tv_sec = (time_t) sec; nv.it_value.tv_usec = 0;
+	if (setitimer(ITIMER_REAL, &nv, &ov) < 0) return 0;
+	unsigned left = (unsigned) ov.it_value.tv_sec;
+	if (left == 0 && ov.it_value.tv_usec != 0) left = 1;     /* round a sub-second remainder up */
+	return left;
+}
 unsigned sleep(unsigned sec) {
 	struct timespec ts; ts.tv_sec = (time_t) sec; ts.tv_nsec = 0;
 	nanosleep(&ts, 0);
