@@ -355,6 +355,55 @@ udhcpc: bin/libc.ndl bin/libc.ndl.a
 	cp "$(BB_DIR)/udhcpc.nxe" $(BINFOLDER)udhcpc.nxe
 	@echo "staged $(BINFOLDER)udhcpc.nxe — run 'make image' to install it into /nanos/bin"
 
+# zlib 1.3.1 (optional, external): the FIRST library port — a static libz.a + zlib.h/zconf.h
+# installed into the SDK sysroot, NOT an app (no .nxe, nothing on the disk image). It is the
+# foundational compression dependency for the downstream app/lib ports (doom, netsurf's
+# libpng/libcurl, dropbear-with-compression). Built by the nanos-sdk from $(ZLIB_PORT)/nxport.toml:
+# zlib ships its own hand-rolled ./configure (not autotools), so hooks/pre_configure.sh runs it with
+# the cross CC/AR/RANLIB + --static --prefix=sysroot, build="make" drives the produced Makefile, and
+# install="sysroot" makes the driver skip mknx (a library has no app binary); hooks/post_build.sh
+# `make install`s libz.a + headers into the sysroot. `make image`/`make image64` never depends on
+# this. This target ESTABLISHES the library-port convention the later lib ports (ncurses/libpng/
+# libjpeg) follow: same nanos-port driver as the app ports, install="sysroot" instead of a .nxe.
+#
+# ARCH-AWARE (mirrors `make openssl`/`make ping`): for ARCH=x86_64 the port targets the x86_64-nanos
+# sysroot, sets NX_HOST=x86_64-nanos (pre_configure picks the cross triple + the LP64/non-PIC
+# small-model/no-red-zone cflags + the nx-dllimport.h data-import shim, force-included so zlib's
+# gz*.c errno references become __imp_errno IAT slots when a downstream app links libz.a) and
+# NX_LP64=1. The in-tree x86_64 crt0/nxhdr/libc the cross gcc default-links (zlib's configure runs
+# link probes) are refreshed first, like ping. i686 is unchanged (generic cross gcc, no shim).
+ZLIB_PORT := $(SDK_WORK)/zlib-port
+ifeq ($(ARCH),x86_64)
+ZLIB_TRIPLE  := x86_64-nanos
+ZLIB_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
+ZLIB_PREREQ   = $(NXPORT_PREREQ)
+ZLIB_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(ZLIB_TRIPLE)-mknx"
+else
+ZLIB_TRIPLE  := i686-nanos
+ZLIB_PORT_ENV =
+ZLIB_PREREQ   = @true
+ZLIB_STARTUP  = true
+endif
+zlib: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/$(ZLIB_TRIPLE)/include" || { echo "nanos-sdk $(ZLIB_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(ZLIB_PORT)/nxport.toml"   || { echo "zlib port not found at $(ZLIB_PORT)/nxport.toml"; exit 1; }
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(ZLIB_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(ZLIB_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(ZLIB_TRIPLE)/include/SyscallNr.h"
+	# The dllimport shim (errno/stdin/stdout/stderr -> libc.ndl IAT slots). x86_64 code references
+	# these DATA exports RIP-relative (R_X86_64_PC32), which mknx can't auto-import; pre_configure
+	# -include's it into every TU via CFLAGS. i686 uses absolute relocs and skips it (NX_HOST != x86_64-nanos).
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(ZLIB_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/libc.ndl"
+	$(ZLIB_STARTUP)
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(ZLIB_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk $(ZLIB_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	@echo "installed libz.a + zlib.h/zconf.h into the $(ZLIB_TRIPLE) sysroot ($(SDK_TC)/$(ZLIB_TRIPLE)) — link downstream ports with -lz"
+
 # NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
 # libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke NanWM
 # libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
@@ -402,7 +451,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
