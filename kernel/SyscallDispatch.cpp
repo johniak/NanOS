@@ -458,6 +458,14 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 	case SYS_getsid:
 		ret = sysGetsid((int) a0);
 		break;
+	case SYS_setitimer:
+		// a0 = which (ITIMER_REAL=0), a1 = const k_itimerval* new, a2 = k_itimerval* old.
+		ret = sysSetitimer((int) a0, (const k_itimerval*) a1, (k_itimerval*) a2);
+		break;
+	case SYS_getitimer:
+		// a0 = which, a1 = k_itimerval* out (remaining value + interval).
+		ret = sysGetitimer((int) a0, (k_itimerval*) a1);
+		break;
 	case SYS_signal:
 		ret = signalAction((int) a0, (unsigned) a1, (unsigned) a2);   // a1 = handler, a2 = sa_restorer
 		break;

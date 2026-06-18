@@ -15,6 +15,7 @@ namespace arch { struct TrapFrame; }
 // The kernel-ABI sigaction struct rt_sigaction reads/writes (defined in SyscallNr.h). Only
 // a forward declaration is needed here; the dispatch includes SyscallNr.h for the layout.
 struct k_sigaction;
+struct k_itimerval;   // setitimer/getitimer kernel-ABI struct (SyscallNr.h)
 
 namespace kernel {
 
@@ -57,6 +58,12 @@ int  sysSetpgid(int pid, int pgid);
 int  sysGetpgid(int pid);
 int  sysSetsid();
 int  sysGetsid(int pid);
+// setitimer(2)/getitimer(2). Only ITIMER_REAL (which == 0) is supported; VIRTUAL/PROF give
+// -EINVAL. The pointers are the kernel-ABI ::k_itimerval (the libc-glue marshals into it).
+// setitimer arms the running process's real timer (and reports the previous setting in `old`
+// if non-null); getitimer reports the remaining time + interval. Defined in Exec.cpp.
+int  sysSetitimer(int which, const ::k_itimerval* nval, ::k_itimerval* oval);
+int  sysGetitimer(int which, ::k_itimerval* oval);
 bool hasPendingSignalCurrent();            // EINTR/restart check for blocking syscalls
 
 }  // namespace kernel

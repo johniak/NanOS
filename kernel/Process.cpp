@@ -55,6 +55,21 @@ bool mmapFreeAdd(MmapFree* list, int* count, int cap, unsigned va, unsigned len)
 	return true;
 }
 
+// ---- ITIMER_REAL interval timer (pure; host-tested) ------------------------------------
+bool itimerAdvance(ITimerReal& t, uint64_t elapsedUs) {
+	if (t.valueUs == 0)
+		return false;                  // disarmed: never fires
+	if (t.valueUs > elapsedUs) {
+		t.valueUs -= elapsedUs;        // not yet due
+		return false;
+	}
+	// Crossed zero this step: re-arm from the interval. A one-shot (intervalUs == 0) leaves
+	// valueUs at 0, i.e. disarmed. (Sub-tick intervals are coalesced to one fire per step;
+	// standard signals don't queue, so an extra SIGALRM would be merged anyway.)
+	t.valueUs = t.intervalUs;
+	return true;
+}
+
 const int ProcTable::MAX;                    // out-of-line definition for ODR-use
 const int Process::NMMAPFREE;                // out-of-line definition for ODR-use
 static const int MAXPROC = ProcTable::MAX;   // single source of truth (see Process.h)
@@ -138,6 +153,8 @@ Process* ProcTable::alloc(int parent) {
 			p->comm[0] = 0;
 			p->cmdline[0] = 0;
 			sigInit(p->psig);
+			p->itReal.valueUs = 0;       // ITIMER_REAL disarmed (not inherited across fork)
+			p->itReal.intervalUs = 0;
 			p->stopped = false;
 			p->stopSignal = 0;
 			p->stopReported = false;
@@ -435,6 +452,25 @@ void ProcTable::accountTick(bool fromUser, bool idle) {
 	} else {
 		if (g_current) g_current->stime++;
 		g_cpuSystem++;
+	}
+}
+
+// Advance every live process's ITIMER_REAL by `elapsedUs` of real time. On expiry, post a
+// process-directed SIGALRM and wake any blocked thread so it returns to user and delivers
+// the signal (so a SIGALRM interrupts a blocking read/select — e.g. a terminal timeout).
+// Called from the scheduler tick (IRQ context): sigPost just sets a bit and Scheduler::wake
+// only flips a BLOCKED task to READY, both IRQ-safe. wake(0) is a harmless no-op, so an
+// unbound thread (host test) is skipped.
+void ProcTable::tickRealTimers(uint64_t elapsedUs) {
+	for (int i = 0; i < MAXPROC; i++) {
+		Process* p = &g_procs[i];
+		if (!p->used || p->exited || p->itReal.valueUs == 0)
+			continue;
+		if (itimerAdvance(p->itReal, elapsedUs)) {
+			sigPost(p->psig, SIGALRM);
+			for (Thread* th = p->threads; th; th = th->next)
+				Scheduler::wake(th->task);
+		}
 	}
 }
 

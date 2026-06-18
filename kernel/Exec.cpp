@@ -993,4 +993,49 @@ int sysGetpgid(int pid)           { return ProcTable::getpgid(pid); }
 int sysSetsid()                   { return ProcTable::setsid(); }
 int sysGetsid(int pid)            { return ProcTable::getsid(pid); }
 
+// ---- ITIMER_REAL interval timer (setitimer/getitimer) --------------------------------
+// The state lives on the process (Process::itReal); the scheduler tick decrements it and
+// raises SIGALRM (ProcTable::tickRealTimers). These two just marshal the kernel-ABI
+// timeval pairs to/from the microsecond counters. Only ITIMER_REAL (0) is implemented.
+static uint64_t tvToUs(long sec, long usec) {
+	if (sec < 0) sec = 0;
+	if (usec < 0) usec = 0;
+	return (uint64_t) sec * 1000000ull + (uint64_t) usec;
+}
+static void usToTv(uint64_t us, long* sec, long* usec) {
+	*sec  = (long) (us / 1000000ull);
+	*usec = (long) (us % 1000000ull);
+}
+
+int sysGetitimer(int which, ::k_itimerval* oval) {
+	if (which != K_ITIMER_REAL)
+		return -22;   // -EINVAL: VIRTUAL/PROF not implemented
+	if (!oval)
+		return -14;   // -EFAULT
+	Process* p = ProcTable::current();
+	if (!p)
+		return -3;    // -ESRCH (should not happen from a user context)
+	usToTv(p->itReal.valueUs,    &oval->it_value_sec,    &oval->it_value_usec);
+	usToTv(p->itReal.intervalUs, &oval->it_interval_sec, &oval->it_interval_usec);
+	return 0;
+}
+
+int sysSetitimer(int which, const ::k_itimerval* nval, ::k_itimerval* oval) {
+	if (which != K_ITIMER_REAL)
+		return -22;   // -EINVAL
+	Process* p = ProcTable::current();
+	if (!p)
+		return -3;
+	if (oval) {       // report the PREVIOUS setting before overwriting (Linux semantics)
+		usToTv(p->itReal.valueUs,    &oval->it_value_sec,    &oval->it_value_usec);
+		usToTv(p->itReal.intervalUs, &oval->it_interval_sec, &oval->it_interval_usec);
+	}
+	if (nval) {       // a NULL new value queries only (old is still reported above)
+		p->itReal.valueUs    = tvToUs(nval->it_value_sec,    nval->it_value_usec);
+		p->itReal.intervalUs = tvToUs(nval->it_interval_sec, nval->it_interval_usec);
+		// it_value == 0 disarms the timer (valueUs 0); tickRealTimers then skips it.
+	}
+	return 0;
+}
+
 }

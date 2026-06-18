@@ -97,6 +97,8 @@
 #define SYS_getegid 108
 #define SYS_rt_sigpending 127
 #define SYS_rt_sigsuspend 130
+#define SYS_setitimer 38     /* ITIMER_REAL interval timer (alarm()/editor timeouts) */
+#define SYS_getitimer 36
 #define SYS_utime 132
 #define SYS_statfs 137
 #define SYS_fstatfs 138
@@ -248,6 +250,8 @@
 #define SYS_rt_sigprocmask 175
 #define SYS_rt_sigpending 176
 #define SYS_rt_sigsuspend 179
+#define SYS_setitimer 104    /* ITIMER_REAL interval timer (alarm()/editor timeouts) */
+#define SYS_getitimer 105
 #define SYS_getdents64 220
 #define SYS_dup 41
 #define SYS_pipe 42
@@ -316,5 +320,23 @@ struct k_sigaction {
 	void*         k_sa_restorer;   /* sigreturn trampoline (libc __nx_sigtramp) */
 	unsigned      k_sa_mask[2];    /* 64-bit blocked-during-handler mask (low word first) */
 };
+
+/* The kernel-ABI itimerval that setitimer(2)/getitimer(2) read/write. The userland libc-glue
+ * marshals its platform `struct itimerval` into this (exactly as sigaction marshals into
+ * k_sigaction), so the kernel never has to know the target libc's timeval layout. Field
+ * order matches Linux: it_interval (the reload) THEN it_value (time to next expiry), each a
+ * seconds + microseconds pair. `long` is consistent per-arch (4 B i386 / 8 B x86_64) because
+ * both the kernel and the libc-glue compile for the same arch — the value/usec fit easily. */
+struct k_itimerval {
+	long it_interval_sec;
+	long it_interval_usec;
+	long it_value_sec;
+	long it_value_usec;
+};
+
+/* which-timer selector for setitimer/getitimer (Linux values). Only ITIMER_REAL works. */
+#define K_ITIMER_REAL    0
+#define K_ITIMER_VIRTUAL 1
+#define K_ITIMER_PROF    2
 
 #endif /* SYSCALLNR_H_ */

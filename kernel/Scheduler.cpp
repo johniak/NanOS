@@ -184,6 +184,9 @@ void Scheduler::onTick(bool fromUser) {
 	// Attribute this tick to the running process (user vs system by the ring it interrupted),
 	// or to idle when the idle task (slot 0) was running.
 	ProcTable::accountTick(fromUser, g_cur == 0);
+	// Advance the per-process ITIMER_REAL timers by one tick of real time (the timer is
+	// 1000 Hz => 1000 us/tick); expiring ones get SIGALRM posted + their threads woken.
+	ProcTable::tickRealTimers(1000);
 	// Sample the load average every 5 s (the timer is 1000 Hz). Runnable = non-idle tasks
 	// in READY/RUNNING (slot 0 is idle).
 	if (g_ticks % 5000u == 0) {

@@ -35,6 +35,24 @@ int      mmapFreeFind(const MmapFree* list, int count, unsigned bytes);
 unsigned mmapFreeCarve(MmapFree* list, int* count, int i, unsigned bytes);
 bool     mmapFreeAdd(MmapFree* list, int* count, int cap, unsigned va, unsigned len);
 
+// ITIMER_REAL interval timer (setitimer/getitimer). A per-process WALL-CLOCK timer: it
+// counts down in real time regardless of whether the process is running, fires SIGALRM on
+// expiry, then re-arms from its interval (a zero interval => one-shot, so it disarms).
+// Times are kept in microseconds; the scheduler clock tick (Scheduler::onTick, 1000 Hz)
+// drives the decrement via ProcTable::tickRealTimers. ITIMER_VIRTUAL/ITIMER_PROF are not
+// implemented (the kernel rejects them) — only ITIMER_REAL is, which is what alarm()/the
+// terminal-response timeout in editors (vim) need.
+struct ITimerReal {
+	uint64_t valueUs;     // microseconds until the next SIGALRM; 0 = disarmed
+	uint64_t intervalUs;  // reload after expiry; 0 = one-shot (disarms on fire)
+};
+
+// Advance an interval timer by `elapsedUs` of real time. Returns true EXACTLY when it
+// crosses zero this step (the caller raises SIGALRM); on expiry it re-arms from the
+// interval (a one-shot, intervalUs == 0, stays disarmed at 0). A disarmed timer
+// (valueUs == 0) never fires. Pure -> host-tested.
+bool itimerAdvance(ITimerReal& t, uint64_t elapsedUs);
+
 // One thread of execution within a process (thread group). The Task is the scheduler
 // context; the rest is per-thread state that used to live (implicitly) on the Process.
 struct Thread {
@@ -105,6 +123,13 @@ struct Process {
 	int  stopSignal;     // the signal that stopped it (valid while `stopped`)
 	bool stopReported;   // waitpid(WUNTRACED) has already reported this stop
 	bool continued;      // SIGCONT delivered since the last wait report
+
+	// ITIMER_REAL state (setitimer/getitimer). Decremented in real time by the scheduler
+	// clock tick; on expiry SIGALRM is posted to this process and the timer re-arms from
+	// its interval. Cleared (disarmed) at alloc; NOT inherited across fork (Linux resets
+	// interval timers in the child); preserved across execve (Linux keeps them). See
+	// ProcTable::tickRealTimers + the SYS_setitimer/SYS_getitimer glue in Exec.cpp.
+	ITimerReal itReal;
 
 	// Thread group. Every process is a thread group: tgid == pid, with at least the leader
 	// thread (whose tid == pid). clone() (Task 2.3) adds more threads to `threads`.
@@ -203,6 +228,10 @@ public:
 	// and the global user/system/idle tick counters. cpuTimes/forksTotal/lastPid feed
 	// /proc/stat and /proc/loadavg.
 	static void accountTick(bool fromUser, bool idle);
+	// Advance every live process's ITIMER_REAL by `elapsedUs` of real time, posting SIGALRM
+	// to (and waking) each process whose timer expires. Called once per scheduler tick from
+	// Scheduler::onTick (so the timer counts wall-clock time, not just the running process's).
+	static void tickRealTimers(uint64_t elapsedUs);
 	static void cpuTimes(unsigned* user, unsigned* system, unsigned* idle);
 	static unsigned forksTotal();        // processes created since boot (Linux /proc/stat)
 	static int lastPid();                // pid of the most recently created process
