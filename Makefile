@@ -404,6 +404,58 @@ zlib: bin/libc.ndl bin/libc.ndl.a
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	@echo "installed libz.a + zlib.h/zconf.h into the $(ZLIB_TRIPLE) sysroot ($(SDK_TC)/$(ZLIB_TRIPLE)) — link downstream ports with -lz"
 
+# ncurses 6.4 (optional, external): a static-library port — libncurses.a + libtinfo.a + headers
+# (curses.h/ncurses.h/term.h/...) installed into the SDK sysroot, NOT an app (no .nxe, nothing on
+# the disk image). It is the terminal-handling dependency that unblocks the vim port. Built by the
+# nanos-sdk from $(NCURSES_PORT)/nxport.toml the same way as `make zlib`: install="sysroot" makes
+# the driver skip mknx (a library has no app binary), build="autotools" runs ncurses' configure
+# (--host + the shared cross config.cache + the port's `cache` answers), and hooks/post_build.sh
+# `make install`s the libs+headers into the sysroot. TERMINFO is COMPILED IN via
+# --with-fallbacks=xterm-256color (no runtime terminfo DB shipped, matching the i686 port);
+# --disable-db-install ships none. `make image`/`make image64` never depends on this.
+#
+# ARCH-AWARE (mirrors `make zlib`/`make ping`): for ARCH=x86_64 the port targets the x86_64-nanos
+# sysroot, sets NX_HOST=x86_64-nanos + NX_LP64=1, and exports CFLAGS with the NanOS x86_64 user ABI
+# (-fno-pie/-mcmodel=small/-mno-red-zone) for the cross-target compiles. The nx-dllimport.h data
+# shim is appended to include/ncurses_cfg.h by hooks/post_configure.sh (guarded with USE_BUILD_CC so
+# ncurses' host build-tools that compile the fallbacks never see it). The in-tree x86_64
+# crt0/nxhdr/libc/mknx (link probes + final lib) are refreshed first, and the honest-conftest data
+# stub regenerated (PRECMD) so autoconf's link probes detect functions faithfully. i686 is
+# unchanged (generic cross gcc, absolute relocs, no shim, no extra CFLAGS).
+NCURSES_PORT := $(SDK_WORK)/ncurses-port
+ifeq ($(ARCH),x86_64)
+NCURSES_TRIPLE := x86_64-nanos
+NCURSES_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1 -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone"
+NCURSES_PREREQ   = $(NXPORT_PREREQ)
+NCURSES_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(NCURSES_TRIPLE)-mknx"
+NCURSES_PRECMD   = NM=$(NCURSES_TRIPLE)-nm CONFTEST_STUB_CC=$(NCURSES_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(NCURSES_TRIPLE)/lib &&
+else
+NCURSES_TRIPLE := i686-nanos
+NCURSES_PORT_ENV =
+NCURSES_PREREQ   = @true
+NCURSES_STARTUP  = true
+NCURSES_PRECMD   =
+endif
+ncurses: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/$(NCURSES_TRIPLE)/include" || { echo "nanos-sdk $(NCURSES_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(NCURSES_PORT)/nxport.toml" || { echo "ncurses port not found at $(NCURSES_PORT)/nxport.toml"; exit 1; }
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(NCURSES_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(NCURSES_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(NCURSES_TRIPLE)/include/SyscallNr.h"
+	# The dllimport shim (stdout/stderr/errno -> libc.ndl IAT slots). x86_64 lib objects reference
+	# these DATA exports RIP-relative (R_X86_64_PC32); the port's post_configure hook #includes it
+	# into ncurses_cfg.h (only for x86_64; i686 uses absolute relocs and skips it).
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(NCURSES_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/libc.ndl"
+	$(NCURSES_STARTUP)
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(NCURSES_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk $(NCURSES_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(NCURSES_PRECMD) python3 /sdk/port/nanos-port /work/port'
+	@echo "installed libncurses.a + libtinfo.a + headers into the $(NCURSES_TRIPLE) sysroot ($(SDK_TC)/$(NCURSES_TRIPLE)) — link downstream ports with -lncurses -ltinfo"
+
 # NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
 # libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke NanWM
 # libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
@@ -451,7 +503,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
