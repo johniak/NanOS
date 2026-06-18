@@ -112,20 +112,15 @@ static void start_sshd(void) {
 		if (pid > 0)
 			waitpid(pid, 0, 0);
 	}
-#ifdef __x86_64__
-	/* x86_64: run dropbear in the FOREGROUND (-F). Its daemon() double-fork does not background
-	 * reliably here — the backgrounded grandchild can't serve its inherited listening socket (a
-	 * known x86_64 nested-fork limitation), so the SSH port never answers when daemonised. In -F the
-	 * process that created the listening socket is the one that accept()s, which works (host->guest
-	 * SSH with pubkey/password auth into bash verified). start_service() waitpid()s it, so init
-	 * parks on sshd as PID 1 — the x86_64 local console is not yet wired anyway, so SSH is the
-	 * access path. -E sends dropbear's log to the boot log. */
-	char* a[] = { (char*) "dropbear", (char*) "-F", (char*) "-E", (char*) "-r", (char*) SSH_HOSTKEY,
-	              (char*) "-p", (char*) "22", 0 };
-#else
+	/* dropbear daemonizes itself (its daemon() double-fork backgrounds the listener; the
+	 * reparented grandchild — PID 1's child — serves accept()ed connections). This works on BOTH
+	 * arches: the earlier x86_64 "run -F in the foreground" workaround is gone, since the nested
+	 * daemon double-fork is now verified to background correctly on x86_64. Running dropbear in the
+	 * foreground would have parked init on sshd and starved the local console of a shell; letting it
+	 * daemonize lets main() fall through to execve the interactive console login shell while SSH
+	 * keeps listening on :22 in the background. start_service() reaps the short-lived launcher. */
 	char* a[] = { (char*) "dropbear", (char*) "-r", (char*) SSH_HOSTKEY, (char*) "-p", (char*) "22", 0 };
-#endif
-	start_service(DROPBEAR, a);                  // i686: daemonizes; x86_64 (-F): parks init on sshd
+	start_service(DROPBEAR, a);                  // daemonizes; init returns and runs the console shell
 }
 
 /* Bring up the listening services after the network is configured: inetd (the super-server:
