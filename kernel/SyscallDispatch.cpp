@@ -573,8 +573,12 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		ret = doSelect(g_sys, (int) a0, (unsigned*) a1, (unsigned*) a2, (unsigned*) a3, (unsigned*) a4);
 		break;
 	case SYS_socketcall: {
-		// a0 = sub-call number, a1 = pointer to its argument array (each entry is 4 bytes).
-		const unsigned* uargs = (const unsigned*) a1;
+		// a0 = sub-call number, a1 = pointer to its argument array. Each entry is pointer-wide
+		// (libc-glue/sockets.c packs them as `unsigned long`): 4 bytes on i686, 8 on x86_64. Read
+		// at uintptr_t width so the LP64 args aren't sliced in half — reading them as 4-byte
+		// `unsigned` made socket(AF_INET, SOCK_RAW, IPPROTO_ICMP) arrive as socket(2, 0, 3) on
+		// x86_64 (EINVAL). Same full-width rationale as iovGather above; no change on i686.
+		const uintptr_t* uargs = (const uintptr_t*) a1;
 		if (!uargs) { ret = -EINVAL; break; }
 		uintptr_t A[6] = {0,0,0,0,0,0};
 		for (int i = 0; i < 6; i++) A[i] = uargs[i];   // over-reads are harmless (page-resident args)
