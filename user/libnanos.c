@@ -31,3 +31,10 @@ int read(int fd, void* b, unsigned n)         { return (int) syscall3(SYS_read, 
 int open(const char* p, int f)                { return (int) syscall3(SYS_open, (long) p, f, 0); }
 int close(int fd)                             { return (int) syscall3(SYS_close, fd, 0, 0); }
 void exit(int c)                              { syscall3(SYS_exit, c, 0, 0); for (;;) {} }
+
+// Shared startup crt064.S calls __nx_init_tls before main so libc programs get their
+// %fs.base/TCB live before the first errno access (it lives in libc.ndl's tls.c). The
+// minimal freestanding init links no libc.ndl and makes only raw syscalls — it never reads
+// %fs:0 — so here it is a no-op that simply satisfies the link. (libc programs override it
+// with the real arch_prctl(ARCH_SET_FS) bootstrap from tls.c.)
+void __nx_init_tls(void) {}

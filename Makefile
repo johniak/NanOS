@@ -404,6 +404,47 @@ run64: image64
 init64:
 	$(DOCKER_RUN) make ARCH=x86_64 bin/init.nxe
 
+# Plan 10 Tasks 5-6: the x86_64 libc + pthread/TLS ring-3 smokes. Builds a real picolibc program
+# (printf) and a pthread/TLS program (errno + a thread) with the x86_64-nanos SDK toolchain
+# against the SDK sysroot, proving the 4-artifact libc contract (libc.ndl + import lib + crt0 +
+# nxhdr) and the pthread arch port run in ring 3. To run one: install it as PID 1 (overwrite
+# /nanos/core/init.nxe in the image) and boot. The sysroot-inject below mirrors the i686
+# `make <app>` cp lines, arch-selected via NANOS_TRIPLE (= x86_64-nanos when ARCH=x86_64).
+NANOS_TRIPLE := $(if $(filter x86_64,$(ARCH)),x86_64-nanos,i686-nanos)
+SDK_SYSROOT  := $(SDK_TC)/$(NANOS_TRIPLE)
+SDK_DEV_IMG  ?= nanos-sdk-dev:latest
+SMOKE_PROGS  := hello pthread_hello
+.PHONY: smoke64
+smoke64:
+ifneq ($(ARCH),x86_64)
+	$(MAKE) ARCH=x86_64 smoke64
+else
+	# 1) (Re)build the 64-bit libc artifacts in the kernel-toolchain container (ELF64 libc.ndl +
+	#    import lib + the TLS-bootstrap crt0 + nxhdr). `make clean` first avoids mixing a stale
+	#    i686 bin/*.o into the x86_64 link (the libc-glue objects are not arch-suffixed).
+	$(DOCKER_RUN) sh -c 'make ARCH=x86_64 bin/libc.ndl bin/libc.ndl.a bin/crt0.o bin/nxhdr.o'
+	# 2) Inject them + the LP64 porting headers + the x86_64 SyscallNr.h into the SDK sysroot.
+	@test -d "$(SDK_SYSROOT)/include" || { echo "nanos-sdk toolchain not found at $(SDK_SYSROOT)"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_SYSROOT)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_SYSROOT)/include/SyscallNr.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_SYSROOT)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_SYSROOT)/lib/libc.ndl"
+	cp $(BINFOLDER)crt0.o          "$(SDK_SYSROOT)/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o         "$(SDK_SYSROOT)/lib/nxhdr.o"
+	# 3) Build each smoke .nxe with the SDK gcc: compile against the picolibc sysroot
+	#    (nx-dllimport.h redirects the stdio DATA imports), link the import lib + crt0/nxhdr at
+	#    the .ndl base, then mknx into a v4 .nxe that imports libc.ndl by name.
+	docker run --rm -v "$(SDK_TC)":/work/toolchain -v "$(CURDIR)":/src \
+	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /src $(SDK_DEV_IMG) sh -c 'set -e; SR=/work/toolchain/$(NANOS_TRIPLE); \
+	    for s in $(SMOKE_PROGS); do \
+	      $(NANOS_TRIPLE)-gcc -O2 -ffreestanding -include user/libc-glue/nx-dllimport.h -c user/smoke/$$s.c -o $(BINFOLDER)$$s.o; \
+	      $(NANOS_TRIPLE)-gcc -nostdlib -Wl,--emit-relocs -T $$SR/lib/nx.ld -o $(BINFOLDER)$$s.elf $$SR/lib/crt0.o $$SR/lib/nxhdr.o $(BINFOLDER)$$s.o $$SR/lib/libc.a -lgcc; \
+	      $(NANOS_TRIPLE)-mknx $(BINFOLDER)$$s.elf $(BINFOLDER)$$s.nxe --need libc.ndl; \
+	    done'
+	@echo "built $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(SMOKE_PROGS))) — install one over /nanos/core/init.nxe (+ bin/libc.ndl to /nanos/lib) to run under QEMU"
+endif
+
 else
 # ============================================================================
 # CONTAINER side (Linux): real compilation, image and ISO creation.
