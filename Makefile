@@ -132,23 +132,58 @@ endif
 # the freshly built libc.ndl{,.a}) and drives nanos-port inside the nanos-sdk-dev container.
 # The manifest (configure flags + cross-compile cache) lives at $(SDK_WORK)/inetutils-port.
 # `make image` never depends on this; a missing toolchain/port errors clearly and is skipped.
+#
+# ARCH-AWARE (mirrors `make bash`/`make grep`): the SAME nxport.toml + nanos-port driver builds
+# either arch — only the cross triple changes. For ARCH=x86_64 the port targets the x86_64-nanos
+# sysroot, sets NX_HOST=x86_64-nanos (configure --host / CC / mknx) + NX_LP64=1 (the driver
+# appends the 64-bit sizeofs over the shared 32-bit config.cache), and the in-tree x86_64
+# crt0/nxhdr the toolchain default-links are refreshed too (like `make git`). i686 is unchanged.
 NANOS_SDK   ?= $(HOME)/Projects/nanos-sdk
 SDK_TC      := $(SDK_WORK)/toolchain
 PING_PORT   := $(SDK_WORK)/inetutils-port
+ifeq ($(ARCH),x86_64)
+PING_TRIPLE  := x86_64-nanos
+PING_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
+PING_PREREQ   = $(NXPORT_PREREQ)
+# x86_64-nanos-gcc default-links the sysroot crt0.o/nxhdr.o; they must track this checkout.
+# Refresh the toolchain's mknx with this checkout's mknx64 too: the SDK-baked x86_64-nanos-mknx
+# predates mknx64's Windows-style DATA auto-import (stdin/stdout/stderr/errno from libc.ndl), so
+# the port's final mknx would fail "undefined function 'stdout'". mknx64 is the source of truth.
+PING_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(PING_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(PING_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(PING_TRIPLE)-mknx"
+# The honest-conftest gcc wrapper pairs with a per-libc data stub (weak defs of libc.ndl's
+# DATA-only exports). Regenerate it from the libc.a we just refreshed, so autoconf link probes
+# resolve real functions strictly from libc.a, data from the stub, and absent symbols fail —
+# without it, every AC_CHECK_FUNC passes and gnulib misdetects MSVC/getgrouplist/... and breaks.
+PING_PRECMD   = NM=$(PING_TRIPLE)-nm CONFTEST_STUB_CC=$(PING_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(PING_TRIPLE)/lib &&
+else
+PING_TRIPLE  := i686-nanos
+PING_PORT_ENV =
+PING_PREREQ   = @true
+PING_STARTUP  = true
+PING_PRECMD   =
+endif
 ping: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(PING_PORT)/nxport.toml"     || { echo "inetutils port not found at $(PING_PORT)/nxport.toml"; exit 1; }
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(PING_PREREQ)
 	# Refresh the SDK sysroot from this repo (the source of truth for headers + libc).
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(PING_TRIPLE)/include/SyscallNr.h"
+	# The dllimport shim (stdin/stdout/stderr/environ/_ctype_b -> libc.ndl IAT slots). x86_64
+	# code references these DATA exports RIP-relative (R_X86_64_PC32), which mknx can't auto-
+	# import; the shim turns each into an __imp_<name> slot deref. The port's post_configure
+	# hook #includes it into config.h (only for x86_64; i686 uses absolute relocs and skips it).
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
+	$(PING_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(PING_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	  -e SDK=/sdk $(PING_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(PING_PORT)/ping.nxe" $(BINFOLDER)ping.nxe
-	@echo "staged $(BINFOLDER)ping.nxe — run 'make image' to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)ping.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
 
 # GNU wget 1.21.4 (optional, external). Unmodified upstream, HTTP-only (no TLS yet). Same
 # reproducible flow as `make ping`: refresh the SDK sysroot from this checkout, drive nanos-port.
@@ -706,6 +741,12 @@ _image64: _all _userland64 _kext
 	fi
 	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
 	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# ping (optional, external): GNU inetutils ping built by `make ARCH=x86_64 ping` (the nanos-sdk
+	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	# Mirrors the i686 _image population.
+	if [ -f $(BINFOLDER)ping.nxe ]; then \
+	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
 	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
