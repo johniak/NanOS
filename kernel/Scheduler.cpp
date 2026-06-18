@@ -106,7 +106,7 @@ static Task* allocSlot(int id) {
 	t->waitNext = 0;
 	t->kstack = stk;
 	t->proc = 0;               // set when a Process binds this task (Kernel/forkProcess)
-	t->esp0 = ((unsigned) (unsigned long) (stk + KSTACK_SIZE)) & ~15u;   // 16-aligned TSS.esp0
+	t->esp0 = ((uintptr_t) (stk + KSTACK_SIZE)) & ~(uintptr_t) 15;   // 16-aligned TSS.esp0
 	return t;
 }
 
@@ -115,7 +115,7 @@ Task* Scheduler::create(void (*body)(), int id) {
 	if (!t)
 		return 0;
 	t->body = body ? body : idleBody;
-	t->kesp = arch::archTaskBootstrap((unsigned char*) (unsigned long) t->esp0, arch::archKernelCr3());
+	t->kesp = arch::archTaskBootstrap((unsigned char*) t->esp0, arch::archKernelCr3());
 	t->state = TASK_READY;   // kesp is now valid -> the task may be scheduled (see allocSlot)
 	return t;
 }
@@ -358,7 +358,7 @@ void Scheduler::start() {
 	ProcTable::setCurrentThread(g_tasks[first].thread);
 	arch::archLoadThreadTls(g_tasks[first].thread ? g_tasks[first].thread->tlsBase : 0);
 	// Switch from the throwaway boot context into the first task; never returns here.
-	static unsigned throwaway;
+	static uintptr_t throwaway;
 	arch::archContextSwitch(&throwaway, g_tasks[first].kesp);
 }
 

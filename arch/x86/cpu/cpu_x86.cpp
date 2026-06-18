@@ -2,6 +2,7 @@
  * cpu_x86.cpp — x86 implementation of <arch/cpu.h>.
  */
 #include <arch/cpu.h>
+#include <arch/sched.h>   // setKernelStack contract (uintptr_t esp0)
 #include "Gdt.h"
 #include "Idt.h"
 
@@ -66,7 +67,7 @@ void powerOff() {
 
 // Repoint TSS.esp0 (where the CPU lands on the next ring3->ring0 trap). The scheduler
 // calls this on every switch with the next task's kernel-stack top.
-void setKernelStack(unsigned esp0) { g_gdt.setKernelStack(esp0); }
+void setKernelStack(uintptr_t esp0) { g_gdt.setKernelStack(esp0); }
 
 // Re-point the single TLS GDT descriptor (entry 6, selector 0x33) at the current thread's TLS
 // block and reload %gs. Called by the scheduler on every switch and by set_thread_area.

@@ -5,7 +5,8 @@
 [GLOBAL taskTrampoline]
 [EXTERN schedulerRunCurrentBody]
 
-; void archContextSwitch(unsigned* saveOldKesp, unsigned newKesp)
+; void archContextSwitch(uintptr_t* saveOldKesp, uintptr_t newKesp)
+;   (uintptr_t == 32-bit on i686, so the body below is unchanged; the C contract is widened)
 ;   Save callee-saved regs + CR3 + esp of the current task into *saveOldKesp, then
 ;   load the next task's context. Stack after the 5 pushes (top -> bottom):
 ;     [esp]    cr3

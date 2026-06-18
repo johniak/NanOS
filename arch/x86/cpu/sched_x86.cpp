@@ -22,11 +22,11 @@ extern "C" void schedPreempt() { kernel::Scheduler::preempt(); }
 
 namespace arch {
 
-unsigned archKernelCr3() { return kernel::readCr3(); }   // kernel dir at create time
+uint64_t archKernelCr3() { return kernel::readCr3(); }   // kernel dir at create time
 
 void halt_or_hlt() { __asm__ __volatile__("sti; hlt"); }
 
-unsigned archTaskBootstrap(unsigned char* kstackTop, unsigned cr3) {
+uintptr_t archTaskBootstrap(unsigned char* kstackTop, uint64_t cr3) {
 	// Fabricate the stack so the first archContextSwitch pops (cr3, ebp, edi, esi,
 	// ebx) and `ret`s into taskTrampoline — exactly the layout archContextSwitch saves.
 	unsigned* sp = (unsigned*) kstackTop;
@@ -35,8 +35,8 @@ unsigned archTaskBootstrap(unsigned char* kstackTop, unsigned cr3) {
 	*--sp = 0;                           // edi
 	*--sp = 0;                           // esi
 	*--sp = 0;                           // ebx
-	*--sp = cr3;                         // cr3 (popped first)
-	return (unsigned) sp;
+	*--sp = (uint32_t) cr3;              // cr3 (popped first) — i686 CR3 is 32-bit
+	return (uintptr_t) sp;
 }
 
 // The timer tick. The interrupted frame's CS tells us whether we preempted ring 3 (user) or

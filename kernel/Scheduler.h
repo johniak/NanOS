@@ -12,6 +12,8 @@
 #ifndef SCHEDULER_H_
 #define SCHEDULER_H_
 
+#include <stdint.h>   // uintptr_t: kesp/esp0 are kernel stack pointers (64-bit on x86_64)
+
 namespace kernel {
 
 struct Process;   // a task's owning process (Process.h); back-pointer avoids an O(n) byTask scan
@@ -26,8 +28,8 @@ enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_STOPPED, TASK_DONE
 void loadDecay(unsigned load[3], int runnable);
 
 struct Task {
-	unsigned kesp;          // saved kernel esp (the whole context lives on the stack)
-	unsigned esp0;          // top of this task's kernel stack (TSS.esp0 when it runs)
+	uintptr_t kesp;         // saved kernel esp (the whole context lives on the stack)
+	uintptr_t esp0;         // top of this task's kernel stack (TSS.esp0 when it runs)
 	TaskState state;
 	void (*body)();
 	int id;                 // 0 = idle

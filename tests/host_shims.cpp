@@ -11,6 +11,7 @@
 #include "memory_manager.h"
 #include "SynthFs.h"
 #include <cstdio>
+#include <cstdint>   // uintptr_t/uint64_t: match the widened <arch/sched.h> contract
 
 // memory_manager.h declares malloc/free/realloc/calloc with C++ linkage (no
 // extern "C"), so libc's C-linkage versions don't satisfy them. Provide the
@@ -35,10 +36,10 @@ void inputSetRaw(int) {}
 
 // Scheduler arch primitives are hardware (context switch / timer); the host harness
 // only exercises the pure round-robin logic, so these are no-op stubs.
-unsigned archTaskBootstrap(unsigned char*, unsigned) { return 0; }
-unsigned archKernelCr3() { return 0; }
+uintptr_t archTaskBootstrap(unsigned char*, uint64_t) { return 0; }
+uint64_t archKernelCr3() { return 0; }
 void archTimerInit(unsigned) {}
-void setKernelStack(unsigned) {}
+void setKernelStack(uintptr_t) {}
 void archLoadThreadTls(unsigned) {}   // TLS descriptor reload is hardware (GDT + %gs): no-op on host
 void halt_or_hlt() {}
 unsigned long cpuIrqSave() { return 0; }   // no interrupts on the host harness
@@ -74,7 +75,7 @@ unsigned rtcEpoch() { return 1781000000u; }
 bool archHwRandom(unsigned*) { return false; }
 unsigned archEntropyTick() { return 0; }
 }
-extern "C" void archContextSwitch(unsigned*, unsigned) {}   // C linkage (see arch/sched.h)
+extern "C" void archContextSwitch(uintptr_t*, uintptr_t) {}   // C linkage (see arch/sched.h)
 
 // /proc/meminfo data sources live in the kernel (Kernel.cpp, not in the test build);
 // stub them with fixed figures so SynthFs links and the meminfo file is readable.

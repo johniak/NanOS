@@ -21,7 +21,7 @@ extern "C" void ret_from_fork();   // isr.S
 
 namespace arch {
 
-void archForkChild(kernel::Task* child, TrapFrame* parentTf, unsigned childCr3) {
+void archForkChild(kernel::Task* child, TrapFrame* parentTf, uint64_t childCr3) {
 	kernel::Registers* parent = (kernel::Registers*) parentTf;
 
 	// Copy the parent's full trap frame to the top of the child's kernel stack.
@@ -37,8 +37,8 @@ void archForkChild(kernel::Task* child, TrapFrame* parentTf, unsigned childCr3) 
 	*--sp = 0;                          // edi
 	*--sp = 0;                          // esi
 	*--sp = 0;                          // ebx
-	*--sp = childCr3;                   // cr3 (popped first, loaded into CR3)
-	child->kesp = (unsigned) sp;
+	*--sp = (uint32_t) childCr3;        // cr3 (popped first, loaded into CR3) — i686 CR3 is 32-bit
+	child->kesp = (uintptr_t) sp;
 }
 
 // clone (thread create): same fabrication as archForkChild, but the new thread runs on its
@@ -46,14 +46,14 @@ void archForkChild(kernel::Task* child, TrapFrame* parentTf, unsigned childCr3) 
 // ESP iret restores) with the caller-supplied childUserEsp. `cr3` is the SHARED directory phys
 // (the thread keeps the parent's address space); the context-switch frame still reloads it so
 // archContextSwitch's unconditional CR3 write lands on a valid (here, unchanged) directory.
-void archCloneChild(kernel::Task* child, TrapFrame* parentTf, unsigned cr3, unsigned childUserEsp) {
+void archCloneChild(kernel::Task* child, TrapFrame* parentTf, uint64_t cr3, uintptr_t childUserEsp) {
 	kernel::Registers* parent = (kernel::Registers*) parentTf;
 
 	unsigned char* top = (unsigned char*) child->esp0;
 	kernel::Registers* frame = ((kernel::Registers*) top) - 1;
 	*frame = *parent;
 	frame->eax = 0;                     // clone() returns 0 in the new thread
-	frame->useresp = childUserEsp;      // ... which runs on its own stack
+	frame->useresp = (uint32_t) childUserEsp;   // ... which runs on its own stack (i686 ESP is 32-bit)
 
 	unsigned* sp = (unsigned*) frame;
 	*--sp = (unsigned) ret_from_fork;   // ret target after the 5 pops
@@ -61,8 +61,8 @@ void archCloneChild(kernel::Task* child, TrapFrame* parentTf, unsigned cr3, unsi
 	*--sp = 0;                          // edi
 	*--sp = 0;                          // esi
 	*--sp = 0;                          // ebx
-	*--sp = cr3;                        // cr3 (popped first, loaded into CR3) — shared dir
-	child->kesp = (unsigned) sp;
+	*--sp = (uint32_t) cr3;             // cr3 (popped first, loaded into CR3) — shared dir, 32-bit on i686
+	child->kesp = (uintptr_t) sp;
 }
 
 }  // namespace arch
