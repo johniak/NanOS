@@ -46,17 +46,25 @@ int NxeLoader::loadImage(void* image, unsigned len, nxaddr_t loadDelta,
 	char* img = (char*) image;
 	nxaddr_t base = h->loadBase;
 
-	// 1) Base relocations: each listed absolute is an R_X86_64_64 (8-byte) word on x86_64,
-	//    R_386_32 (4-byte) on i386 — nxaddr_t follows the arch, so one line serves both.
-	//    A delta of 0 (loaded at the preferred base) makes this a no-op.
+	// 1) Base relocations: each listed absolute is the natural word (R_X86_64_64 / 8 bytes on
+	//    x86_64, R_386_32 / 4 bytes on i386), UNLESS the offset carries NX_RELOC_W32 — then it
+	//    is a 4-byte (R_X86_64_32S) site that small-model non-PIC library code uses to address
+	//    a symbol. Either way the loader adds the load delta. A delta of 0 (loaded at the
+	//    preferred base, e.g. the executable) makes this a no-op.
 	if (h->relocCount) {
 		if (!inImage(h->relocTable, (nxaddr_t) h->relocCount * sizeof(NxReloc), base, len))
 			return -3;
 		NxReloc* rel = (NxReloc*) (img + (h->relocTable - base));
 		for (unsigned i = 0; i < h->relocCount; i++) {
-			if (!inImage(rel[i].off, sizeof(nxaddr_t), base, len))
+			nxaddr_t off = rel[i].off & ~NX_RELOC_W32;
+			int w32 = (rel[i].off & NX_RELOC_W32) != 0;
+			nxaddr_t sz = w32 ? 4 : sizeof(nxaddr_t);
+			if (!inImage(off, sz, base, len))
 				return -3;
-			*(nxaddr_t*) (img + (rel[i].off - base)) += loadDelta;
+			if (w32)
+				*(uint32_t*) (img + (off - base)) += (uint32_t) loadDelta;
+			else
+				*(nxaddr_t*) (img + (off - base)) += loadDelta;
 		}
 	}
 

@@ -42,7 +42,8 @@ typedef struct { uint64_t r_offset, r_info, r_addend; } Elf_Rela; /* SHT_RELA (w
 #define SHT_RELA_T   4
 #define R_ABS64      1     /* R_X86_64_64  — 8-byte absolute: a base-reloc site */
 #define R_PC32       2     /* R_X86_64_PC32 — RIP-relative: NOT relocated (position-indep.) */
-#define R_ABS32S     11    /* R_X86_64_32S — forces image into low 2 GiB; never a base-reloc */
+#define R_ABS32      10    /* R_X86_64_32  — 4-byte absolute (unsigned) */
+#define R_ABS32S     11    /* R_X86_64_32S — 4-byte absolute (signed); small-model code refs */
 #define EM_TARGET    62    /* EM_X86_64 */
 #define ELF_R_TYPE(i) ((uint32_t)((i) & 0xffffffff))
 #define ELF_R_SYM(i)  ((uint32_t)((i) >> 32))
@@ -218,9 +219,25 @@ int main(int argc, char** argv) {
 			FILE* o = fopen(path, "w");
 			if (!o)
 				die("--implib: cannot open output file");
-			fprintf(o, "[BITS 32]\n");
 			// Prefix identifiers with `$` so nasm treats them literally even when the name is
 			// a reserved word (e.g. `times`, `abs`); the `$` is not part of the symbol.
+#if defined(NX_FORCE64)
+			// x86_64: 64-bit code; the thunk MUST be RIP-relative. In long mode `FF /4` with a
+			// disp32 (`jmp [...]`) is ALWAYS RIP-relative — there is no absolute [disp32] form —
+			// so NASM's default absolute `[sym]` would emit the slot's absolute VMA as the disp
+			// and the CPU would read VMA+RIP (the wrong address). `[rel $__imp_name]` makes NASM
+			// emit a PC-relative reference so the linker computes the right slot displacement.
+			// The IAT slot is 8 bytes (a 64-bit address the loader fills in).
+			fprintf(o, "[BITS 64]\n");
+			if (isFunc)
+				fprintf(o, "section .text\nglobal $%s\n$%s: jmp [rel $__imp_%s]\n", nm, nm, nm);
+			if (soname)
+				fprintf(o, "section .nxlib.%s progbits alloc write align=8\n", soname);
+			else
+				fprintf(o, "section .data\n");
+			fprintf(o, "global $__imp_%s\n$__imp_%s: dq 0\n", nm, nm);
+#else
+			fprintf(o, "[BITS 32]\n");
 			if (isFunc)
 				fprintf(o, "section .text\nglobal $%s\n$%s: jmp [$__imp_%s]\n", nm, nm, nm);
 			if (soname)
@@ -228,6 +245,7 @@ int main(int argc, char** argv) {
 			else
 				fprintf(o, "section .data\n");
 			fprintf(o, "global $__imp_%s\n$__imp_%s: dd 0\n", nm, nm);
+#endif
 			fclose(o);
 		}
 		free(done);
@@ -235,14 +253,19 @@ int main(int argc, char** argv) {
 	}
 
 	/* 2) Base relocations. On x86_64 the linker emits SHT_RELA (with addend); on i386 SHT_REL.
-	 *    We record ONLY R_X86_64_64 / R_386_32 sites against a DEFINED (section-relative)
-	 *    symbol — those hold a module address (8 bytes on x86_64, 4 on i386) that shifts with
-	 *    the load base. R_X86_64_PC32 / R_386_PC32 is RIP-/PC-relative (position-independent)
-	 *    and is never relocated. R_X86_64_32S appears in small-model non-PIC code and is NOT a
-	 *    base-reloc, but its presence is exactly why the image MUST load in the low 2 GiB —
-	 *    which our fixed base 0x800000 guarantees. A reloc against an undefined/weak symbol
-	 *    (resolved to 0) or an ABSOLUTE symbol (a fixed constant) must NOT be delta-adjusted —
-	 *    doing so would turn e.g. a NULL function pointer into `delta` and crash on first use. */
+	 *    We record sites against a DEFINED (section-relative) symbol whose stored value is an
+	 *    absolute module address that shifts with the load base:
+	 *      - R_X86_64_64 / R_386_32 — the natural word (8 bytes on x86_64, 4 on i386);
+	 *      - R_X86_64_32 / R_X86_64_32S — 4-byte absolutes that small-model non-PIC code uses
+	 *        to address symbols. These were previously ignored, which is correct ONLY for the
+	 *        executable (it loads at its preferred base, delta 0). A LIBRARY (.ndl) is relocated
+	 *        to a non-preferred base, so its 32-bit absolutes MUST be fixed too — otherwise a
+	 *        data address like &errno keeps the link-time base and faults. We tag them with
+	 *        NX_RELOC_W32 so the loader patches 4 bytes (the patched value stays in the low
+	 *        2 GiB, since modules load there). R_*_PC32 is RIP-/PC-relative and never relocated.
+	 *    A reloc against an undefined/weak symbol (resolved to 0) or an ABSOLUTE symbol (a fixed
+	 *    constant) must NOT be delta-adjusted — doing so would turn e.g. a NULL function pointer
+	 *    into `delta` and crash on first use. */
 	Buf relocs = {0};
 	unsigned relocCount = 0;
 	for (int i = 0; i < g_nsh; i++) {
@@ -269,11 +292,18 @@ int main(int argc, char** argv) {
 #else
 			{ Elf_Rel* r = (Elf_Rel*) (rbase + (size_t) j * esz); r_off = r->r_offset; r_info = r->r_info; }
 #endif
-			if (ELF_R_TYPE(r_info) != R_ABS64) continue;            // only the absolute fixup
+			uint32_t rtype = ELF_R_TYPE(r_info);
+			int is32 = 0;
+#if defined(NX_FORCE64)
+			if (rtype == R_ABS32 || rtype == R_ABS32S) is32 = 1;
+			else if (rtype != R_ABS64) continue;
+#else
+			if (rtype != R_ABS64) continue;                         // i386: R_386_32 only
+#endif
 			if (r_off < loadBase || r_off >= bssStart) continue;
 			uint16_t shndx = rsym[ELF_R_SYM(r_info)].st_shndx;
 			if (shndx == SHN_UNDEF || shndx == SHN_ABS) continue;   // not a module address
-			bu64(&relocs, r_off);                                   // nxaddr_t-wide reloc entry
+			bu64(&relocs, is32 ? (r_off | NX_RELOC_W32) : r_off);   // tag 4-byte sites
 			relocCount++;
 		}
 	}

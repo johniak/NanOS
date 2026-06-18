@@ -60,10 +60,18 @@ typedef struct {
 
 /* A base relocation: the word at `off` holds an absolute address (R_386_32 on i386,
  * R_X86_64_64 on x86_64); the loader adds the load delta to it when the module loads at a
- * non-preferred base. */
+ * non-preferred base.
+ *
+ * On x86_64 the top bit of `off` (NX_RELOC_W32) marks a 4-byte (R_X86_64_32S) site instead
+ * of the natural 8-byte word: small-model non-PIC code addresses symbols with 32-bit
+ * absolutes, and those still shift with the load base when a LIBRARY (.ndl) is relocated to
+ * a non-preferred base. The executable loads at delta 0 so its 32-bit sites are no-ops, but a
+ * library must fix them too. i686 never sets the bit (all its relocs are 4-byte R_386_32 ==
+ * the natural word, and modules load well below the 2 GiB mark where the bit would live). */
 typedef struct {
-	nxaddr_t off;        /* abs address of the word to fix up */
+	nxaddr_t off;        /* abs address of the word to fix up (top bit = NX_RELOC_W32 tag) */
 } NxReloc;
+#define NX_RELOC_W32  (((nxaddr_t) 1) << (8 * sizeof(nxaddr_t) - 1))
 
 /* A needed shared library: load the .ndl named `nameOff` before resolving imports. */
 typedef struct {
