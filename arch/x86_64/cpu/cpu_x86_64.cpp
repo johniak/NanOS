@@ -25,6 +25,7 @@ namespace arch {
 
 void faultInit();   // arch/x86_64/cpu/fault_x86_64.cpp — #GP/#PF debug handlers
 void syscallSetKernelStack(uint64_t top);   // syscall_x86_64.cpp — the SYSCALL per-CPU kstack
+void archSetUserFsBase(uint64_t base);      // usermode_x86_64.cpp — writes IA32_FS_BASE
 
 void cpuInit() {
     // GDT first: the IDT gates reference code selector 0x08, valid only once we own the GDT.
@@ -63,8 +64,12 @@ void cpuIrqRestore(unsigned long flags) {
     __asm__ __volatile__("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
-// TLS on x86-64 uses %fs.base, set up for user threads in Plan 6. No-op until then.
-void archLoadThreadTls(unsigned /*base*/) { }
+// TLS on x86-64 lives in %fs.base. The thread records its TLS base (arch_prctl(ARCH_SET_FS)
+// from crt0 / pthread create) and the scheduler calls this on every context switch to reload
+// it, so each thread's %fs:0 thread pointer follows it across switches. base==0 (no TLS yet)
+// just clears it. base is a low-canonical user VA (the user window is < 4 GiB), so the unsigned
+// arg carries it without truncation.
+void archLoadThreadTls(unsigned base) { archSetUserFsBase((uint64_t) base); }
 
 // Power off via the ACPI PM1a control port. QEMU's i440fx exposes it at 0x604 (newer), the
 // PIIX4 at 0xB004 (older); 0x4004 covers VirtualBox. SLP_EN|SLP_TYP=0x2000. We try all then

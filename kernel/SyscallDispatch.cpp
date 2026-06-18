@@ -1001,6 +1001,23 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		ret = 0;
 		break;
 	}
+#if defined(__x86_64__)
+	case SYS_arch_prctl: {
+		// x86_64 TLS: a0 = code, a1 = addr. ARCH_SET_FS(0x1002) points the thread pointer
+		// (%fs.base) at the caller's TCB — the x86_64 analogue of i386's set_thread_area.
+		// Record it on the thread so the scheduler reloads %fs.base on every context switch
+		// (archLoadThreadTls -> archSetUserFsBase), then install it now. Other subfunctions
+		// (GET_FS/SET_GS/GET_GS) are unused by the NanOS userland -> -EINVAL.
+		const unsigned long ARCH_SET_FS = 0x1002;
+		if (a0 != (uintptr_t) ARCH_SET_FS) { ret = -EINVAL; break; }
+		Thread* t = ProcTable::currentThread();
+		if (!t) { ret = -EINVAL; break; }
+		t->tlsBase = (unsigned) a1;
+		arch::archLoadThreadTls((unsigned) a1);   // writes IA32_FS_BASE now
+		ret = 0;
+		break;
+	}
+#endif
 	case SYS_set_tid_address: {
 		// a0 = clear-tid address. Record it on the calling thread; on thread exit (Task 2.3)
 		// the kernel zeroes *ptr and futex-wakes it (the pthread_join handshake). Returns tid.

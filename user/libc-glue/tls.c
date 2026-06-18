@@ -8,11 +8,34 @@
  * with no shared global (the old `__imp_errno` data slot is gone).
  *
  * For the MAIN thread there is no pthread_create to set up TLS, so crt0 calls
- * __nx_init_tls() (exported by libc.ndl) before main(): it points the TLS descriptor at
- * a static TCB whose `self` field is itself, so %gs:0 resolves and errno works from the
- * very first libc call. Threads created later (Phase 4) get their own TCB + set_thread_area.
+ * __nx_init_tls() (exported by libc.ndl) before main(): it points the thread pointer at
+ * a static TCB whose `self` field is itself, so the thread pointer resolves and errno works
+ * from the very first libc call. Threads created later (Phase 4) get their own TCB + a
+ * matching thread-pointer install.
+ *
+ *   - i386   : the thread pointer is %gs, installed via set_thread_area(2) (GDT entry 6).
+ *   - x86_64 : the thread pointer is %fs.base, installed via arch_prctl(ARCH_SET_FS, &tcb)
+ *              (the kernel writes IA32_FS_BASE and records it for context-switch reload).
  */
 #include <nx-tcb.h>
+
+#if defined(__x86_64__)
+
+#define SYS_arch_prctl 158
+#define ARCH_SET_FS    0x1002
+
+/* arch_prctl(ARCH_SET_FS, addr): the x86_64 `syscall` instruction — nr in %rax, code in %rdi,
+ * addr in %rsi; %rcx/%r11 are clobbered by the instruction itself (return RIP / rflags). */
+static long sys_arch_prctl(int code, unsigned long addr) {
+	long ret;
+	__asm__ __volatile__("syscall"
+			: "=a"(ret)
+			: "a"((long) SYS_arch_prctl), "D"((long) code), "S"(addr)
+			: "rcx", "r11", "memory");
+	return ret;
+}
+
+#else /* i386 */
 
 #define SYS_set_thread_area 243
 
@@ -32,6 +55,8 @@ static int sys_set_thread_area(struct user_desc *ud) {
 			: "memory");
 	return ret;
 }
+
+#endif /* __x86_64__ */
 
 /* The main thread's TCB. Lives in libc.ndl's .bss, which the loader maps per-process, so
  * each process gets its own. Threads spawned via pthread_create allocate their own TCBs. */
@@ -59,13 +84,21 @@ static void __nx_run_ctors(void) {
 		(*p)();
 }
 
-/* Install the main thread's TLS: self-point the TCB and aim the fixed TLS GDT slot
- * (entry 6 / selector 0x33) at it via set_thread_area. The kernel reloads %gs on the way
- * back to ring 3, so %gs:0 reads `self` immediately after this returns. Called from crt0
- * (_start) before any other libc work, so errno is valid for the whole program. */
+/* Install the main thread's TLS: self-point the TCB and aim the thread pointer at it. On
+ * x86_64 that is %fs.base via arch_prctl(ARCH_SET_FS); on i386 the fixed TLS GDT slot
+ * (entry 6 / selector 0x33) via set_thread_area. The kernel records the base and reloads
+ * the thread pointer on its way back to ring 3 / on every context switch, so the thread
+ * pointer reads `self` immediately after this returns. Called from crt0 (_start) before any
+ * other libc work, so errno is valid for the whole program. */
 void __nx_init_tls(void) {
 	__nx_main_tcb.self = &__nx_main_tcb;
 
+#if defined(__x86_64__)
+	if (sys_arch_prctl(ARCH_SET_FS, (unsigned long) &__nx_main_tcb) != 0)
+		/* TLS setup failed -> %fs:0 is invalid and the first errno access would fault or
+		 * corrupt memory. Trap loudly instead of limping on with a broken thread pointer. */
+		__asm__ __volatile__("int3");
+#else
 	struct user_desc ud;
 	ud.entry_number = (unsigned int) -1;   /* "pick a slot"; kernel returns the fixed one */
 	ud.base_addr    = (unsigned int) &__nx_main_tcb;
@@ -75,6 +108,7 @@ void __nx_init_tls(void) {
 		/* TLS setup failed -> %gs:0 is invalid and the first errno access would fault or
 		 * corrupt memory. Trap loudly instead of limping on with a broken thread pointer. */
 		__asm__ __volatile__("int3");
+#endif
 
 	/* TLS (and thus errno) is live now; malloc's static recursive lock already works. Run
 	 * libc.ndl's constructors so picolibc's std-stream lock-init fires and stdio is locked.
