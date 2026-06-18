@@ -27,7 +27,10 @@ int loadKextImage(void* buf, unsigned cap, ExportResolver resolve, nxaddr_t* ent
 	NxHeader* h = (NxHeader*) buf;
 	if (h->magic != NX_MAGIC)
 		return -1;
-	unsigned delta = (unsigned) (unsigned long) buf - h->loadBase;
+	// Load delta in the format's native address width (nxaddr_t = 64-bit on x86_64, 32-bit
+	// on i386). Computing it as `unsigned` truncated the 64-bit base/buffer addresses, so
+	// every R_X86_64_64 / R_X86_64_32S fixup landed at a garbage address — must stay 64-bit.
+	nxaddr_t delta = (nxaddr_t) (unsigned long) buf - h->loadBase;
 	return NxeLoader::loadImage(buf, cap, delta, resolve, entryOut, 0, 0);
 }
 
