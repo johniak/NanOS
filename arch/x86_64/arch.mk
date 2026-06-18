@@ -34,8 +34,14 @@ ARCH_LINKER=arch/x86_64/linker.ld
 ARCH_SOURCES=loader.o entry64.o AddressSpace.o mmu_x86_64.o \
              Gdt64.o Idt64.o Interrupt64.o isr64.o irq64.o \
              cpu_x86_64.o fault_x86_64.o irq_x86_64.o irqtest64.o \
+             console_x86_64.o bootinfo_x86_64.o MultibootMmap.o \
              ATA64.o Hdd64.o AtaBlockDevice64.o block_x86_64.o
 
 # Plan 6 adds the ring-3 path: syscall trap (MSR init + entry stub), usermode enter,
 # the exit() longjmp. Append to whatever Plans 2-5 already listed.
 ARCH_SOURCES += syscall_x86_64.o syscall_entry64.o usermode_x86_64.o nxjmp64.o
+
+# Plan 9 un-stage: the last MD subsystems the real kernel/Kernel.cpp needs — the scheduler
+# context switch (switch64 + sched MD), fork/clone child fabrication, the CSPRNG entropy
+# source, PCI config-space access, and the keyboard input/line-discipline.
+ARCH_SOURCES += switch64.o sched_x86_64.o fork_x86_64.o random_x86_64.o pci_x86_64.o input_x86_64.o

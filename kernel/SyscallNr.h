@@ -95,10 +95,8 @@
 #define SYS_setgid 106
 #define SYS_geteuid 107
 #define SYS_getegid 108
-#define SYS_sigprocmask SYS_rt_sigprocmask
 #define SYS_rt_sigpending 127
 #define SYS_rt_sigsuspend 130
-#define SYS_sigsuspend SYS_rt_sigsuspend
 #define SYS_utime 132
 #define SYS_statfs 137
 #define SYS_fstatfs 138
@@ -129,6 +127,25 @@
 #define SYS_reboot 169
 #define SYS_arch_prctl 158   /* NEW on x86_64: TLS base (ARCH_SET_FS) — see %fs.base path */
 #define SYS_pselect6 270
+#define SYS_times 100
+#define SYS_getcwd 79
+/* i386-legacy calls that do NOT exist on x86_64 (socketcall, signal(2), and the *32 uid/gid
+ * variants). The SHARED SyscallDispatch has case labels for them; define them here as unique
+ * NanOS-private sentinels (>= 1001) so those labels compile without colliding with a real
+ * x86_64 number — no x86_64 program ever issues these. */
+#define SYS_socketcall  1001
+#define SYS_signal      1002
+#define SYS_getuid32    1003
+#define SYS_geteuid32   1004
+#define SYS_getgid32    1005
+#define SYS_getegid32   1006
+#define SYS_setuid32    1007
+#define SYS_setgid32    1008
+/* x86_64 has only the rt_ signal-mask calls; the legacy single-word sigprocmask/sigsuspend
+ * are i386-only. Sentinels so the shared dispatch's legacy case labels stay distinct from the
+ * rt_ ones (which carry the real x86_64 numbers 14 / 130). */
+#define SYS_sigprocmask 1009
+#define SYS_sigsuspend  1010
 /* NanOS-private (outside the Linux range). */
 #define SYS_termmode 1000
 #else
@@ -261,7 +278,15 @@
 #define SYS_recvfrom 371
 #define SYS_recvmsg 372
 #define SYS_shutdown 373
-/* socketcall sub-call numbers (the index in the (call, args*) pair). */
+
+/* NanOS-private numbers (outside the Linux i386 range, so they never collide with
+ * a Linux number we might add later). */
+#define SYS_termmode 501  /* console input mode: 0 = cooked (line), 1 = raw (keys) */
+#endif
+
+/* socketcall sub-call numbers (the index in the (call, args*) pair) — ALSO used as the
+ * arch-neutral internal selector the kernel's socketOp() switch dispatches on, so they are
+ * shared by both ABIs (i386 socketcall demux + the x86_64 direct socket syscalls). */
 #define SC_SOCKET 1
 #define SC_BIND 2
 #define SC_CONNECT 3
@@ -280,11 +305,6 @@
 #define SC_SENDMSG 16
 #define SC_RECVMSG 17
 #define SC_ACCEPT4 18
-
-/* NanOS-private numbers (outside the Linux i386 range, so they never collide with
- * a Linux number we might add later). */
-#define SYS_termmode 501  /* console input mode: 0 = cooked (line), 1 = raw (keys) */
-#endif
 
 /* The kernel-ABI sigaction layout that rt_sigaction(2) reads/writes (Linux i386 "new"
  * struct, also what musl marshals into). Field order/sizes are load-bearing: sa_mask is a

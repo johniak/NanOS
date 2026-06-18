@@ -449,8 +449,19 @@ ASFLAGS=
 # container's own case-sensitive FS, then copy the kernel back.
 KSRC=/tmp/nanos-ksrc
 
-# Full link set as paths under the (bind-mounted) object dir.
-OBJECTS=$(addprefix $(BINFOLDER),$(SOURCES))
+# Kernel objects live in a PER-ARCH subdirectory so the elf32 (i686) and elf64 (x86_64)
+# objects of the same basename (Kernel.o, Exec.o, ...) never collide in bin/. Switching ARCH
+# without a clean would otherwise mix ELF classes (stale elf32 objects linked into an elf64
+# kernel → mangling/format mismatches). i686 keeps bin/ (unchanged); x86_64 uses bin/k64/.
+# The final kernel.bin still lands at bin/kernel.bin (only one arch is current at a time).
+ifeq ($(ARCH),x86_64)
+KOBJ=$(BINFOLDER)k64/
+else
+KOBJ=$(BINFOLDER)
+endif
+
+# Full link set as paths under the per-arch object dir.
+OBJECTS=$(addprefix $(KOBJ),$(SOURCES))
 
 # Sources are compiled from a case-sensitive copy in $(KSRC) (the macOS bind mount is
 # case-insensitive, where <string.h> would collide with lib/String.h). But the OBJECTS
@@ -458,7 +469,7 @@ OBJECTS=$(addprefix $(BINFOLDER),$(SOURCES))
 # container runs. tar preserves source mtimes, so make rebuilds only what changed
 # (and, via -MMD dep files, what a changed header reaches) instead of everything.
 _all:
-	@mkdir -p $(BINFOLDER)
+	@mkdir -p $(BINFOLDER) $(KOBJ)
 	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
 	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage --exclude=tests -C /src . | tar -xf - -C $(KSRC) && \
 	 ln -s /src/$(BINFOLDER) $(KSRC)/bin
@@ -481,16 +492,20 @@ _convcheck:
 $(BINFOLDER)kernel.bin: $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) -lgcc
 
-$(BINFOLDER)%.o: %.cpp
+# Kernel object rules write into the per-arch $(KOBJ) (bin/ for i686, bin/k64/ for x86_64).
+$(KOBJ)%.o: %.cpp
+	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
 # The shared VT engine (user/term/vt.c) compiled with KERNEL flags for FbConsole. A distinct
 # object name (vtk.o) keeps it separate from the userland bin/vt.o that nterm/nwterm link.
-$(BINFOLDER)vtk.o: user/term/vt.c
-	@mkdir -p $(BINFOLDER)
+$(KOBJ)vtk.o: user/term/vt.c
+	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
-$(BINFOLDER)%.o: %.s
+$(KOBJ)%.o: %.s
+	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) $< -o $@
-$(BINFOLDER)%.o: %.S
+$(KOBJ)%.o: %.S
+	@mkdir -p $(@D)
 	nasm -f $(ASM_FMT) $< -o $@
 
 # ---- x86_64 Plan 2 staged bring-up ------------------------------------------------------
@@ -784,7 +799,7 @@ _iso: _all
 _clean:
 	-rm $(BINFOLDER)*.o $(BINFOLDER)*.d $(BINFOLDER)kernel.bin
 	-rm $(BINFOLDER)*.elf $(BINFOLDER)*.nxe $(BINFOLDER)*.ndl $(BINFOLDER)*.a $(BINFOLDER)mknx
-	-rm -rf $(BINFOLDER)libimp
+	-rm -rf $(BINFOLDER)libimp $(BINFOLDER)k64
 
 # ----------------------------------------------------------------------------
 # Userland: .nxe programs link against ported picolibc + our syscall glue (own
