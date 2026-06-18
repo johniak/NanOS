@@ -1009,8 +1009,10 @@ _image64: _all _userland64 _kext
 	# GRUB menuentry -> the real kernel (GRUB multiboot1 loads the ELF64).
 	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel.bin\n}\n' > /tmp/grub64.cfg
 	printf "rm /boot/grub/grub.cfg\nwrite /tmp/grub64.cfg /boot/grub/grub.cfg\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config}.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config,cache,logs,
+	# share/terminfo/x} + the /apps bundle root + the /bin link farm, created upfront so every
+	# subsequent install step (and the optional-app blocks below) finds its parent directory.
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot
 	# (loadAllKexts). The PS/2 keyboard + mouse + e1000 NIC drivers live here, NOT in kernel.bin.
