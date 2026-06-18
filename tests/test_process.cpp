@@ -522,3 +522,68 @@ TEST_CASE("mmap free-list: a freed range is reused by a later same-size request"
 	CHECK(va == 0x50000000);   // next create gets the recycled VA
 	CHECK(count == 0);         // list drained
 }
+
+// ---- ITIMER_REAL interval timer -------------------------------------------------------
+
+TEST_CASE("itimerAdvance: counts down, fires on cross-zero, re-arms / disarms") {
+	// Disarmed never fires.
+	ITimerReal off{0, 0};
+	CHECK(!itimerAdvance(off, 1000));
+	CHECK(off.valueUs == 0);
+
+	// One-shot: fires once, then stays disarmed.
+	ITimerReal once{1500, 0};
+	CHECK(!itimerAdvance(once, 1000));     // 1500 -> 500
+	CHECK(once.valueUs == 500);
+	CHECK(itimerAdvance(once, 1000));      // 500 - 1000 <= 0 => expire
+	CHECK(once.valueUs == 0);              // interval 0 => disarmed
+	CHECK(!itimerAdvance(once, 1000));     // no further fire
+
+	// Periodic: fires and re-arms from the interval.
+	ITimerReal rep{1000, 2000};
+	CHECK(itimerAdvance(rep, 1000));       // expire exactly at zero
+	CHECK(rep.valueUs == 2000);            // re-armed from interval
+	CHECK(!itimerAdvance(rep, 1500));      // 2000 -> 500
+	CHECK(rep.valueUs == 500);
+	CHECK(itimerAdvance(rep, 500));        // expire again
+	CHECK(rep.valueUs == 2000);            // re-armed once more
+}
+
+TEST_CASE("tickRealTimers: ticks decrement, SIGALRM posted on expiry, periodic re-arms") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(/*parent*/0);
+	REQUIRE(p != nullptr);
+	const uint64_t alrm = (uint64_t) 1 << (SIGALRM - 1);
+
+	// Arm: 3 ms to first fire, 2 ms period (the tick is 1000 us).
+	p->itReal.valueUs = 3000;
+	p->itReal.intervalUs = 2000;
+
+	ProcTable::tickRealTimers(1000);   // 3000 -> 2000
+	ProcTable::tickRealTimers(1000);   // 2000 -> 1000
+	CHECK((p->psig.pending & alrm) == 0);          // not yet
+	CHECK(p->itReal.valueUs == 1000);              // getitimer would report ~1 ms remaining
+
+	ProcTable::tickRealTimers(1000);   // 1000 -> expire
+	CHECK((p->psig.pending & alrm) != 0);          // SIGALRM became pending
+	CHECK(p->itReal.valueUs == 2000);              // re-armed from the interval
+
+	// Clear the pending bit and confirm the periodic timer fires again after the interval.
+	sigConsume(p->leaderThread()->sig, p->psig, SIGALRM);
+	CHECK((p->psig.pending & alrm) == 0);
+	ProcTable::tickRealTimers(1000);   // 2000 -> 1000
+	CHECK((p->psig.pending & alrm) == 0);
+	ProcTable::tickRealTimers(1000);   // 1000 -> expire again
+	CHECK((p->psig.pending & alrm) != 0);
+
+	// A disarmed timer (valueUs 0) is skipped: clear + one-shot to zero, then no more fires.
+	sigConsume(p->leaderThread()->sig, p->psig, SIGALRM);
+	p->itReal.valueUs = 1000;
+	p->itReal.intervalUs = 0;
+	ProcTable::tickRealTimers(1000);   // expire (one-shot)
+	CHECK((p->psig.pending & alrm) != 0);
+	CHECK(p->itReal.valueUs == 0);
+	sigConsume(p->leaderThread()->sig, p->psig, SIGALRM);
+	ProcTable::tickRealTimers(1000);   // disarmed: nothing
+	CHECK((p->psig.pending & alrm) == 0);
+}
