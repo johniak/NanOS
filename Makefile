@@ -76,27 +76,55 @@ bash: docker-image
 	cp "$(BASH_FORK)/nanos/bash.nxe" $(BINFOLDER)bash.nxe
 	@echo "staged $(BINFOLDER)bash.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it"
 
-# GNU grep (optional, external). Built by the nanos-sdk in its own work dir (cross toolchain +
-# gnulib). This target only copies the finished grep.nxe into bin/, where _image installs it as
-# the /nanos/bin/grep system utility. The SDK build itself lives outside this repo (see the
-# nanos-sdk-and-vim-port notes); `make image` never depends on this, so a missing artifact can't
-# break a normal build.
+# GNU grep / vim / bzip2 (optional, external). The upstream sources live in the nanos-sdk work
+# dir. These targets are ARCH-AWARE:
+#   * i686 (default): copy the hand-built .nxe the nanos-sdk produced (the original 32-bit flow,
+#     left untouched — `make image` never depends on it, so a missing artifact can't break a build).
+#   * x86_64: rebuild the .nxe from source inside the nanos-build container via the reproducible
+#     driver scripts/nx-port-build.sh (nx-gcc wrapper -> picolibc + libc-glue + a NanOS .nxe link,
+#     mknx64 -> v4 .nxe). Mirrors `make bash`: the same NX_* env selects the 64-bit toolchain,
+#     linker script, mknx and LP64 sizes; the driver applies the per-app LP64/POSIX fixes.
 SDK_WORK ?= $(HOME)/Projects/nanos-sdk-work
+# Shared x86_64 build env + the ELF64 startup/libc prereqs (same set `make bash` rebuilds).
+NXPORT_ENV = -e NX_CC=x86_64-elf-gcc -e NX_HOST=x86_64-elf -e NX_PICO=/opt/picolibc/x86_64-elf \
+  -e NX_MKNX=/src/bin/mknx64 -e NX_LDSCRIPT=/src/arch/x86_64/user-nx.ld \
+  -e 'NX_ARCHFLAGS=-mcmodel=small -mno-red-zone' -e NX_LP64=1
+NXPORT_PREREQ = $(DOCKER_RUN) sh -c 'make ARCH=x86_64 bin/libc.ndl bin/libc.ndl.a bin/crt0.o bin/nxhdr.o bin/mknx64'
+# docker run that mounts BOTH this checkout (/src) and the app source ($1 -> /work/src).
+NXPORT_RUN = docker run --rm -v $(CURDIR):/src $(NXPORT_ENV) -w /src
+
 grep:
+ifeq ($(ARCH),x86_64)
+	$(NXPORT_PREREQ)
+	$(NXPORT_RUN) -v "$(SDK_WORK)/grep-3.11":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh grep
+	cp "$(SDK_WORK)/grep-3.11/grep.nxe" $(BINFOLDER)grep.nxe
+else
 	@test -f "$(SDK_WORK)/grep-3.11/src/grep.nxe" || { echo "grep.nxe not found at $(SDK_WORK)/grep-3.11/src (build it with the nanos-sdk first)"; exit 1; }
 	cp "$(SDK_WORK)/grep-3.11/src/grep.nxe" $(BINFOLDER)grep.nxe
-	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' to install it into /nanos/bin"
+endif
+	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
 
-# GNU vim + bzip2 (optional, external) — same as grep: the nanos-sdk builds them in its work dir;
-# these targets only copy the finished .nxe into bin/, where _image installs them.
 vim:
+ifeq ($(ARCH),x86_64)
+	$(NXPORT_PREREQ)
+	$(NXPORT_RUN) -v "$(SDK_WORK)/vim":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh vim
+	cp "$(SDK_WORK)/vim/vim.nxe" $(BINFOLDER)vim.nxe
+else
 	@test -f "$(SDK_WORK)/vim/src/vim.nxe" || { echo "vim.nxe not found at $(SDK_WORK)/vim/src (build it with the nanos-sdk first)"; exit 1; }
 	cp "$(SDK_WORK)/vim/src/vim.nxe" $(BINFOLDER)vim.nxe
-	@echo "staged $(BINFOLDER)vim.nxe — run 'make image' to install it into /apps/vim"
+endif
+	@echo "staged $(BINFOLDER)vim.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /apps/vim"
+
 bzip2:
+ifeq ($(ARCH),x86_64)
+	$(NXPORT_PREREQ)
+	$(NXPORT_RUN) -v "$(SDK_WORK)/bzip2-1.0.8":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh bzip2
+	cp "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" $(BINFOLDER)bzip2.nxe
+else
 	@test -f "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" || { echo "bzip2.nxe not found at $(SDK_WORK)/bzip2-1.0.8 (build it with the nanos-sdk first)"; exit 1; }
 	cp "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" $(BINFOLDER)bzip2.nxe
-	@echo "staged $(BINFOLDER)bzip2.nxe — run 'make image' to install it into /nanos/bin"
+endif
+	@echo "staged $(BINFOLDER)bzip2.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
 
 # GNU inetutils ping (optional, external). The plan's real ping: SOCK_RAW/ICMP + getaddrinfo,
 # unmodified upstream. Unlike grep/vim (prebuilt by hand), this target is REPRODUCIBLE: it
@@ -665,6 +693,24 @@ _image64: _all _userland64
 	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# grep + bzip2 (optional, external): system utilities -> /nanos/bin, installed only if
+	# `make ARCH=x86_64 grep|bzip2` staged them. Mirrors the i686 _image population.
+	if [ -f $(BINFOLDER)grep.nxe ]; then \
+	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
+	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
+	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
+	if [ -f $(BINFOLDER)vim.nxe ]; then \
+	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).

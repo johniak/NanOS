@@ -1,0 +1,73 @@
+#!/bin/sh
+# nx-gcc — a compiler driver wrapper that makes a hosted autoconf project (bash) build for
+# NanOS: compile against picolibc + our libc-glue headers, and LINK like a NanOS .nxe
+# program (own crt0/nxhdr + nx.ld linker script + libc.ndl import library). configure's
+# compile-and-link conftests therefore succeed, and the produced ELF can be turned into a
+# .nxe by mknx afterwards.
+#
+# Env (set by build.sh, ultimately by the NanOS `make bash` target — arch-aware):
+#   NANOS         the NanOS repo mount (default /src)
+#   PICO          picolibc prefix         (i686 default, x86_64-elf when ARCH=x86_64)
+#   NX_CC         the cross gcc           (i686-elf-gcc default, x86_64-elf-gcc for x86_64)
+#   NX_ARCHFLAGS  extra codegen flags     (x86_64 needs -mcmodel=small -mno-red-zone)
+#   NX_LDSCRIPT   the .nxe linker script  ($NANOS/user/nx.ld i686, arch/x86_64/user-nx.ld x64)
+# i686 stays the default for every var, so the original 32-bit build is unchanged.
+set -e
+: "${NANOS:=/src}"
+: "${PICO:=/opt/picolibc/i686-elf}"
+GCC="${NX_CC:-i686-elf-gcc}"
+: "${NX_ARCHFLAGS:=}"
+: "${NX_LDSCRIPT:=$NANOS/user/nx.ld}"
+
+# picolibc on bare i686-elf never defines _POSIX_VERSION (its guards are rtems/svr4/cygwin
+# only), so bash would pick `union wait` (undefined here) for job status. We are POSIX-ish
+# and picolibc gates nothing on _POSIX_VERSION itself, so defining it is safe and makes bash
+# take the `int WAIT` path.
+CFLAGS_NX="-ffreestanding -isystem $PICO/include -D_GNU_SOURCE -D_DEFAULT_SOURCE \
+-D_XOPEN_SOURCE=700 -D_POSIX_VERSION=200809L -DUSEC_PER_SEC=1000000 \
+-fno-pic -fno-stack-protector -fcommon $NX_ARCHFLAGS \
+-I$NANOS/user/libc-glue/include -iquote $NANOS/kernel"
+
+# compat-decls.h + a forced <unistd.h> give bash its hosted POSIX surface. gnulib-based
+# projects (grep, ...) generate their OWN unistd.h/sys/stat.h replacements and a feed of the
+# preprocessed -include content into their header-generation machinery trips on these (the
+# `char *` prototypes glob-expand on a recipe line). Such ports set NX_GNULIB=1 to skip them;
+# they still get the libc-glue include dir and nx-dllimport.h below.
+if [ "${NX_GNULIB:-0}" != 1 ]; then
+	CFLAGS_NX="$CFLAGS_NX -include $NANOS/user/libc-glue/compat-decls.h -include unistd.h"
+else
+	# gnulib ports instead read the hosted-POSIX surface straight from the (posix-hosted-patch'd)
+	# picolibc headers, whose nanos-only declarations are guarded by __nanos__ — but the picolibc
+	# cross is a bare *-elf target that doesn't predefine it, so spell it out here.
+	CFLAGS_NX="$CFLAGS_NX -D__nanos__"
+fi
+
+# nx-dllimport.h redirects the stdio/errno/environ DATA symbols to dllimport IAT slots — it
+# is needed for bash's REAL translation units (which take the address of stdin/errno/...),
+# but it pulls picolibc's real <stdio.h> prototypes into autoconf's conftest.c probes, where
+# `AC_CHECK_FUNC` declares `char foo();` and gcc14 then rejects the conflicting prototype —
+# making every libc-function probe wrongly come out "no". conftests only need to LINK (the
+# data symbols already live in libc.ndl.a), so force-include the dllimport shim for everything
+# EXCEPT conftest.
+# gnulib projects can't take the dllimport shim as a force-include: it pulls <stdio.h> before
+# their mandatory `#include <config.h>`, tripping gnulib's "config.h first" guard. Such ports
+# (NX_GNULIB=1) instead append the shim to the BOTTOM of their generated config.h (correct
+# ordering — see nx-port-build.sh), so nx-gcc must NOT also force-include it here.
+if [ "${NX_GNULIB:-0}" != 1 ]; then
+	case " $* " in
+	*conftest*) ;;
+	*) CFLAGS_NX="$CFLAGS_NX -include $NANOS/user/libc-glue/nx-dllimport.h" ;;
+	esac
+fi
+
+# Compile-only invocations (-c/-S/-E) just need the include + freestanding setup.
+for a in "$@"; do
+	case "$a" in
+	-c|-S|-E) exec $GCC $CFLAGS_NX "$@" ;;
+	esac
+done
+
+# Otherwise this is a link (possibly compile+link of a conftest): splice in the NanOS
+# startup objects, linker script and the libc import library so _start/main resolve.
+exec $GCC $CFLAGS_NX -nostdlib -Wl,--emit-relocs -T "$NX_LDSCRIPT" \
+	"$NANOS/bin/crt0.o" "$NANOS/bin/nxhdr.o" "$@" "$NANOS/bin/libc.ndl.a" -lgcc
