@@ -664,14 +664,19 @@ _bringup64:
 # mounts at boot; init.nxe (PID 1) is installed at /nanos/core/init.nxe — the exact path
 # kernel/Kernel.cpp execs. (The staged kernel + its disk path are retired here; bringup64
 # remains as the staged rescue-ISO smoke target.)
-_image64: _all _userland64
+_image64: _all _userland64 _kext
 	IMAGE_PATH=$(IMAGE64_GRUB2) ./scripts/create-grub2-image.sh
 	# GRUB menuentry -> the real kernel (GRUB multiboot1 loads the ELF64).
 	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel.bin\n}\n' > /tmp/grub64.cfg
 	printf "rm /boot/grub/grub.cfg\nwrite /tmp/grub64.cfg /boot/grub/grub.cfg\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,config}.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/config\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config}.
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot
+	# (loadAllKexts). The PS/2 keyboard + mouse + e1000 NIC drivers live here, NOT in kernel.bin.
+	for m in $(KEXTS); do \
+	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	done
 	# PID 1: the real user/init.c (dynamically linked against libc.ndl), which execve()s the
 	# login shell. The kernel execs /disks/main/nanos/core/init.nxe and runs it in ring 3.
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
@@ -1416,20 +1421,43 @@ _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BIN
 # code is ring-0 freestanding C++ (no picolibc); -Iinclude gives the freestanding string.h and
 # we deliberately omit -Ilib so the macOS case-insensitivity trap can't bite when building in
 # /src. (See docs/filesystem.md: /nanos/kext.)
+# Kexts run in ring 0 with the KERNEL ABI, so they take the same machine-dependent codegen
+# flags as the kernel ($(KARCHFLAGS): on x86_64 that is -mno-red-zone -mno-sse -mno-mmx
+# -mno-80387 — a ring-0 module must not touch SSE/x87 or the red zone across interrupts;
+# empty on i686). $(CXX)/$(LD) are already the arch cross toolchain ($(CROSS)gcc).
 KEXT_CFLAGS=-ffreestanding -nostdlib -nostdinc++ --no-exceptions --no-rtti \
   -fno-sized-deallocation -fno-leading-underscore -fno-pic -fno-stack-protector \
-  -Iarch/include -Ikernel -Idrivers -Iinclude $(KOPTFLAGS)
+  -Iarch/include -Ikernel -Idrivers -Iinclude $(KARCHFLAGS) $(KOPTFLAGS)
+
+# Arch knobs for the kext format: x86_64 emits ELF64 (.nxlib.kernel slots are 8-byte `dq`,
+# RIP-relative `jmp [rel ...]` thunks, base < 2 GiB via kext64.ld) and is packed by mknx64
+# (v4 / R_X86_64_*); i686 keeps the historical 32-bit thunks (4-byte `dd`, absolute `jmp`)
+# and mknx (v3 / R_386_32).
+ifeq ($(ARCH),x86_64)
+KEXT_LD=kext/kext64.ld
+KIMP_BITS=64
+KIMP_DW=dq
+KIMP_ALIGN=8
+KIMP_REL=rel
+else
+KEXT_LD=kext/kext.ld
+KIMP_BITS=32
+KIMP_DW=dd
+KIMP_ALIGN=4
+KIMP_REL=
+endif
 
 # Kernel import library for kexts, GENERATED from kexports.def (single source of truth): a
 # module links these thunks/slots (__imp_knx_* in section .nxlib.kernel), which mknx turns
 # into "kernel"-scoped imports the loader binds against KernelExports.
 $(BINFOLDER)kimports.S: kernel/kexports.def
 	@mkdir -p $(BINFOLDER)
-	@awk 'BEGIN{print "[BITS 32]"; print "section .nxlib.kernel progbits alloc write align=4"} \
-	  /^KX\(/{ n=$$0; sub(/^KX\(/,"",n); sub(/\).*/,"",n); k[++c]=n; print "[GLOBAL __imp_" n "]"; print "__imp_" n ": dd 0" } \
-	  END{ print "section .text"; for(i=1;i<=c;i++){ print "[GLOBAL " k[i] "]"; print k[i] ": jmp [__imp_" k[i] "]" } }' $< > $@
+	@awk -v bits=$(KIMP_BITS) -v dw=$(KIMP_DW) -v algn=$(KIMP_ALIGN) -v rel="$(KIMP_REL)" \
+	  'BEGIN{print "[BITS " bits "]"; print "section .nxlib.kernel progbits alloc write align=" algn} \
+	  /^KX\(/{ n=$$0; sub(/^KX\(/,"",n); sub(/\).*/,"",n); k[++c]=n; print "[GLOBAL __imp_" n "]"; print "__imp_" n ": " dw " 0" } \
+	  END{ print "section .text"; for(i=1;i<=c;i++){ print "[GLOBAL " k[i] "]"; r=(rel==""?"":rel " "); print k[i] ": jmp [" r "__imp_" k[i] "]" } }' $< > $@
 $(BINFOLDER)kimports.o: $(BINFOLDER)kimports.S
-	nasm -f elf $< -o $@
+	nasm -f $(ASM_FMT) $< -o $@
 
 # Kext source objects (NOT in kernel SOURCES; never linked into kernel.bin).
 $(BINFOLDER)%.o: kext/%.cpp
@@ -1448,18 +1476,18 @@ $(BINFOLDER)%.o: kext/e1000/%.cpp
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
 KEXT_GLUE=$(BINFOLDER)nxhdr.o $(BINFOLDER)kimports.o $(BINFOLDER)kext_rt.o
-$(BINFOLDER)mouse.nkext: $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mouse_ps2.o $(MKNX) kext/kext.ld
-	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
+$(BINFOLDER)mouse.nkext: $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mouse_ps2.o $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)MouseDevice.o $(BINFOLDER)mouse_ps2.o -lgcc
-	$(MKNX) $(@:.nkext=.elf) $@
-$(BINFOLDER)kbd.nkext: $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o $(MKNX) kext/kext.ld
-	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
+$(BINFOLDER)kbd.nkext: $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)kbd_ps2.o -lgcc
-	$(MKNX) $(@:.nkext=.elf) $@
-$(BINFOLDER)e1000.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000.o $(MKNX) kext/kext.ld
-	$(LD) -nostdlib -Wl,--emit-relocs -T kext/kext.ld -o $(@:.nkext=.elf) \
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
+$(BINFOLDER)e1000.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000.o $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)e1000.o -lgcc
-	$(MKNX) $(@:.nkext=.elf) $@
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
 KEXTS=kbd mouse e1000
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
