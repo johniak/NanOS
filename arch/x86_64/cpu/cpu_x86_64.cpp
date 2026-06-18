@@ -37,6 +37,11 @@ void cpuInit() {
     faultInit();
 }
 
+// Repoint TSS.rsp0 (the kernel stack the CPU loads on a ring3->ring0 interrupt/exception gate).
+// The scheduler calls this via setKernelStack (sched_x86_64.cpp) on every task switch; g_gdt is
+// file-scoped here, so this thin setter is the way other arch TUs reach it.
+void cpuSetTssKernelStack(uint64_t rsp0) { g_gdt.setKernelStack(rsp0); }
+
 void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts()  { __asm__ __volatile__("sti"); }
 void cpuHalt()              { __asm__ __volatile__("hlt"); }
