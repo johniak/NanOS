@@ -21,8 +21,17 @@
 /* Kernel futex ABI (kernel/SyscallNr.h + SyscallDispatch.cpp): SYS_futex takes the futex word in
  * ebx, the op in ecx, the compare/wake-count value in edx, and a timeout pointer in esi (0 here).
  * The kernel requires FUTEX_PRIVATE_FLAG OR-ed into the op or it returns -ENOSYS. */
+/* Syscall numbers + trap are arch-specific: i386 uses int 0x80 with the i386 numbers; x86_64
+ * uses the SYSCALL instruction with the x86_64 numbers (futex=202, gettid=186) and the SysV arg
+ * registers (rdi/rsi/rdx/r10; SYSCALL clobbers rcx/r11). The kernel reads the same arg slots on
+ * both ABIs (futex: word, op, val, timeout). */
+#if defined(__x86_64__)
+#define SYS_futex            202
+#define SYS_gettid           186
+#else
 #define SYS_futex            240
 #define SYS_gettid           224
+#endif
 #define FUTEX_WAIT           0
 #define FUTEX_WAKE           1
 #define FUTEX_PRIVATE_FLAG   128
@@ -31,26 +40,48 @@
  * block forever. We ignore the return: any return means "re-check the word", which the loops do. */
 static void futex_wait(int* uaddr, int val) {
 	int r;
+#if defined(__x86_64__)
+	register long r10 __asm__("r10") = 0;   /* timeout */
+	__asm__ __volatile__("syscall" : "=a"(r)
+		: "a"((long) SYS_futex), "D"((long) uaddr), "S"((long) (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)),
+		  "d"((long) val), "r"(r10)
+		: "rcx", "r11", "memory");
+#else
 	__asm__ __volatile__("int $0x80"
 		: "=a"(r)
 		: "a"(SYS_futex), "b"(uaddr), "c"(FUTEX_WAIT | FUTEX_PRIVATE_FLAG), "d"(val), "S"(0)
 		: "memory");
+#endif
 	(void) r;
 }
 
 /* WAKE wakes up to `count` waiters on *uaddr. */
 static void futex_wake(int* uaddr, int count) {
 	int r;
+#if defined(__x86_64__)
+	register long r10 __asm__("r10") = 0;   /* timeout (unused for WAKE) */
+	__asm__ __volatile__("syscall" : "=a"(r)
+		: "a"((long) SYS_futex), "D"((long) uaddr), "S"((long) (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)),
+		  "d"((long) count), "r"(r10)
+		: "rcx", "r11", "memory");
+#else
 	__asm__ __volatile__("int $0x80"
 		: "=a"(r)
 		: "a"(SYS_futex), "b"(uaddr), "c"(FUTEX_WAKE | FUTEX_PRIVATE_FLAG), "d"(count), "S"(0)
 		: "memory");
+#endif
 	(void) r;
 }
 
 static int sys_gettid(void) {
 	int r;
+#if defined(__x86_64__)
+	long rr;
+	__asm__ __volatile__("syscall" : "=a"(rr) : "a"((long) SYS_gettid) : "rcx", "r11", "memory");
+	r = (int) rr;
+#else
 	__asm__ __volatile__("int $0x80" : "=a"(r) : "a"(SYS_gettid) : "memory");
+#endif
 	return r;
 }
 

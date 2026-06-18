@@ -11,7 +11,15 @@
 
 static inline int sys3(int nr, int a, int b, int c) {
 	int r;
+#if defined(__x86_64__)
+	long rr;
+	__asm__ __volatile__("syscall" : "=a"(rr)
+		: "a"((long) nr), "D"((long) a), "S"((long) b), "d"((long) c)
+		: "rcx", "r11", "memory");
+	r = (int) rr;
+#else
 	__asm__ __volatile__("int $0x80" : "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c) : "memory");
+#endif
 	return r;
 }
 

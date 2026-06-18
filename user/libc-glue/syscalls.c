@@ -39,18 +39,40 @@ void __nx_link_streams(void) {
 	__nx_keep_stderr = stderr;
 }
 
+/* The kernel trap is arch-specific: i386 uses int 0x80 (nr=eax, args ebx/ecx/edx/esi/edi);
+ * x86_64 uses the SYSCALL instruction (nr=rax, args rdi/rsi/rdx/r10/r8/r9 — SYSCALL clobbers
+ * rcx/r11). The `int` arguments are widened to `long` for the 64-bit registers; pointers reach
+ * here already truncated to `int` by the wrappers below, so they must live in the low 2 GiB —
+ * which the x86_64 user memory map guarantees (fixed low base, low stack + mmap window). */
 static inline int sys3(int nr, int a, int b, int c) {
 	int r;
+#if defined(__x86_64__)
+	long rr;
+	__asm__ __volatile__("syscall" : "=a"(rr)
+		: "a"((long) nr), "D"((long) a), "S"((long) b), "d"((long) c)
+		: "rcx", "r11", "memory");
+	r = (int) rr;
+#else
 	__asm__ __volatile__("int $0x80" : "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c) : "memory");
+#endif
 	return r;
 }
 
-/* 4-arg form (i386: nr=eax, a=ebx, b=ecx, c=edx, d=esi). Needed by the rt_sig* calls, whose
- * 4th argument is the sigsetsize. */
+/* 4-arg form (i386: nr=eax, a=ebx, b=ecx, c=edx, d=esi; x86_64: 4th arg in r10). Needed by
+ * the rt_sig* calls, whose 4th argument is the sigsetsize. */
 static inline int sys4(int nr, int a, int b, int c, int d) {
 	int r;
+#if defined(__x86_64__)
+	long rr;
+	register long r10 __asm__("r10") = (long) d;
+	__asm__ __volatile__("syscall" : "=a"(rr)
+		: "a"((long) nr), "D"((long) a), "S"((long) b), "d"((long) c), "r"(r10)
+		: "rcx", "r11", "memory");
+	r = (int) rr;
+#else
 	__asm__ __volatile__("int $0x80"
 		: "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c), "S"(d) : "memory");
+#endif
 	return r;
 }
 
@@ -502,11 +524,22 @@ int ioctl(int fd, unsigned long request, ...) {
 	return reterr(sys3(SYS_ioctl, fd, (int) request, (int) arg));
 }
 
-/* 5-argument syscall (ebx/ecx/edx/esi/edi) for mmap, which needs more than three args. */
+/* 5-argument syscall (i386: ebx/ecx/edx/esi/edi; x86_64: rdi/rsi/rdx/r10/r8) for mmap, which
+ * needs more than three args. */
 static inline int sys5(int nr, int a, int b, int c, int d, int e) {
 	int r;
+#if defined(__x86_64__)
+	long rr;
+	register long r10 __asm__("r10") = (long) d;
+	register long r8  __asm__("r8")  = (long) e;
+	__asm__ __volatile__("syscall" : "=a"(rr)
+		: "a"((long) nr), "D"((long) a), "S"((long) b), "d"((long) c), "r"(r10), "r"(r8)
+		: "rcx", "r11", "memory");
+	r = (int) rr;
+#else
 	__asm__ __volatile__("int $0x80"
 		: "=a"(r) : "a"(nr), "b"(a), "c"(b), "d"(c), "S"(d), "D"(e) : "memory");
+#endif
 	return r;
 }
 
