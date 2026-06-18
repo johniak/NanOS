@@ -1,13 +1,23 @@
 /*
- * console_x86_64.cpp — x86_64 VGA text-mode implementation of <arch/console.h>.
+ * console_x86_64.cpp — x86_64 console sink implementing <arch/console.h>.
  *
- * 80x25 text buffer at physical 0xB8000 (reachable through the loader's identity map),
- * hardware cursor via VGA ports 0x3D4/0x3D5. A self-contained Plan-2 sink: no framebuffer
- * console yet (consoleActivateFramebuffer is a no-op; the fbcon takeover lands with the
- * graphics work in a later plan). Port I/O uses inline asm directly (this is MD code, so the
- * MI arch-cleanliness guard does not apply here).
+ * Two backends, mirroring arch/x86/drivers/console_x86.cpp:
+ *   - early boot: 80x25 VGA text at physical 0xB8000 (reachable through the loader's 1 GiB
+ *     identity map), hardware cursor via VGA ports 0x3D4/0x3D5.
+ *   - once the bootloader's linear framebuffer has been mapped into the kernel
+ *     (arch::consoleActivateFramebuffer, called from Kernel::initPaging after
+ *     mmuMapKernelMmio), the console hands over to the MI FbConsole (Linux fbcon model):
+ *     boot text and the shell render as pixel glyphs on the framebuffer. Without this the
+ *     VGA text buffer is invisible whenever GRUB set a graphics video mode (the framebuffer
+ *     scans out, not 0xB8000), so the fbcon takeover is required for a usable graphics-mode
+ *     console — the same wiring the i686 port already has.
+ *
+ * Port I/O uses inline asm directly (this is MD code, so the MI arch-cleanliness guard does
+ * not apply here).
  */
 #include <arch/console.h>
+#include <arch/bootinfo.h>
+#include "FbConsole.h"
 #include <string.h>
 
 namespace {
@@ -17,6 +27,12 @@ unsigned short cursorY = 0;
 volatile unsigned short* videoram = (volatile unsigned short*) 0xB8000;
 
 const unsigned short ATTR = 0x0F00;   // white on black, in the high byte of each cell
+
+// Framebuffer console (Linux fbcon model). Selected at runtime once the bootloader
+// framebuffer has been mapped (arch::consoleActivateFramebuffer); until then the VGA text
+// path below is used so early boot text is never lost to an unmapped framebuffer.
+kernel::FbConsole g_fb;
+bool g_useFb = false;
 
 inline void outb(unsigned short port, unsigned char val) {
 	__asm__ __volatile__("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -44,6 +60,10 @@ void scroll() {
 namespace arch {
 
 void consolePutChar(char c) {
+	if (g_useFb) {
+		g_fb.putChar(c);
+		return;
+	}
 	if (c == 0x08 && cursorX) {
 		cursorX--;
 	} else if (c == 0x09) {
@@ -66,6 +86,10 @@ void consolePutChar(char c) {
 }
 
 void consoleClear() {
+	if (g_useFb) {
+		g_fb.clear();
+		return;
+	}
 	const unsigned short blank = (unsigned short) (ATTR | ' ');
 	for (int i = 0; i < 80 * 25; i++)
 		videoram[i] = blank;
@@ -75,6 +99,10 @@ void consoleClear() {
 }
 
 void consoleSetCursor(unsigned x, unsigned y) {
+	if (g_useFb) {
+		g_fb.setCursor(x, y);
+		return;
+	}
 	cursorX = (unsigned short) x;
 	cursorY = (unsigned short) y;
 	moveCursor();
@@ -84,12 +112,29 @@ void consoleInit() {
 	consoleClear();
 }
 
-// Plan 2: VGA text only. The framebuffer (fbcon) takeover lands with the graphics work.
-void consoleActivateFramebuffer() {}
+// Switch the console onto the bootloader's framebuffer (the fbcon takeover). Called once,
+// after the framebuffer MMIO has been identity-mapped into the kernel directory
+// (mmuMapKernelMmio in Kernel::initPaging). No-op if the bootloader gave no framebuffer (we
+// stay in VGA text mode). The framebuffer physical address is identity-mapped, so it is
+// reachable directly as a kernel pointer (same model as the i686 port).
+void consoleActivateFramebuffer() {
+	const BootFramebuffer* fb = bootFramebuffer();
+	if (!fb)
+		return;
+	kernel::FbSurface s = { (uint8_t*) (uintptr_t) fb->addr, fb->pitch,
+			fb->width, fb->height, fb->bpp };
+	g_fb.init(s);
+	g_useFb = true;
+}
 
 void consoleSize(unsigned* cols, unsigned* rows) {
-	if (cols) *cols = 80;
-	if (rows) *rows = 25;
+	if (g_useFb) {
+		if (cols) *cols = g_fb.cols();
+		if (rows) *rows = g_fb.rows();
+	} else {
+		if (cols) *cols = 80;   // VGA text mode
+		if (rows) *rows = 25;
+	}
 }
 
 }  // namespace arch

@@ -5,7 +5,8 @@
 
 MBALIGN  equ 1 << 0
 MEMINFO  equ 1 << 1
-MBFLAGS  equ MBALIGN | MEMINFO
+VIDEO    equ 1 << 2                 ; request a graphics video mode (like Linux vesafb)
+MBFLAGS  equ MBALIGN | MEMINFO | VIDEO
 MBMAGIC  equ 0x1BADB002
 MBCHECK  equ -(MBMAGIC + MBFLAGS)
 
@@ -14,6 +15,21 @@ align 4
     dd MBMAGIC
     dd MBFLAGS
     dd MBCHECK
+    ; AOUT-kludge fields (offsets 12..28). Unused (flag bit 16 is clear) but must be
+    ; present as zeros so the graphics fields land at their fixed offset 32. Mirrors the
+    ; i686 loader.s header layout.
+    dd 0                            ; header_addr
+    dd 0                            ; load_addr
+    dd 0                            ; load_end_addr
+    dd 0                            ; bss_end_addr
+    dd 0                            ; entry_addr
+    ; Graphics request (flag bit 2), offsets 32..44. mode_type 0 = linear framebuffer.
+    ; GRUB sets this mode (VBE on BIOS, GOP on UEFI) and reports the framebuffer in the
+    ; Multiboot info; bootinfo_x86_64.cpp reads back the real width/height/pitch/bpp.
+    dd 0                            ; mode_type = 0 (linear graphics)
+    dd 1024                         ; width
+    dd 768                          ; height
+    dd 32                           ; depth (bits per pixel)
 
 section .bss
 align 16
