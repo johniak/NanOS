@@ -104,11 +104,46 @@ else
 endif
 	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
 
+# Vim (the editor). ARCH-AWARE:
+#   * i686 (default): copy the hand-built 32-bit .nxe the nanos-sdk produced (original flow, intact).
+#   * x86_64: build from source via the REPRODUCIBLE nanos-port driver (mirrors `make ping`/`make
+#     ncurses`) against the x86_64-nanos sysroot, linking libtinfo.a from the ncurses port. The
+#     manifest ($(VIM_PORT)/nxport.toml) REUSES the i686 vim_cv_* cross-cache; hooks/pre_configure.sh
+#     scrubs the stale i686 build state the `dir:` copy carries over. We first refresh the SDK sysroot
+#     from THIS checkout (POSIX headers + libc.ndl{,.a} + the nx-dllimport.h data-import shim + the
+#     crt0/nxhdr startup objects + mknx64) so the x86_64 build tracks the live ABI. Requires `make
+#     ARCH=x86_64 ncurses` first (libtinfo.a + curses.h/term.h in the sysroot). `make image*` never
+#     depends on this; a missing artifact is skipped by _image/_image64.
+VIM_PORT := $(SDK_WORK)/vim-port
+VIM_SRC  := $(SDK_WORK)/vim
+ifeq ($(ARCH),x86_64)
+VIM_TRIPLE   := x86_64-nanos
+# CFLAGS = NanOS x86_64 user ABI (fixed-base ET_EXEC, small model, no red zone) + the dllimport shim
+# force-included into every TU (x86_64 references picolibc's stdout/stderr/errno DATA RIP-relative,
+# which mknx routes through __imp_<name> IAT slots). LDFLAGS=-no-pie keeps the fixed-base layout.
+VIM_PORT_ENV  = -e NX_HOST=x86_64-nanos -e NX_LP64=1 \
+  -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone -include nx-dllimport.h" \
+  -e LDFLAGS="-no-pie"
+endif
 vim:
 ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
-	$(NXPORT_RUN) -v "$(SDK_WORK)/vim":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh vim
-	cp "$(SDK_WORK)/vim/vim.nxe" $(BINFOLDER)vim.nxe
+	@test -d "$(SDK_TC)/$(VIM_TRIPLE)/include" || { echo "nanos-sdk $(VIM_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(SDK_TC)/$(VIM_TRIPLE)/lib/libtinfo.a" || { echo "libtinfo.a not in the $(VIM_TRIPLE) sysroot — run 'make ARCH=x86_64 ncurses' first"; exit 1; }
+	@test -f "$(VIM_PORT)/nxport.toml" || { echo "vim port not found at $(VIM_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(VIM_TRIPLE)/include/"
+	cp kernel/SyscallNr.h            "$(SDK_TC)/$(VIM_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(VIM_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/$(VIM_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/$(VIM_TRIPLE)/lib/libc.ndl"
+	cp $(BINFOLDER)crt0.o            "$(SDK_TC)/$(VIM_TRIPLE)/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o           "$(SDK_TC)/$(VIM_TRIPLE)/lib/nxhdr.o"
+	cp $(BINFOLDER)mknx64            "$(SDK_TC)/bin/$(VIM_TRIPLE)-mknx"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(VIM_PORT)":/work/port -v "$(VIM_SRC)":/work/vim -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk $(VIM_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(VIM_PORT)/vim.nxe" $(BINFOLDER)vim.nxe
 else
 	@test -f "$(SDK_WORK)/vim/src/vim.nxe" || { echo "vim.nxe not found at $(SDK_WORK)/vim/src (build it with the nanos-sdk first)"; exit 1; }
 	cp "$(SDK_WORK)/vim/src/vim.nxe" $(BINFOLDER)vim.nxe
@@ -897,7 +932,17 @@ _image64: _all _userland64 _kext
 	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  infocmp xterm-256color 2>/dev/null \
+	    | sed -E 's@setaf=[^,]*,@setaf=\\E[3%p1%dm,@; s@setab=[^,]*,@setab=\\E[4%p1%dm,@' \
+	    > /tmp/xterm-256color.ti; \
+	  tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null; \
+	  printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
+	# terminfo DB for vim (mirror i686 _image): the xterm-256color entry, with setaf/setab rewritten
+	# to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form vim's term_color() drives correctly (the stock
+	# conditional form leaks junk through vim's minimal tgoto). Shipped under /nanos/share/terminfo,
+	# matching TERM=xterm-256color + TERMINFO. Done above, inside the vim block (its only consumer).
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
 	e2fsck -fy "$(IMAGE64_GRUB2_PART)" || true
