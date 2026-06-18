@@ -517,6 +517,62 @@ ncurses: bin/libc.ndl bin/libc.ndl.a
 	  -w /work/port nanos-sdk-dev:latest sh -c '$(NCURSES_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	@echo "installed libncurses.a + libtinfo.a + headers into the $(NCURSES_TRIPLE) sysroot ($(SDK_TC)/$(NCURSES_TRIPLE)) — link downstream ports with -lncurses -ltinfo"
 
+# libpng 1.6.43 (optional, external): a static-library port — libpng16.a + headers (png.h /
+# pngconf.h / pnglibconf.h) installed into the SDK sysroot, NOT an app (no .nxe, nothing on the disk
+# image). It is the PNG image codec dependency that unblocks the doom and netsurf ports. Built by the
+# nanos-sdk from $(LIBPNG_PORT)/nxport.toml the same way as `make ncurses`: install="sysroot" makes
+# the driver skip mknx (a library has no app binary), build="autotools" runs libpng's configure
+# (--host + the shared cross config.cache + the port's flags), and hooks/post_build.sh `make install`s
+# libpng16.a + headers into the sysroot. Depends on zlib being in the SAME sysroot first
+# (`make [ARCH=x86_64] zlib`): libpng's configure finds -lz + zlib.h on the default cross search path,
+# so no --with-zlib-prefix is needed. SSE2 filter intrinsics are disabled (--enable-intel-sse=no in
+# the manifest) so libpng uses the portable C path — matches the i686 port and avoids the QEMU-CPU
+# SIMD trap. `make image`/`make image64` never depends on this.
+#
+# ARCH-AWARE (mirrors `make ncurses`/`make zlib`): for ARCH=x86_64 the port targets the x86_64-nanos
+# sysroot, sets NX_HOST=x86_64-nanos + NX_LP64=1, and exports CFLAGS with the NanOS x86_64 user ABI
+# (-fno-pie/-mcmodel=small/-mno-red-zone) for the cross-target compiles. The nx-dllimport.h data
+# shim is appended to the generated config.h by hooks/post_configure.sh (guarded with USE_BUILD_CC),
+# so libpng's RIP-relative reference to picolibc's `stderr` DATA becomes an __imp_stderr IAT slot a
+# downstream app's mknx fills. The in-tree x86_64 crt0/nxhdr/libc/mknx (link probes + final lib) are
+# refreshed first, and the honest-conftest data stub regenerated (PRECMD) so autoconf's link probes
+# (AC_CHECK_LIB(z,...) etc.) detect symbols faithfully. i686 is unchanged (generic cross gcc, absolute
+# relocs, no shim, no extra CFLAGS).
+LIBPNG_PORT := $(SDK_WORK)/libpng-port
+ifeq ($(ARCH),x86_64)
+LIBPNG_TRIPLE := x86_64-nanos
+LIBPNG_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1 -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone"
+LIBPNG_PREREQ   = $(NXPORT_PREREQ)
+LIBPNG_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(LIBPNG_TRIPLE)-mknx"
+LIBPNG_PRECMD   = NM=$(LIBPNG_TRIPLE)-nm CONFTEST_STUB_CC=$(LIBPNG_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(LIBPNG_TRIPLE)/lib &&
+else
+LIBPNG_TRIPLE := i686-nanos
+LIBPNG_PORT_ENV =
+LIBPNG_PREREQ   = @true
+LIBPNG_STARTUP  = true
+LIBPNG_PRECMD   =
+endif
+libpng: bin/libc.ndl bin/libc.ndl.a
+	@test -d "$(SDK_TC)/$(LIBPNG_TRIPLE)/include" || { echo "nanos-sdk $(LIBPNG_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/libz.a" || { echo "libz.a not in the $(LIBPNG_TRIPLE) sysroot — run 'make $(if $(filter x86_64,$(ARCH)),ARCH=x86_64 ,)zlib' first"; exit 1; }
+	@test -f "$(LIBPNG_PORT)/nxport.toml" || { echo "libpng port not found at $(LIBPNG_PORT)/nxport.toml"; exit 1; }
+	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	$(LIBPNG_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(LIBPNG_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(LIBPNG_TRIPLE)/include/SyscallNr.h"
+	# The dllimport shim (stderr/errno -> libc.ndl IAT slots). x86_64 lib objects reference these DATA
+	# exports RIP-relative (R_X86_64_PC32); the port's post_configure hook #includes it into config.h
+	# (only for x86_64; i686 uses absolute relocs and skips it).
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(LIBPNG_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/libc.ndl"
+	$(LIBPNG_STARTUP)
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(LIBPNG_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk $(LIBPNG_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(LIBPNG_PRECMD) python3 /sdk/port/nanos-port /work/port'
+	@echo "installed libpng16.a + png.h/pngconf.h/pnglibconf.h into the $(LIBPNG_TRIPLE) sysroot ($(SDK_TC)/$(LIBPNG_TRIPLE)) — link downstream ports with -lpng16 -lz"
+
 # NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
 # libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke NanWM
 # libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
@@ -564,7 +620,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
