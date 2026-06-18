@@ -126,4 +126,26 @@ RUN set -eux; \
 # Marker the Makefile checks to know it is running inside the build container.
 RUN touch /etc/nanos-build
 
+# x86_64-elf picolibc: the 64-bit counterpart of the i686-elf picolibc above, built
+# against the x86_64-elf cross-gcc for the long-mode port's libc.ndl. Trailing layer
+# (after both toolchains + the marker) so it never invalidates the expensive cached
+# toolchain layers. meson/ninja/git/python3 were already installed by the i686 picolibc
+# layer. Built non-PIC / small code model (-fno-pic -mcmodel=small -mno-red-zone via the
+# cross-file) so objects emit absolute relocs that mknx64 handles, not GOTPCREL/PLT.
+COPY picolibc-x86_64-elf.txt /tmp/picolibc-x86_64-elf.txt
+RUN set -eux; \
+    git clone --depth 1 --branch "${PICOLIBC_VERSION}" \
+        https://github.com/picolibc/picolibc /tmp/picolibc; \
+    cd /tmp/picolibc; \
+    meson setup build --cross-file /tmp/picolibc-x86_64-elf.txt \
+        -Dprefix=/opt/picolibc/x86_64-elf \
+        -Dincludedir=include -Dlibdir=lib \
+        -Dmultilib=false -Dpicocrt=false -Dpicolib=true -Dsemihost=false \
+        -Dposix-console=true \
+        -Dtests=false -Dformat-default=double -Dthread-local-storage=false \
+        -Derrno-function=__errno_location; \
+    ninja -C build; \
+    ninja -C build install; \
+    cd /; rm -rf /tmp/picolibc /tmp/picolibc-x86_64-elf.txt
+
 WORKDIR /src

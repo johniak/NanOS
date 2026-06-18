@@ -1,0 +1,24 @@
+# Meson cross file: build picolibc with the NanOS x86_64-elf cross-gcc.
+# Used by docker/Dockerfile. The toolchain is already on PATH (/opt/cross/bin).
+[binaries]
+c = 'x86_64-elf-gcc'
+ar = 'x86_64-elf-ar'
+as = 'x86_64-elf-as'
+strip = 'x86_64-elf-strip'
+
+[host_machine]
+system = 'none'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
+
+[built-in options]
+# Non-PIC / small code model so picolibc objects emit absolute (R_X86_64_32S)
+# relocations that mknx64 handles, NOT GOTPCREL/PLT. -mno-red-zone keeps the
+# objects safe for the kernel/interrupt-aware userland ABI.
+c_args = ['-fno-pic', '-mcmodel=small', '-mno-red-zone']
+
+[properties]
+# The cross-gcc cannot link a hosted test program (freestanding), so skip Meson's
+# compiler sanity link check.
+skip_sanity_check = true
