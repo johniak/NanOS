@@ -719,6 +719,18 @@ image64:
 run64: image64
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
 
+# Doom (in-tree doomgeneric), ARCH-AWARE host wrapper. Stages bin/doom.nxe in the container for
+# the selected arch — i686 (default) or x86_64 — using the arch-selected userland toolchain,
+# picolibc sysroot, linker script and mknx (see the $(BINFOLDER)doom.nxe rule). For i686 doom is
+# also built by `make image` (it is in USER_PROGS); for x86_64 it is NOT in the minimal
+# X64_USER_PROGS subset, so this target stages it and `make image64` then installs the /apps/doom
+# bundle + /bin/doom.nxe symlink. Switching ARCH reuses bin/ for userland objects, so run
+# `make clean` when crossing arches (the documented x86_64 convention) before `make ARCH=x86_64 doom`.
+.PHONY: doom
+doom:
+	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" ARCH=$(ARCH) doom'
+	@echo "staged $(BINFOLDER)doom.nxe (ARCH=$(ARCH)) — run 'make image' (i686) or 'make image64' (x86_64) to install /apps/doom"
+
 # x86_64 minimal userland (Plan 6): build the 64-bit init.nxe in the container (crt0 +
 # nxhdr + libnanos + init, linked at 0x800000, then mknx64 -> v4 .nxe). Host-side wrapper.
 .PHONY: init64
@@ -1044,6 +1056,18 @@ _image64: _all _userland64 _kext
 	# to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form vim's term_color() drives correctly (the stock
 	# conditional form leaks junk through vim's minimal tgoto). Shipped under /nanos/share/terminfo,
 	# matching TERM=xterm-256color + TERMINFO. Done above, inside the vim block (its only consumer).
+	# Doom (optional, in-tree doomgeneric): an /apps/doom bundle (the binary + its shareware
+	# IWAD doom1.wad) + a /bin/doom.nxe symlink, installed only if `make ARCH=x86_64 doom`
+	# staged bin/doom.nxe. Mirrors the i686 _image doom bundle (APP_PROGS + the WAD write), but
+	# guarded by file presence since doom is not in the minimal X64_USER_PROGS subset. doom mmaps
+	# /dev/fb0 and reads /dev/input0, both now present on x86_64 (the framebuffer multiboot tag).
+	if [ -f $(BINFOLDER)doom.nxe ]; then \
+	  printf "mkdir /apps/doom\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/doom/doom.nxe\nwrite $(BINFOLDER)doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
 	e2fsck -fy "$(IMAGE64_GRUB2_PART)" || true
@@ -1824,7 +1848,7 @@ _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 # code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
 # replaces the shipped backends. Built as the `doom` program in USER_PROGS.
 DOOM_DIR=user/third_party/doomgeneric
-DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector $(UOPTFLAGS)
+DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
 DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
 
 # Per-object rules (with -MMD header tracking) so only CHANGED Doom sources recompile
@@ -1840,9 +1864,20 @@ $(BINFOLDER)doomgeneric_nanos.o: user/doomgeneric_nanos.c
 # statically pulls only still-unresolved symbols: read-only const tables like _ctype_b
 # (importing immutable data has no shared-state benefit, unlike stdout/errno). Functions are
 # already resolved by the thunks, so their libc.a members are not pulled.
-$(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)doom.elf $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a -L$(PICOLIBC)/lib -lc -lgcc
-	$(MKNX) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe --need libc.ndl
+$(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)doom.elf $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a -L$(PICOLIBC)/lib -lc -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe --need libc.ndl
+
+# Arch-aware `make doom`: stage bin/doom.nxe for the selected arch (i686 default, or
+# ARCH=x86_64). The .nxe rule above already uses the arch-selected toolchain ($(CXX)/$(LD)),
+# 64-bit picolibc sysroot ($(PICOLIBC)), linker script ($(USER_NX_LD)) and mknx ($(MKNX_TOOL)),
+# so the SAME rule produces an ELF32 v3 .nxe for i686 or an ELF64 v4 .nxe for x86_64. On i686
+# doom is also part of USER_PROGS (built by `make image`); on x86_64 it is NOT in the minimal
+# X64_USER_PROGS subset, so `make ARCH=x86_64 doom` is the way to stage it, and `make image64`
+# then installs the /apps/doom bundle + /bin/doom.nxe symlink (only if bin/doom.nxe exists).
+.PHONY: doom
+doom: $(BINFOLDER)doom.nxe
+	@echo "staged $(BINFOLDER)doom.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install the /apps/doom bundle"
 
 # Pull in all userland header-dependency files (.d), so a changed header recompiles only
 # the objects that include it. Missing on a clean build -> everything compiles (correct).
