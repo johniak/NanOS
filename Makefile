@@ -55,11 +55,26 @@ iso: docker-image
 # Absent fork => the target errors clearly; `make image` itself never depends on this, so a
 # missing fork can't break a normal build.
 BASH_FORK ?= $(HOME)/Projects/bash-nanos
+# Arch-aware (mirrors smoke64 / the in-tree x86_64 userland): for ARCH=x86_64 the fork builds
+# against the 64-bit picolibc sysroot + x86_64-elf-gcc, links the elf64 .nxe linker script and
+# turns the ELF into a v4 .nxe with mknx64 (NX_LP64=1 fixes bash's LP64 sizeof answers). i686
+# passes no env, so build.sh/nx-gcc fall back to their 32-bit defaults — unchanged.
+ifeq ($(ARCH),x86_64)
+BASH_ENV = -e NX_CC=x86_64-elf-gcc -e NX_HOST=x86_64-elf -e NX_PICO=/opt/picolibc/x86_64-elf \
+  -e NX_MKNX=/src/bin/mknx64 -e NX_LDSCRIPT=/src/arch/x86_64/user-nx.ld \
+  -e 'NX_ARCHFLAGS=-mcmodel=small -mno-red-zone' -e NX_LP64=1
+# The fork links /src/bin/{crt0.o,nxhdr.o,libc.ndl.a} + mknx64 — they must be the ELF64 build.
+BASH_PREREQ = $(DOCKER_RUN) sh -c 'make ARCH=x86_64 bin/libc.ndl bin/libc.ndl.a bin/crt0.o bin/nxhdr.o bin/mknx64'
+else
+BASH_ENV =
+BASH_PREREQ = @true
+endif
 bash: docker-image
 	@test -f "$(BASH_FORK)/nanos/build.sh" || { echo "bash fork not found at $(BASH_FORK)/nanos (set BASH_FORK=/path/to/bash-nanos)"; exit 1; }
-	docker run --rm -v $(CURDIR):/src -v "$(BASH_FORK)":/bash -w /bash $(DOCKER_IMAGE) sh /bash/nanos/build.sh build
+	$(BASH_PREREQ)
+	docker run --rm -v $(CURDIR):/src -v "$(BASH_FORK)":/bash $(BASH_ENV) -w /bash $(DOCKER_IMAGE) sh /bash/nanos/build.sh build
 	cp "$(BASH_FORK)/nanos/bash.nxe" $(BINFOLDER)bash.nxe
-	@echo "staged $(BINFOLDER)bash.nxe — run 'make image' to install it into /apps/bash"
+	@echo "staged $(BINFOLDER)bash.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it"
 
 # GNU grep (optional, external). Built by the nanos-sdk in its own work dir (cross toolchain +
 # gnulib). This target only copies the finished grep.nxe into bin/, where _image installs it as
@@ -640,6 +655,17 @@ _image64: _all _userland64
 	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# GNU bash (optional): installed as an /apps/bash bundle + a /bin/bash.nxe symlink ONLY if
+	# `make ARCH=x86_64 bash` staged bin/bash.nxe. passwd's login shell is /disks/main/bin/bash.nxe,
+	# so this is what PID 1 execve()s. Mirrors the i686 _image bash population. Skipped silently
+	# otherwise (init falls back to nsh). The /apps + /bin link-farm dirs are created here.
+	-printf "mkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	if [ -f $(BINFOLDER)bash.nxe ]; then \
+	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
 	e2fsck -fy "$(IMAGE64_GRUB2_PART)" || true
