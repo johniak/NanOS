@@ -475,7 +475,7 @@ _all:
 	 ln -s /src/$(BINFOLDER) $(KSRC)/bin
 	$(MAKE) -C $(KSRC) _compile
 
-_compile: $(BINFOLDER)kernel.bin
+_compile: $(KOBJ)kernel.bin
 
 # Syntax-only -Wconversion check of ONE MI source, compiled from a case-sensitive copy (the
 # macOS bind mount collides string.h/String.h). Reports warnings for $(FILE) only; sibling
@@ -489,7 +489,9 @@ _convcheck:
 # -lgcc trails the objects so libgcc helper routines first referenced by an object (e.g.
 # __udivdi3 for 64-bit division on i686 — pulled in by the LP64 widening of Plan 7) resolve.
 # (LDFLAGS also lists -lgcc, but a library only satisfies symbols undefined to its left.)
-$(BINFOLDER)kernel.bin: $(OBJECTS)
+# kernel.bin lands in the per-arch $(KOBJ) too (bin/kernel.bin for i686, bin/k64/kernel.bin for
+# x86_64) so the two arches' final binaries never overwrite each other in bin/.
+$(KOBJ)kernel.bin: $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) -lgcc
 
 # Kernel object rules write into the per-arch $(KOBJ) (bin/ for i686, bin/k64/ for x86_64).
@@ -569,29 +571,31 @@ _bringup64:
 	@printf 'set timeout=0\nset default=0\nmenuentry "nanos64" {\n  multiboot /boot/kernel64.bin\n  boot\n}\n' > /tmp/iso64/boot/grub/grub.cfg
 	grub-mkrescue -o $(BINFOLDER)nanos64.iso /tmp/iso64
 
-# Plan 5: build the staged long-mode kernel (storage stack linked in) and install it into a GRUB2
-# ext4 DISK image. Same case-sensitive-copy build as _bringup64, then: (re)create the disk skeleton
-# (create-grub2-image.sh, IMAGE_PATH overridden to the x86_64 image), point grub.cfg at the staged
-# kernel, and write it to /nanos/core/kernel64.bin. The ext4 partition doubles as /disks/main, which
-# the staged kernel mounts at boot — so /boot/grub/grub.cfg is the very file the read self-test reads.
-_image64:
-	@mkdir -p $(STAGE_BIN)
-	@rm -rf $(KSRC) && mkdir -p $(KSRC) && \
-	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage --exclude=tests -C /src . | tar -xf - -C $(KSRC) && \
-	 ln -s /src/$(BINFOLDER) $(KSRC)/bin
-	$(MAKE) -C $(KSRC) _stage64
+# Plan 9 (un-stage): build the REAL machine-independent kernel via the full `_all` link (into
+# bin/kernel.bin — the same kernel/Kernel.cpp the i686 build runs) and install it into a GRUB2
+# ext4 DISK image. Depends on _all (which compiles the x86_64 objects into bin/k64/ and links
+# bin/kernel.bin). Then: (re)create the disk skeleton (create-grub2-image.sh, IMAGE_PATH
+# overridden to the x86_64 image), point grub.cfg at the real kernel, and write it to
+# /nanos/core/kernel.bin. The ext4 partition doubles as /disks/main, which the real kernel
+# mounts at boot; init.nxe (PID 1) is installed at /nanos/core/init.nxe — the exact path
+# kernel/Kernel.cpp execs. (The staged kernel + its disk path are retired here; bringup64
+# remains as the staged rescue-ISO smoke target.)
+_image64: _all
 	IMAGE_PATH=$(IMAGE64_GRUB2) ./scripts/create-grub2-image.sh
-	# GRUB menuentry -> the staged kernel (GRUB multiboot1 loads the ELF64).
-	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel64.bin\n}\n' > /tmp/grub64.cfg
+	# GRUB menuentry -> the real kernel (GRUB multiboot1 loads the ELF64).
+	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel.bin\n}\n' > /tmp/grub64.cfg
 	printf "rm /boot/grub/grub.cfg\nwrite /tmp/grub64.cfg /boot/grub/grub.cfg\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# Install the staged kernel under /nanos/core (so /nanos exists for the write self-test too).
+	# Install the real kernel under /nanos/core (so /nanos exists for the write self-test too).
 	-printf "mkdir /nanos\nmkdir /nanos/core\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
-	printf "rm /nanos/core/kernel64.bin\nwrite $(BINFOLDER)kernel64.bin /nanos/core/kernel64.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# Build + install the 64-bit init.nxe (PID 1): the staged kernel loads it from here and runs
-	# it in ring 3. Built in /src directly (the minimal freestanding userland needs no KSRC copy:
-	# no source includes <string.h>, so the case-insensitivity trap does not apply).
+	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Build + install the 64-bit init.nxe (PID 1): the kernel execs /disks/main/nanos/core/init.nxe
+	# and runs it in ring 3. Built in /src directly (the minimal freestanding userland needs no KSRC
+	# copy: no source includes <string.h>, so the case-insensitivity trap does not apply).
 	$(MAKE) ARCH=x86_64 $(BINFOLDER)init.nxe
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
+	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
+	e2fsck -fy "$(IMAGE64_GRUB2_PART)" || true
 	@echo "x86_64 disk image ready: $(IMAGE64_GRUB2)  (boot: $(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw)"
 
 -include $(OBJECTS:.o=.d)

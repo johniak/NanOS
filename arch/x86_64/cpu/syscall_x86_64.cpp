@@ -81,15 +81,13 @@ void syscallInit() {
 }
 
 void syscallSelfTest() {
-	// A zero-length write(1, "", 0) round-trips through the real syscall path without
-	// printing — catches a broken MSR/entry/stub before userland exists.
-	long ret;
-	const char* msg = "";
-	__asm__ __volatile__("syscall"
-		: "=a"(ret)
-		: "a"((long) SYS_write), "D"(1L), "S"((long) msg), "d"(0L)
-		: "rcx", "r11", "memory");
-	(void) ret;
+	// No-op on x86_64. The i686 self-test issues `int 0x80` from ring 0, whose handler `iret`s
+	// back to ring 0 (same-privilege) — a valid round trip. On x86_64 the fast syscall path is
+	// SYSCALL/SYSRET, and SYSRET *unconditionally* returns to ring 3 (CPL 3). A SYSCALL issued
+	// from ring 0 would therefore have its `sysret` drop the ring-0 caller into ring 3 at a
+	// kernel RIP → #PF. The ISA simply does not support a ring0->ring0 syscall round trip, so
+	// there is nothing to self-test here; the real validation is init.nxe (PID 1) issuing
+	// syscalls from ring 3, which exercises the entry stub + dispatch + sysret for real.
 }
 
 }  // namespace arch

@@ -24,13 +24,19 @@ unsigned char g_bootKstack[8192] __attribute__((aligned(16)));
 namespace arch {
 
 void faultInit();   // arch/x86_64/cpu/fault_x86_64.cpp — #GP/#PF debug handlers
+void syscallSetKernelStack(uint64_t top);   // syscall_x86_64.cpp — the SYSCALL per-CPU kstack
 
 void cpuInit() {
     // GDT first: the IDT gates reference code selector 0x08, valid only once we own the GDT.
     g_gdt.initialize();
     // Point TSS.rsp0 at the boot kernel stack and load the task register, so future
     // ring3->ring0 traps have a kernel stack to land on.
-    g_gdt.setKernelStack((uint64_t) (g_bootKstack + sizeof(g_bootKstack)));
+    uint64_t bootTop = (uint64_t) (g_bootKstack + sizeof(g_bootKstack));
+    g_gdt.setKernelStack(bootTop);
+    // Seed the SYSCALL fast-path per-CPU kernel stack too (decision #B): the boot syscallSelfTest
+    // and any early trap issue SYSCALL before the scheduler runs its first setKernelStack, and the
+    // entry stub loads RSP from this slot after swapgs — a zero here would fault on the first push.
+    syscallSetKernelStack(bootTop);
     g_gdt.loadTss();
     // IDT: remap the PIC and install all 256 gates (CPU exceptions + IRQs). No sti yet.
     g_idt.initialize();
