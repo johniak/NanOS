@@ -399,8 +399,14 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		ret = forkProcess(tf);
 		break;
 	case SYS_clone:
-		// i386 ABI: a0=flags, a1=child_stack, a2=ptid, a3=tls, a4=ctid.
+		// The clone arg order differs by ABI: i386 is clone(flags, stack, ptid, tls, ctid)
+		// (a3=tls, a4=ctid), but x86_64 swaps the last two — clone(flags, stack, ptid, ctid, tls)
+		// (a3=ctid, a4=tls). cloneThread always takes (..., tls, ctid), so pass them per-ABI.
+#if defined(__x86_64__)
+		ret = cloneThread(tf, (unsigned) a0, (unsigned) a1, (unsigned) a2, (unsigned) a4, (unsigned) a3);
+#else
 		ret = cloneThread(tf, (unsigned) a0, (unsigned) a1, (unsigned) a2, (unsigned) a3, (unsigned) a4);
+#endif
 		break;
 	case SYS_getpid:
 		ret = ProcTable::current()->pid;

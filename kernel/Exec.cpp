@@ -307,12 +307,18 @@ int cloneThread(arch::TrapFrame* tf, unsigned flags, unsigned childStack,
 	t->thread = th;
 	th->task = t;
 
-	// CLONE_SETTLS: the child's TLS base comes from the user_desc the caller points `tls` at
-	// (same struct as set_thread_area). The scheduler reloads GDT entry 6 from th->tlsBase when
-	// it first switches to this task, so __thread accesses resolve to the child's own block.
+	// CLONE_SETTLS: record the child's TLS base so the scheduler installs it (archLoadThreadTls)
+	// on first switch, and __thread / errno resolve to the child's own block. The `tls` argument's
+	// meaning is ABI-specific: on i386 it points at a user_desc (same struct as set_thread_area),
+	// whose base_addr is the block; on x86_64 it IS the base value directly (the %fs.base the
+	// child's thread pointer needs — musl passes the TCB address, no user_desc).
 	if ((flags & CLONE_SETTLS) && tls) {
+#if defined(__x86_64__)
+		th->tlsBase = tls;
+#else
 		UserDesc* ud = (UserDesc*) tls;
 		th->tlsBase = ud->base_addr;
+#endif
 	}
 	// CLONE_PARENT_SETTID: publish the new tid to the PARENT's *ptid (shared space -> visible now).
 	if ((flags & CLONE_PARENT_SETTID) && ptid)

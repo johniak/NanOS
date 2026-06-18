@@ -27,7 +27,25 @@ void faultInit();   // arch/x86_64/cpu/fault_x86_64.cpp — #GP/#PF debug handle
 void syscallSetKernelStack(uint64_t top);   // syscall_x86_64.cpp — the SYSCALL per-CPU kstack
 void archSetUserFsBase(uint64_t base);      // usermode_x86_64.cpp — writes IA32_FS_BASE
 
+// Enable SSE so ring-3 code (the userland is built SSE-ON — decision #3: SysV AMD64 passes
+// floats/varargs in XMM, and picolibc's vfprintf uses movups) does not #UD on the first XMM
+// instruction. Clear CR0.EM (no x87 emulation) + set CR0.MP, then set CR4.OSFXSR (legacy SSE +
+// FXSAVE/FXRSTOR area) and CR4.OSXMMEXCPT (SIMD float exceptions go to #XF, not #UD). The kernel
+// itself is -mno-sse, so it never touches XMM; this is purely to permit ring 3.
+static void enableSse() {
+    uint64_t cr0;
+    __asm__ __volatile__("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(1ULL << 2);                          // EM = 0
+    cr0 |=  (1ULL << 1);                          // MP = 1
+    __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0) : "memory");
+    uint64_t cr4;
+    __asm__ __volatile__("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1ULL << 9) | (1ULL << 10);            // OSFXSR | OSXMMEXCPT
+    __asm__ __volatile__("mov %0, %%cr4" : : "r"(cr4) : "memory");
+}
+
 void cpuInit() {
+    enableSse();
     // GDT first: the IDT gates reference code selector 0x08, valid only once we own the GDT.
     g_gdt.initialize();
     // Point TSS.rsp0 at the boot kernel stack and load the task register, so future
