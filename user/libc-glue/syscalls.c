@@ -585,7 +585,24 @@ void* sbrk(int incr) {
  * (the kernel fills only a few fields) and set a sane st_blksize — picolibc's stdio sizes
  * its file buffer from st_blksize, so leaving it as stack garbage makes fopen try to
  * malloc a huge (or zero) buffer, which fails and then crashes on the first fread. */
-struct knl_stat { unsigned mode, size, nlink, uid, gid, mtime, ino; };
+/* MUST match the kernel's LinuxStat (kernel/Syscall.h): the kernel writes this exact 48-byte
+ * record into the user buffer for stat/lstat/fstat/fstatat. It was widened to 64-bit fields
+ * for the x86_64 layout (commit "LinuxStat widened to the x86_64 layout"); a stale 28-byte
+ * struct here both mis-maps the fields AND overflows the caller's stack buffer (corrupting the
+ * saved callee-saved registers — e.g. ls's mkent keeps &entry in %rbx across stat, so the
+ * overflow faulted it). Fixed-width types => identical layout on i386 and x86_64. */
+/* Plain field names (NOT st_*): st_mtime/st_atime/... are POSIX macros (st_mtim.tv_sec) in
+ * picolibc, so they cannot be struct member names — only the layout has to match. */
+struct knl_stat {
+	uint64_t ino;
+	uint32_t mode;
+	uint32_t nlink;
+	uint32_t uid;
+	uint32_t gid;
+	uint64_t size;
+	uint64_t blocks;
+	int64_t  mtime;
+};
 static void fillstat(struct stat* o, const struct knl_stat* k) {
 	memset(o, 0, sizeof *o);
 	o->st_mode = k->mode;
@@ -595,6 +612,7 @@ static void fillstat(struct stat* o, const struct knl_stat* k) {
 	o->st_gid = k->gid;
 	o->st_mtime = k->mtime;
 	o->st_ino = k->ino;
+	o->st_blocks = k->blocks;
 	o->st_blksize = 512;
 }
 int stat(const char* p, struct stat* o) {
