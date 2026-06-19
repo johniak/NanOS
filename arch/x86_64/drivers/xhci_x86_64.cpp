@@ -39,7 +39,8 @@ const uint32_t PORTSC_RW1C = 0xFE0000;   // CSC..CEC change bits (write-1-to-cle
 // Runtime interrupter-0 registers (bytes from g_rt).
 enum { RT_IR0 = 0x20, IR_ERSTSZ = 0x08, IR_ERSTBA = 0x10, IR_ERDP = 0x18 };
 // TRB types.
-enum { TRB_LINK = 6, TRB_ENABLE_SLOT = 9, TRB_ADDRESS_DEVICE = 11, TRB_EVAL_CONTEXT = 13,
+enum { TRB_NORMAL = 1, TRB_LINK = 6, TRB_ENABLE_SLOT = 9, TRB_ADDRESS_DEVICE = 11,
+       TRB_CONFIGURE_EP = 12, TRB_EVAL_CONTEXT = 13,
        TRB_SETUP = 2, TRB_DATA = 3, TRB_STATUS = 4,
        TRB_TRANSFER_EVENT = 32, TRB_CMD_COMPLETION = 33, TRB_PORT_STATUS = 34 };
 
@@ -142,6 +143,13 @@ int dciOf(int endpoint) {
     int num = endpoint & 0x0F;
     int in  = (endpoint & 0x80) ? 1 : 0;
     return num * 2 + in;
+}
+
+// xHCI EP Type field (EP Context dword1 bits 5:3).
+int epTypeOf(UsbXfer type, UsbDir dir) {
+    if (type == USB_BULK) return dir == USB_IN ? 6 : 2;
+    if (type == USB_INT)  return dir == USB_IN ? 7 : 3;
+    return 4;   // control
 }
 
 // ---- controller bring-up ----
@@ -281,11 +289,48 @@ int xhciSubmit(UsbHc*, UsbTransfer* t) {
         }
         t->result = -1; t->complete = 1; return -1;
     }
-    // Bulk/interrupt endpoints land in Task 9 (mass-storage) / the HID kext.
+    // Bulk / interrupt: a single Normal TRB carrying the data buffer.
+    uint64_t trbPhys = ringPush(r, phys(t->data), t->len,
+                                (TRB_NORMAL << 10) | (1 << 2) /*ISP*/ | (1 << 5) /*IOC*/);
+    g_db[t->slot] = (uint32_t)dci;
+    Trb ev;
+    for (int guard = 0; guard < 16; guard++) {
+        if (!eventPoll(&ev)) { t->result = -1; t->complete = 1; return -1; }
+        if (((ev.control >> 10) & 0x3F) != TRB_TRANSFER_EVENT) continue;
+        int cc = (ev.status >> 24) & 0xFF;
+        if (ev.param == trbPhys) {
+            t->result = (cc == 1 || cc == 13) ? (int)(t->len - (ev.status & 0xFFFFFF)) : -1;
+            t->complete = 1;
+            return t->result < 0 ? -1 : 0;
+        }
+        if (cc != 1 && cc != 13) { t->result = -1; t->complete = 1; return -1; }
+    }
     t->result = -1; t->complete = 1; return -1;
 }
 
-int xhciConfigureEndpoint(UsbHc*, int, int, UsbXfer, UsbDir, int) { return 0; }
+// Configure a bulk/interrupt endpoint: allocate its transfer ring, set its EP context, and issue
+// a Configure Endpoint command (bumping the slot's Context Entries to cover the new DCI).
+int xhciConfigureEndpoint(UsbHc*, int slot, int endpoint, UsbXfer type, UsbDir dir, int maxPacket) {
+    if (slot <= 0 || slot >= MAX_SLOTS) return -1;
+    SlotState& s = g_slots[slot];
+    int dci = dciOf(endpoint);
+    if (dci < 2 || dci >= 32) return -1;
+    if (!s.ep[dci].ring) { s.ep[dci].ring = (Trb*) allocFrame(); s.ep[dci].enq = 0; s.ep[dci].cycle = 1; }
+
+    memset(s.inputCtx, 0, kernel::FRAME_SIZE);
+    ctxAt(s.inputCtx, 0)[1] = (1u << 0) | (1u << dci);          // add Slot + the new EP
+    uint32_t* slotIn  = ctxAt(s.inputCtx, 1);
+    uint32_t* slotDev = ctxAt(s.devCtx, 0);
+    slotIn[0] = (slotDev[0] & ~(0x1Fu << 27)) | ((uint32_t)dci << 27);   // Context Entries = dci
+    slotIn[1] = slotDev[1];
+    uint32_t* ep = ctxAt(s.inputCtx, dci + 1);
+    ep[0] = 0;
+    ep[1] = ((uint32_t)epTypeOf(type, dir) << 3) | (3 << 1) /*CErr*/ | ((uint32_t)maxPacket << 16);
+    ep[2] = (uint32_t)(phys(s.ep[dci].ring) & ~0xFull) | 1 /*DCS*/;
+    ep[3] = (uint32_t)(phys(s.ep[dci].ring) >> 32);
+    ep[4] = (uint32_t)maxPacket;   // Average TRB Length
+    return cmdExec(phys(s.inputCtx), (TRB_CONFIGURE_EP << 10) | ((uint32_t)slot << 24), 0) == 1 ? 0 : -1;
+}
 int xhciPortCount(UsbHc*) { return g_maxPorts; }
 
 const UsbHcOps OPS = { xhciEnablePort, xhciConfigureEndpoint, xhciSubmit, xhciPortCount };
