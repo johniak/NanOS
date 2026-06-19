@@ -742,7 +742,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 verify64
+.PHONY: test64 smoke-x86_64 smoke-usb verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -753,10 +753,15 @@ test64: test-image
 smoke-x86_64: image64
 	bash scripts/smoke-x86_64.sh
 
-# `verify64` = the full x86_64 gate: host tests (test64) + the MD boot smoke. One command answers
-# "does x86_64 still work end-to-end" — MI logic AND the real boot path.
-verify64: test64 smoke-x86_64
-	@echo "x86_64 verify: host tests + MD boot smoke both passed."
+# `smoke-usb` is the live-USB boot gate: boot with the whole root filesystem on a USB mass-storage
+# device (no -drive disk) and assert the in-kernel xHCI+USB-core+MSC path mounts root and boots.
+smoke-usb: image64
+	bash scripts/smoke-usb.sh
+
+# `verify64` = the full x86_64 gate: host tests (test64) + the ATA MD boot smoke + the live-USB
+# boot smoke. One command answers "does x86_64 still work end-to-end" — MI logic AND both boot paths.
+verify64: test64 smoke-x86_64 smoke-usb
+	@echo "x86_64 verify: host tests + ATA boot smoke + live-USB boot smoke all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
