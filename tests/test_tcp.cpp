@@ -302,6 +302,51 @@ TEST_CASE("fast retransmit on 3 duplicate ACKs") {
 	socketClose(c.s);
 }
 
+// Feed a TCP segment WITH options (like a real Linux/macOS client: MSS/SACK/timestamps/wscale).
+// optlen must be a multiple of 4 (the data offset is in 32-bit words).
+static void feedTcpOpt(uint32_t peer, uint16_t sport, uint16_t dport, uint32_t seq, uint32_t ack,
+                       uint8_t flags, const unsigned char* opts, int optlen,
+                       const unsigned char* data, int dlen) {
+	NetBuf* skb=netbufAlloc(); skb->reserve(0);
+	int tlen=20+optlen+dlen, tot=IP_HLEN_MIN+tlen;
+	unsigned char* h=skb->put(tot); std::memset(h,0,tot);
+	h[0]=0x45; wr16be(h+2,tot); h[8]=64; h[9]=IPPROTO_TCP; wr32be(h+12,peer); wr32be(h+16,g_dev.ip);
+	wr16be(h+10,inetChecksum(h,IP_HLEN_MIN));
+	unsigned char* t=h+IP_HLEN_MIN;
+	wr16be(t,sport); wr16be(t+2,dport); wr32be(t+4,seq); wr32be(t+8,ack);
+	t[12]=(uint8_t)(((20+optlen)/4)<<4); t[13]=flags; wr16be(t+14,4096); wr16be(t+16,0);
+	if (optlen) std::memcpy(t+20,opts,optlen);
+	if (dlen) std::memcpy(t+20+optlen,data,dlen);
+	wr16be(t+16, inetPseudoChecksum(peer, g_dev.ip, IPPROTO_TCP, t, tlen));
+	skb->dev=&g_dev; ipRx(skb);
+}
+
+// Reproduces the x86_64 "TCP handshake never completes" bug seen in QEMU: a real client's SYN and
+// final ACK carry a timestamp option, unlike the bare-segment passive-open test above. The ACK must
+// still drive SYN_RCVD -> ESTABLISHED.
+TEST_CASE("passive open with real client options (timestamps): ACK completes the handshake") {
+	setup();
+	uint32_t peer=ipv4(10,0,2,80);
+	Socket* srv=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	socketBind(srv, 0, 8080);
+	CHECK(tcpListen(srv, 8) == 0);
+	clearCap();
+	// real SYN options: MSS, SACK-permitted, timestamps(TSval=0x1000,TSecr=0), NOP, window scale 7
+	const unsigned char synOpt[20] = { 0x02,0x04,0x05,0xb4, 0x04,0x02, 0x08,0x0a,0x00,0x00,0x10,0x00,0x00,0x00,0x00,0x00, 0x01, 0x03,0x03,0x07 };
+	feedTcpOpt(peer, 40000, 8080, 0x900, 0, TCP_SYN, synOpt, 20, nullptr, 0);
+	Seg synack; REQUIRE(parseCap(&synack));
+	CHECK((synack.flags & (TCP_SYN|TCP_ACK)) == (TCP_SYN|TCP_ACK));
+	uint32_t srvIss=synack.seq;
+	// final ACK: NOP,NOP,timestamps(TSval=0x1001 advanced, TSecr echoes our send time)
+	const unsigned char ackOpt[12] = { 0x01,0x01, 0x08,0x0a,0x00,0x00,0x10,0x01, 0x00,0x00,0x27,0x10 };
+	feedTcpOpt(peer, 40000, 8080, 0x901, srvIss+1, TCP_ACK, ackOpt, 12, nullptr, 0);
+	int err=-1;
+	Socket* conn=tcpAccept(srv, &err);
+	REQUIRE(conn != nullptr);
+	CHECK(tcpState(conn) == TCP_ESTABLISHED);
+	socketClose(conn); socketClose(srv);
+}
+
 TEST_CASE("bare SYN to a closed port -> RST+ACK; send-buffer fills -> EAGAIN") {
 	setup();
 	uint32_t peer=ipv4(212,77,98,9);
