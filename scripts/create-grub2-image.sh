@@ -1,23 +1,76 @@
 #!/bin/bash
-# Creates a 256MB HDD image with GRUB2 and an ext2 partition starting at LBA 2048.
-# Runs INSIDE the nanos-build container (Linux); no Docker, no mount, no loop device.
-# Uses mke2fs -E offset and grub-mkimage + dd so it works without privileges.
+# Creates the NanOS disk-image skeleton. Runs INSIDE the nanos-build container (Linux);
+# no Docker, no mount, no loop device (parted + mtools + mke2fs -E offset + debugfs/limine).
+#
+# Two layouts, selected by NANOS_BOOT:
+#   * NANOS_BOOT=limine  -> hybrid GPT image bootable under BOTH BIOS and UEFI via Limine
+#                           (x86_64 live-USB target). bios_boot + ESP/FAT + ext4 root (label NANOS).
+#   * (unset, default)   -> legacy GRUB i386-pc MBR image (the frozen i686 path; unchanged).
+# The kernel + /nanos tree are populated separately by the Makefile's _image/_image64 (debugfs).
 
 set -e
 
-# IMAGE_PATH may be overridden in the environment (the x86_64 staged image build reuses this
-# same skeleton at a different path, disk/image64-grub2.img); default = the i686 image.
 IMAGE_PATH="${IMAGE_PATH:-disk/image-grub2.img}"
-OFFSET=1048576   # 2048 sectors * 512 bytes = 1MiB
-SECTORS=522240   # (256MB - 1MB) / 512  — grown from 32MB to fit large apps (NetSurf ~7MB + res)
 
-# Skeleton is built once; the kernel is (re)written separately each build.
+# Skeleton is built once; the kernel + files are (re)written separately each build.
 if [ -f "$IMAGE_PATH" ]; then
     echo "Image $IMAGE_PATH already exists. Delete it to recreate."
     exit 0
 fi
-
 mkdir -p "$(dirname "$IMAGE_PATH")"
+
+if [ "$NANOS_BOOT" = limine ]; then
+    # ---- Hybrid GPT + Limine (BIOS + UEFI) ----
+    # Layout (parted aligns to 1 MiB): P1 bios_boot @1MiB(1MiB), P2 ESP/FAT @2MiB(32MiB),
+    # P3 ext4 root @34MiB(rest). The P3 byte offset is fixed at 35651584 — the Makefile uses it too.
+    ROOT_OFFSET=35651584
+    echo "Creating hybrid GPT+Limine image (BIOS+UEFI)..."
+
+    # 320 MiB disk (root ~286 MiB after the 34 MiB boot area).
+    dd if=/dev/zero of="$IMAGE_PATH" bs=1M count=320 status=none
+
+    parted -s "$IMAGE_PATH" mklabel gpt
+    parted -s "$IMAGE_PATH" mkpart bios_boot 1MiB 2MiB
+    parted -s "$IMAGE_PATH" set 1 bios_grub on
+    parted -s "$IMAGE_PATH" mkpart ESP fat16 2MiB 34MiB
+    parted -s "$IMAGE_PATH" set 2 esp on
+    # End the root at 318 MiB (NOT 100%): the last ~2 MiB holds the backup GPT header — letting the
+    # ext4 fill to the disk end would overwrite it ("secondary header not valid" on limine install).
+    parted -s "$IMAGE_PATH" mkpart NANOS ext4 34MiB 318MiB
+    echo "Created GPT partition table (bios_boot + ESP + ext4 root)"
+
+    # ESP (FAT) built in a separate file with mtools, then dd'd into P2 (offset 2 MiB).
+    dd if=/dev/zero of=/tmp/esp.img bs=1M count=32 status=none
+    mformat -i /tmp/esp.img -v ESP ::
+    mmd -i /tmp/esp.img ::/EFI ::/EFI/BOOT
+    mcopy -i /tmp/esp.img /usr/local/share/limine/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+    cat > /tmp/limine.conf <<'LCONF'
+timeout: 0
+/NanOS
+    protocol: multiboot1
+    path: fslabel(NANOS):/nanos/core/kernel.bin
+LCONF
+    mcopy -i /tmp/esp.img /tmp/limine.conf ::/EFI/BOOT/limine.conf
+    dd if=/tmp/esp.img of="$IMAGE_PATH" bs=1M seek=2 conv=notrunc status=none
+    echo "Built ESP (BOOTX64.EFI + limine.conf)"
+
+    # ext4 root at P3 (label NANOS so limine.conf's fslabel(NANOS) resolves it). Size matches the
+    # 34..318 MiB partition exactly so it never runs into the backup GPT at the disk end.
+    ROOT_BLOCKS=$(( (318*1024*1024 - ROOT_OFFSET) / 1024 ))
+    mke2fs -t ext4 -q -L NANOS -E offset=$ROOT_OFFSET "$IMAGE_PATH" ${ROOT_BLOCKS}k
+    echo "Created ext4 root (label NANOS) at offset $ROOT_OFFSET"
+
+    # Limine BIOS stages -> the bios_boot partition (P1).
+    limine bios-install "$IMAGE_PATH" 1
+
+    rm -f /tmp/esp.img /tmp/limine.conf
+    echo "Hybrid GPT+Limine image created: $IMAGE_PATH (root @ $ROOT_OFFSET)"
+    exit 0
+fi
+
+# ---- Legacy GRUB i386-pc MBR image (frozen i686 path) ----
+OFFSET=1048576   # 2048 sectors * 512 bytes = 1MiB
+SECTORS=522240   # (256MB - 1MB) / 512  — grown from 32MB to fit large apps (NetSurf ~7MB + res)
 
 echo "Creating GRUB2 HDD image..."
 

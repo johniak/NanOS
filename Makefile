@@ -24,7 +24,8 @@ IMAGE_GRUB2_PART=$(IMAGE_GRUB2)?offset=1048576
 # x86_64 staged GRUB disk image (Plan 5): a separate image carrying the staged ELF64 kernel
 # + an ext4 partition for /disks/main. Same partition layout/offset as the i686 image.
 IMAGE64_GRUB2=disk/image64-grub2.img
-IMAGE64_GRUB2_PART=$(IMAGE64_GRUB2)?offset=1048576
+# Hybrid GPT+Limine layout: the ext4 root (P3) starts at 34 MiB (after bios_boot @1MiB + ESP @2MiB,32MiB).
+IMAGE64_GRUB2_PART=$(IMAGE64_GRUB2)?offset=35651584
 
 DOCKER_IMAGE=nanos-build
 # Build the image for the host's NATIVE architecture (no --platform): the i686-elf cross
@@ -1041,10 +1042,9 @@ _bringup64:
 # kernel/Kernel.cpp execs. (The staged kernel + its disk path are retired here; bringup64
 # remains as the staged rescue-ISO smoke target.)
 _image64: _all _userland64 _kext
-	IMAGE_PATH=$(IMAGE64_GRUB2) ./scripts/create-grub2-image.sh
-	# GRUB menuentry -> the real kernel (GRUB multiboot1 loads the ELF64).
-	@printf 'set timeout=0\nset default=0\nmenuentry "NanOS x86_64" {\n  multiboot /nanos/core/kernel.bin\n}\n' > /tmp/grub64.cfg
-	printf "rm /boot/grub/grub.cfg\nwrite /tmp/grub64.cfg /boot/grub/grub.cfg\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# Hybrid GPT image bootable under BOTH BIOS and UEFI via Limine (limine.conf on the ESP points at
+	# /nanos/core/kernel.bin on the ext4 root by label — no /boot/grub/grub.cfg needed).
+	IMAGE_PATH=$(IMAGE64_GRUB2) NANOS_BOOT=limine ./scripts/create-grub2-image.sh
 	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config,cache,logs,
 	# share/terminfo/x} + the /apps bundle root + the /bin link farm, created upfront so every
 	# subsequent install step (and the optional-app blocks below) finds its parent directory.
