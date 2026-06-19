@@ -385,6 +385,40 @@ TEST_CASE("passive open: LISTEN -> SYN-ACK -> ACK, accept() returns a connection
 	socketClose(conn); socketClose(srv);
 }
 
+// Regression for the x86_64 "server stops accepting after a burst of connections" wedge: a peer
+// RST leaves the accepted child TCB in TCP_CLOSED but still pinned (the app hasn't close()d it
+// yet). When the peer reuses that exact ephemeral 4-tuple for a FRESH connection, the dead TCB
+// must NOT shadow the LISTEN socket — the SYN has to reach the listener and get a SYN-ACK.
+// Before the fix lookup() matched the CLOSED zombie, swallowed the SYN, and the port wedged.
+TEST_CASE("reused 4-tuple after RST: dead TCB must not shadow the listener") {
+	setup();
+	uint32_t peer=ipv4(10,0,2,80);
+	Socket* srv=socketCreate(AF_INET,SOCK_STREAM,0,nullptr);
+	socketBind(srv, 0, 8080);
+	CHECK(tcpListen(srv, 8) == 0);
+	clearCap();
+	// First connection on peer:40000 -> us:8080, fully established and accepted.
+	feedTcp(peer, 40000, 8080, 0x900, 0, TCP_SYN, nullptr, 0);
+	Seg synack; REQUIRE(parseCap(&synack));
+	CHECK((synack.flags & (TCP_SYN|TCP_ACK)) == (TCP_SYN|TCP_ACK));
+	uint32_t iss1=synack.seq;
+	feedTcp(peer, 40000, 8080, 0x901, iss1+1, TCP_ACK, nullptr, 0);
+	int err=-1; Socket* conn=tcpAccept(srv, &err);
+	REQUIRE(conn != nullptr);
+	CHECK(tcpState(conn) == TCP_ESTABLISHED);
+	// Peer RSTs the connection: the child TCB goes CLOSED but is still pinned by `conn` (NOT closed).
+	feedTcp(peer, 40000, 8080, 0x902, iss1+1, TCP_RST, nullptr, 0);
+	CHECK(tcpState(conn) == TCP_CLOSED);
+	clearCap();
+	// Peer reuses the SAME 4-tuple for a brand-new connection. The dead TCB must be skipped so the
+	// SYN reaches the listener: a SYN-ACK must be emitted.
+	feedTcp(peer, 40000, 8080, 0x5000, 0, TCP_SYN, nullptr, 0);
+	Seg synack2; REQUIRE(parseCap(&synack2));
+	CHECK((synack2.flags & (TCP_SYN|TCP_ACK)) == (TCP_SYN|TCP_ACK));
+	CHECK(synack2.ack == 0x5001);           // acks the NEW SYN, proving a fresh passive open
+	socketClose(conn); socketClose(srv);
+}
+
 TEST_CASE("close flushes Nagle-held data before FIN (HTTP body not lost on close)") {
 	// Reproduces the darkhttpd bug: a small body write while the header is still unacked is held
 	// by Nagle; close() must flush it BEFORE the FIN, not abandon it.

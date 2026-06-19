@@ -330,6 +330,13 @@ Tcb* lookup(uint32_t la, uint16_t lp, uint32_t ra, uint16_t rp) {
 		if (!t->used) continue;
 		if (t->localPort != lp) continue;
 		if (t->isListen) { if (t->localIp == 0 || t->localIp == la) listener = t; continue; }
+		// A TCP_CLOSED tcb is a dead connection still pinned by an un-closed socket (e.g. after a
+		// peer RST). It must NOT match: when the peer reuses that ephemeral 4-tuple for a fresh
+		// connection, the SYN has to reach the LISTEN socket — otherwise the zombie shadows the
+		// listener, no SYN-ACK is sent, and the port wedges permanently. (This is the burst-churn
+		// "TCP stops accepting after N connections" bug: a reused source port collides with a
+		// not-yet-freed CLOSED tcb.) Skipping it lets the SYN fall through to the listener below.
+		if (t->state == TCP_CLOSED) continue;
 		if (t->remotePort == rp && t->remoteIp == ra && (t->localIp == 0 || t->localIp == la))
 			return t;
 	}
