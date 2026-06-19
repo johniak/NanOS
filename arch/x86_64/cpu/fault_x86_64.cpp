@@ -1,19 +1,33 @@
 /*
- * fault_x86_64.cpp — x86-64 CPU-exception debug handlers (#GP vector 13, #PF vector 14).
+ * fault_x86_64.cpp — x86-64 CPU-exception handlers (#GP vector 13, #PF vector 14).
  *
- * Print the fault details (64-bit rip/cr2 via Console::writeHex(unsigned long) from Plan 2)
- * and halt, so faults are debuggable instead of triple-faulting invisibly. readCr2() comes
- * from arch/x86_64/mm/PagingControl.h (Plan 3). Process-killing (ring-3 SIGSEGV) lands when
- * the scheduler is ported.
+ * A fault from ring 3 (cs low 2 bits set) is the user program's bug, NOT the kernel's: kill just
+ * that process (like a SIGSEGV) and let the scheduler keep running — a crashing app (e.g. a browser
+ * faulting on teardown) must not take the whole system down. A fault from ring 0 is a real kernel
+ * bug: print the 64-bit rip/cr2 + halt, so it is debuggable instead of triple-faulting invisibly.
+ * (Earlier this stub halted on EVERY fault, including ring 3, because the scheduler wasn't ported
+ * yet — now it is, so ring-3 faults route to killCurrentProcess like the i686 handler.)
  */
 #include "Interrupt64.h"
 #include "PagingControl.h"   // kernel::readCr2 (64-bit)
 #include "Console.h"
+#include "Exec.h"            // kernel::killCurrentProcess
+#include "Signal.h"          // SIGSEGV
 
 namespace {
 
 void faultHandler(kernel::Registers* r) {
-    kernel::Console::write("\n*** CPU EXCEPTION vec=");
+    if (r->cs & 3) {
+        kernel::Console::write("\n[nanos: killed faulting process: vec=");
+        kernel::Console::writeHex((int) r->int_no);
+        if (r->int_no == 14) { kernel::Console::write(" cr2="); kernel::Console::writeHex((unsigned long) kernel::readCr2()); }
+        kernel::Console::write(" rip=");
+        kernel::Console::writeHex((unsigned long) r->rip);
+        kernel::Console::writeLine("]");
+        kernel::killCurrentProcess(SIGSEGV);   // terminates current + reschedules; does NOT return
+        return;                                // (unreachable)
+    }
+    kernel::Console::write("\n*** KERNEL EXCEPTION vec=");
     kernel::Console::writeHex((int) r->int_no);
     kernel::Console::write(" err=");
     kernel::Console::writeHex((unsigned long) r->err_code);
