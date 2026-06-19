@@ -101,17 +101,33 @@ SYN arrived. **Fix:** `lookup()` skips `TCP_CLOSED` TCBs so the SYN reaches the 
 QEMU: 120 back-to-back SSH handshakes complete where the stack previously wedged at ~35–60. Regression
 test added (`tests/test_tcp.cpp`, "reused 4-tuple after RST …"); confirmed red→green.
 
-**Root cause #2 — dropbear ZOMBIE accumulation (process/signal layer, NOT yet fixed).** With #1 fixed,
-extreme churn (≈250+ rapid connections) still degrades: the dropbear master (pid 5) forks a child per
-connection, the child `exit()`s (auth fails), but the master **never reaps it** — `/proc/<pid>/status`
-shows dozens of `Name: dropbear  State: Z  PPid: 5`. The kernel DOES post `SIGCHLD` + wake the parent
-on child exit (`kernel/Exec.cpp:404`), so the gap is in the dropbear↔NanOS reaping interaction (its
-SIGCHLD/self-pipe/`select()` reaper not firing on NanOS) or a signal-delivery edge case. Zombies pile
-up until the process table is exhausted; new connections are then accepted by the kernel but never
-serviced (client timeout). This is **machine-independent** (shared with i686) and only bites under
-pathological load — realistic use (20 sequential SSH logins) is **100% clean** post-fix #1. Tracking
-as a separate follow-up; the next step is a minimal `fork`+`SIGCHLD`+`waitpid(WNOHANG)` userland test
-to decide kernel-signal-bug vs dropbear-specific.
+**Root cause #2 — userland/kernel signal-NUMBER ABI mismatch (FIXED, reproducer added).** With #1
+fixed, extreme churn (≈250+ rapid connections) still degraded: the dropbear master (pid 5) forked a
+child per connection, the child `exit()`ed, but the master **never reaped it** — `/proc/<pid>/status`
+showed dozens of `Name: dropbear State: Z PPid: 5`; zombies filled the process table until new
+connections were accepted but never serviced. Pinned via a minimal reproducer (`user/smoke/sigreap.c`,
+dropbear's exact pattern) + kernel tracing in `procExit`:
+
+- `raise(SIGCHLD)` to self **did** run the handler (`g_entered=1`), but a CHILD-EXIT SIGCHLD did **not**
+  — and `select()` was never interrupted. The `procExit` log showed `parent->psig.handlers[SIGCHLD]==0`
+  (default) at child death, yet the app had installed a handler. The `[SA]` trace (keyed on the kernel
+  SIGCHLD value) never printed → **userland passed a different SIGCHLD number than the kernel.**
+- Confirmed by preprocessing the SDK sysroot: kernel `SIGCHLD=17` (Linux), picolibc `SIGCHLD=20` (BSD).
+  Signals 16–20+ are scrambled (`SIGSTOP` 17↔19, `SIGCONT` 19↔18, `SIGTSTP` 18↔20, `SIGUSR1` 30↔10,
+  `SIGCANCEL` 33↔32). Low signals (INT=2, TERM=15, KILL=9, PIPE=13, TTIN/TTOU=21/22) already matched —
+  which is why Ctrl+C worked and the bug stayed hidden. dropbear armed its reaper at 20; the kernel
+  posted death at 17 → never delivered → zombies.
+
+**Fix (commit):** a glue `<sys/signal.h>` (`user/libc-glue/include/sys/signal.h`) with an
+`#ifdef __nanos__` branch defining the full Linux signal set; the build injects it into the SDK sysroot
+on every port build. Verified end-to-end via `sigreap`: **FAIL-ZOMBIES-LEAK → OK-HANDLER-REAPS** (handler
+reaps all 10 children) through the glue-injected header. This is machine-independent (helps i686 too).
+**Remaining:** apps that reap via an async SIGCHLD handler — dropbear above all — must be REBUILT to bake
+in the corrected numbers (`make ARCH=x86_64 dropbear` then reinstall); `init`/the shell were unaffected
+(they reap with blocking `waitpid` and only touch already-matching signals). The long-term home for the
+numbering branch is the SDK picolibc port. NOTE: `make dropbear` currently fails at `./configure`
+(exit 77, defaults to `--host=i686-nanos`) — a pre-existing port-build issue to resolve separately
+before the SSH end-to-end can be re-verified; the mechanism itself is proven by `sigreap`.
 
 ---
 
