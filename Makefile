@@ -1044,6 +1044,14 @@ _image64: _all _userland64 _kext
 	for l in $(X64_GUI_LIBS); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
+	# NanWM desktop apps -> /apps/<name>/<name>.nxe bundles + /bin/<name>.nxe symlink (the link farm),
+	# the layout nwm spawns them from. Mirrors the i686 APP_PROGS loop.
+	for p in $(X64_GUI_APPS); do \
+	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
@@ -1678,31 +1686,31 @@ $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o 
 # nwnote links the libnw import library (+ libc.ndl.a for crt0's exit thunk) and declares only
 # --need libnw.ndl; the recursive loader auto-loads libc.ndl (libnw's dependency), exactly like
 # a Windows app that links user32 and gets ntdll transitively.
-$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)nwnote.elf $@ --need libnw.ndl
+$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwnote.elf $@ --need libnw.ndl
 # nwform uses ONLY the toolkit (+ libc for snprintf/exit); --need libnwui.ndl pulls the whole
 # chain libnwui->libnw->libc via the recursive loader.
-$(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwform.elf $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)nwform.elf $@ --need libnwui.ndl
+$(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwform.elf $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwform.elf $@ --need libnwui.ndl
 # nwexp: the file explorer — same toolkit-only chain as nwform (--need libnwui.ndl).
-$(BINFOLDER)nwexp.nxe: $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwexp.elf $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)nwexp.elf $@ --need libnwui.ndl
+$(BINFOLDER)nwexp.nxe: $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwexp.elf $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwexp.elf $@ --need libnwui.ndl
 # nwset: the Settings demo — toolkit-only chain like nwform/nwexp.
-$(BINFOLDER)nwset.nxe: $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwset.elf $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)nwset.elf $@ --need libnwui.ndl
+$(BINFOLDER)nwset.nxe: $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwset.elf $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwset.elf $@ --need libnwui.ndl
 # nwabout: "About This Computer" — toolkit-only chain like nwset.
-$(BINFOLDER)nwabout.nxe: $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwabout.elf $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)nwabout.elf $@ --need libnwui.ndl
+$(BINFOLDER)nwabout.nxe: $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwabout.elf $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwabout.elf $@ --need libnwui.ndl
 # nwterm: the real windowed Terminal — a raw libnw client running nsh on a pty, with the shared
 # VT engine (vt.o). --need libnw.ndl.
-$(BINFOLDER)nwterm.nxe: $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)nwterm.elf $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)nwterm.elf $@ --need libnw.ndl
+$(BINFOLDER)nwterm.nxe: $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwterm.elf $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwterm.elf $@ --need libnw.ndl
 # rustform: the SAME demo written in RUST, proving the C-ABI libnwui is language-agnostic. A
 # cargo staticlib (no_std, -Z build-std for the bare i686-nanos target) is linked with crt0 +
 # the import libraries, then mknx'd like any app; --need libnwui.ndl pulls the whole chain.
@@ -1854,8 +1862,12 @@ X64_SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail tr
 # NanWM compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm
+# NanWM desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
+# (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
+# (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
+X64_GUI_APPS=nwexp nwset nwabout nwnote nwform nwterm
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
-X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS)
+X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
 _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))
 
 # ----------------------------------------------------------------------------
