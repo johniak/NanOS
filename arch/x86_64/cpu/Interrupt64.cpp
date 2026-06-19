@@ -7,6 +7,7 @@
  */
 #include "Interrupt64.h"
 #include "Port64.h"
+#include "SignalDispatch.h"   // kernel::signalDeliver()
 
 namespace kernel {
 static IsrHandler interruptHandlers[256];
@@ -20,6 +21,11 @@ void Interrupt::registerInterruptHandler(unsigned char n, IsrHandler handler) {
 extern "C" void isr_handler(kernel::Registers* regs) {
     if (kernel::interruptHandlers[regs->int_no] != 0)
         kernel::interruptHandlers[regs->int_no](regs);
+    // On the way back to ring 3, deliver pending signals (mirror i686 Interrupt.cpp). A fault
+    // handler that kills the process does not return here, so this only runs for recoverable
+    // ring-3 exceptions. Not a syscall return -> no restart.
+    if ((regs->cs & 3) == 3)
+        kernel::signalDeliver((arch::TrapFrame*) regs, 0, false);
 }
 
 // Called from irq64.S (device IRQs, vectors 32..47).
@@ -32,4 +38,10 @@ extern "C" void irq_handler(kernel::Registers* regs) {
 
     if (kernel::interruptHandlers[regs->int_no] != 0)
         kernel::interruptHandlers[regs->int_no](regs);
+    // On the way back to ring 3, deliver pending signals (e.g. a SIGINT posted by the keyboard
+    // IRQ, or SIGKILL/SIGALRM, to a CPU-bound foreground process that makes no syscalls).
+    // Mirror i686 Interrupt.cpp; the deferred-preemption schedPreempt call in irq64.S runs after
+    // this. Not a syscall return -> no restart.
+    if ((regs->cs & 3) == 3)
+        kernel::signalDeliver((arch::TrapFrame*) regs, 0, false);
 }
