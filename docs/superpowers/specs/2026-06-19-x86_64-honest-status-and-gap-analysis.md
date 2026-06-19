@@ -199,6 +199,20 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [ ] **NetSurf faults (#GP) on window close** (rip in the netsurf image, ring 3). Now non-catastrophic
       (the fault fix kills just netsurf — which is what "close" means — and the desktop survives), but the
       app shouldn't fault on teardown. App-side (netsurf-nanos) bug, low priority. *(low)*
+- [x] **No async signal delivery on IRQ/exception return to ring 3** — `Interrupt64.cpp` delivered
+      signals only on the SYSCALL return, so a CPU-bound ring-3 task (no syscalls) never saw SIGINT
+      (Ctrl+C) / SIGKILL / SIGALRM. FIXED: `signalDeliver(regs,0,false)` on a ring-3 frame, like i686
+      (commit 8a57df3). *(3rd of 3 missing ring-3-return hooks found by the audit; see note below)*
+
+> **AUDIT (2026-06-19):** grepped `arch/x86_64` for stale "when ... ported" stubs / debug `hlt` loops /
+> hooks i686 has that x86_64 lacks. Found a clear PATTERN — **all three were the ring-3-RETURN path**:
+> (1) preemption `schedPreempt` (75177a1), (2) fault→`killCurrentProcess` (4fc541d), (3) signal delivery
+> (8a57df3). The Plan-6 syscall return wired its share, but the IRQ/exception/fault returns were left as
+> Plan-1..4 debug stubs. Otherwise clean: per-task `%fs.base` TLS IS reloaded on context switch
+> (`Scheduler.cpp:170` → `archLoadThreadTls`); remaining `hlt` loops are legit (idle, ring-0 fault,
+> taskTrampoline guard); `KernelStage64.cpp` is the rescue-ISO staged path only. Known limit (documented):
+> `archLoadThreadTls(unsigned)` truncates the TLS base to 32 bits — fine while the user window is <4 GiB.
+
 - [x] **x86_64 had NO involuntary preemption** — `irq64.S` never called `schedPreempt` (Plan 4 TODO).
       Any busy-looping user task starved ksoftirqd-net + console → whole-system wedge. FIXED: wire the
       ring-3 IRQ-return preempt hook (commit 75177a1). Console now stays live under load. ✅ *(foundational)*
