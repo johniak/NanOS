@@ -687,6 +687,14 @@ QEMU_CPU ?= -cpu Nehalem
 # window placement). More RAM = bigger kernel heap + a bigger user frame pool.
 QEMU_MEM=-m 512
 
+# The x86_64 emulator + CPU, INDEPENDENT of the selected ARCH. The `run64`/`bringup64` targets are
+# inherently 64-bit, but they are usually invoked as plain `make run64` (no ARCH=x86_64), so `$(QEMU)`
+# / `$(QEMU_CPU)` would resolve from the DEFAULT (i686) arch.mk to qemu-system-i386 — which loads the
+# 64-bit kernel, faults entering long mode, triple-faults and reboots into an endless GRUB loop. Pin
+# the 64-bit emulator here so these targets always boot the x86_64 image with the right machine.
+QEMU64     ?= qemu-system-x86_64
+QEMU_CPU64 ?= -cpu qemu64
+
 run: image
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
 
@@ -756,7 +764,7 @@ convcheck:
 bringup64:
 	$(DOCKER_RUN) make ARCH=x86_64 _bringup64
 	@echo "Booting bin/nanos64.iso — expect the staged banner ('NanOS x86_64 -- staged bring-up') on the VGA console."
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -cdrom $(BINFOLDER)nanos64.iso
+	$(QEMU64) $(QEMU_CPU64) $(QEMU_MEM) -cdrom $(BINFOLDER)nanos64.iso
 
 # x86_64 staged DISK image (Plan 5): build the staged long-mode kernel (now with the MI storage
 # stack linked in) and install it into a GRUB2 ext4 disk image as /nanos/core/kernel64.bin, with
@@ -767,7 +775,7 @@ image64:
 	$(DOCKER_RUN) make ARCH=x86_64 _image64
 
 run64: image64
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
+	$(QEMU64) $(QEMU_CPU64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
 
 # Doom (in-tree doomgeneric), ARCH-AWARE host wrapper. Stages bin/doom.nxe in the container for
 # the selected arch — i686 (default) or x86_64 — using the arch-selected userland toolchain,
