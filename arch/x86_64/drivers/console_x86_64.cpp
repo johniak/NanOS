@@ -37,6 +37,32 @@ bool g_useFb = false;
 inline void outb(unsigned short port, unsigned char val) {
 	__asm__ __volatile__("outb %0, %1" : : "a"(val), "Nd"(port));
 }
+inline unsigned char inb(unsigned short port) {
+	unsigned char r;
+	__asm__ __volatile__("inb %1, %0" : "=a"(r) : "Nd"(port));
+	return r;
+}
+
+// COM1 (0x3F8) serial mirror: every console char is also written to the UART so headless QEMU
+// runs can capture the full, unbounded log to a file (-serial file:...) — the VGA text buffer
+// only retains the last 25 lines. Initialized lazily on first use.
+const unsigned short COM1 = 0x3F8;
+bool g_serialReady = false;
+void serialInit() {
+	outb(COM1 + 1, 0x00);   // disable interrupts
+	outb(COM1 + 3, 0x80);   // DLAB on
+	outb(COM1 + 0, 0x01);   // divisor 1 -> 115200 baud
+	outb(COM1 + 1, 0x00);
+	outb(COM1 + 3, 0x03);   // 8N1, DLAB off
+	outb(COM1 + 2, 0xC7);   // enable+clear FIFO, 14-byte threshold
+	outb(COM1 + 4, 0x0B);   // IRQs off, RTS/DSR set
+	g_serialReady = true;
+}
+inline void serialPut(char c) {
+	if (!g_serialReady) serialInit();
+	while (!(inb(COM1 + 5) & 0x20)) { }   // wait for THR empty
+	outb(COM1, (unsigned char) c);
+}
 
 void moveCursor() {
 	unsigned short loc = (unsigned short) (cursorY * 80 + cursorX);
@@ -60,6 +86,8 @@ void scroll() {
 namespace arch {
 
 void consolePutChar(char c) {
+	if (c == '\n') serialPut('\r');
+	serialPut(c);
 	if (g_useFb) {
 		g_fb.putChar(c);
 		return;
