@@ -63,4 +63,12 @@ int usbMscRead10(UsbMsc* m, uint32_t lba, uint32_t count, void* buf) {
     return bot(m, cdb, 10, arch::USB_IN, buf, count * bs) < 0 ? -1 : 0;
 }
 
+int usbMscWrite10(UsbMsc* m, uint32_t lba, uint32_t count, const void* buf) {
+    uint32_t bs = m->blockSize ? m->blockSize : 512;
+    uint8_t cdb[10] = { 0x2A, 0,
+        (uint8_t)(lba >> 24), (uint8_t)(lba >> 16), (uint8_t)(lba >> 8), (uint8_t)lba,
+        0, (uint8_t)(count >> 8), (uint8_t)count, 0 };
+    return bot(m, cdb, 10, arch::USB_OUT, (void*)buf, count * bs) < 0 ? -1 : 0;
+}
+
 }  // namespace kernel

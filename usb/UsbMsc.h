@@ -21,6 +21,8 @@ int usbMscInit(UsbMsc* m, int slot, int epIn, int epOut);
 int usbMscReadCapacity(UsbMsc* m, uint32_t* blocks, uint32_t* blockSize);
 // SCSI READ(10): read `count` blocks starting at `lba` into buf. Returns 0 on success, <0 on error.
 int usbMscRead10(UsbMsc* m, uint32_t lba, uint32_t count, void* buf);
+// SCSI WRITE(10): write `count` blocks starting at `lba` from buf. Returns 0 on success, <0 on error.
+int usbMscWrite10(UsbMsc* m, uint32_t lba, uint32_t count, const void* buf);
 
 }  // namespace kernel
 #endif
