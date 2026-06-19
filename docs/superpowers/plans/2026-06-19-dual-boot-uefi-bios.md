@@ -69,17 +69,20 @@ parser (`make ARCH=x86_64 test`, ≥90% lcov gate).
 # via wget+tar (no git in the image). Trailing layer so the toolchain cache above stays valid.
 RUN set -eux; cd /tmp; \
     wget -qO limine.tar.gz https://github.com/limine-bootloader/limine/archive/refs/heads/v8.x-binary.tar.gz; \
+    d="$(tar tzf limine.tar.gz | head -1 | cut -d/ -f1)"; \
     tar xf limine.tar.gz; \
-    cd limine-v8.x-binary; \
+    cd "$d"; \
     make; \
     install -Dm644 BOOTX64.EFI    /usr/local/share/limine/BOOTX64.EFI; \
     install -Dm755 limine          /usr/local/bin/limine; \
-    cd /; rm -rf /tmp/limine*
+    cd /; rm -rf /tmp/limine* /tmp/"$d"
 ```
+(The tarball's top dir is `Limine-8.x-binary` — capital L, no `v` — so derive it dynamically.)
 
-- [ ] **Step 2: Rebuild the build image.**
+- [ ] **Step 2: Rebuild the build image.** The build context is `docker/` (where the COPY'd
+  picolibc cross-files live), as the Makefile does it.
 
-Run: `docker build -f docker/Dockerfile -t nanos-build .`
+Run: `docker build -t nanos-build docker/`
 Expected: builds to completion; the Limine layer is the only one re-run if the toolchain was cached.
 
 - [ ] **Step 3: Verify the tool + EFI binary are present.**

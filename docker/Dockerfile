@@ -148,4 +148,17 @@ RUN set -eux; \
     ninja -C build install; \
     cd /; rm -rf /tmp/picolibc /tmp/picolibc-x86_64-elf.txt
 
+# Limine bootloader (BIOS+UEFI) for the hybrid GPT image. The vN.x-binary branch ships prebuilt
+# BIOS stages + BOOTX64.EFI and a tiny host `limine` deploy tool we build with the host cc. Fetched
+# via wget+tar (no git in the image). Trailing layer so the toolchain cache above stays valid.
+RUN set -eux; cd /tmp; \
+    wget -qO limine.tar.gz https://github.com/limine-bootloader/limine/archive/refs/heads/v8.x-binary.tar.gz; \
+    d="$(tar tzf limine.tar.gz | head -1 | cut -d/ -f1)"; \
+    tar xf limine.tar.gz; \
+    cd "$d"; \
+    make; \
+    install -Dm644 BOOTX64.EFI    /usr/local/share/limine/BOOTX64.EFI; \
+    install -Dm755 limine          /usr/local/bin/limine; \
+    cd /; rm -rf /tmp/limine* /tmp/"$d"
+
 WORKDIR /src
