@@ -44,20 +44,28 @@ if [ "$NANOS_BOOT" = limine ]; then
     mformat -i /tmp/esp.img -v ESP ::
     mmd -i /tmp/esp.img ::/EFI ::/EFI/BOOT
     mcopy -i /tmp/esp.img /usr/local/share/limine/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
+    # BIOS stage 2: Limine's bios-install (into the bios_boot partition) still loads limine-bios.sys
+    # from a filesystem — it searches the root / boot / limine dirs of a readable partition.
+    mcopy -i /tmp/esp.img /usr/local/share/limine/limine-bios.sys ::/limine-bios.sys
     cat > /tmp/limine.conf <<'LCONF'
 timeout: 0
+serial: yes
 /NanOS
     protocol: multiboot1
     path: fslabel(NANOS):/nanos/core/kernel.bin
 LCONF
+    # Config where BOTH paths look: ESP root (BIOS limine-bios.sys) + next to BOOTX64.EFI (UEFI).
+    mcopy -i /tmp/esp.img /tmp/limine.conf ::/limine.conf
     mcopy -i /tmp/esp.img /tmp/limine.conf ::/EFI/BOOT/limine.conf
     dd if=/tmp/esp.img of="$IMAGE_PATH" bs=1M seek=2 conv=notrunc status=none
-    echo "Built ESP (BOOTX64.EFI + limine.conf)"
+    echo "Built ESP (BOOTX64.EFI + limine-bios.sys + limine.conf)"
 
-    # ext4 root at P3 (label NANOS so limine.conf's fslabel(NANOS) resolves it). Size matches the
-    # 34..318 MiB partition exactly so it never runs into the backup GPT at the disk end.
+    # ext2 root at P3 (label NANOS so limine.conf's fslabel(NANOS) resolves it). ext2 (block-mapped,
+    # NO extents) — Limine's ext reader panics ("block longer than extent") on the extent tree that
+    # debugfs lays out for ext4; the kernel auto-detects ext2 and mounts it read+write. Size matches
+    # the 34..318 MiB partition exactly so it never runs into the backup GPT at the disk end.
     ROOT_BLOCKS=$(( (318*1024*1024 - ROOT_OFFSET) / 1024 ))
-    mke2fs -t ext4 -q -L NANOS -E offset=$ROOT_OFFSET "$IMAGE_PATH" ${ROOT_BLOCKS}k
+    mke2fs -t ext2 -q -L NANOS -E offset=$ROOT_OFFSET "$IMAGE_PATH" ${ROOT_BLOCKS}k
     echo "Created ext4 root (label NANOS) at offset $ROOT_OFFSET"
 
     # Limine BIOS stages -> the bios_boot partition (P1).

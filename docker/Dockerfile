@@ -157,8 +157,9 @@ RUN set -eux; cd /tmp; \
     tar xf limine.tar.gz; \
     cd "$d"; \
     make; \
-    install -Dm644 BOOTX64.EFI    /usr/local/share/limine/BOOTX64.EFI; \
-    install -Dm755 limine          /usr/local/bin/limine; \
+    install -Dm644 BOOTX64.EFI     /usr/local/share/limine/BOOTX64.EFI; \
+    install -Dm644 limine-bios.sys /usr/local/share/limine/limine-bios.sys; \
+    install -Dm755 limine           /usr/local/bin/limine; \
     cd /; rm -rf /tmp/limine* /tmp/"$d"
 
 WORKDIR /src
