@@ -94,9 +94,9 @@ static void start_service(const char* path, char* const argv[]) {
 
 /* Start the SSH server (Dropbear) as a boot service. On FIRST boot it generates a persistent
  * ed25519 host key on the read-write disk, so the key is stable across reboots (no client
- * host-key-changed warnings); later boots reuse it. dropbear then daemonizes like inetd. Login is
- * by password (the hash in /nanos/config/passwd) or ~/.ssh/authorized_keys. From the host (the
- * `make run` hostfwd maps 2222->22): `ssh -p 2222 root@localhost`. Skipped if the binary is absent. */
+ * host-key-changed warnings); later boots reuse it. Login is by password (the hash in
+ * /nanos/config/passwd) or ~/.ssh/authorized_keys. From the host (the `make run` hostfwd maps
+ * 2222->22): `ssh -p 2222 root@localhost`. Skipped if the binary is absent. */
 static void start_sshd(void) {
 	if (access(DROPBEAR, X_OK) != 0)
 		return;
@@ -112,20 +112,36 @@ static void start_sshd(void) {
 		if (pid > 0)
 			waitpid(pid, 0, 0);
 	}
-	/* dropbear daemonizes itself (its daemon() double-fork backgrounds the listener; the
-	 * reparented grandchild — PID 1's child — serves accept()ed connections). This works on BOTH
-	 * arches: the earlier x86_64 "run -F in the foreground" workaround is gone, since the nested
-	 * daemon double-fork is now verified to background correctly on x86_64. Running dropbear in the
-	 * foreground would have parked init on sshd and starved the local console of a shell; letting it
-	 * daemonize lets main() fall through to execve the interactive console login shell while SSH
-	 * keeps listening on :22 in the background. start_service() reaps the short-lived launcher. */
-	char* a[] = { (char*) "dropbear", (char*) "-r", (char*) SSH_HOSTKEY, (char*) "-p", (char*) "22", 0 };
-	start_service(DROPBEAR, a);                  // daemonizes; init returns and runs the console shell
+	/* Run dropbear in the FOREGROUND (-F) but background it OURSELVES with a plain fork: the child
+	 * exec's `dropbear -F`, init (the parent) does NOT waitpid on it and returns to run the local
+	 * console shell. init's main reap loop later collects it (and any session grandchildren that
+	 * reparent to PID 1).
+	 *
+	 * Why not let dropbear daemonize (its own daemon() double-fork)? On x86_64 the per-connection
+	 * session child faults in ring 3 (vec=0e err=0x15 rip=0x0 — a call through a null pointer) right
+	 * after KEX when dropbear has detached via daemon(): the double-fork + setsid + serving the
+	 * listening socket inherited across the detach leaves dropbear's fork->exec-shell session path
+	 * broken. In -F the same process that created the listening socket is the one that accept()s and
+	 * forks each session, and that path is verified to serve full host->guest SSH logins into bash on
+	 * x86_64. Backgrounding -F at the init level keeps that working session path AND frees PID 1 to
+	 * run the console. Unified across arches: i686's daemon() path worked, but -F-backgrounded is at
+	 * least as correct there. -E sends dropbear's log to the boot log (child stderr is redirected). */
+	note("  [init] starting dropbear (foreground, backgrounded by init)\n");
+	int pid = fork();
+	if (pid == 0) {
+		log_redirect_child();
+		char* a[] = { (char*) "dropbear", (char*) "-F", (char*) "-E", (char*) "-r",
+		              (char*) SSH_HOSTKEY, (char*) "-p", (char*) "22", 0 };
+		execve(DROPBEAR, a, environ);
+		_exit(127);
+	}
+	/* parent: deliberately no waitpid — dropbear -F keeps running in the background. */
 }
 
 /* Bring up the listening services after the network is configured: inetd (the super-server:
- * echo/daytime/... + telnet -> telnetd login) and sshd (Dropbear). Both daemonize themselves;
- * their grandchildren reparent to init. darkhttpd is NOT started by default — start it by hand:
+ * echo/daytime/... + telnet -> telnetd login), which daemonizes itself, and sshd (Dropbear),
+ * which init backgrounds in foreground mode (see start_sshd). darkhttpd is NOT started by
+ * default — start it by hand:
  *   darkhttpd /disks/main/apps/www --port 80 --daemon
  * (its binary still ships in /nanos/bin; only the boot-time autostart is gone). */
 static void start_services(void) {
@@ -178,7 +194,7 @@ int main(void) {
 	strcpy(homevar, "HOME=");
 	strncat(homevar, (pw && pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : "/", sizeof homevar - 6);
 
-	char* newenv[64];
+	static char* newenv[64];
 	int n = 0;
 	for (char** e = environ; *e && n < 59; e++)
 		newenv[n++] = *e;
@@ -187,12 +203,50 @@ int main(void) {
 	newenv[n++] = (char*) "PATH=/disks/main/nanos/bin:/disks/main/bin";
 	newenv[n] = 0;
 
-	char* argv[] = { name0, 0 };
-	execve(shell, argv, newenv);
-
-	/* The configured shell failed to load (e.g. an image without the optional bash) — fall
-	 * back to nsh so the system is never left without a shell. */
-	char* fbargv[] = { (char*) "nsh", 0 };
-	execve(FALLBACK_SHELL, fbargv, newenv);
-	return 127;   /* only reached if even nsh failed */
+	/* init no longer morphs into the shell with execve(): it has backgrounded `dropbear -F`
+	 * above, so it must stay alive as PID 1 to (a) keep an interactive console login shell
+	 * running on the keyboard/tty and (b) reap EVERY child — the console shell, the backgrounded
+	 * dropbear, and any orphaned grandchildren that reparent to PID 1 — so no zombies accumulate.
+	 *
+	 * The console is a job-control tty: a freshly forked shell starts in init's process group and
+	 * then claims the terminal via tcsetpgrp. After a previous shell exits, the terminal's
+	 * foreground group is left pointing at the dead shell, so before each (re)spawn init resets it
+	 * to its own group — otherwise the new shell, still in init's group, would SIGTTIN-stop itself
+	 * on its first console read. (SIGTTOU/SIGTTIN are ignored here so init never stops on tty I/O.) */
+	signal(SIGTTOU, SIG_IGN);
+	signal(SIGTTIN, SIG_IGN);
+	for (;;) {
+		tcsetpgrp(0, getpgrp());          // hand the console's foreground group back to init
+		int spid = fork();
+		if (spid == 0) {
+			char* argv[] = { name0, 0 };
+			execve(shell, argv, newenv);
+			/* The configured shell failed to load (e.g. an image without the optional bash) —
+			 * fall back to nsh so the system is never left without a shell. */
+			char* fbargv[] = { (char*) "nsh", 0 };
+			execve(FALLBACK_SHELL, fbargv, newenv);
+			_exit(127);                   /* only reached if even nsh failed */
+		}
+		if (spid < 0) {                   // can't fork a shell: degrade to a pure reaper
+			for (;;) {
+				if (waitpid(-1, 0, 0) < 0) {
+					struct timespec ts = { 1, 0 };
+					nanosleep(&ts, 0);
+				}
+			}
+		}
+		/* Reap children until the console shell itself exits, then respawn it (getty-style).
+		 * Any other reaped pid (dropbear, an orphaned grandchild) is just collected and ignored. */
+		for (;;) {
+			int w = waitpid(-1, 0, 0);
+			if (w == spid)
+				break;
+			if (w < 0) {                  // no children to reap right now — back off briefly
+				struct timespec ts = { 0, 200 * 1000 * 1000 };
+				nanosleep(&ts, 0);
+			}
+		}
+		struct timespec ts = { 0, 200 * 1000 * 1000 };   // backoff so a crash-looping shell can't spin
+		nanosleep(&ts, 0);
+	}
 }
