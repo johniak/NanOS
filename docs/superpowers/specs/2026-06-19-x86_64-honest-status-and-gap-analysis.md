@@ -182,9 +182,21 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 
 ## 7. Precise list of what is missing / broken
 
+> **Progress update 2026-06-19 (later pass).** A. is largely cleared and two NEW foundational bugs
+> were found+fixed that were never in the original list. Status below reflects the current HEAD.
+
 **A. Correctness bugs (block real use):**
-- [ ] **TCP handshake completion** (both directions) — SSH/TLS/HTTP all dead. *(critical)*
-- [ ] Commit the working-tree `init.c` so HEAD == the booting artifact. *(trivial, do first)*
+- [x] **TCP handshake completion** — RESOLVED (§3a): `lookup()` dead-CLOSED-tcb shadow (commit 2fbfa71)
+      + userland↔kernel SIGCHLD ABI mismatch (commit 1f14284). SSH auths + runs remote commands. ✅
+- [x] Commit the working-tree `init.c` — HEAD now matches the booting artifact. ✅
+- [x] **`make run64` booted the x86_64 image with `qemu-system-i386`** (default-arch QEMU) → long-mode
+      triple-fault → endless GRUB reboot loop. FIXED: ARCH-independent `QEMU64` (commit f099ab2). ✅
+- [x] **x86_64 had NO involuntary preemption** — `irq64.S` never called `schedPreempt` (Plan 4 TODO).
+      Any busy-looping user task starved ksoftirqd-net + console → whole-system wedge. FIXED: wire the
+      ring-3 IRQ-return preempt hook (commit 75177a1). Console now stays live under load. ✅ *(foundational)*
+- [ ] **dropbear `ssh host cmd` teardown linger** — the command's shell becomes an unreaped zombie; the
+      session-child spins on `read()` of a never-EOF pipe. No longer wedges the box (preemption contains
+      it) but hogs ~½ CPU and degrades new connections. Narrow, dropbear-pipe-close vs NanOS pipe-EOF. *(medium)*
 
 **B. Verification debt (we don't actually know these work):**
 - [ ] No MD (`arch/x86_64`) automated coverage — context switch, fork, syscall entry, e1000 kext.
@@ -196,7 +208,8 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 
 **D. Cut-over (the user-authorized end state, NOT yet started):**
 - [ ] Make `ARCH=x86_64` the default; delete `arch/x86` + i686 toolchains; collapse the arch-guards.
-      **Blocked on A** — do not cut over while TCP (a core subsystem) is broken.
+      **A's TCP blocker is cleared; the dropbear-linger is non-catastrophic** — cut-over is now gated
+      mainly on B (verification debt) so we don't default to an arch we can't regression-test.
 
 ---
 
