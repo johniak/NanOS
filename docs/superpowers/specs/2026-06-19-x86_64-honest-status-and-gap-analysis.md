@@ -227,9 +227,14 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
       input precision via QEMU monitor PS/2 is unreliable, so on-screen mouse interaction stays unverified.)*
 
 **B. Verification debt (we don't actually know these work):**
-- [ ] No MD (`arch/x86_64`) automated coverage — context switch, fork, syscall entry, e1000 kext.
-- [ ] `make ARCH=x86_64 test` (the x86_64 paging doctests) is not part of the routine gate.
-- [ ] Several apps (bzip2, grep, full coreutils, NanWM mouse input) only assumed-good.
+- [x] **MD boot path now has an automated gate** — `make smoke-x86_64` (scripts/smoke-x86_64.sh) boots
+      image64 in QEMU headless and asserts long-mode + paging + ATA/ext4-JBD2-write + e1000/net +
+      scheduler + ring-3 fork/exec, ZERO faults (6/6 checks PASS). Catches the boot-path class host
+      tests miss (commit c452e8e).
+- [x] **`make ARCH=x86_64 test` wired into a routine command** — `make test64` (MI doctests + the
+      64-bit paging/AddressSpace tests); `make verify64` = test64 + smoke-x86_64 in one (commit c452e8e).
+- [ ] Several apps (bzip2, grep, full coreutils) only assumed-good. *(NanWM desktop + bash-in-terminal
+      now verified on screen; mouse click-to-focus still unverified — QEMU PS/2 imprecision.)*
 
 **C. Kernel hardening (flagged, unaudited):**
 - [ ] VA-window ceiling / `adoptKernelDirectory` / address-space teardown leak (§6.2).
@@ -268,12 +273,13 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 6. **Verify end-to-end myself:** host→guest `ssh root@127.0.0.1` into bash runs a command; `openssl
    s_client` to a reachable host completes a TLS handshake. `/proc/net/tcp` shows `ESTABLISHED`. Zero faults.
 
-**Phase 2 — close the verification gap:**
-7. Wire `make ARCH=x86_64 test` into the routine check (so the x86_64 paging doctests run).
-8. Add targeted host tests / a documented QEMU smoke checklist for the MD pieces that can't be
-   host-tested (boot → fork → pipe → ext4 write → TCP handshake → fb app), so "does x86_64 still work"
-   is one reproducible command, not 13 subagent reports.
-9. Spot-verify the assumed-good apps (bzip2, grep) and NanWM mouse input, on screen, once.
+**Phase 2 — close the verification gap — DONE (commit c452e8e):**
+- [x] 7. `make test64` — x86_64 host doctest gate (MI + 64-bit paging) as one routine command.
+- [x] 8. `make smoke-x86_64` (scripts/smoke-x86_64.sh) — the MD boot smoke: boots image64 headless and
+  asserts long-mode/paging/ATA+ext4-write/e1000-net/scheduler/ring-3-fork-exec, ZERO faults (6/6 PASS).
+  `make verify64` chains both = the single "does x86_64 still work end-to-end" command.
+- [~] 9. NanWM desktop + bash-in-terminal spot-verified on screen this session; bzip2/grep and mouse
+  click-to-focus still unverified.
 
 **Phase 2b — port the NanWM desktop to x86_64 — DONE (commit e76da9d), except residual mouse verify:**
 - [x] 10–11 DONE: apps added to `X64_GUI_APPS`, recipes made arch-correct, built clean, installed as
