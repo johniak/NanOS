@@ -4,6 +4,9 @@
 #include "Clock.h"
 #include "BlockDevice.h"
 #include "DeviceManager.h"
+#include "UsbCore.h"            // USB enumeration (in-kernel storage path for live-USB root)
+#include "UsbMsc.h"
+#include "UsbMscBlockDevice.h"
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
@@ -80,6 +83,48 @@ static unsigned firstPartitionLba(BlockDevice* dev) {
 			return start;
 	}
 	return 2048;
+}
+
+// Discover USB mass-storage devices on the in-kernel USB host controller: enumerate each port,
+// bind any Mass-Storage interface to a UsbMsc + UsbMscBlockDevice, register it, and return the
+// first one found (the live-USB root candidate). No-op (returns null) if no controller / no device.
+static BlockDevice* usbStorageDiscover() {
+	const arch::UsbHcOps* ops = arch::usbHcOps();
+	if (!ops)
+		return 0;
+	BlockDevice* first = 0;
+	int ports = ops->portCount(arch::usbHc());
+	for (int p = 1; p <= ports; p++) {
+		UsbDevice dev;
+		if (usbEnumeratePort(p, &dev) != 0)
+			continue;
+		bool isMsc = false;
+		for (int i = 0; i < dev.numInterfaces; i++)
+			if (dev.iface[i].bInterfaceClass == USB_CLASS_MASS_STORAGE)
+				isMsc = true;
+		if (!isMsc)
+			continue;
+		int epIn = 0, epOut = 0;
+		for (int i = 0; i < dev.numEndpoints; i++) {
+			unsigned char a = dev.endpoint[i].bEndpointAddress;
+			if ((dev.endpoint[i].bmAttributes & 0x3) == 2) {   // bulk endpoint
+				if (a & 0x80) epIn = a; else epOut = a;
+			}
+		}
+		if (!epIn || !epOut)
+			continue;
+		UsbMsc* msc = new UsbMsc();
+		if (usbMscInit(msc, dev.slot, epIn, epOut) != 0)
+			continue;
+		uint32_t blocks = 0, bsize = 0;
+		if (usbMscReadCapacity(msc, &blocks, &bsize) != 0)
+			continue;
+		BlockDevice* bd = new UsbMscBlockDevice(msc, "usb0");
+		DeviceManager::registerDevice(bd);
+		if (!first)
+			first = bd;
+	}
+	return first;
 }
 
 static void mountVolume(Vfs* vfs, SynthFs* root, const char* name, BlockDevice* dev,
@@ -286,8 +331,20 @@ void Kernel::start() {
 	SynthFs* root = new SynthFs();
 	vfs->mount("/", root);
 	kernelExportsInit(root);   // loadable modules add /dev/input<N> through this root
+	// Root discovery: a live-USB system keeps the whole FS on a USB stick, so prefer a USB
+	// mass-storage volume with a valid MBR; otherwise fall back to the ATA disk (the QEMU
+	// -drive image path). The USB storage path (xHCI+core+MSC) was brought up before paging.
+	BlockDevice* usb0 = usbStorageDiscover();
+	BlockDevice* rootDev = hd0;
+	if (usb0) {
+		unsigned char mbr[512];
+		if (usb0->readSectors(0, 1, mbr) == 0 && mbr[510] == 0x55 && mbr[511] == 0xAA) {
+			rootDev = usb0;
+			Console::writeLine("Root: USB mass-storage device (usb0)");
+		}
+	}
 	okBegin("Mounting ext filesystem at /disks/main");
-	mountVolume(vfs, root, "main", hd0, firstPartitionLba(hd0));   // discovered from the MBR
+	mountVolume(vfs, root, "main", rootDev, firstPartitionLba(rootDev));   // USB-or-ATA, MBR-discovered
 	okEnd();
 
 	// Phase 6: exercise the read-write path on the real disk and report persistence.
