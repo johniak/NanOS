@@ -1,15 +1,18 @@
 // arch/x86_64/drivers/xhci_x86_64.cpp — x86_64 xHCI driver (MD). See xhci_x86_64.h.
 //
-// Phase 1 (this commit): PCI discovery of the xHCI controller (class 0x0C/0x03/0x30), map its
-// MMIO BAR0, read the capability registers (CAPLENGTH/HCIVERSION/HCSPARAMS1) to learn the
-// operational-register base + port/slot counts, and log. Controller init + rings + Address
-// Device land in the next task. This is ring-0 MD code, so it does its own volatile MMIO.
+// Implements <arch/usbhc.h> against the xHCI spec rev 1.2: PCI discovery + MMIO (§5.3), the
+// controller init sequence (§4.2), command/event rings + ERST (§4.9), port reset, slot/endpoint
+// contexts + Enable Slot / Address Device (§4.3, §4.6), and EP0 control transfers (§4.11). Poll
+// model: submit() runs a transfer to completion by polling the event ring (no IRQ yet; YAGNI).
+// Ring-0 MD code, so it does its own volatile MMIO + DMA (FrameAllocator frames; phys == virt).
 #include "xhci_x86_64.h"
 #include <arch/usbhc.h>
 #include <arch/mmu.h>
 #include "Pci.h"
 #include "Console.h"
+#include "FrameAllocator.h"
 #include <stdint.h>
+#include <string.h>
 
 namespace arch {
 
@@ -19,20 +22,284 @@ namespace {
 
 using kernel::Pci;
 using kernel::PciDevice;
+using kernel::g_frames;
 
-// xHCI capability-register offsets (bytes from MMIO base; xHCI spec 1.2 §5.3).
-enum { CAP_CAPLENGTH = 0x00, CAP_HCIVERSION = 0x02, CAP_HCSPARAMS1 = 0x04 };
+// ---- register offsets ----
+// Capability registers (bytes from g_mmio).
+enum { CAP_HCSPARAMS1 = 0x04, CAP_HCSPARAMS2 = 0x08, CAP_HCCPARAMS1 = 0x10,
+       CAP_DBOFF = 0x14, CAP_RTSOFF = 0x18 };
+// Operational registers (bytes from g_op).
+enum { OP_USBCMD = 0x00, OP_USBSTS = 0x04, OP_PAGESIZE = 0x08, OP_CRCR = 0x18,
+       OP_DCBAAP = 0x30, OP_CONFIG = 0x38, OP_PORTSC = 0x400 };
+enum { USBCMD_RS = 0x1, USBCMD_HCRST = 0x2 };
+enum { USBSTS_HCH = 0x1, USBSTS_CNR = 0x800 };
+// PORTSC bits.
+enum { PORTSC_CCS = 0x1, PORTSC_PED = 0x2, PORTSC_PR = 0x10, PORTSC_PRC = 0x200000 };
+const uint32_t PORTSC_RW1C = 0xFE0000;   // CSC..CEC change bits (write-1-to-clear); preserve on RMW.
+// Runtime interrupter-0 registers (bytes from g_rt).
+enum { RT_IR0 = 0x20, IR_ERSTSZ = 0x08, IR_ERSTBA = 0x10, IR_ERDP = 0x18 };
+// TRB types.
+enum { TRB_LINK = 6, TRB_ENABLE_SLOT = 9, TRB_ADDRESS_DEVICE = 11, TRB_EVAL_CONTEXT = 13,
+       TRB_SETUP = 2, TRB_DATA = 3, TRB_STATUS = 4,
+       TRB_TRANSFER_EVENT = 32, TRB_CMD_COMPLETION = 33, TRB_PORT_STATUS = 34 };
 
-volatile uint8_t* g_mmio   = 0;   // MMIO BAR0 base (== capability registers)
-volatile uint8_t* g_op     = 0;   // operational registers = MMIO + CAPLENGTH
-uint32_t g_mmioPhys        = 0;
-int      g_maxPorts        = 0;
-int      g_maxSlots        = 0;
+struct Trb { uint64_t param; uint32_t status; uint32_t control; } __attribute__((packed));
+
+const int RING_TRBS = 64;   // per ring (1 KiB); last entry is a Link TRB back to start.
+const int EVT_TRBS  = 64;   // event ring segment size.
+const int MAX_SLOTS = 16;   // tracked device slots.
+
+struct EpRing { Trb* ring; int enq; int cycle; };
+struct SlotState { uint8_t* devCtx; uint8_t* inputCtx; EpRing ep[32]; };
+
+volatile uint8_t* g_mmio = 0;
+volatile uint8_t* g_op   = 0;
+volatile uint8_t* g_rt   = 0;
+volatile uint32_t* g_db  = 0;     // doorbell array
+uint32_t g_mmioPhys = 0;
+int g_maxPorts = 0, g_maxSlots = 0;
+int g_ctxSize  = 32;              // 32 or 64 (HCCPARAMS1.CSZ)
+
+uint64_t* g_dcbaa = 0;
+EpRing    g_cmd{};                // command ring
+Trb*      g_evt = 0;              // event ring segment
+int       g_evtDeq = 0, g_evtCycle = 1;
+SlotState g_slots[MAX_SLOTS]{};
 
 inline uint32_t cap32(int off) { return *(volatile uint32_t*) (g_mmio + off); }
+inline uint32_t op32(int off)  { return *(volatile uint32_t*) (g_op + off); }
+inline void     wop32(int off, uint32_t v) { *(volatile uint32_t*) (g_op + off) = v; }
+inline void     wop64(int off, uint64_t v) { *(volatile uint64_t*) (g_op + off) = v; }
+inline uint32_t rt32(int off)  { return *(volatile uint32_t*) (g_rt + off); }
+inline void     wrt32(int off, uint32_t v) { *(volatile uint32_t*) (g_rt + off) = v; }
+inline void     wrt64(int off, uint64_t v) { *(volatile uint64_t*) (g_rt + off) = v; }
+inline uint32_t portsc(int port)        { return op32(OP_PORTSC + (port-1)*0x10); }
+inline void     wportsc(int port, uint32_t v) {
+    // Preserve PED + the RW1C change bits when setting other fields (writing them 1 disables/clears).
+    uint32_t cur = portsc(port) & ~(PORTSC_RW1C | PORTSC_PED);
+    *(volatile uint32_t*) (g_op + OP_PORTSC + (port-1)*0x10) = cur | v;
+}
 
-// Locate the first xHCI controller: PCI class 0x0C (serial bus), subclass 0x03 (USB),
-// prog-IF 0x30 (xHCI). Returns true + fills `out`.
+inline uint64_t phys(void* p) { return (uint64_t)(uintptr_t) p; }
+uint8_t* allocFrame() { uint64_t f = g_frames.alloc(); if (f) memset((void*)(uintptr_t)f, 0, kernel::FRAME_SIZE); return (uint8_t*)(uintptr_t)f; }
+
+void ioWaitSpin() { for (volatile int i = 0; i < 1000; i++) {} }
+
+// Push one TRB onto a ring; returns the physical address of the slot it was written to.
+// Handles the trailing Link TRB (wrap + toggle cycle).
+uint64_t ringPush(EpRing& r, uint64_t param, uint32_t status, uint32_t control) {
+    Trb* t = &r.ring[r.enq];
+    uint64_t slotPhys = phys(t);
+    t->param = param; t->status = status;
+    t->control = control | (uint32_t)(r.cycle & 1);
+    r.enq++;
+    if (r.enq == RING_TRBS - 1) {
+        Trb* lnk = &r.ring[r.enq];
+        lnk->param = phys(r.ring); lnk->status = 0;
+        lnk->control = (TRB_LINK << 10) | (1 << 1) /*Toggle Cycle*/ | (uint32_t)(r.cycle & 1);
+        r.enq = 0; r.cycle ^= 1;
+    }
+    return slotPhys;
+}
+
+// Poll the event ring for the next event; returns false on timeout.
+bool eventPoll(Trb* out) {
+    for (long guard = 0; guard < 20000000L; guard++) {
+        Trb* e = &g_evt[g_evtDeq];
+        if ((int)(e->control & 1) == g_evtCycle) {
+            *out = *e;
+            g_evtDeq++;
+            if (g_evtDeq == EVT_TRBS) { g_evtDeq = 0; g_evtCycle ^= 1; }
+            uint64_t deqPhys = phys(&g_evt[g_evtDeq]);
+            wrt64(RT_IR0 + IR_ERDP, deqPhys | (1ull << 3) /*EHB clear*/);
+            return true;
+        }
+        ioWaitSpin();
+    }
+    return false;
+}
+
+// Execute a command-ring command; returns completion code (1 = success) and slot id via *slot.
+int cmdExec(uint64_t param, uint32_t control, int* slot) {
+    ringPush(g_cmd, param, 0, control);
+    g_db[0] = 0;   // command-ring doorbell (target 0)
+    Trb ev;
+    for (int guard = 0; guard < 16; guard++) {
+        if (!eventPoll(&ev)) return -1;
+        if (((ev.control >> 10) & 0x3F) == TRB_CMD_COMPLETION) {
+            if (slot) *slot = (ev.control >> 24) & 0xFF;
+            return (ev.status >> 24) & 0xFF;
+        }
+    }
+    return -1;
+}
+
+uint32_t* ctxAt(uint8_t* base, int index) { return (uint32_t*) (base + index * g_ctxSize); }
+
+// Map a USB endpoint address (0 = default control) to its Device Context Index.
+int dciOf(int endpoint) {
+    if (endpoint == 0) return 1;                 // EP0 control
+    int num = endpoint & 0x0F;
+    int in  = (endpoint & 0x80) ? 1 : 0;
+    return num * 2 + in;
+}
+
+// ---- controller bring-up ----
+void controllerInit() {
+    while (op32(OP_USBSTS) & USBSTS_CNR) ioWaitSpin();        // wait Controller Not Ready clear
+    wop32(OP_USBCMD, op32(OP_USBCMD) & ~USBCMD_RS);            // stop
+    while (!(op32(OP_USBSTS) & USBSTS_HCH)) ioWaitSpin();      // wait halted
+    wop32(OP_USBCMD, USBCMD_HCRST);                            // reset
+    while (op32(OP_USBCMD) & USBCMD_HCRST) ioWaitSpin();
+    while (op32(OP_USBSTS) & USBSTS_CNR) ioWaitSpin();
+
+    wop32(OP_CONFIG, g_maxSlots);                             // MaxSlotsEn
+
+    // DCBAA (Device Context Base Address Array).
+    g_dcbaa = (uint64_t*) allocFrame();
+    // Scratchpad buffers, if the controller demands them.
+    uint32_t hcs2 = cap32(CAP_HCSPARAMS2);
+    int maxScratch = (int)((((hcs2 >> 21) & 0x1F) << 5) | ((hcs2 >> 27) & 0x1F));
+    if (maxScratch > 0) {
+        uint64_t* arr = (uint64_t*) allocFrame();
+        for (int i = 0; i < maxScratch; i++) arr[i] = phys(allocFrame());
+        g_dcbaa[0] = phys(arr);
+    }
+    wop64(OP_DCBAAP, phys(g_dcbaa));
+
+    // Command ring.
+    g_cmd.ring = (Trb*) allocFrame(); g_cmd.enq = 0; g_cmd.cycle = 1;
+    wop64(OP_CRCR, phys(g_cmd.ring) | 1 /*RCS*/);
+
+    // Event ring + ERST (one segment).
+    g_evt = (Trb*) allocFrame(); g_evtDeq = 0; g_evtCycle = 1;
+    uint64_t* erst = (uint64_t*) allocFrame();
+    erst[0] = phys(g_evt);                  // segment base
+    erst[1] = (uint64_t) EVT_TRBS;          // segment size (TRBs), high dword 0
+    wrt32(RT_IR0 + IR_ERSTSZ, 1);
+    wrt64(RT_IR0 + IR_ERDP, phys(g_evt));
+    wrt64(RT_IR0 + IR_ERSTBA, phys(erst));
+
+    wop32(OP_USBCMD, op32(OP_USBCMD) | USBCMD_RS);            // run
+    while (op32(OP_USBSTS) & USBSTS_HCH) ioWaitSpin();
+}
+
+// Build the EP0 context (DCI 1) for a slot with a given max packet size.
+void writeEp0Context(uint32_t* ep0, uint64_t ringPhys, int maxPacket) {
+    ep0[0] = 0;
+    ep0[1] = (4 << 3) /*EP Type = Control*/ | (3 << 1) /*CErr*/ | ((uint32_t)maxPacket << 16);
+    ep0[2] = (uint32_t)(ringPhys & ~0xFull) | 1 /*DCS*/;
+    ep0[3] = (uint32_t)(ringPhys >> 32);
+    ep0[4] = 8;   // Average TRB Length
+}
+
+int initialMaxPacket(int speed) {
+    switch (speed) { case 4: return 512; case 3: return 64; case 2: return 8; default: return 8; }
+}
+
+// One internal control GET_DESCRIPTOR(DEVICE) of `len` bytes during enumeration setup.
+int controlIn(int slotId, uint8_t descType, void* buf, int len);   // fwd (defined via submit path)
+
+// Reset+enable `port`, allocate a slot, address the device, fix EP0 max packet. Returns slot id.
+int xhciEnablePort(UsbHc*, int port, int* speedOut) {
+    uint32_t ps = portsc(port);
+    if (!(ps & PORTSC_CCS)) return -1;                   // nothing connected
+    if (!(ps & PORTSC_PED)) {                            // USB2: drive a reset; USB3 auto-enables
+        wportsc(port, PORTSC_PR);
+        for (int i = 0; i < 100000 && !(portsc(port) & PORTSC_PRC); i++) ioWaitSpin();
+        wportsc(port, PORTSC_PRC);                       // clear reset-change
+    }
+    ps = portsc(port);
+    int speed = (ps >> 10) & 0xF;
+    if (speedOut) *speedOut = speed;
+
+    int slot = 0;
+    if (cmdExec(0, (TRB_ENABLE_SLOT << 10), &slot) != 1 || slot <= 0 || slot >= MAX_SLOTS) return -1;
+    SlotState& s = g_slots[slot];
+
+    s.devCtx = allocFrame();
+    g_dcbaa[slot] = phys(s.devCtx);
+    EpRing& ep0 = s.ep[1];
+    ep0.ring = (Trb*) allocFrame(); ep0.enq = 0; ep0.cycle = 1;
+
+    int mp = initialMaxPacket(speed);
+    s.inputCtx = allocFrame();
+    ctxAt(s.inputCtx, 0)[1] = (1 << 0) | (1 << 1);       // Input Control: add Slot + EP0
+    uint32_t* slotCtx = ctxAt(s.inputCtx, 1);
+    slotCtx[0] = (1u << 27) /*context entries = 1*/ | ((uint32_t)speed << 20);
+    slotCtx[1] = ((uint32_t)port << 16) /*root hub port*/;
+    writeEp0Context(ctxAt(s.inputCtx, 2), phys(ep0.ring), mp);
+
+    if (cmdExec(phys(s.inputCtx), (TRB_ADDRESS_DEVICE << 10) | ((uint32_t)slot << 24), 0) != 1) return -1;
+
+    // Read the first 8 bytes of the device descriptor to learn the real EP0 max packet size;
+    // re-evaluate the EP0 context if it differs (mandatory for full-speed: 8/16/32/64).
+    uint8_t dd8[8] = {0};
+    if (controlIn(slot, /*USB_DT_DEVICE*/1, dd8, 8) >= 8) {
+        int realMp = (speed == 4) ? 512 : dd8[7];
+        if (realMp > 0 && realMp != mp) {
+            memset(s.inputCtx, 0, kernel::FRAME_SIZE);
+            ctxAt(s.inputCtx, 0)[1] = (1 << 1);          // add EP0 only
+            writeEp0Context(ctxAt(s.inputCtx, 2), phys(ep0.ring), realMp);
+            cmdExec(phys(s.inputCtx), (TRB_EVAL_CONTEXT << 10) | ((uint32_t)slot << 24), 0);
+        }
+    }
+    return slot;
+}
+
+int xhciSubmit(UsbHc*, UsbTransfer* t) {
+    if (t->slot <= 0 || t->slot >= MAX_SLOTS) { t->result = -1; t->complete = 1; return -1; }
+    SlotState& s = g_slots[t->slot];
+    int dci = dciOf(t->endpoint);
+    EpRing& r = s.ep[dci];
+    if (!r.ring) { t->result = -1; t->complete = 1; return -1; }
+
+    if (t->type == USB_CONTROL) {
+        uint64_t setupData = 0; memcpy(&setupData, &t->setup, 8);
+        uint32_t trt = (t->len == 0) ? 0 : (t->dir == USB_IN ? 3 : 2);
+        ringPush(r, setupData, 8, (TRB_SETUP << 10) | (1 << 6) /*IDT*/ | (trt << 16));
+        uint64_t dataPhys = 0;
+        if (t->len) dataPhys = ringPush(r, phys(t->data), t->len,
+                                        (TRB_DATA << 10) | (1 << 2) /*ISP*/ | ((t->dir == USB_IN ? 1u : 0u) << 16));
+        uint32_t sdir = (t->len && t->dir == USB_IN) ? 0 : 1;
+        uint64_t statusPhys = ringPush(r, 0, 0, (TRB_STATUS << 10) | (sdir << 16) | (1 << 5) /*IOC*/);
+        g_db[t->slot] = (uint32_t)dci;
+
+        int dataLen = (int)t->len;
+        Trb ev;
+        for (int guard = 0; guard < 16; guard++) {
+            if (!eventPoll(&ev)) { t->result = -1; t->complete = 1; return -1; }
+            if (((ev.control >> 10) & 0x3F) != TRB_TRANSFER_EVENT) continue;
+            int cc = (ev.status >> 24) & 0xFF;
+            if (ev.param == dataPhys) dataLen = (int)t->len - (int)(ev.status & 0xFFFFFF);
+            if (ev.param == statusPhys) {
+                t->result = (cc == 1) ? dataLen : -1;
+                t->complete = 1;
+                return t->result < 0 ? -1 : 0;
+            }
+            if (cc != 1 && cc != 13 /*short packet*/) { t->result = -1; t->complete = 1; return -1; }
+        }
+        t->result = -1; t->complete = 1; return -1;
+    }
+    // Bulk/interrupt endpoints land in Task 9 (mass-storage) / the HID kext.
+    t->result = -1; t->complete = 1; return -1;
+}
+
+int xhciConfigureEndpoint(UsbHc*, int, int, UsbXfer, UsbDir, int) { return 0; }
+int xhciPortCount(UsbHc*) { return g_maxPorts; }
+
+const UsbHcOps OPS = { xhciEnablePort, xhciConfigureEndpoint, xhciSubmit, xhciPortCount };
+
+// Defined here (after xhciSubmit) so enablePort's EP0 fix-up can issue a control IN.
+int controlIn(int slotId, uint8_t descType, void* buf, int len) {
+    UsbTransfer t{}; t.slot = slotId; t.endpoint = 0; t.type = USB_CONTROL; t.dir = USB_IN;
+    t.setup = { 0x80, 6 /*GET_DESCRIPTOR*/, (uint16_t)(descType << 8), 0, (uint16_t)len };
+    t.data = buf; t.len = (uint32_t)len;
+    xhciSubmit(0, &t);
+    return t.result;
+}
+
+// Locate the first xHCI controller: PCI class 0x0C / subclass 0x03 / prog-IF 0x30.
 bool findXhci(PciDevice& out) {
     PciDevice devs[32];
     int n = Pci::enumerate(devs, 32);
@@ -52,7 +319,6 @@ void xhciInit() {
         Console::writeLine("xHCI: none (continuing on ATA)");
         return;
     }
-    // BAR0 is the (possibly 64-bit) MMIO window; the low 32 bits suffice in QEMU's address map.
     g_mmioPhys = d.bar[0].addr;
     uint32_t bytes = d.bar[0].size ? d.bar[0].size : 0x1000;
     Pci::enableMemSpace(d);
@@ -60,15 +326,19 @@ void xhciInit() {
     mmuMapKernelMmio(g_mmioPhys, bytes);
     g_mmio = (volatile uint8_t*) (uintptr_t) g_mmioPhys;
 
-    // The CAPLENGTH/HCIVERSION dword: QEMU's xHCI MMIO only services 32-bit accesses to the
-    // capability block, so read the whole dword and slice it (a sub-dword read returns 0).
+    // QEMU's xHCI MMIO services only 32-bit accesses to the capability block, so read the whole
+    // CAPLENGTH/HCIVERSION dword and slice it (a sub-dword read returns 0).
     uint32_t cap0      = cap32(0x00);
     uint8_t  capLength = (uint8_t)  (cap0 & 0xFF);
     uint16_t hciVer    = (uint16_t) ((cap0 >> 16) & 0xFFFF);
     uint32_t hcs1      = cap32(CAP_HCSPARAMS1);
+    uint32_t hcc1      = cap32(CAP_HCCPARAMS1);
     g_op       = g_mmio + capLength;
-    g_maxSlots = (int) (hcs1 & 0xFF);
+    g_rt       = g_mmio + (cap32(CAP_RTSOFF) & ~0x1Fu);
+    g_db       = (volatile uint32_t*) (g_mmio + (cap32(CAP_DBOFF) & ~0x3u));
+    g_maxSlots = (int) (hcs1 & 0xFF); if (g_maxSlots >= MAX_SLOTS) g_maxSlots = MAX_SLOTS - 1;
     g_maxPorts = (int) ((hcs1 >> 24) & 0xFF);
+    g_ctxSize  = (hcc1 & 0x4) ? 64 : 32;
 
     Console::write("xHCI: ");
     Console::write(g_maxPorts);   Console::write(" ports, ");
@@ -77,6 +347,9 @@ void xhciInit() {
     Console::write(" @ BAR0=");
     Console::writeHex((uint64_t) g_mmioPhys);
     Console::writeLine("");
+
+    controllerInit();
+    usbHcRegister((UsbHc*) g_mmio, &OPS);
 }
 
 void usbHostInit() { xhciInit(); }
