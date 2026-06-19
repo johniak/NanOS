@@ -106,12 +106,14 @@ void mmuDestroyAddressSpace(AddressSpace* s) { mmuFreeAddressSpace(s); }
 void mmuFreeAddressSpace(AddressSpace* s) {
 	if (!s)
 		return;
-	// Free only the PRIVATE parts: the per-window page tables + their frames, then the PML4.
+	// Free the PRIVATE parts: the per-window page tables + their leaf frames (freeUserWindow), then
+	// the private intermediate tables (freeUserTables: the PDPTs/PDs marked PTE_PRIV), then the PML4.
 	// The shared kernel-half tables are aliased by the copied PML4 entries — leave them.
 	for (uint64_t va = VA_USER_BASE;   va < VA_USER_END;   va += PD_SPAN) s->impl.freeUserWindow(va);
 	for (uint64_t va = VA_HEAP_BASE;   va < VA_HEAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
 	for (uint64_t va = VA_MODULE_BASE; va < VA_MODULE_MAX; va += PD_SPAN) s->impl.freeUserWindow(va);
 	for (uint64_t va = VA_MMAP_BASE;   va < VA_MMAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
+	s->impl.freeUserTables();   // free the private PDPTs/PDs freeUserWindow leaves behind
 	g_fa->free((uint32_t) s->impl.directoryPhys());
 	delete s;
 }

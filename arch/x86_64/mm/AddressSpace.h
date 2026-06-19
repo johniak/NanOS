@@ -44,6 +44,11 @@ public:
 	// PD entry. Tears down a process's private user window WITHOUT touching shared kernel tables.
 	void freeUserWindow(uint64_t userVa);
 
+	// Free the PER-PROCESS intermediate tables (PDPTs + PDs marked PTE_PRIV) — the private tables
+	// that freeUserWindow does NOT reclaim (it only frees leaf PTs + pages). Shared kernel-half
+	// entries (PTE_PRIV cleared) are left intact. Call AFTER the freeUserWindow loops.
+	void freeUserTables();
+
 	// Eager fork copy: for every present page in `src`'s user-window PT (the PD entry covering
 	// `userVa`), allocate a fresh frame, copy the bytes, and map it here with the same flags.
 	// This space must already share the kernel half and have a private (empty) user window.

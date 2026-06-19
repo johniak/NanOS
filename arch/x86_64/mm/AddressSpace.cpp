@@ -23,8 +23,9 @@ uint64_t* AddressSpace::nextTable(uint64_t* parent, uint64_t idx, bool create) {
 		if (!f)
 			return 0;
 		memset(m_env.physToVirt(m_env.ctx, f), 0, FRAME_SIZE);
-		// Intermediate entries kept permissive; access is enforced at the leaf PTE.
-		parent[idx] = makeEntry(f, PTE_PRESENT | PTE_RW | PTE_USER);
+		// Intermediate entries kept permissive; access is enforced at the leaf PTE. PTE_PRIV marks
+		// this table as a per-process private allocation (teardown frees it; never re-privatized).
+		parent[idx] = makeEntry(f, PTE_PRESENT | PTE_RW | PTE_USER | PTE_PRIV);
 	}
 	return (uint64_t*) m_env.physToVirt(m_env.ctx, entryAddr(parent[idx]));
 }
@@ -73,6 +74,10 @@ uint64_t AddressSpace::translate(uint64_t va) const {
 uint64_t* AddressSpace::privatizeChild(uint64_t* parent, uint64_t idx) {
 	if (!entryPresent(parent[idx]))
 		return 0;
+	// Already a per-process private copy? Re-privatizing would allocate a fresh frame and orphan
+	// (leak) the current one — the bug behind the per-fork frame leak. Idempotent: reuse it.
+	if (parent[idx] & PTE_PRIV)
+		return (uint64_t*) m_env.physToVirt(m_env.ctx, entryAddr(parent[idx]));
 	uint64_t srcPhys = entryAddr(parent[idx]);
 	uint64_t f = m_env.allocFrame(m_env.ctx);
 	if (!f)
@@ -80,9 +85,12 @@ uint64_t* AddressSpace::privatizeChild(uint64_t* parent, uint64_t idx) {
 	uint64_t* dst = (uint64_t*) m_env.physToVirt(m_env.ctx, f);
 	uint64_t* src = (uint64_t*) m_env.physToVirt(m_env.ctx, srcPhys);
 	for (int i = 0; i < 512; i++)
-		dst[i] = src[i];
-	// Relink, preserving the original entry's flags (incl. NX) but pointing at the copy.
-	parent[idx] = makeEntry(f, parent[idx] & (FLAG_MASK | PTE_NX));
+		dst[i] = src[i] & ~PTE_PRIV;   // the copied children are SHARED aliases of src's children
+		                               // until individually privatized — they must not look private
+		                               // (else teardown would free a table this AS only aliases).
+	// Relink, preserving the original entry's flags (incl. NX) + mark the copy private (PTE_PRIV)
+	// so a later privatize is a no-op and teardown frees it.
+	parent[idx] = makeEntry(f, (parent[idx] & (FLAG_MASK | PTE_NX)) | PTE_PRIV);
 	return dst;
 }
 
@@ -97,7 +105,9 @@ void AddressSpace::adoptKernelDirectory(uint64_t kernelTopPhys, uint64_t userVa)
 	uint64_t* dst = top();
 	uint64_t* src = (uint64_t*) m_env.physToVirt(m_env.ctx, kernelTopPhys);
 	for (int i = 0; i < 512; i++)
-		dst[i] = src[i];        // share the whole kernel half by value
+		dst[i] = src[i] & ~PTE_PRIV;   // share the kernel half by value, but the SHARED kernel tables
+		                               // must NOT look private: clear PTE_PRIV so privatizeChild forks
+		                               // them on first user write and teardown never frees them.
 	dropPde(userVa);            // privatize the path to the user window + drop its PD entry
 }
 
@@ -122,6 +132,25 @@ void AddressSpace::freeUserWindow(uint64_t userVa) {
 			m_env.freeFrame(m_env.ctx, entryAddr(pt[e]));   // the mapped user frame
 	m_env.freeFrame(m_env.ctx, ptPhys);                     // the page table itself
 	p2[pdi] = 0;
+}
+
+void AddressSpace::freeUserTables() {
+	// Free this process's PRIVATE intermediate tables. PTE_PRIV (set by privatizeChild/nextTable,
+	// cleared on shared kernel-half entries) marks a per-process table. freeUserWindow already
+	// freed the leaf PTs + pages, so we free only the PDs + PDPTs here. We free the PD FRAME
+	// itself but do NOT descend into its entries: any kernel-aliased PTs it still references are
+	// owned by the real kernel PML4 and must survive.
+	uint64_t* p4 = top();
+	for (int i = 0; i < 512; i++) {
+		if (!(p4[i] & PTE_PRIV))                // shared kernel PDPT (or empty) — leave it
+			continue;
+		uint64_t* p3 = (uint64_t*) m_env.physToVirt(m_env.ctx, entryAddr(p4[i]));
+		for (int j = 0; j < 512; j++)
+			if (p3[j] & PTE_PRIV)               // a private PD (its PTs already freed above)
+				m_env.freeFrame(m_env.ctx, entryAddr(p3[j]));
+		m_env.freeFrame(m_env.ctx, entryAddr(p4[i]));   // the private PDPT itself
+		p4[i] = 0;
+	}
 }
 
 bool AddressSpace::copyUserWindowFrom(const AddressSpace& src, uint64_t userVa) {

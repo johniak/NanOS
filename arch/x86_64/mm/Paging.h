@@ -17,8 +17,12 @@ const uint64_t PTE_PRESENT = 0x1;
 const uint64_t PTE_RW      = 0x2;
 const uint64_t PTE_USER    = 0x4;
 const uint64_t PTE_NX      = 1ULL << 63;                 // No-Execute (honored when EFER.NXE=1)
+const uint64_t PTE_PRIV    = 1ULL << 9;                  // AVL bit 9 (ignored by HW): this entry points
+                                                         // at a PER-PROCESS private table — re-privatize
+                                                         // is a no-op, and teardown frees it. Cleared on
+                                                         // the shared kernel-half entries (adoptKernelDirectory).
 const uint64_t PAGE_MASK   = 0x000FFFFFFFFFF000ULL;      // bits 12..51: the 4 KiB frame address
-const uint64_t FLAG_MASK   = 0xFFF;                      // low 12 control bits
+const uint64_t FLAG_MASK   = 0xFFF;                      // low 12 control bits (incl. the AVL PTE_PRIV)
 
 inline uint64_t pml4Index(uint64_t va) { return (va >> 39) & 0x1FF; }
 inline uint64_t pdptIndex(uint64_t va) { return (va >> 30) & 0x1FF; }
