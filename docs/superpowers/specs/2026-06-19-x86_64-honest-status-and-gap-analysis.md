@@ -236,8 +236,16 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [ ] Several apps (bzip2, grep, full coreutils) only assumed-good. *(NanWM desktop + bash-in-terminal
       now verified on screen; mouse click-to-focus still unverified — QEMU PS/2 imprecision.)*
 
-**C. Kernel hardening (flagged, unaudited):**
-- [ ] VA-window ceiling / `adoptKernelDirectory` / address-space teardown leak (§6.2).
+**C. Kernel hardening (flagged):**
+- [x] **Address-space teardown leak FIXED** (commit 9758df9) — `privatizeChild` re-allocated an
+      already-private PDPT/PD on every `dropPde` iteration (~27/fork), and teardown never freed the
+      private intermediate tables: **~232 KB leaked per process, linearly** (measured: alloc 704 vs
+      free 647; MemFree −23 MB/100 procs). Fixed via a PTE_PRIV (AVL bit) marker: idempotent
+      privatize + `freeUserTables()` on teardown. Re-measured: 650 alloc == 650 free, MemFree flat
+      (−4 KB/100 procs). `adoptKernelDirectory` audited correct as part of this (clears PTE_PRIV on
+      the shared kernel half). Verified: 624 host tests + MD boot smoke pass.
+- [ ] VA-window ceiling (>1 GiB user-VA window) — still the documented carry-forward gate before
+      large-RAM / heavy-multiprocess; not exercised yet. *(low until then)*
 
 **D. Cut-over (the user-authorized end state, NOT yet started):**
 - [ ] Make `ARCH=x86_64` the default; delete `arch/x86` + i686 toolchains; collapse the arch-guards.
@@ -296,9 +304,13 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
     draws, and takes **mouse + keyboard** input (the input path `nwm` itself has never had verified on x64).
     Capture one screenshot per app as the evidence. This also discharges the §7-A "nwm assumed-good" item.
 
-**Phase 3 — audit the flagged kernel concerns:**
-13. Audit the VA-window ceiling, `adoptKernelDirectory` privatization, and address-space teardown for
-    the page-table leak (§6.2). Add a stress test (spawn/exit many processes; watch free-frame count).
+**Phase 3 — audit the flagged kernel concerns — teardown leak DONE (commit 9758df9):**
+- [x] 13a. **Address-space teardown page-table leak FIXED** — stress-tested exactly as planned
+  (spawn/exit 100 procs, watch MemFree): found ~232 KB/proc leaked, root-caused (privatizeChild
+  re-alloc + no intermediate-table free), fixed (PTE_PRIV marker), re-measured flat (−4 KB/100).
+  `adoptKernelDirectory` privatization audited correct in the same pass.
+- [ ] 13b. VA-window ceiling (>1 GiB) still unexercised — the documented carry-forward gate before
+  large-RAM / heavy multiprocess. Low priority until that workload exists.
 
 **Phase 4 — cut-over (only after Phases 1–3 are green):**
 14. Default `ARCH=x86_64`; delete `arch/x86` + i686 toolchain layers; collapse arch-guards; update docs.
