@@ -1,0 +1,425 @@
+# NanOS — Roadmap „Real Hardware / Daily Driver" (zespół 30 osób, 18–24 mies.)
+
+> Dokument strategiczny. Stan repo: gałąź `feat/pthread`, 2026-06-15.
+> Definiuje cel nadrzędny, model pracy zespołu 30 osób, governance repo oraz
+> 8-kwartałowy backbone milestone'ów prowadzący NanOS od „działa w QEMU" do
+> „bootuje i działa jako daily-driver na realnym laptopie".
+>
+> Powiązane: `2026-06-15-x86_64-migration-analysis.md` (szczegóły techniczne portu
+> 64-bit), `2026-06-15-pthread-design.md` (wątki), `docs/superpowers/ROADMAP.md`
+> (poprzedni roadmap multiprocessingu — **superseded** przez ten dokument).
+
+---
+
+## 0. Cel nadrzędny i zasady
+
+**North star:** NanOS bootuje z UEFI i działa jako użyteczny system na **HP EliteBook
+820 G3** (Skylake, 2 rdzenie / 4 wątki). „Działa" = klawiatura, ekran, dysk, sieć,
+shell, GUI, porty (bash/vim/netsurf) — na bare-metal, nie tylko w QEMU.
+
+**Co to oznacza dla priorytetów (obiektywne sufity, w kolejności):**
+
+1. **x86_64 (long mode)** — fundament wszystkiego nowoczesnego (NX, >4 GiB, UEFI startuje
+   w 64-bit, SMP/APIC zakłada 64-bit). Bez tego reszta to ślepa uliczka.
+2. **Firmware/boot realny** — UEFI + GOP + ACPI; dziś tylko Multiboot1/BIOS w QEMU.
+3. **Stos USB (xHCI)** — żadna realna maszyna nie jest w pełni użyteczna bez USB
+   (storage do flashowania, mysz, urządzenia zewnętrzne).
+4. **Realny magazyn** — AHCI/SATA + NVMe (M.2) + GPT + FAT (partycja ESP); dziś tylko ATA PIO.
+5. **SMP** — EliteBook ma 2 rdzenie/4 wątki; dziś wszystko jednoprocesorowe
+   („concurrency, not parallelism" wg specu pthread).
+6. **Dojrzałość MM + hardening** — COW fork (dziś eager copy), demand paging, page
+   cache, W^X/NX, KASLR/ASLR, SMEP/SMAP (wszystko wymaga 64-bit).
+7. **Pakiety + głębia POSIX + self-hosting** — `nap`, epoll/poll/timerfd,
+   menedżer pakietów, próba kompilacji on-device.
+
+**Zasady prowadzenia (z CLAUDE.md + governance):**
+- TDD wszędzie gdzie host-testowalne (≥90% lcov bramka); headless-QEMU verification.
+- Praca na gałęziach feature, nigdy na trunku. Commity/PR **bez wzmianki o AI**.
+- Utrzymujemy podział MI/MD i `make check-arch`; nowe arch = `arch/x86_64/`.
+- **Decoupling:** `make image` nie zależy od aplikacji — kernel doprowadzamy do 64-bit
+  zanim tkniemy którykolwiek port.
+- **Nie kasujemy funkcji z roadmapy.** Elementy o różnym ryzyku układamy w bramki
+  `required` / `proof` / `follow-on`, zamiast usuwać je z planu. Daily-driver 1.0 może
+  mieć GOP bez akceleracji i LAN bez WiFi, ale ścieżki `i915`/WiFi/LinuxKPI/self-hosting
+  pozostają zaplanowane jako dowody kierunku albo prace po 1.0.
+
+---
+
+## 1. Strategia sekwencjonowania (podejście B)
+
+x86_64 to fundament, ale jego krytyczna ścieżka (~1500–2000 linii) nie zatrudni 30 osób.
+Dlatego:
+
+> **Mały elitarny zespół pcha krytyczną ścieżkę x86_64 (boot/paging/przerwania/syscall).
+> Równolegle reszta buduje komponenty MI / host-testowalne (rdzeń USB, virtio, COW,
+> dokończenie pthread, audyt blokad SMP, toolchain), które integrują się gdy 64-bit
+> wstanie.** Zero podwójnej pracy — komponenty MI są architektonicznie niezależne.
+
+Odrzucone: (A) „x86_64 hard-first, reszta czeka" (≈25 osób bezczynnych 2 kwartały);
+(C) „sprzęt na i686, port na końcu" (podwójna praca, sprzeczne z decyzją o zastąpieniu).
+
+### 1.1. Strategia ponownego użycia sterowników Linuksa (warstwa LinuxKPI)
+
+Pisanie od zera sterowników do Intel HD 520 (GPU), Wireless-AC 8260 (WiFi) czy nowych NIC-ów
+to praca rzędu lat. **FreeBSD rozwiązuje to dwoma warstwami; bierzemy z nich wzorzec:**
+
+- **LinuxKPI (kernel-space)** — shim implementujący API jądra Linuksa (`struct device`,
+  PCI API, DMA API, workqueues, completions, mutexy/spinlocki, `kmalloc`, `ioremap`,
+  IRQ threads, `dma-buf`), o który **rekompiluje się źródła sterowników Linuksa**
+  (np. DRM `i915`, `iwlwifi`). To jest to, co pozwala FreeBSD używać linuksowego
+  `drm-kmod`. **To jest to, czego dotyczy ta prośba.**
+- (Linuxulator = user-space ABI to osobny temat — nie dotyczy sterowników; pomijamy.)
+
+**Decyzja strategiczna:** NanOS dostaje **model urządzeń ukształtowany pod Linuksa** —
+prymitywy SMP (Strumień C: mutexy/spinlocki), PCIe + MSI/MSI-X (E), DMA API i IRQ
+threads projektujemy **z semantyką zgodną z Linuksem**, tak by późniejszy shim LinuxKPI
+był cienki, a nie wymagał przerabiania rdzenia. To **nie** jest istniejący mechanizm
+`.nkext` (to ładowalne moduły NanOS) — LinuxKPI to **warstwa source-compat** dla obcego
+kodu sterowników.
+
+**Sekwencja:** powierzchnię KPI projektujemy w Q5–Q6 (równolegle do SMP, bo dzieli z nim
+prymitywy synchronizacji); pierwszy realny sterownik przez shim (PoC: prosty NIC lub
+DRM `i915` dla EliteBooka) w Q8 / jako duży follow-on po 1.0. **Uwaga licencyjna (GPL):**
+sterowniki Linuksa to GPLv2 — trzymamy je jako **osobne moduły** (jak FreeBSD `drm-kmod`),
+nie wkompilowujemy w rdzeń NanOS; granica licencyjna = interfejs LinuxKPI.
+
+**Bramki (gates) — twarde zależności:**
+- `init.nxe` 64-bit działa **⟹** rebuild portów rusza (Strumień B tail).
+- x86_64 bootuje + przerwania **⟹** integracja USB/storage/SMP na realnym jądrze.
+- Wszystko zielone w QEMU x86_64 **⟹** pierwsze flashowanie na EliteBook (lab).
+
+### 1.2. Strategia pakietów (`nap` — Nano Package Manager)
+
+`nap` nie jest pustym punktem Q8: ma osobne repo **`~/Projects/nano-packages`** na gałęzi
+`feat/nap-mvp`. Stan na 2026-06-15:
+
+- `server/` — Django + DRF + sqlite registry, modele `Package`/`Release`, upload ZIP STORE,
+  API `/api/v1/packages/...`, testy serwera.
+- `client/` — Rust `no_std`: `napcore` z logiką testowaną na hoście przez trait `Sys`
+  (HTTP, JSON, ZIP STORE, sha256, DB installed, install/remove/upgrade/list) oraz cienki
+  crate urządzeniowy `nap` z FFI do libc NanOS.
+- Kontrakt runtime: pakiety instalują do `/disks/main/...`, link-farm app używa symlinków
+  partycyjnych (`/apps/<name>/<name>.nxe`), domyślne repo w QEMU to `http://10.0.2.2:8000`.
+
+**Decyzja strategiczna:** `nap` rozwijamy równolegle jako multi-repo produkt, ale nie
+blokujemy nim portu x86_64. Najpierw utrzymujemy go jako host-testowalny klient+serwer
+oraz i686 proving ground; po Bramce Q2 dostaje target `x86_64-nanos` i staje się
+domyślnym sposobem dokładania portów. To zmienia Q8 z „dopiero zaczynamy pakiety" na
+„pakiety są dojrzałe, regresyjnie testowane i używane do dystrybucji portów".
+
+---
+
+## 2. Governance repo (Strumień 0 — fundament, dzień 1)
+
+### 2.1. Stan faktyczny historii
+
+- **Oryginał „zero-AI" jest na `master` (= `origin/master`)**, czubek `b83b433
+  "update runtime"`, **2026-02-05** — ostatni ludzki commit przed pracą z agentami.
+  Gałąź `develop` **nie istnieje** (mimo potocznej nazwy).
+- Praca AI zaczyna się **2026-06-06** (`1d806d8`) na `dockerized-build`, odgałęzionej
+  prosto od `b83b433`. Bieżący `feat/pthread` jest **404 commity** przed `master`.
+- **Daty commitów są nieusuwalne** (author-date w obiekcie git); oryginał jest
+  bezpieczny na `origin/master`. Chodzi o **trwałe zakotwiczenie i ochronę**.
+
+### 2.2. Nienaruszalne zachowanie oryginału (AKCJA #1, przed jakimkolwiek ruchem `master`)
+
+```
+git tag -a original-zero-ai-2026-02-05 b83b433 -m "Pristine zero-AI NanOS baseline (last human commit)"
+git branch legacy/original-zero-ai b83b433
+git push origin original-zero-ai-2026-02-05
+git push origin legacy/original-zero-ai
+# branch protection na origin: no force-push, no delete (tag + legacy/*)
+```
+Tag jest nieruchomy i odporny na GC; `legacy/original-zero-ai` jest widoczna i daje się
+zworktree'ować do audytu „co napisał człowiek". To spełnia „nie może zaginąć z datami".
+
+### 2.3. Model gałęzi (zatwierdzony: `master`→legacy, nowy `main`+`develop`)
+
+```
+legacy/original-zero-ai   (= tag original-zero-ai-2026-02-05)  ← NIETYKALNE, oryginał
+main                      ← stabilny trunk; TYLKO zweryfikowany na realnym sprzęcie ("wysoki")
+develop                   ← integracja: agenci mergują tu; CI + headless-QEMU bramkuje
+release/qN                ← (opcjonalnie) snapshot kwartalny pod sprzęt
+feat/<agent>/<temat>      ← per-agent, KAŻDY w osobnym worktree
+```
+
+Mechanika cut-over (po 2.2):
+1. `main` ← obecny dorobek (promowany z `feat/pthread` po zazielenieniu).
+2. `develop` ← `main`; codzienna integracja agentów.
+3. `master` przestaje być trunkiem; pozostaje wskaźnik historyczny lub usuwany po
+   potwierdzeniu, że tag+legacy istnieją na origin. **`master` NIE jest ruszany, dopóki
+   2.2 nie jest na origin.**
+
+### 2.4. Worktree governance (równoległa praca 30 agentów)
+
+- Każdy agent: `git worktree add ../nanos-wt/<temat> -b feat/<agent>/<temat> develop`
+  → izolowany katalog roboczy; brak kolizji.
+- **Pułapka build-infra (zadanie Q1, Strumień 0/G):** `make run` używa współdzielonych
+  `disk/image-grub2.img` i monitora `/tmp/qmon` — 30 równoległych QEMU na to nadepnie.
+  Sparametryzować per-worktree: `IMAGE=$(pwd)/disk/image.img`, `QMON=/tmp/qmon-$(basename
+  $PWD)`, nazwy kontenerów Docker z sufiksem worktree.
+- Narzędzie `Agent`/workflow z `isolation: "worktree"` używamy dla zadań mutujących pliki.
+
+### 2.5. Worktree „wysoki" do testów na realnym sprzęcie
+
+Dedykowany, **długożyjący worktree przypięty do `main`** (`../nanos-hw-release`),
+odseparowany od churn worktree feature'owych. Z niego buduje się obrazy na EliteBook
+i flashuje do labu (Strumień G, Q7–Q8). „Co ląduje na laptopie" jest odprzężone od
+pracy 30 agentów.
+
+### 2.6. Multi-repo
+
+SDK i pakiety żyją w osobnych repo (`nanos-sdk`, `nanos-sdk-work`, `bash-nanos`,
+`nano-packages`, `*-port`). Ta sama dyscyplina: zachowanie baseline +
+`main`/`develop`/`feat/*`, bo migracja x86_64 i dystrybucja przez `nap` ich dotyka.
+
+---
+
+## 3. Strumienie (10 strumieni, ~30 osób peak)
+
+| # | Strumień | Osób | Główna odpowiedzialność | Kluczowa zależność |
+|---|---|---|---|---|
+| **A** | Rdzeń x86_64 | ~5 | boot long-mode, paging 4-poziomowy, przerwania, syscall/sysret, GDT/IDT/TSS 64-bit | **krytyczna ścieżka, nic nie blokuje** |
+| **B** | Toolchain + ABI userland + rebuild portów | ~5 | `x86_64-nanos`, `.nxe` v4, `mknx`, `libc.ndl`, crt0/sigtramp, rebuild ~12 portów | ABI syscalli od A; rebuild po `init.nxe` 64-bit |
+| **C** | SMP / współbieżność | ~5 | APIC/x2APIC, per-CPU, audyt+wdrożenie blokad jądra, scheduler SMP, dokończenie pthread/musl | jądro x86_64 (A) |
+| **D** | Boot & firmware | ~3 | UEFI (x86_64-efi GRUB / własny stub), GOP, ACPI MADT/FADT, GPT, FAT (ESP) | trampolina/boot od A |
+| **E** | Magazyn & magistrale | ~4 | PCIe enum, AHCI/SATA, NVMe, virtio-blk/net, partycje | przerwania+paging od A |
+| **F** | Stos USB | ~4 | xHCI, USB core, HID (klawiatura/mysz), mass storage (bulk/SCSI) | rdzeń host-testowalny od dnia 1; integracja po A |
+| **G** | MM/POSIX/QA + lab sprzętowy | ~4 | COW fork, demand paging, page cache, mmap plików, epoll/poll/timerfd, hardening; CI matrix, lab EliteBook, fuzzing | rozproszona; lab po pierwszym boocie x86_64 |
+| **H** | Linux Driver Compat (LinuxKPI) | 0→~4 | model urządzeń zgodny z Linuksem, shim API jądra Linuksa, pierwszy sterownik przez rekompilację (GPU `i915` / WiFi `iwlwifi`) | prymitywy SMP (C) + PCIe/DMA (E); ramp-up Q5 |
+| **I** | Desktop / NanWM / UX | ~3 | wdrożenie redesignu (glass/blur compositor), window management, apki desktopowe (Files/Settings/Terminal), integracja wejścia/ekranu, jakość daily-driver | userland, równoległy od dnia 1; res. GOP (D), wejście USB/touchpad (F/G) |
+| **J** | Pakiety / `nap` | 0→~2 | repo `nano-packages`: Django registry, Rust `napcore`/`nap.nxe`, format paczek ZIP STORE, E2E install/remove/upgrade, katalog portów | sieć+ext RW już działają na i686; x86_64 rebuild po B; bare-metal po E/D |
+
+**Przepływ osób (headcount = peak/orientacyjny, nie steady-state).** Strumienie ramp-up/
+ramp-down między kwartałami: **A** (x86_64-specyficzne) kończy się po Q2 → zasila C/I/H;
+**D** i **F** wygasają po Q4 → zasilają G/H/I/J. **H** rusza od ~0 (tylko wpływ na decyzje
+C/E w Q3–Q4), ramp do ~4–5 w Q5–Q8. **I** działa stale (jakość user-facing to długi ogon).
+**J** jest mały, bo większość kodu `nap` jest host-testowalna i już żyje w osobnym repo; jego
+koszt rośnie dopiero przy E2E, katalogu pakietów i podpisach/QA.
+
+Strumienie **dojrzałe** w trybie utrzymaniowym: **sieć TCP/IP** i **ext RW** — portują się
+przy x86_64/SMP, bez nowych dużych prac w Q1–Q4. (NanWM **nie** jest „utrzymaniowy" — przy
+celu daily-driver desktop wymaga aktywnego dopracowania → dedykowany Strumień I.)
+
+---
+
+## 4. Backbone kwartalny (8 kwartałów)
+
+### Q1 — Fundament: x86_64 wstaje
+- **A:** trampolina long-mode w `loader.s` (identity-map 2 MiB hugepages, PAE+LME+PG),
+  64-bit GDT, skok do 64-bitowego `kmain` (znak na VGA = pierwszy dowód życia). Paging
+  4-poziomowy (`AddressSpace`/`mmu` → 64-bit, NX) — rozwijane **TDD na hoście**.
+- **B:** `arch/x86_64/arch.mk`, `x86_64-elf` w Dockerze, `nasm -f elf64`,
+  `OUTPUT_FORMAT(elf64-x86-64)`, `qemu-system-x86_64`. Pusty `arch/x86_64` kompiluje się.
+- **C:** dokończenie pthread/musl na i686 (proving ground); **audyt blokad jądra** pod SMP
+  (gdzie są niejawne założenia jednoprocesorowości).
+- **D:** projekt ścieżki UEFI; analiza CSM EliteBooka jako bootstrap.
+- **F:** rdzeń USB host-testowalny (deskryptory, maszyny stanów, enumeracja) — bez sprzętu.
+- **G:** Strumień 0 governance (tag/legacy/`main`/`develop`); per-worktree build-infra; CI.
+- **I:** wdrożenie redesignu UI (glass/blur compositor z `.claude/nanoos-ui/`) na i686;
+  window management (snapping, alt-tab, dock/taskbar, spójne dekoracje). Praca userland,
+  rebuild pod x86_64 po Bramce Q2.
+- **J:** `nano-packages` jako równoległy produkt: domknąć testy serwera i `napcore`,
+  utrzymać 100% coverage host-testowalnej logiki, spisać kontrakt integracji z NanOS
+  (`NAP_CLIENT`, `/disks/main`, symlink targety, `NAP_REPO`).
+- **Bramka Q1:** x86_64 bootuje w QEMU, drukuje, ma paging 4-poziomowy (host-testy zielone);
+  redesign NanWM działa w QEMU (i686); `nap` server+client core zielone na hoście.
+
+### Q2 — Fundament: jądro x86_64 kompletne
+- **A:** GDT/IDT/TSS 64-bit (TSS 16 B, IST dla #DF/#PF), `isr/irq` z ręcznym zrzutem
+  rejestrów + `swapgs` + `iretq`, `syscall`/`sysret` (MSR LSTAR/STAR/FMASK), numery
+  syscalli x86_64. Klawiatura/PIT/IRQ działają. **`%fs.base` dla TLS user** (arch_prctl).
+- **B:** userland ABI: `crt0.S`/`libnanos`/`sigtramp` na System V AMD64; format `.nxe` v4
+  (adresy 64-bit, `R_X86_64_64`/`R_X86_64_32S`, niskie bazy <2 GiB), `mknx`/`NxeLoader`.
+  **`init.nxe` 64-bit działa.**
+- **E:** `ATA.S` 64-bit (drobne) — odtworzenie boot z ext4 na 64-bit.
+- **G:** MI cleanup LP64 (FrameAllocator, SyscallDispatch args→`uintptr_t`, Console hex 64-bit,
+  off_t/stat) — sterowane `-Wconversion`.
+- **J/B:** dodać target `x86_64-nanos` dla klienta `nap` i regułę Makefile bez uzależniania
+  `make image` od zewnętrznego repo; `nap.nxe` jest opcjonalnym artefaktem userland, nie blockerem
+  dla bootu kernela.
+- **Bramka Q2 (KAMIEŃ MILOWY):** x86_64 bootuje z ext4, `init.nxe`→`nsh` działa, klawiatura
+  i shell w QEMU. `arch/x86/` (i686) przechodzi w tryb referencyjny/legacy i może zostać
+  usunięty dopiero po Q4 bare-metal, jeśli x86_64 ma pełny parity smoke. Rebuild portów
+  odblokowany.
+
+### Q3 — Bring-up sprzętu: firmware + magazyn
+- **D:** UEFI realnie (GRUB `x86_64-efi` lub własny stub) + **GOP framebuffer**; ACPI MADT
+  (lista CPU dla SMP) + FADT (poweroff/reboot); GPT parsing; FAT (read) dla ESP.
+- **E:** PCIe enumeracja (ECAM/MMCONFIG); **AHCI/SATA** (EliteBook ma SATA); virtio-blk/net
+  (ścieżka QEMU). Partycje GPT zamontowane.
+- **B:** rolling rebuild portów: bash → grep/vim (czysta rekompilacja).
+- **F:** **xHCI** (rings, ERST, slot/endpoint) + integracja z przerwaniami x86_64.
+- **G:** projekt COW fork + demand paging (host-testowalny na `AddressSpace`).
+- **J:** pierwsze QEMU E2E `nap install hello`: dev-serwer Django na hoście (`10.0.2.2:8000`),
+  pakiet ZIP STORE, zapis do `/disks/main`, `nap list`, reboot persistence. To może działać
+  na i686 albo x86_64, ale kontrakt pakietu musi być już arch-aware.
+- **Bramka Q3:** boot UEFI+GOP w QEMU (OVMF); dysk przez AHCI/virtio; xHCI wykrywa urządzenia.
+
+### Q4 — Bring-up sprzętu: USB + NVMe + pierwszy bare-metal
+- **F:** USB core + **HID** (klawiatura/mysz USB) + **mass storage** (bulk-only, SCSI read).
+- **E:** **NVMe** (M.2 EliteBooka); rozszerzenie e1000 → **e1000e/I219-LM** (NIC EliteBooka).
+- **I:** integracja desktopu ze sprzętem: natywna rozdzielczość **GOP**, kursor/mysz przez
+  **USB-HID** (od F), apki Files/Settings/Terminal z trybu demo do produkcyjnych.
+- **D:** FAT write (zapis do ESP); pełny ACPI poweroff/reboot na sprzęcie.
+- **B:** rebuild portów sieciowych (inetutils/ping/wget), OpenSSL (NanOS/portable
+  x86_64 config, nie ABI Linuksa), Dropbear.
+- **G:** **PIERWSZE FLASHOWANIE NA ELITEBOOK** (CSM/Multiboot1 jako bootstrap, potem UEFI).
+  Lab sprzętowy: rig z EliteBookiem, serial/USB-debug, automatyczny flash z worktree `main`.
+- **J:** bare-metal smoke `nap list` + instalacja małego pakietu przez LAN, jeśli I219-LM działa;
+  fallback: instalacja z lokalnego ZIP-a na dysku/USB mass storage, żeby testować filesystem i DB
+  niezależnie od sieci.
+- **Bramka Q4 (KAMIEŃ MILOWY):** NanOS bootuje na **realnym EliteBooku** (ekran przez GOP,
+  klawiatura przez i8042 lub USB-HID, dysk przez AHCI/NVMe). Shell działa na bare-metal;
+  `nap` ma co najmniej jedną ścieżkę instalacji pakietu w labie (LAN albo lokalny ZIP).
+
+### Q5 — SMP: prawdziwa równoległość
+- **C:** AP startup (INIT-SIPI-SIPI wg ACPI MADT), per-CPU GS-base, **audyt→wdrożenie
+  spinlocków/mutexów** w całym jądrze (scheduler, alokatory, VFS, sieć), **scheduler SMP**
+  (per-CPU runqueue + load balancing), TLB shootdown (IPI).
+- **C:** pthread/musl z **prawdziwą równoległością** na 2–4 wątkach EliteBooka.
+- **G:** COW fork (zamiast eager copy) + demand paging — duży zysk wydajności fork/exec.
+- **J:** `nap remove`/`upgrade` w QEMU + bare-metal rig; format katalogu repo wersjonowany
+  tak, żeby porty x86_64 i ewentualne arch-independent assets mogły współistnieć.
+- **Bramka Q5:** 2+ rdzenie EliteBooka aktywne; równoległy benchmark pokazuje speedup;
+  stress-test scheduler/locki stabilny.
+
+### Q6 — Skala + hardening
+- **G:** page cache + mmap plików (zamiast pełnego odczytu); opcjonalnie swap.
+- **G:** **hardening:** W^X/NX wymuszone (bit NX z 64-bit), KASLR + ASLR, SMEP/SMAP,
+  stack canaries, separacja user/kernel audytowana.
+- **C/E:** strojenie wydajności pod realny sprzęt (cache, kolejki przerwań MSI/MSI-X).
+- **B:** rebuild cięższych portów: NetSurf/libnsfb (audyt arytmetyki offsetów FB), Doom
+  (sprawdzić 64-bit-clean), busybox.
+- **H:** projekt **modelu urządzeń zgodnego z Linuksem** + powierzchni LinuxKPI (mapowanie
+  prymitywów SMP/PCIe/DMA/IRQ z C i E na semantykę jądra Linuksa); szkielet shimu.
+- **J:** `nap` staje się oficjalnym kanałem instalacji portów: paczki dla bash/vim/doom/netsurf,
+  rollback po błędzie zapisu, sanity-check DB po crash/reboot. HTTPS/podpisy jako projekt Q7/Q8,
+  nie warunek MVP.
+- **Bramka Q6:** NX/ASLR aktywne i zweryfikowane; page cache mierzalnie przyspiesza I/O;
+  pełen ekosystem portów zbudowany 64-bit; `nap install` działa dla realnych portów;
+  powierzchnia LinuxKPI zaprojektowana.
+
+### Q7 — Daily-driver: peryferia EliteBooka
+- **G/E:** **Intel HDA audio** (kodek EliteBooka), **touchpad** (Synaptics PS/2 lub I2C-HID),
+  bateria/ACPI battery + lid + thermal (odczyt), podświetlenie/jasność.
+- **D:** ACPI sleep (S3) — stretch goal; co najmniej clean shutdown/reboot.
+- **G:** POSIX depth: epoll/poll/timerfd/eventfd, `inotify`-lite (dla realnych demonów).
+- **I:** finalny polish UX daily-driver: **touchpad** + gesty (od G), Settings sprzętowe
+  (jasność/audio/bateria), powiadomienia, schowek, fonty/theming, wydajność software-
+  compositora w natywnej rozdzielczości (do czasu akceleracji i915/LinuxKPI w Q8+).
+- **J:** UX pakietów: `nap` w Settings/Files/Terminal workflow, cache paczek, czytelne błędy
+  offline/ENOSPC/deps, opcjonalnie podpisy repo lub transport HTTPS jeśli OpenSSL jest gotowy.
+- **Bramka Q7:** EliteBook jako użyteczny desktop: dopracowany NanWM (touchpad, Settings,
+  powiadomienia), dźwięk, sieć, zarządzanie energią (poweroff/reboot/bateria), pakiety
+  instalowalne bez ręcznego modyfikowania obrazu.
+
+### Q8 — Dojrzałość: pakiety, self-hosting, stabilność
+- **J/G:** menedżer pakietów **`nap`** jako dojrzały kanał dystrybucji: registry w
+  `~/Projects/nano-packages`, katalog paczek dla portów, upgrade/remove regresyjnie testowane,
+  dokumentacja tworzenia paczek, mirror/dev-server dla labu.
+- **B/G:** **próba self-hostingu** — port gcc/binutils na NanOS, kompilacja prostego
+  programu on-device (klasyczny kamień dojrzałości; stretch).
+- **H:** **shim LinuxKPI + pierwszy sterownik przez rekompilację** — PoC: prosty linuksowy
+  NIC lub DRM `i915` (GPU EliteBooka) jako osobny moduł GPL. Dowód, że ścieżka reuse
+  działa; pełne sterowniki (WiFi `iwlwifi`, akceleracja GPU) jako follow-on po 1.0.
+- **G:** QA na skalę: CI matrix (QEMU + bare-metal rig), fuzzing syscalli/VFS,
+  stress/soak testy, dokumentacja użytkownika.
+- **Bramka Q8 (FINAŁ):** NanOS 1.0 „daily-driver" na EliteBooku — stabilny, z pakietami,
+  udokumentowany, z labem regresyjnym na realnym sprzęcie. W tym samym kwartale domykamy
+  bramki `proof`: próba self-hostingu oraz **ścieżka LinuxKPI udowodniona** (≥1 sterownik
+  Linuksa działa przez shim). Pełne WiFi `iwlwifi` i akceleracja/modeset `i915` zostają w
+  roadmapie jako follow-on po 1.0, nie jako usunięte funkcje.
+
+---
+
+## 5. Macierz sterowników — HP EliteBook 820 G3 (Skylake)
+
+| Podsystem | Sprzęt EliteBooka | Strumień | Kwartał | Ryzyko / uwaga |
+|---|---|---|---|---|
+| Boot | UEFI (Class 2, **CSM dostępny**) | D | Q3–Q4 | CSM+Multiboot1 = tani bootstrap; UEFI właściwe potem |
+| Ekran | Intel HD Graphics 520, **GOP** | D | Q3 | framebuffer GOP od Q3; akceleracja/modeset przez **DRM `i915`/LinuxKPI** (H, Q8+) |
+| Klawiatura | i8042 (PS/2, EC) | (jest) / F | Q4 | **NanOS już ma PS/2** → klawiatura „za darmo"; USB-HID jako backup |
+| Touchpad/pointstick | Synaptics (PS/2 lub I2C-HID) | G | Q7 | I2C-HID trudniejsze; PS/2 prostsze |
+| Magazyn | SATA (AHCI) + M.2 (SATA/NVMe) | E | Q3–Q4 | AHCI najpierw; NVMe zależnie od konfiguracji egzemplarza |
+| Sieć LAN | **Intel I219-LM** | E | Q4 | rozszerzenie istniejącego e1000 → e1000e/I219 |
+| WiFi | Intel Wireless-AC 8260 | H | Q8+ | od zera poza zakresem; realne przez **`iwlwifi`/LinuxKPI** jako follow-on po 1.0 |
+| USB | Intel **xHCI** (USB 3.0) | F | Q3–Q4 | mandatory: storage do flashowania, mysz |
+| Audio | Intel HDA (kodek) | G | Q7 | stretch; klasyczny HDA |
+| Zasilanie | ACPI (bateria/lid/thermal/S3) | D/G | Q7 | poweroff/reboot pewne; S3 stretch |
+| CPU | 2 rdzenie / 4 wątki | C | Q5 | SMP daje realny speedup |
+
+---
+
+## 6. Zależności krytyczne (ścieżka)
+
+```
+Strumień 0 (governance)  ──┐ (dzień 1, nieblokujące)
+                           │
+A: x86_64 boot ─→ paging ─→ przerwania ─→ syscall ──┬─→ [Bramka Q2: init.nxe 64-bit]
+                                                    │
+B: toolchain ─────────────→ ABI/.nxe v4 ───────────┘ ─→ rebuild portów (długi ogon, równoległy)
+                                                    │
+                          (po Bramce Q2 / jądro 64-bit gotowe)
+                                                    │
+                        ┌───────────────────────────┼───────────────────────────┐
+                        ↓                            ↓                            ↓
+        D: UEFI/GOP/ACPI            E: PCIe/AHCI/NVMe/virtio        F: xHCI/HID/storage
+                        └───────────────┬───────────┴───────────────┬───────────┘
+                                        ↓                           ↓
+                            [Bramka Q4: bare-metal EliteBook]   C: SMP (po jądrze 64-bit)
+                                        ↓                           ↓
+                                  G: MM/hardening/peryferia/QA  ─→  [Bramka Q8: daily-driver 1.0]
+                                                    │
+                                                    └─→ J: nap registry/client ─→ paczki portów ─→ upgrade/remove QA
+```
+
+Komponenty **host-testowalne / MI** (rdzeń USB, COW na `AddressSpace`, audyt blokad,
+dokończenie pthread, cleanup LP64, `napcore`/registry) ruszają **od dnia 1** równolegle
+do krytycznej ścieżki A.
+
+---
+
+## 7. Główne ryzyka
+
+| Ryzyko | Wpływ | Mitygacja |
+|---|---|---|
+| Krytyczna ścieżka A wąska (5 os.) blokuje resztę | wysoki | maks. praca MI/host-testowalna przed Bramką Q2; A nie czeka na nic |
+| Model kodu `.nxe` / relokacje 64-bit (jedyna niemechaniczna decyzja) | wysoki | niskie bazy <2 GiB + model small + `R_X86_64_64`/`R_X86_64_32S` (wg analizy x64 §5.4 #1) |
+| `%fs.base`/TLS + asymetria SSE (kernel `-mno-sse`, user wymaga SSE) | średni | wzorce znane; testy wcześnie; flagi w `arch.mk` (x64 §5.4 #2,#3) |
+| Red zone / `swapgs` / adresy kanoniczne w ścieżce przerwań | średni | review asm, IST dla #DF, testy fault na sprzęcie |
+| SMP locking — niejawne założenia jednoprocesorowości | wysoki | audyt Q1 przed wdrożeniem; stress-testy; Big Kernel Lock jako etap pośredni |
+| Realny sprzęt ≠ QEMU (warianty firmware/peryferiów) | wysoki | lab z EliteBookiem od Q4; CSM bootstrap; serial debug; konkretny egzemplarz referencyjny |
+| 30 agentów × współdzielona build-infra | średni | per-worktree obraz/socket/kontener (Strumień 0, Q1) |
+| Rebuild ~12 portów (dominujący koszt kalendarzowy) | średni | równoległy, odseparowany od kernela; rusza po Bramce Q2; ryzyko rozproszone |
+| **`nap` multi-repo drift** (`nano-packages` vs NanOS ABI/ścieżki/syscalle) | średni | jawny kontrakt `NAP_CLIENT`, QEMU E2E od Q3, osobna bramka x86_64 targetu po Q2, testy hostowe `napcore`/server |
+| **LinuxKPI ogromny zakres** (FreeBSD budował latami) | wysoki | model urządzeń „Linux-shaped" od Q3–Q4 → cienki shim; tylko PoC w zakresie 1.0, reszta follow-on |
+| **Licencja GPL** sterowników Linuksa | średni | LinuxKPI'd sterowniki jako osobne moduły GPL (wzorzec `drm-kmod`); granica = interfejs shimu |
+
+---
+
+## 8. Weryfikacja (per CLAUDE.md + lab)
+
+- **Host:** `make test` (doctest, ≥90% lcov) — rdzeń USB, COW, paging 4-poziomowy,
+  `NxeLoader` v4 rozwijane TDD bez sprzętu.
+- **Nap host:** w `~/Projects/nano-packages`: server coverage dla Django registry oraz
+  `cargo llvm-cov` dla `napcore`; urządzeniowy crate `nap` weryfikowany przez QEMU E2E.
+- **QEMU:** `qemu-system-x86_64` headless screendump + `-d int` fault grep; OVMF dla UEFI.
+- **Bare-metal:** lab z EliteBookiem (Strumień G, od Q4) — automatyczny flash z worktree
+  `main`, serial/USB-debug, testy regresyjne na realnym sprzęcie przed każdą promocją do `main`.
+- **CI:** `develop` bramkowane host+QEMU; `main` bramkowane dodatkowo bare-metal rig.
+
+---
+
+## 9. Pierwsze akcje (sprint 0)
+
+1. **Governance (AKCJA #1):** tag `original-zero-ai-2026-02-05` + `legacy/original-zero-ai`
+   + push + branch protection (sekcja 2.2). **Przed jakimkolwiek ruchem `master`.**
+2. Utworzyć `main` (z zazielenionego `feat/pthread`) i `develop`; spisać konwencję worktree.
+3. Per-worktree build-infra (obraz/socket/kontener parametryzowane) — odblokowuje 30 agentów.
+4. `arch/x86_64/arch.mk` + `x86_64-elf` w Dockerze (pusty arch kompiluje się).
+5. Skonsolidować literały okien VA do kontraktu `arch/mmu.h` (przygotowanie pod 64-bit).
+6. `nano-packages`: utrwalić baseline gałęzi `feat/nap-mvp`, spisać kontrakt z NanOS
+   (`NAP_CLIENT`, ścieżki `/disks/main`, default `NAP_REPO`), dodać plan integracji
+   x86_64 targetu po Bramce Q2.
+7. Per-strumień: rozpisać Q1 na zadania TDD bite-sized (osobne plany w `plans/`).
