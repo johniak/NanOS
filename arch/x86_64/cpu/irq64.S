@@ -1,11 +1,15 @@
 ; arch/x86_64/cpu/irq64.S — x86-64 hardware-IRQ entry stubs (vectors 32..47) + dispatch.
 ; Same manual-save / swapgs / iretq shape as isr64.S, but dispatches to irq_handler (which
-; sends the PIC EOI). Scheduler-driven deferred preemption is NOT wired here (no scheduler in
-; Plan 4); it returns in a later plan, mirroring i686 irq.S's schedPreempt hook.
+; sends the PIC EOI). Scheduler-driven deferred preemption IS wired here now (mirroring i686
+; irq.S's schedPreempt hook): on the way back to ring 3, irq_common_stub calls schedPreempt so a
+; quantum-expired user task is involuntarily preempted. Without this, a CPU-/syscall-bound user
+; task (e.g. a busy-looping daemon) never yields and starves every other task — including the net
+; softirq thread and the console — under the otherwise cooperative scheduler.
 
 bits 64
 
 extern irq_handler
+extern schedPreempt
 
 %macro IRQ 2
   global irq%1
@@ -57,6 +61,17 @@ irq_common_stub:
     mov rdi, rsp          ; arg0 = kernel::Registers*
     cld
     call irq_handler
+
+    ; Deferred preemption: switch tasks ONLY on the way back to ring 3, where the kernel stack
+    ; holds a full, clean trap frame. With the 15 GP regs still pushed, the saved CS sits at
+    ; [rsp + 15*8 + int_no(8) + err_code(8) + RIP(8)] = [rsp+144]. Skip when returning to ring 0
+    ; (kernel is never preempted mid-instruction). schedPreempt may context-switch; on resume we
+    ; fall through to the pops below, so every GP reg (incl. schedPreempt's caller-saved clobbers)
+    ; is restored from the stack before iretq. GS is still the kernel GS here (swapgs is below).
+    test byte [rsp + 144], 3
+    jz .no_preempt
+    call schedPreempt
+.no_preempt:
 
     pop r15
     pop r14
