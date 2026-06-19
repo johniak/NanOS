@@ -197,11 +197,12 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [ ] **dropbear `ssh host cmd` teardown linger** — the command's shell becomes an unreaped zombie; the
       session-child spins on `read()` of a never-EOF pipe. No longer wedges the box (preemption contains
       it) but hogs ~½ CPU and degrades new connections. Narrow, dropbear-pipe-close vs NanOS pipe-EOF. *(medium)*
-- [ ] **NanWM desktop apps are NOT built for x86_64.** `X64_GUI_PROGS=nwm` ships ONLY the compositor;
-      the i686 desktop apps — `nwexp` (Files/explorer), `nwterm` (terminal), `nwset` (Settings), `nwnote`,
-      `nwform`, `nwabout` — are absent from `X64_USER_PROGS`, so `make image64` never builds/installs them.
-      The x86_64 GUI is compositor-only today (and `nwm` itself is only assumed-good — on-screen mouse
-      input never verified). Porting + on-screen verifying the apps is a real completeness gap. *(medium)*
+- [x] **NanWM desktop apps now build + install + run on x86_64** (commit e76da9d). Their recipes were
+      i686-only (`$(MKNX)` + `user/nx.ld`); fixed to `$(MKNX_TOOL)`/`$(USER_NX_LD)`, added `X64_GUI_APPS`,
+      installed as `/apps/<name>/` bundles (where nwm spawns them). VERIFIED on screen: `nwm` starts and
+      **Files (nwexp) reads /disks/main, Settings (nwset) + NetSurf render; Terminal (nwterm) spawns.** ✅
+      *(Residual: `nwterm` was occluded behind other windows — not individually surfaced headless; mouse
+      input precision via QEMU monitor PS/2 is unreliable, so on-screen mouse interaction stays unverified.)*
 
 **B. Verification debt (we don't actually know these work):**
 - [ ] No MD (`arch/x86_64`) automated coverage — context switch, fork, syscall entry, e1000 kext.
@@ -252,7 +253,10 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
    is one reproducible command, not 13 subagent reports.
 9. Spot-verify the assumed-good apps (bzip2, grep) and NanWM mouse input, on screen, once.
 
-**Phase 2b — port the NanWM desktop to x86_64 (§7 A: compositor-only today):**
+**Phase 2b — port the NanWM desktop to x86_64 — DONE (commit e76da9d), except residual mouse verify:**
+- [x] 10–11 DONE: apps added to `X64_GUI_APPS`, recipes made arch-correct, built clean, installed as
+  `/apps/<name>/` bundles. 12 DONE for Files/Settings/NetSurf (rendered on screen); `nwterm` spawned but
+  occluded — on-screen mouse interaction (raise/click a window) still unverified (QEMU PS/2 imprecision).
 10. **Add the desktop apps to the x64 build set:** put `nwexp` (Files), `nwterm` (terminal), `nwset`
     (Settings), `nwnote`, `nwform`, `nwabout` into `X64_GUI_PROGS` (Makefile), plus any libs they pull
     that `nwm` doesn't already (e.g. the `vt` terminal core / ncurses for `nwterm`). One app at a time —
