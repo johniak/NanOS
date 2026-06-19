@@ -744,7 +744,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-usb verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-usb verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -760,10 +760,14 @@ smoke-x86_64: image64
 smoke-usb: image64
 	bash scripts/smoke-usb.sh
 
-# `verify64` = the full x86_64 gate: host tests (test64) + the ATA MD boot smoke + the live-USB
-# boot smoke. One command answers "does x86_64 still work end-to-end" — MI logic AND both boot paths.
-verify64: test64 smoke-x86_64 smoke-usb
-	@echo "x86_64 verify: host tests + ATA boot smoke + live-USB boot smoke all passed."
+# `smoke-uefi` boots the GPT image under edk2/OVMF firmware (UEFI) so BOOTX64.EFI -> Limine -> kernel
+# is exercised — the other half of the dual-firmware boot (smoke-x86_64 covers BIOS/SeaBIOS).
+smoke-uefi: image64
+	bash scripts/smoke-uefi.sh
+
+# `verify64` = the full x86_64 gate: host tests (test64) + BIOS + UEFI + live-USB boot smokes.
+verify64: test64 smoke-x86_64 smoke-uefi smoke-usb
+	@echo "x86_64 verify: host tests + BIOS + UEFI + live-USB boot smokes all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
