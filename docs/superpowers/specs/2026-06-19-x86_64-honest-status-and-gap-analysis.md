@@ -312,13 +312,26 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [ ] 13b. VA-window ceiling (>1 GiB) still unexercised — the documented carry-forward gate before
   large-RAM / heavy multiprocess. Low priority until that workload exists.
 
-**Phase 4 — cut-over (only after Phases 1–3 are green):**
-14. Default `ARCH=x86_64`; delete `arch/x86` + i686 toolchain layers; collapse arch-guards; update docs.
+**Phase 4 — cut-over: SPLIT, and the deletion DEFERRED (decision 2026-06-19).**
+The cut-over is two separable steps with very different risk:
+- (a) flip default `ARCH ?= x86_64` — cheap, reversible, low risk. Available whenever wanted.
+- (b) delete `arch/x86` + i686 toolchains + collapse arch-guards — expensive, ONE-WAY, and it
+  destroys the i686 differential-debugging reference that found EVERY MD bug this session
+  (preempt/fault/signal were all "mirror i686"). **DEFERRED** — the MI/MD split means `arch/x86`
+  sitting there unbuilt costs nothing, so it stays as a frozen reference + fallback until x86_64
+  burns in. Risk analysis: losing the oracle + young `verify64` + unknown latent x64 stubs (the
+  ">1 GiB VA ceiling" is one known-open) + no fallback outweigh the only gain (less code).
 
-**Sequencing rule:** Phase 1's TCP gate is now CLEARED (§3a resolved); the cut-over is gated on Phase 2
-(verification debt) + Phase 2b (the desktop is compositor-only). The dropbear teardown linger (§7-A) is
-non-catastrophic and need not block cut-over. The "100% done" claim stays dishonest until Phases 2–2b are
-green and verified on screen.
+> **POLICY — i686 is FROZEN (decision 2026-06-19).** No new development, ports, fixes, or features
+> target i686. **x86_64 is the sole development architecture.** `arch/x86` + the i686 toolchain are
+> KEPT (not deleted) ONLY as a frozen reference / debugging oracle / fallback — never extended.
+> i686 building or being green is explicitly NOT a gate and NOT maintained. New in-tree code may
+> assume x86_64; do not spend effort keeping i686 working. Revisit deleting `arch/x86` only after
+> x86_64 has burned in (more `verify64` runs, the remaining gaps closed).
+
+**Remaining before considering deletion (b):** port the i686-only in-tree helpers that still matter
+to x86_64 — `nanologin` (telnet/ssh login), `dhcpcfg` (DHCP script helper), `nterm` (console
+terminal); burn in `verify64`; close the >1 GiB VA-window ceiling if large-RAM/multiprocess is wanted.
 
 ---
 
