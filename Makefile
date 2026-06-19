@@ -736,6 +736,27 @@ test: test-image
 coverage: test-image
 	$(TEST_DOCKER_RUN) make ARCH=$(ARCH) _coverage
 
+# --- x86_64 verification gate (Phase 2 of the migration plan) --------------------------------
+# `test64` runs the host doctest suite for ARCH=x86_64 — same MI tests as `make test` PLUS the
+# 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
+# host gate into a single routine command so the 64-bit paging math is checked every run, not
+# only when someone remembers to pass ARCH=x86_64.
+.PHONY: test64 smoke-x86_64 verify64
+test64: test-image
+	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
+
+# `smoke-x86_64` is the MACHINE-DEPENDENT half host tests can't reach: build the x86_64 disk image
+# and boot it in QEMU headless, asserting the whole MD path came up with zero faults (long-mode,
+# GDT/IDT/paging, ATA+ext4 JBD2 write, e1000/net, scheduler, ring-3 fork/exec). Native QEMU on the
+# host; the build runs in Docker via the image64 dep.
+smoke-x86_64: image64
+	bash scripts/smoke-x86_64.sh
+
+# `verify64` = the full x86_64 gate: host tests (test64) + the MD boot smoke. One command answers
+# "does x86_64 still work end-to-end" — MI logic AND the real boot path.
+verify64: test64 smoke-x86_64
+	@echo "x86_64 verify: host tests + MD boot smoke both passed."
+
 clean:
 	$(DOCKER_RUN) make _clean
 	-rm -rf iso/ nanos.iso $(IMAGE_GRUB2) coverage/
