@@ -252,15 +252,29 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
    is one reproducible command, not 13 subagent reports.
 9. Spot-verify the assumed-good apps (bzip2, grep) and NanWM mouse input, on screen, once.
 
+**Phase 2b — port the NanWM desktop to x86_64 (§7 A: compositor-only today):**
+10. **Add the desktop apps to the x64 build set:** put `nwexp` (Files), `nwterm` (terminal), `nwset`
+    (Settings), `nwnote`, `nwform`, `nwabout` into `X64_GUI_PROGS` (Makefile), plus any libs they pull
+    that `nwm` doesn't already (e.g. the `vt` terminal core / ncurses for `nwterm`). One app at a time —
+    start with `nwexp` (simplest, file-list) then `nwterm` (most complex: PTY + vt).
+11. **LP64-clean each app** with the same rules as the rest of the port: `-fno-pie -fno-PIC`, 8-byte
+    long/ptr/size_t, no pointer truncation in the compositor IPC / draw calls; run the per-file LP64
+    truncation check (§ the `make` LP64 guard). Fix per-app until it links + mknx's clean.
+12. **Verify ON SCREEN** (graphical `make run64` + screendump, not headless): `nwm` starts, each app opens,
+    draws, and takes **mouse + keyboard** input (the input path `nwm` itself has never had verified on x64).
+    Capture one screenshot per app as the evidence. This also discharges the §7-A "nwm assumed-good" item.
+
 **Phase 3 — audit the flagged kernel concerns:**
-10. Audit the VA-window ceiling, `adoptKernelDirectory` privatization, and address-space teardown for
+13. Audit the VA-window ceiling, `adoptKernelDirectory` privatization, and address-space teardown for
     the page-table leak (§6.2). Add a stress test (spawn/exit many processes; watch free-frame count).
 
 **Phase 4 — cut-over (only after Phases 1–3 are green):**
-11. Default `ARCH=x86_64`; delete `arch/x86` + i686 toolchain layers; collapse arch-guards; update docs.
+14. Default `ARCH=x86_64`; delete `arch/x86` + i686 toolchain layers; collapse arch-guards; update docs.
 
-**Sequencing rule:** Phase 1 is the gate. Everything "works" except TCP, and TCP is a core subsystem —
-the cut-over and the "100% done" claim are not honest until §3 is fixed and I have verified it myself.
+**Sequencing rule:** Phase 1's TCP gate is now CLEARED (§3a resolved); the cut-over is gated on Phase 2
+(verification debt) + Phase 2b (the desktop is compositor-only). The dropbear teardown linger (§7-A) is
+non-catastrophic and need not block cut-over. The "100% done" claim stays dishonest until Phases 2–2b are
+green and verified on screen.
 
 ---
 
