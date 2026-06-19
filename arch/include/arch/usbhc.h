@@ -36,6 +36,10 @@ struct UsbHcOps {
     // Submit a transfer; for the poll model, run it to completion (or until timeout) and fill result.
     int  (*submit)(UsbHc*, UsbTransfer*);
     int  (*portCount)(UsbHc*);
+    // Non-blocking interrupt-IN poll (HID): arms one transfer on first call and, on later calls,
+    // returns >0 (bytes, into t->data) once a report has arrived and re-arms, 0 if not yet ready,
+    // <0 on error. Never blocks — an idle HID endpoint just returns 0 (the caller yields and retries).
+    int  (*intPoll)(UsbHc*, UsbTransfer*);
 };
 
 // The MD driver registers (hc, ops); MI core fetches the current HC. One HC for now.

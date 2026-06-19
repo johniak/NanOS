@@ -7,6 +7,7 @@
 #include "UsbCore.h"            // USB enumeration (in-kernel storage path for live-USB root)
 #include "UsbMsc.h"
 #include "UsbMscBlockDevice.h"
+#include "UsbHidInput.h"        // in-kernel USB-HID keyboard/mouse -> existing evdev
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
 #include "Ext4Filesystem.h"
@@ -89,32 +90,26 @@ static unsigned firstPartitionLba(BlockDevice* dev) {
 // bind any Mass-Storage interface to a UsbMsc + UsbMscBlockDevice, register it, and return the
 // first one found (the live-USB root candidate). No-op (returns null) if no controller / no device.
 static BlockDevice* usbStorageDiscover() {
-	const arch::UsbHcOps* ops = arch::usbHcOps();
-	if (!ops)
-		return 0;
 	BlockDevice* first = 0;
-	int ports = ops->portCount(arch::usbHc());
-	for (int p = 1; p <= ports; p++) {
-		UsbDevice dev;
-		if (usbEnumeratePort(p, &dev) != 0)
-			continue;
+	for (int i = 0; i < usbDeviceCount(); i++) {
+		const UsbDevice* dev = usbDeviceAt(i);
 		bool isMsc = false;
-		for (int i = 0; i < dev.numInterfaces; i++)
-			if (dev.iface[i].bInterfaceClass == USB_CLASS_MASS_STORAGE)
+		for (int j = 0; j < dev->numInterfaces; j++)
+			if (dev->iface[j].bInterfaceClass == USB_CLASS_MASS_STORAGE)
 				isMsc = true;
 		if (!isMsc)
 			continue;
 		int epIn = 0, epOut = 0;
-		for (int i = 0; i < dev.numEndpoints; i++) {
-			unsigned char a = dev.endpoint[i].bEndpointAddress;
-			if ((dev.endpoint[i].bmAttributes & 0x3) == 2) {   // bulk endpoint
+		for (int j = 0; j < dev->numEndpoints; j++) {
+			unsigned char a = dev->endpoint[j].bEndpointAddress;
+			if ((dev->endpoint[j].bmAttributes & 0x3) == 2) {   // bulk endpoint
 				if (a & 0x80) epIn = a; else epOut = a;
 			}
 		}
 		if (!epIn || !epOut)
 			continue;
 		UsbMsc* msc = new UsbMsc();
-		if (usbMscInit(msc, dev.slot, epIn, epOut) != 0)
+		if (usbMscInit(msc, dev->slot, epIn, epOut) != 0)
 			continue;
 		uint32_t blocks = 0, bsize = 0;
 		if (usbMscReadCapacity(msc, &blocks, &bsize) != 0)
@@ -316,6 +311,7 @@ void Kernel::start() {
 	// is compiled into the kernel (same root-driver-in-kernel rule as ATA). No-op if absent.
 	okBegin("USB host controller (xHCI)");
 	arch::usbHostInit();
+	usbEnumerateAll();   // enumerate every USB port once into the registry (storage + HID read it)
 	okEnd();
 
 	// Storage stack: register the arch boot disk as a block device, register the
@@ -439,6 +435,12 @@ void Kernel::start() {
 	netBringUp();
 	okEnd();
 	Console::writeLine("       eth0 10.0.2.15/24 gw 10.0.2.2 (static; udhcpc refines it at init)");
+
+	// USB-HID input: if a USB keyboard/mouse enumerated, start the poll thread feeding the
+	// existing evdev devices (keyboard -> /dev/input0, mouse -> /dev/input<N>). NanWM unchanged.
+	okBegin("USB-HID input (keyboard/mouse)");
+	usbHidInit();
+	okEnd();
 
 	okBegin("Timer 1000 Hz + starting shell/services");
 	arch::archTimerInit(1000);

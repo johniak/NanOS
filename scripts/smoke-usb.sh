@@ -2,9 +2,9 @@
 # smoke-usb.sh — the live-USB boot smoke: boot with the ENTIRE root filesystem on a USB
 # mass-storage device (no -drive disk), and assert the kernel's in-kernel USB storage path
 # (xHCI + USB core + MSC) discovered the controller, mounted /disks/main over USB-MSC, reached
-# the shell, ran a ring-3 fork/exec, and took ZERO faults. (usb-kbd / usb-mouse + the HID-into-NanWM
-# assertions are added once the usbhid kext lands — Task 6; attaching a usb-kbd now would only
-# steal the monitor's sendkey input since nothing drives it yet.)
+# the shell, ran a ring-3 fork/exec, and took ZERO faults. A usb-kbd + usb-mouse are attached and
+# driven by the in-kernel USB-HID module: the console fork/exec below is typed THROUGH the USB
+# keyboard (QEMU routes sendkey to it), so a green fork/exec assertion also proves USB-HID input.
 #
 # Usage: scripts/smoke-usb.sh              (boots disk/image64-grub2.img as a USB stick; build first)
 # Exit 0 = PASS, non-zero = FAIL (offending serial/int lines printed).
@@ -23,6 +23,7 @@ pkill -9 -f "qemu-system-x86_64.*$USBIMG" 2>/dev/null
 qemu-system-x86_64 -cpu qemu64 -m 512 \
     -drive if=none,id=usbstick,file="$USBIMG",format=raw \
     -device qemu-xhci -device usb-storage,drive=usbstick \
+    -device usb-kbd -device usb-mouse \
     -netdev user,id=n0 -device e1000,netdev=n0 \
     -display none -serial file:"$SER" -monitor unix:"$MON",server,nowait \
     -no-reboot -d int,cpu_reset -D "$INT" &
@@ -68,7 +69,8 @@ chk "xHCI: "                                  "xHCI controller discovered"
 chk "Root: USB mass-storage device"           "root discovery picked the USB volume"
 chk "Mounting ext filesystem at /disks/main"  "/disks/main mounted over USB-MSC"
 chk "bash-5"                                  "reached the login shell on a USB-only system"
-chk "USB_SMOKE_FORK_OK"                        "ring-3 fork/exec from console on the USB root"
+chk "USB-HID:"                                 "USB-HID keyboard/mouse module came up"
+chk "USB_SMOKE_FORK_OK"                        "ring-3 fork/exec typed THROUGH the USB keyboard (USB-HID input works)"
 no  "CPU EXCEPTION|KERNEL EXCEPTION|killed faulting process|Triple fault"  "no faults on the console"
 if grep -qE "Triple fault" "$INT" 2>/dev/null; then echo "  FAIL: QEMU logged a Triple fault"; PASS=0; else echo "  OK  : no triple fault in QEMU int log"; fi
 

@@ -39,6 +39,12 @@ public:
 	// Consume one raw PS/2 byte; `now_us` stamps any events emitted by a completed packet.
 	void feed(unsigned char byte, unsigned long long now_us);
 
+	// Emit one evdev event directly (the in-kernel USB-HID path already has decoded dx/dy/buttons
+	// and bypasses PS/2 packet assembly).
+	void event(unsigned short type, unsigned short code, int value, unsigned long long now_us) {
+		push(type, code, value, now_us);
+	}
+
 private:
 	void push(unsigned short type, unsigned short code, int value, unsigned long long now_us);
 

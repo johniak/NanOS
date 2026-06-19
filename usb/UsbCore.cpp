@@ -42,6 +42,21 @@ int usbEnumeratePort(int port, UsbDevice* out) {
     if (setConfiguration(out->slot, out->configValue) < 0) return -1;
     return 0;
 }
+static UsbDevice g_devs[8];
+static int g_devCount = 0;
+int usbEnumerateAll() {
+    auto ops = arch::usbHcOps();
+    g_devCount = 0;
+    if (!ops) return 0;
+    int ports = ops->portCount(arch::usbHc());
+    for (int p = 1; p <= ports && g_devCount < 8; p++) {
+        UsbDevice d;
+        if (usbEnumeratePort(p, &d) == 0) g_devs[g_devCount++] = d;
+    }
+    return g_devCount;
+}
+int usbDeviceCount() { return g_devCount; }
+const UsbDevice* usbDeviceAt(int i) { return (i >= 0 && i < g_devCount) ? &g_devs[i] : 0; }
 }  // namespace kernel
 
 namespace arch {

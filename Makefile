@@ -11,7 +11,7 @@ MI_SOURCES+= Syscall.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelEx
 MI_SOURCES+= Pci.o
 MI_SOURCES+= Net.o NetBuf.o NetDevice.o Loopback.o NetCore.o Ether.o Arp.o Ip.o Route.o Icmp.o
 MI_SOURCES+= Socket.o Udp.o Raw.o Tcp.o Packet.o Unix.o NetProc.o NetStats.o
-MI_SOURCES+= UsbCore.o UsbHid.o UsbMsc.o UsbMscBlockDevice.o
+MI_SOURCES+= UsbCore.o UsbHid.o UsbMsc.o UsbMscBlockDevice.o UsbHidInput.o MouseDevice.o
 MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 # Full link set = portable objects + the selected arch's machine-dependent objects.
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
@@ -875,10 +875,10 @@ LD=$(CROSS)gcc
 
 # Sources live in layered directories; let make find them by basename. The MI
 # dirs are fixed; the arch's dirs come from ARCH_VPATH (arch/$(ARCH)/...).
-VPATH=init:kernel:drivers:fs:fs/ext:mm:lib:net:usb:$(ARCH_VPATH)
+VPATH=init:kernel:drivers:fs:fs/ext:mm:lib:net:usb:kext/mouse:$(ARCH_VPATH)
 # Kernel include path: the MI code dirs + the arch contracts (arch/include) + the
 # selected arch's headers (ARCH_INCLUDES) + the freestanding <string.h> in include/.
-KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iinclude -Iuser/term $(ARCH_INCLUDES)
+KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Ikext/mouse -Iinclude -Iuser/term $(ARCH_INCLUDES)
 
 # Optimization. -O2 is the single biggest performance win for the target (it was all -O0): pixel
 # loops get inlined and the ~10x interpreter-style overhead disappears. Two safety flags make -O2

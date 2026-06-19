@@ -50,7 +50,8 @@ const int RING_TRBS = 64;   // per ring (1 KiB); last entry is a Link TRB back t
 const int EVT_TRBS  = 64;   // event ring segment size.
 const int MAX_SLOTS = 16;   // tracked device slots.
 
-struct EpRing { Trb* ring; int enq; int cycle; };
+struct EpRing { Trb* ring; int enq; int cycle;
+                uint64_t armed; bool ready; bool err; int residual; };   // intPoll: outstanding TRB + completion
 struct SlotState { uint8_t* devCtx; uint8_t* inputCtx; EpRing ep[32]; };
 
 volatile uint8_t* g_mmio = 0;
@@ -118,6 +119,17 @@ bool eventPoll(Trb* out) {
         ioWaitSpin();
     }
     return false;
+}
+
+// Non-blocking single event check: returns true + the event if one is ready, false otherwise.
+bool eventPollNB(Trb* out) {
+    Trb* e = &g_evt[g_evtDeq];
+    if ((int)(e->control & 1) != g_evtCycle) return false;
+    *out = *e;
+    g_evtDeq++;
+    if (g_evtDeq == EVT_TRBS) { g_evtDeq = 0; g_evtCycle ^= 1; }
+    wrt64(RT_IR0 + IR_ERDP, phys(&g_evt[g_evtDeq]) | (1ull << 3));
+    return true;
 }
 
 // Execute a command-ring command; returns completion code (1 = success) and slot id via *slot.
@@ -310,6 +322,48 @@ int xhciSubmit(UsbHc*, UsbTransfer* t) {
 
 // Configure a bulk/interrupt endpoint: allocate its transfer ring, set its EP context, and issue
 // a Configure Endpoint command (bumping the slot's Context Entries to cover the new DCI).
+// Drain all currently-pending transfer events into the per-EP completion records (so events for
+// any armed interrupt endpoint are captured regardless of which EP the caller is polling).
+void drainTransferEvents() {
+    Trb ev;
+    while (eventPollNB(&ev)) {
+        if (((ev.control >> 10) & 0x3F) != TRB_TRANSFER_EVENT) continue;
+        for (int s = 0; s < MAX_SLOTS; s++)
+            for (int d = 0; d < 32; d++) {
+                EpRing& r = g_slots[s].ep[d];
+                if (r.armed && r.armed == ev.param) {
+                    int cc = (ev.status >> 24) & 0xFF;
+                    r.err = (cc != 1 && cc != 13);            // 1=success, 13=short packet
+                    r.residual = (int)(ev.status & 0xFFFFFF);
+                    r.ready = true; r.armed = 0;
+                }
+            }
+    }
+}
+
+// Non-blocking interrupt-IN poll: arm one Normal TRB if none outstanding; return bytes once a
+// report has arrived (re-arming next call), 0 if not ready, <0 on error.
+int xhciIntPoll(UsbHc*, UsbTransfer* t) {
+    if (t->slot <= 0 || t->slot >= MAX_SLOTS) return -1;
+    SlotState& s = g_slots[t->slot];
+    int dci = dciOf(t->endpoint);
+    EpRing& r = s.ep[dci];
+    if (!r.ring) return -1;
+    drainTransferEvents();
+    if (r.ready) {
+        r.ready = false;
+        if (r.err) { t->result = -1; t->complete = 1; return -1; }
+        int n = (int)t->len - r.residual;
+        t->result = n; t->complete = 1;
+        return n;
+    }
+    if (!r.armed) {
+        r.armed = ringPush(r, phys(t->data), t->len, (TRB_NORMAL << 10) | (1 << 2) | (1 << 5));
+        g_db[t->slot] = (uint32_t)dci;
+    }
+    return 0;
+}
+
 int xhciConfigureEndpoint(UsbHc*, int slot, int endpoint, UsbXfer type, UsbDir dir, int maxPacket) {
     if (slot <= 0 || slot >= MAX_SLOTS) return -1;
     SlotState& s = g_slots[slot];
@@ -324,7 +378,10 @@ int xhciConfigureEndpoint(UsbHc*, int slot, int endpoint, UsbXfer type, UsbDir d
     slotIn[0] = (slotDev[0] & ~(0x1Fu << 27)) | ((uint32_t)dci << 27);   // Context Entries = dci
     slotIn[1] = slotDev[1];
     uint32_t* ep = ctxAt(s.inputCtx, dci + 1);
-    ep[0] = 0;
+    // Interval (EP Context dword0 bits 23:16): period = 2^Interval * 125us microframes. Interrupt
+    // endpoints MUST have a valid interval or the controller never schedules periodic transfers;
+    // ~8ms (Interval=6) suits a boot keyboard/mouse. Bulk ignores this field.
+    ep[0] = (type == USB_INT) ? (6u << 16) : 0;
     ep[1] = ((uint32_t)epTypeOf(type, dir) << 3) | (3 << 1) /*CErr*/ | ((uint32_t)maxPacket << 16);
     ep[2] = (uint32_t)(phys(s.ep[dci].ring) & ~0xFull) | 1 /*DCS*/;
     ep[3] = (uint32_t)(phys(s.ep[dci].ring) >> 32);
@@ -333,7 +390,7 @@ int xhciConfigureEndpoint(UsbHc*, int slot, int endpoint, UsbXfer type, UsbDir d
 }
 int xhciPortCount(UsbHc*) { return g_maxPorts; }
 
-const UsbHcOps OPS = { xhciEnablePort, xhciConfigureEndpoint, xhciSubmit, xhciPortCount };
+const UsbHcOps OPS = { xhciEnablePort, xhciConfigureEndpoint, xhciSubmit, xhciPortCount, xhciIntPoll };
 
 // Defined here (after xhciSubmit) so enablePort's EP0 fix-up can issue a control IN.
 int controlIn(int slotId, uint8_t descType, void* buf, int len) {
