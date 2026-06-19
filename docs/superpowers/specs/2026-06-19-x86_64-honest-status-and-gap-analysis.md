@@ -191,6 +191,14 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [x] Commit the working-tree `init.c` — HEAD now matches the booting artifact. ✅
 - [x] **`make run64` booted the x86_64 image with `qemu-system-i386`** (default-arch QEMU) → long-mode
       triple-fault → endless GRUB reboot loop. FIXED: ARCH-independent `QEMU64` (commit f099ab2). ✅
+- [x] **A ring-3 CPU fault halted the WHOLE machine** — `fault_x86_64.cpp` was a debug stub that
+      `for(;;) hlt`'d on every #GP/#PF (incl. user faults; "process-killing lands when the scheduler is
+      ported" — but it was). Any app crash (e.g. closing NetSurf → ring-3 #GP) wedged the system. FIXED:
+      ring-3 fault → `killCurrentProcess(SIGSEGV)` + reschedule, like i686 (commit 4fc541d). Verified with
+      `crashtest` — process dies, shell survives. *(foundational; another stale "when scheduler is ported" TODO)*
+- [ ] **NetSurf faults (#GP) on window close** (rip in the netsurf image, ring 3). Now non-catastrophic
+      (the fault fix kills just netsurf — which is what "close" means — and the desktop survives), but the
+      app shouldn't fault on teardown. App-side (netsurf-nanos) bug, low priority. *(low)*
 - [x] **x86_64 had NO involuntary preemption** — `irq64.S` never called `schedPreempt` (Plan 4 TODO).
       Any busy-looping user task starved ksoftirqd-net + console → whole-system wedge. FIXED: wire the
       ring-3 IRQ-return preempt hook (commit 75177a1). Console now stays live under load. ✅ *(foundational)*
