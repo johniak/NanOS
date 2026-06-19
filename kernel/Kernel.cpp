@@ -7,6 +7,7 @@
 #include "UsbCore.h"            // USB enumeration (in-kernel storage path for live-USB root)
 #include "UsbMsc.h"
 #include "UsbMscBlockDevice.h"
+#include "PartitionTable.h"     // MBR + GPT root-partition discovery
 #include "UsbHidInput.h"        // in-kernel USB-HID keyboard/mouse -> existing evdev
 #include "Vfs.h"
 #include "Ext2Filesystem.h"
@@ -71,19 +72,7 @@ static void ptySignal(void*, int sig, int pgrp) {
 // the first non-empty partition entry. Falls back to 2048 (the image's GRUB layout) when
 // there is no valid MBR — so a bare/unpartitioned image still mounts.
 static unsigned firstPartitionLba(BlockDevice* dev) {
-	unsigned char mbr[512];
-	if (dev->readSectors(0, 1, mbr) != 0)
-		return 2048;
-	if (mbr[510] != 0x55 || mbr[511] != 0xAA)
-		return 2048;
-	for (int i = 0; i < 4; i++) {
-		unsigned char* e = mbr + 0x1BE + i * 16;   // 4 entries of 16 bytes
-		unsigned type = e[4];                       // partition type (0 = unused)
-		unsigned start = e[8] | (e[9] << 8) | (e[10] << 16) | ((unsigned) e[11] << 24);
-		if (type != 0 && start != 0)
-			return start;
-	}
-	return 2048;
+	return firstFsPartitionLba(dev);   // MBR + GPT (the image is GPT after the Limine switch)
 }
 
 // Discover USB mass-storage devices on the in-kernel USB host controller: enumerate each port,

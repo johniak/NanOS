@@ -1,7 +1,13 @@
 // kernel/PartitionTable.cpp — MBR + GPT partition discovery (MI). See PartitionTable.h.
 #include "PartitionTable.h"
-#include <string.h>
 namespace kernel {
+
+// The freestanding kernel <string.h> has no memcmp; compare the GPT signature byte-by-byte.
+static bool isGptSig(const unsigned char* p) {
+    static const char sig[8] = { 'E','F','I',' ','P','A','R','T' };
+    for (int i = 0; i < 8; i++) if (p[i] != (unsigned char)sig[i]) return false;
+    return true;
+}
 
 static unsigned long long rd64(const unsigned char* p) {
     unsigned long long v = 0; for (int i = 0; i < 8; i++) v |= (unsigned long long)p[i] << (8 * i); return v;
@@ -31,7 +37,7 @@ unsigned firstFsPartitionLba(BlockDevice* dev) {
     if (gpt) {
         unsigned char hdr[512];
         if (dev->readSectors(1, 1, hdr) != 0) return 2048;
-        if (memcmp(hdr, "EFI PART", 8) != 0) return 2048;
+        if (!isGptSig(hdr)) return 2048;
         unsigned long long entryLba = rd64(hdr + 72);
         unsigned numEntries = rd32(hdr + 80);
         unsigned entrySize  = rd32(hdr + 84);
