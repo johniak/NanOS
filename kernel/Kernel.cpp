@@ -34,6 +34,7 @@
 #include <arch/cpu.h>
 #include <arch/syscall.h>
 #include <arch/block.h>
+#include <arch/usbhc.h>       // in-kernel USB host controller (root-storage path for live-USB)
 #include "FrameAllocator.h"
 #include "memory_manager.h"   // heapTotalBytes/heapFreeBytes for /proc/meminfo
 char buf[1024];
@@ -260,6 +261,18 @@ void Kernel::start() {
 //	char* bb = buf;
 	//kernel::Interrupt::registerInterruptHandler(, &callback3);
 
+	// PCI config-space backend must be live before BOTH the USB host controller (below) and the
+	// e1000 kext (later). Installed here, before the storage stack, so the in-kernel USB path can
+	// discover its controller. (Idempotent: the later kexts rely on this same backend.)
+	Pci::setBackend(arch::pciConfigRead32, arch::pciConfigWrite32);
+
+	// Bring up the in-kernel USB host controller (xHCI) BEFORE the storage stack. On a live-USB
+	// system the root filesystem lives on a USB mass-storage device, so the xHCI+USB-core+MSC path
+	// is compiled into the kernel (same root-driver-in-kernel rule as ATA). No-op if absent.
+	okBegin("USB host controller (xHCI)");
+	arch::usbHostInit();
+	okEnd();
+
 	// Storage stack: register the arch boot disk as a block device, register the
 	// filesystem types, and mount at "/". All access goes through the VFS.
 	BlockDevice* hd0 = arch::bootDisk();
@@ -331,7 +344,6 @@ void Kernel::start() {
 	// the kexts load, since the e1000 NIC driver finds its device through kernel::Pci / the
 	// knx_pci_* exports.
 	okBegin("PCI bus enumeration");
-	Pci::setBackend(arch::pciConfigRead32, arch::pciConfigWrite32);
 	okEnd();
 	pciScanReport();
 

@@ -43,5 +43,11 @@ void  usbHcRegister(UsbHc* hc, const UsbHcOps* ops);
 UsbHc* usbHc();
 const UsbHcOps* usbHcOps();
 
+// MD entry: discover + bring up the platform USB host controller(s). The x86_64 impl
+// (xhci_x86_64.cpp) PCI-discovers an xHCI and calls usbHcRegister. MI/Kernel calls this
+// before the storage stack so a live-USB system can mount its root over USB mass-storage.
+// No-op (logs "no xHCI") when no controller is present, so the ATA disk-image path is unaffected.
+void  usbHostInit();
+
 }  // namespace arch
 #endif
