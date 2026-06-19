@@ -197,6 +197,11 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [ ] **dropbear `ssh host cmd` teardown linger** — the command's shell becomes an unreaped zombie; the
       session-child spins on `read()` of a never-EOF pipe. No longer wedges the box (preemption contains
       it) but hogs ~½ CPU and degrades new connections. Narrow, dropbear-pipe-close vs NanOS pipe-EOF. *(medium)*
+- [ ] **NanWM desktop apps are NOT built for x86_64.** `X64_GUI_PROGS=nwm` ships ONLY the compositor;
+      the i686 desktop apps — `nwexp` (Files/explorer), `nwterm` (terminal), `nwset` (Settings), `nwnote`,
+      `nwform`, `nwabout` — are absent from `X64_USER_PROGS`, so `make image64` never builds/installs them.
+      The x86_64 GUI is compositor-only today (and `nwm` itself is only assumed-good — on-screen mouse
+      input never verified). Porting + on-screen verifying the apps is a real completeness gap. *(medium)*
 
 **B. Verification debt (we don't actually know these work):**
 - [ ] No MD (`arch/x86_64`) automated coverage — context switch, fork, syscall entry, e1000 kext.
