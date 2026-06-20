@@ -27,30 +27,18 @@ MsiResult msiSetup(const MsiEnv& env, uint8_t bus, uint8_t dev, uint8_t func) {
 		else if (id == 0x05) msiOff = off;
 		off = (uint8_t) ((hdr >> 8) & 0xFC);               // next-capability pointer
 	}
-	if (!msixOff && !msiOff)
+	(void) msixOff;
+	// We use single-vector MSI (cap 0x05). The NIC is single-queue (one softirq), so all interrupt
+	// causes funnel to one vector — MSI delivers that automatically with no per-chip routing. MSI-X
+	// would add nothing here and needs device-specific IVAR cause->vector routing (a future
+	// multi-queue/RSS refinement). If a device offers no MSI cap, the caller falls back to legacy INTx.
+	if (!msiOff)
 		return none;
 
 	int vec = env.allocVector();
 	if (vec < 0)
 		return none;
 	uint32_t addr = 0xFEE00000u | ((uint32_t) env.lapicId() << 12);
-
-	if (msixOff) {
-		// Table offset/BIR at cap+4: low 3 bits = BIR (which BAR holds the table), rest = byte offset.
-		uint32_t tob = env.cfgRead(bus, dev, func, (uint8_t) (msixOff + 4));
-		uint8_t  bir = (uint8_t) (tob & 0x7);
-		uint32_t tableOff = tob & ~0x7u;
-		uint32_t bar = env.cfgRead(bus, dev, func, (uint8_t) (0x10 + bir * 4)) & ~0xFu;
-		volatile uint32_t* t = (volatile uint32_t*) ((uint8_t*) env.mapMmio(bar, 0x1000) + tableOff);
-		t[0] = addr;                          // message address low
-		t[1] = 0;                             // message address high
-		t[2] = (uint32_t) vec;                // message data = vector
-		t[3] = 0;                             // vector control: unmasked
-		uint16_t mc = cfg16(env, bus, dev, func, (uint8_t) (msixOff + 2));
-		mc |= 0x8000;                         // MSI-X Enable (message-control bit15)
-		writeMsgCtrl(env, bus, dev, func, msixOff, mc);
-		return MsiResult{ MSI_KIND_MSIX, vec, msixOff };
-	}
 
 	// MSI: message control at cap+2; addr at cap+4; data at cap+8 (64-bit cap) or cap+8 low (32-bit).
 	uint16_t mc = cfg16(env, bus, dev, func, (uint8_t) (msiOff + 2));

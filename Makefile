@@ -744,7 +744,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-usb verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -770,9 +770,14 @@ smoke-uefi: image64
 smoke-bigmem: image64
 	bash scripts/smoke-bigmem.sh
 
-# `verify64` = the full x86_64 gate: host tests (test64) + BIOS + UEFI + big-RAM + live-USB boot smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-usb
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + live-USB boot smokes all passed."
+# `smoke-e1000e` boots with the 82574L (-device e1000e) so the shared E1000Core + MSI-X + the minimal
+# LAPIC are exercised headless — the QEMU-testable stand-in for the I219's MSI-X/NAPI path.
+smoke-e1000e: image64
+	bash scripts/smoke-e1000e.sh
+
+# `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB smokes.
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB boot smokes all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
@@ -1981,8 +1986,12 @@ $(BINFOLDER)e1000.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000.o $(BINFOLDER)e1000_core
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)e1000.o $(BINFOLDER)e1000_core.o -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
+$(BINFOLDER)e1000e.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000e.o $(BINFOLDER)e1000_core.o $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(BINFOLDER)e1000e.o $(BINFOLDER)e1000_core.o -lgcc
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
-KEXTS=kbd mouse e1000
+KEXTS=kbd mouse e1000 e1000e
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which

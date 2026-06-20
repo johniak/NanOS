@@ -15,35 +15,44 @@ static uint8_t fId()    { return 3; }
 static uint32_t g_table[4];
 static void*   fMap(uint32_t, uint32_t) { return g_table; }
 
-TEST_CASE("msiSetup prefers MSI-X, allocates a vector and enables the cap") {
+TEST_CASE("msiSetup uses single-vector MSI even when MSI-X is also present (single-queue NIC)") {
 	memset(g_cfg, 0, sizeof g_cfg);
 	memset(g_table, 0, sizeof g_table);
 	g_cfg[0x06] = 0x10;                 // Status: capabilities-list present (bit4)
 	g_cfg[0x34] = 0x40;                 // Capabilities pointer -> 0x40
-	// cap @0x40: MSI (id 0x05), next -> 0x50
+	// cap @0x40: MSI (id 0x05), 32-bit (control bit7 clear), next -> 0x50
 	g_cfg[0x40] = 0x05; g_cfg[0x41] = 0x50;
-	// cap @0x50: MSI-X (id 0x11), next -> 0x00
+	// cap @0x50: MSI-X (id 0x11), next -> 0x00 — present but intentionally not used.
 	g_cfg[0x50] = 0x11; g_cfg[0x51] = 0x00;
-	// table offset/BIR at 0x54: BIR = 4, offset = 0
-	g_cfg[0x54] = 0x04;
-	// BAR4 @0x20: a memory BAR (base irrelevant — fMap returns g_table)
-	g_cfg[0x22] = 0xF0; g_cfg[0x23] = 0xFE;
+	g_cfg[0x54] = 0x04;                 // (MSI-X table offset/BIR — ignored)
 
 	MsiEnv env;
 	env.cfgRead = fcRead; env.cfgWrite = fcWrite; env.mapMmio = fMap;
 	env.allocVector = fAlloc; env.lapicId = fId;
 
 	MsiResult r = msiSetup(env, 0, 0, 0);
-	CHECK(r.kind == MSI_KIND_MSIX);
+	CHECK(r.kind == MSI_KIND_MSI);
 	CHECK(r.vector == 0x71);
-	CHECK(r.capOff == 0x50);
-	// MSI-X table entry 0: addr = 0xFEE03000 (lapicId 3 << 12), data = 0x71, unmasked.
-	CHECK(g_table[0] == 0xFEE03000u);
-	CHECK(g_table[2] == 0x71u);
-	CHECK((g_table[3] & 1u) == 0u);
-	// MSI-X enable bit (message-control bit15) set in config space.
-	uint16_t mc; memcpy(&mc, &g_cfg[0x52], 2);
-	CHECK((mc & 0x8000) != 0);
+	CHECK(r.capOff == 0x40);            // the MSI cap, not the MSI-X one
+	uint32_t addr; memcpy(&addr, &g_cfg[0x44], 4);
+	CHECK(addr == 0xFEE03000u);         // message address @cap+4 (lapicId 3 << 12)
+	uint32_t data; memcpy(&data, &g_cfg[0x48], 4);
+	CHECK(data == 0x71u);               // 32-bit: data @cap+8
+	uint16_t mc; memcpy(&mc, &g_cfg[0x42], 2);
+	CHECK((mc & 0x1) != 0);             // MSI enable
+	CHECK(g_table[0] == 0u);            // MSI-X table left untouched
+}
+
+TEST_CASE("msiSetup returns MSI_NONE for an MSI-X-only device (caller falls back to INTx)") {
+	memset(g_cfg, 0, sizeof g_cfg);
+	g_cfg[0x06] = 0x10;
+	g_cfg[0x34] = 0x50;
+	g_cfg[0x50] = 0x11; g_cfg[0x51] = 0x00;   // MSI-X only, no MSI cap
+	MsiEnv env;
+	env.cfgRead = fcRead; env.cfgWrite = fcWrite; env.mapMmio = fMap;
+	env.allocVector = fAlloc; env.lapicId = fId;
+	MsiResult r = msiSetup(env, 0, 0, 0);
+	CHECK(r.kind == MSI_NONE);
 }
 
 TEST_CASE("msiSetup falls back to MSI when only MSI is present (32-bit)") {
