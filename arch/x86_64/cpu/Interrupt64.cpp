@@ -8,6 +8,7 @@
 #include "Interrupt64.h"
 #include "Port64.h"
 #include "SignalDispatch.h"   // kernel::signalDeliver()
+#include "lapic_x86_64.h"     // kernel::lapicEoi() for MSI vectors
 
 namespace kernel {
 static IsrHandler interruptHandlers[256];
@@ -30,11 +31,16 @@ extern "C" void isr_handler(kernel::Registers* regs) {
 
 // Called from irq64.S (device IRQs, vectors 32..47).
 extern "C" void irq_handler(kernel::Registers* regs) {
-    // EOI: acknowledge the slave PIC first if the IRQ came from it (vector >= 40), then the
-    // master — otherwise the PIC won't deliver further interrupts on that line.
-    if (regs->int_no >= 40)
-        kernel::port_outb(0xA0, 0x20);
-    kernel::port_outb(0x20, 0x20);
+    // EOI. MSI/MSI-X vectors (0x70..0x77) are LAPIC-delivered -> EOI the LAPIC. Everything else is
+    // a PIC IRQ (32..47): acknowledge the slave PIC first if the IRQ came from it (vector >= 40),
+    // then the master — otherwise the PIC won't deliver further interrupts on that line.
+    if (regs->int_no >= kernel::MSI_VEC_BASE && regs->int_no < kernel::MSI_VEC_END) {
+        kernel::lapicEoi();
+    } else {
+        if (regs->int_no >= 40)
+            kernel::port_outb(0xA0, 0x20);
+        kernel::port_outb(0x20, 0x20);
+    }
 
     if (kernel::interruptHandlers[regs->int_no] != 0)
         kernel::interruptHandlers[regs->int_no](regs);

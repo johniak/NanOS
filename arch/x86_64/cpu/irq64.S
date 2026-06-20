@@ -36,6 +36,25 @@ IRQ 13, 45
 IRQ 14, 46
 IRQ 15, 47
 
+; MSI/MSI-X vectors 0x70..0x77 (above the PIC IRQ range). Same frame shape as IRQ; irq_handler
+; routes these to the LAPIC EOI instead of the PIC. Used by knx_register_msi for the NIC.
+%macro MSI 2
+  global irq_msi%1
+  irq_msi%1:
+    push qword 0          ; err_code (none)
+    push qword %2         ; int_no = 0x70 + n
+    jmp irq_common_stub
+%endmacro
+
+MSI 0, 0x70
+MSI 1, 0x71
+MSI 2, 0x72
+MSI 3, 0x73
+MSI 4, 0x74
+MSI 5, 0x75
+MSI 6, 0x76
+MSI 7, 0x77
+
 irq_common_stub:
     test byte [rsp + 24], 3
     jz .from_kernel_in

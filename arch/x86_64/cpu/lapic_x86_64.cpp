@@ -32,6 +32,9 @@ void lapicInit() {
 	uint64_t base = rdmsr(IA32_APIC_BASE);
 	base |= (1ull << 11);                                  // global LAPIC enable
 	wrmsr(IA32_APIC_BASE, base);
+	// The LAPIC MMIO register page (base & ~0xFFF, default 0xFEE00000) is mapped by mmuInitKernel
+	// (it sits above RAM, outside the huge identity map). Do NOT map it here — a late page-table
+	// allocation at cpuInit time corrupts the live kernel stack.
 	g_lapic = (volatile uint32_t*) (uintptr_t) (base & 0xFFFFF000ull);
 	g_lapic[LAPIC_SPURIOUS / 4] = 0x100 | 0xFF;            // bit8 = APIC software enable, spurious vec 0xFF
 	msiVecPoolInit(&g_pool);

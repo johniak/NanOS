@@ -23,6 +23,10 @@
 // Linker symbol marking the end of the kernel image (arch/x86_64/linker.ld).
 extern char end;
 
+// Local APIC bring-up (arch/x86_64/cpu/lapic_x86_64.cpp). Called from mmuInitKernel's tail, once the
+// LAPIC MMIO page is mapped — NOT from cpuInit, which runs before paging is set up.
+namespace kernel { void lapicInit(); }
+
 namespace {
 
 const uint64_t PD_SPAN = 0x200000;   // one PD entry maps 2 MiB on x86_64 (privatization stride)
@@ -82,7 +86,16 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 	kernel::enableNxe();                 // honor the NX bit on later USER mappings
 	kernel::loadCr3(g_kernelDirPhys);    // switch off the Plan-1 temporary map onto our PML4
 	kernel::enablePaging();              // re-assert CR0.PG (already on in long mode)
+	// Local APIC MMIO (architectural default 0xFEE00000) sits above RAM, outside the huge identity
+	// map. Map its register page now, on the LIVE kernel space (same path as the framebuffer/xHCI
+	// MMIO maps), so lapicInit() at cpuInit time only WRITES it and never allocates page tables —
+	// a late page-table allocation there hands out a frame overlapping the live kernel stack.
+	g_kspace->mapRange(0xFEE00000, 0xFEE00000, 0x1000, kernel::PTE_PRESENT | kernel::PTE_RW);
 	__asm__ __volatile__("sti");
+	// Now that the LAPIC register page is mapped on the live kernel space, bring the Local APIC up.
+	// (cpuInit — which installs the IDT incl. the MSI gates — already ran; lapicInit fires no
+	// interrupts, it only enables the APIC + spurious vector + the MSI vector pool.)
+	kernel::lapicInit();
 }
 
 uint32_t mmuKernelDirPhys() { return (uint32_t) g_kernelDirPhys; }

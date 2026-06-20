@@ -57,7 +57,9 @@ void cpuInit() {
     // entry stub loads RSP from this slot after swapgs — a zero here would fault on the first push.
     syscallSetKernelStack(bootTop);
     g_gdt.loadTss();
-    // IDT: remap the PIC and install all 256 gates (CPU exceptions + IRQs). No sti yet.
+    // IDT: remap the PIC and install all 256 gates (CPU exceptions + IRQs + the MSI vector gates).
+    // No sti yet. The Local APIC itself is enabled later, from mmuInitKernel — cpuInit runs before
+    // paging, so the LAPIC MMIO page isn't mapped yet here.
     g_idt.initialize();
     faultInit();
 }

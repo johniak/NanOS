@@ -80,6 +80,17 @@ void Idt64::initialize() {
     setGate(46, (uint64_t) irq14, 0x08, 0, 0x8E);
     setGate(47, (uint64_t) irq15, 0x08, 0, 0x8E);
 
+    // MSI/MSI-X vectors 0x70..0x77 -> the irq_msiN stubs (irq64.S). LAPIC-delivered; irq_handler
+    // EOI's these via the LAPIC, not the PIC. knx_register_msi allocates one for the NIC.
+    setGate(0x70, (uint64_t) irq_msi0, 0x08, 0, 0x8E);
+    setGate(0x71, (uint64_t) irq_msi1, 0x08, 0, 0x8E);
+    setGate(0x72, (uint64_t) irq_msi2, 0x08, 0, 0x8E);
+    setGate(0x73, (uint64_t) irq_msi3, 0x08, 0, 0x8E);
+    setGate(0x74, (uint64_t) irq_msi4, 0x08, 0, 0x8E);
+    setGate(0x75, (uint64_t) irq_msi5, 0x08, 0, 0x8E);
+    setGate(0x76, (uint64_t) irq_msi6, 0x08, 0, 0x8E);
+    setGate(0x77, (uint64_t) irq_msi7, 0x08, 0, 0x8E);
+
     ptr.limit = sizeof(entries) - 1;
     ptr.base  = (uint64_t) &entries;
     __asm__ __volatile__("lidt %0" : : "m"(ptr));
