@@ -48,3 +48,6 @@ ARCH_SOURCES += switch64.o sched_x86_64.o fork_x86_64.o random_x86_64.o pci_x86_
 
 # Stream F (USB): the in-kernel xHCI host-controller driver (implements <arch/usbhc.h>).
 ARCH_SOURCES += xhci_x86_64.o
+
+# NIC port: minimal Local APIC + MSI vector allocation (delivers MSI/MSI-X for the e1000e/I219 NIC).
+ARCH_SOURCES += lapic_x86_64.o
