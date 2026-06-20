@@ -1970,6 +1970,9 @@ $(BINFOLDER)%.o: kext/kbd/%.cpp
 $(BINFOLDER)%.o: kext/e1000/%.cpp
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(KEXT_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: kext/i219/%.cpp
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(KEXT_CFLAGS) -Ikext/e1000 -MMD -MP -c $< -o $@   # -Ikext/e1000: i219_phy.cpp needs e1000_core.h
 
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
@@ -2056,7 +2059,7 @@ ARCH_PAGING_TESTS_EXCL=tests/test_addressspace64.cpp tests/test_paging64.cpp
 endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue
 # The host is LP64 (arm64/x86_64) but does not define __x86_64__, so force the v4 64-bit
 # .nx format (nxaddr_t = uint64_t) across the whole host test build. This exercises the
 # x86_64 loader path (R_X86_64_64 fixups, 8-byte IAT slots) and keeps every TU's view of
@@ -2080,6 +2083,7 @@ TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (sh
 TEST_MODULES+= kernel/Pci.cpp             # MI PCI enumeration/BAR decode (mock config-space backend)
 TEST_MODULES+= kernel/MsiRouter.cpp       # MI MSI/MSI-X cap walk + programming (mock config space)
 TEST_MODULES+= kext/e1000/e1000_core.cpp  # pure helpers (ring/desc encode); engine half #ifdef'd out
+TEST_MODULES+= kext/i219/i219_phy.cpp     # pure MDIC command encoder; ich9lan engine half #ifdef'd out
 TEST_MODULES+= net/Net.cpp net/NetBuf.cpp net/NetDevice.cpp net/Loopback.cpp   # MI net core
 TEST_MODULES+= net/Ether.cpp net/Arp.cpp net/Ip.cpp net/Route.cpp net/Icmp.cpp   # L2 + ARP + IPv4 + ICMP
 TEST_MODULES+= net/Socket.cpp net/Udp.cpp net/Raw.cpp net/Tcp.cpp net/Packet.cpp net/Unix.cpp   # socket layer + UDP + RAW + TCP + AF_PACKET + AF_UNIX
@@ -2092,7 +2096,7 @@ TEST_MODULES+= usb/UsbMsc.cpp                   # MI USB mass-storage: BOT + SCS
 TEST_MODULES+= drivers/UsbMscBlockDevice.cpp    # MI BlockDevice adapter over USB MSC
 TEST_MODULES+= kernel/PartitionTable.cpp        # MI MBR+GPT root-partition discovery
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/MsiRouter.*" "*/lapic_x86_64.*" "*/e1000_core.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*" "*/UsbCore.*" "*/UsbHid.*" "*/UsbMsc.*" "*/UsbMscBlockDevice.*" "*/PartitionTable.*" "*/GdtBase.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nwm_core.*" "*/nw_compose.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/MsiRouter.*" "*/lapic_x86_64.*" "*/e1000_core.*" "*/i219_phy.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*" "*/UsbCore.*" "*/UsbHid.*" "*/UsbMsc.*" "*/UsbMscBlockDevice.*" "*/PartitionTable.*" "*/GdtBase.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
