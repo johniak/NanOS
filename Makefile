@@ -1993,8 +1993,12 @@ $(BINFOLDER)e1000e.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000e.o $(BINFOLDER)e1000_co
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(BINFOLDER)e1000e.o $(BINFOLDER)e1000_core.o -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
+$(BINFOLDER)i219.nkext: $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $(BINFOLDER)e1000_core.o $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $(BINFOLDER)e1000_core.o -lgcc
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
-KEXTS=kbd mouse e1000 e1000e
+KEXTS=kbd mouse e1000 e1000e i219
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which
