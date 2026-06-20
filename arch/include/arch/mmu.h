@@ -34,6 +34,7 @@ constexpr uint64_t VA_HEAP_MAX      = 0x4C000000;   // +64 MiB
 constexpr uint64_t VA_MMAP_BASE     = 0x50000000;   // anonymous/file-backed mmap
 constexpr uint64_t VA_MMAP_MAX      = 0x54000000;   // +64 MiB
 constexpr uint64_t VA_FB_BASE       = 0x58000000;   // user framebuffer window (1.375 GiB)
+constexpr uint64_t VA_FB_MAX        = VA_FB_BASE + 0x4000000;   // +64 MiB (bounds the fb window for enum)
 
 // Build the kernel page tables (identity-map all RAM), reserve the arch windows,
 // load the directory and enable paging.

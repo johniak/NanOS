@@ -770,12 +770,9 @@ smoke-uefi: image64
 smoke-bigmem: image64
 	bash scripts/smoke-bigmem.sh
 
-# `verify64` = the full x86_64 gate: host tests (test64) + BIOS + UEFI + live-USB boot smokes.
-# NOTE: smoke-bigmem is intentionally NOT in verify64 yet — booting with >1 GiB RAM is blocked on the
-# kernel-identity / user-window VA overlap (see docs/superpowers/specs the VA-layout redesign). Run it
-# manually (`make smoke-bigmem`) to track that work; it is wired into verify64 once the redesign lands.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-usb
-	@echo "x86_64 verify: host tests + BIOS + UEFI + live-USB boot smokes all passed."
+# `verify64` = the full x86_64 gate: host tests (test64) + BIOS + UEFI + big-RAM + live-USB boot smokes.
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-usb
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + live-USB boot smokes all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean

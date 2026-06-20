@@ -23,8 +23,10 @@ s=socket.socket(socket.AF_UNIX)
 try: s.connect(sys.argv[1])
 except: sys.exit(0)
 time.sleep(0.3)
+# QEMU sendkey wants keysym names, not literal chars: space->spc, '/'->slash.
+SYM = {' ': 'spc', '/': 'slash'}
 for c in "cat /proc/meminfo":
-    k = 'spc' if c==' ' else c
+    k = SYM.get(c, c)
     s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.05)
 s.sendall(b"sendkey ret\n"); time.sleep(1)
 s.close()

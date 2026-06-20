@@ -96,13 +96,33 @@ void mmuMapKernelMmio(uint32_t phys, uint32_t bytes) {
 uint32_t mmuCurrentDirPhys() { return (uint32_t) kernel::readCr3(); }
 void mmuLoadDirPhys(uint32_t dirPhys) { kernel::loadCr3(dirPhys); }
 
+// Privatize (per-process) EVERY user window beyond the program-image window that adoptKernelDirectory
+// already dropped: module/heap/mmap/fb all live in pdpt[1], where the >1 GiB kernel identity map would
+// otherwise leak its huge entries into the shared half. dropPde forks pdpt[1]'s PD once (idempotent)
+// and clears each window slot in the private copy.
+static void dropUserWindows(AddressSpace* s) {
+	for (uint64_t va = VA_USER_BASE + PD_SPAN; va < VA_USER_END;   va += PD_SPAN) s->impl.dropPde(va);
+	for (uint64_t va = VA_MODULE_BASE;          va < VA_MODULE_MAX; va += PD_SPAN) s->impl.dropPde(va);
+	for (uint64_t va = VA_HEAP_BASE;            va < VA_HEAP_MAX;   va += PD_SPAN) s->impl.dropPde(va);
+	for (uint64_t va = VA_MMAP_BASE;            va < VA_MMAP_MAX;   va += PD_SPAN) s->impl.dropPde(va);
+	for (uint64_t va = VA_FB_BASE;              va < VA_FB_MAX;     va += PD_SPAN) s->impl.dropPde(va);
+}
+
+// Free every user window's leaf PT + pages (the private PDPTs/PDs are freed afterwards by freeUserTables).
+static void freeUserWindowsAll(AddressSpace* s) {
+	for (uint64_t va = VA_USER_BASE;   va < VA_USER_END;   va += PD_SPAN) s->impl.freeUserWindow(va);
+	for (uint64_t va = VA_MODULE_BASE; va < VA_MODULE_MAX; va += PD_SPAN) s->impl.freeUserWindow(va);
+	for (uint64_t va = VA_HEAP_BASE;   va < VA_HEAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
+	for (uint64_t va = VA_MMAP_BASE;   va < VA_MMAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
+	for (uint64_t va = VA_FB_BASE;     va < VA_FB_MAX;     va += PD_SPAN) s->impl.freeUserWindow(va);
+}
+
 AddressSpace* mmuCreateAddressSpace() {
 	AddressSpace* s = new AddressSpace(g_env);
-	// Share the whole kernel half; privatize each PD entry of the user window. adopt privatizes
-	// the path to VA_USER_BASE and drops that PD entry; dropPde clears the rest of the window.
+	// Share the whole kernel half; privatize each PD entry of every user window. adopt privatizes
+	// the path to VA_USER_BASE and drops that PD entry; dropUserWindows clears the rest (incl. pdpt[1]).
 	s->impl.adoptKernelDirectory(g_kernelDirPhys, VA_USER_BASE);
-	for (uint64_t va = VA_USER_BASE + PD_SPAN; va < VA_USER_END; va += PD_SPAN)
-		s->impl.dropPde(va);
+	dropUserWindows(s);
 	return s;
 }
 
@@ -117,10 +137,7 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 	// Free the PRIVATE parts: the per-window page tables + their leaf frames (freeUserWindow), then
 	// the private intermediate tables (freeUserTables: the PDPTs/PDs marked PTE_PRIV), then the PML4.
 	// The shared kernel-half tables are aliased by the copied PML4 entries — leave them.
-	for (uint64_t va = VA_USER_BASE;   va < VA_USER_END;   va += PD_SPAN) s->impl.freeUserWindow(va);
-	for (uint64_t va = VA_HEAP_BASE;   va < VA_HEAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
-	for (uint64_t va = VA_MODULE_BASE; va < VA_MODULE_MAX; va += PD_SPAN) s->impl.freeUserWindow(va);
-	for (uint64_t va = VA_MMAP_BASE;   va < VA_MMAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
+	freeUserWindowsAll(s);
 	s->impl.freeUserTables();   // free the private PDPTs/PDs freeUserWindow leaves behind
 	g_fa->free((uint32_t) s->impl.directoryPhys());
 	delete s;
@@ -129,13 +146,13 @@ void mmuFreeAddressSpace(AddressSpace* s) {
 AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	AddressSpace* s = new AddressSpace(g_env);
 	s->impl.adoptKernelDirectory(g_kernelDirPhys, VA_USER_BASE);
-	for (uint64_t va = VA_USER_BASE + PD_SPAN; va < VA_USER_END; va += PD_SPAN)
-		s->impl.dropPde(va);
+	dropUserWindows(s);
 	bool ok = true;
 	for (uint64_t va = VA_USER_BASE;   ok && va < VA_USER_END;   va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint64_t va = VA_HEAP_BASE;   ok && va < VA_HEAP_MAX;   va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint64_t va = VA_MODULE_BASE; ok && va < VA_MODULE_MAX; va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint64_t va = VA_MMAP_BASE;   ok && va < VA_MMAP_MAX;   va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
+	for (uint64_t va = VA_FB_BASE;     ok && va < VA_FB_MAX;     va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	if (!ok) {
 		mmuFreeAddressSpace(s);
 		return 0;
