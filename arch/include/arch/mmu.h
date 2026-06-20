@@ -37,7 +37,7 @@ constexpr uint64_t VA_FB_BASE       = 0x58000000;   // user framebuffer window (
 
 // Build the kernel page tables (identity-map all RAM), reserve the arch windows,
 // load the directory and enable paging.
-void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam);
+void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam);
 
 // Physical address of the kernel page directory (for building per-process
 // directories that share the kernel half, and for switching back on exit).

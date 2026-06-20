@@ -66,7 +66,7 @@ struct AddressSpace {
 	explicit AddressSpace(const kernel::PagingEnv& e) : impl(e) {}
 };
 
-void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
+void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {   // contract is 64-bit (x86_64 needs >4 GiB; i686 stays <=4 GiB, narrows internally)
 	g_fa = &fa;
 
 	// Re-reserve the windows the frame pool must never hand out.

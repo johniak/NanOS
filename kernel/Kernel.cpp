@@ -48,7 +48,7 @@ namespace kernel {
 
 // Live system memory figures (kB) for /proc/meminfo. MemTotal is the whole RAM from the
 // boot map; MemFree is the free physical page frames; KHeap* is the kernel byte heap.
-unsigned sysMemTotalKb() { return (unsigned) (arch::bootMemTop() / 1024u); }
+unsigned sysMemTotalKb() { return (unsigned) (arch::bootMemTop() / 1024ull); }   // 64-bit top -> KB (fits unsigned up to 4 TiB)
 unsigned sysMemFreeKb()  { return (unsigned) (g_frames.freeCount() * (FRAME_SIZE / 1024u)); }
 unsigned sysHeapTotalKb() { return heapTotalBytes() / 1024u; }
 unsigned sysHeapFreeKb()  { return heapFreeBytes() / 1024u; }
@@ -56,7 +56,7 @@ unsigned sysHeapFreeKb()  { return heapFreeBytes() / 1024u; }
 // Mark a usable physical range free in the frame allocator (arch reports only
 // usable ranges via <arch/bootinfo.h>).
 static void markFree(void* fa, uint64_t base, uint64_t len) {
-	((FrameAllocator*) fa)->markRangeFree((uint32_t) base, (uint32_t) len);
+	((FrameAllocator*) fa)->markRangeFree(base, len);   // 64-bit: a range based >4 GiB must not wrap
 }
 
 // PTY terminal-generated signal (Ctrl+C/\/Z on the master) -> the tty's foreground process
@@ -216,7 +216,7 @@ static void okEnd() {
 // the arch MMU to bring up kernel paging. Machine-independent: the page-table
 // format and CR registers live behind <arch/mmu.h>.
 void Kernel::initPaging() {
-	unsigned top = arch::bootMemTop();
+	uint64_t top = arch::bootMemTop();   // 64-bit top-of-RAM (capped at the 16 GiB frame-pool capacity)
 	g_frames.init(top);
 	arch::bootMemForEachUsable(&g_frames, markFree);
 	arch::mmuInitKernel(g_frames, top);

@@ -15,9 +15,9 @@ typedef void (*UsableRangeCb)(void* ctx, uint64_t base, uint64_t length);
 
 void bootMemForEachUsable(void* ctx, UsableRangeCb cb);
 
-// Highest usable physical byte (clamped); a sane fallback if the bootloader
-// provided no memory info.
-uint32_t bootMemTop();
+// Highest usable physical byte (64-bit, capped at the frame-pool capacity); a sane fallback if
+// the bootloader provided no memory info.
+uint64_t bootMemTop();
 
 // A linear graphics framebuffer the firmware/bootloader set up for us (the
 // vesafb/efifb model: the kernel just draws into it). Format read back from the

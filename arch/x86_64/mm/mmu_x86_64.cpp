@@ -46,28 +46,36 @@ struct AddressSpace {
 	explicit AddressSpace(const kernel::PagingEnv& e) : impl(e) {}
 };
 
-void mmuInitKernel(kernel::FrameAllocator& fa, uint32_t topOfRam) {
+void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 	g_fa = &fa;
 
 	// Re-reserve the windows the frame pool must never hand out.
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
-	fa.markRangeUsed(0x100000, (uint32_t) (uintptr_t) &end - 0x100000); // kernel image
-	fa.markRangeUsed((uint32_t) VA_USER_BASE, 0x2000000);          // exec staging window (32 MiB — must
+	fa.markRangeUsed(0x100000, (uint64_t) (uintptr_t) &end - 0x100000); // kernel image
+	fa.markRangeUsed(VA_USER_BASE, 0x2000000);                     // exec staging window (32 MiB — must
 	                                                               // cover the largest staged .nxe; see
 	                                                               // kernel/Exec.cpp STAGE_CAP)
-	// Kernel byte heap: carve ~25% off the TOP of RAM, clamped to [8 MiB, 256 MiB]; the rest
-	// (below) is the frame pool for page tables + user pages.
-	uint32_t heapSize = topOfRam / 4u;
-	if (heapSize > 256u * 1024u * 1024u) heapSize = 256u * 1024u * 1024u;
-	if (heapSize < 8u * 1024u * 1024u)   heapSize = 8u * 1024u * 1024u;
-	uint32_t heapBase = (uint32_t) ((topOfRam - heapSize) & (uint32_t) kernel::PAGE_MASK);
-	fa.markRangeUsed(heapBase, topOfRam - heapBase);
-	// Lay out the kernel heap before the first malloc (new AddressSpace below). The Plan-1
-	// temporary identity map already covers this region, so it is directly accessible.
-	heapInit((void*) (uintptr_t) heapBase, topOfRam - heapBase);
+	// Kernel byte heap: carve ~25% off RAM, clamped to [8 MiB, 256 MiB]. It is laid out + first
+	// touched (heapInit, then `new AddressSpace` below) while ONLY the loader's temporary 1 GiB
+	// identity map is live, so the heap MUST sit within that first 1 GiB. Place it at the top of
+	// min(topOfRam, 1 GiB); the full huge-page map built below then still covers it, and all RAM
+	// above the heap (incl. > 4 GiB) goes to the frame pool. (On <=1 GiB machines this is the old
+	// heap-at-top-of-RAM behaviour unchanged.)
+	const uint64_t BOOT_IDENTITY = 0x40000000;            // loader.s maps 1 GiB (512 x 2 MiB)
+	uint64_t heapSize = topOfRam / 4u;
+	if (heapSize > 256ull * 1024 * 1024) heapSize = 256ull * 1024 * 1024;
+	if (heapSize < 8ull * 1024 * 1024)   heapSize = 8ull * 1024 * 1024;
+	uint64_t heapTop = topOfRam < BOOT_IDENTITY ? topOfRam : BOOT_IDENTITY;
+	uint64_t heapBase = (heapTop - heapSize) & kernel::PAGE_MASK;
+	fa.markRangeUsed(heapBase, heapSize);     // reserve exactly the heap region (not up to topOfRam)
+	// Lay out the kernel heap before the first malloc (new AddressSpace below). heapBase is within
+	// the loader's 1 GiB temporary identity map, so this region is directly accessible right now.
+	heapInit((void*) (uintptr_t) heapBase, heapSize);
 
 	g_kspace = new kernel::AddressSpace(g_env);
-	g_kspace->mapRange(0, 0, topOfRam, kernel::PTE_PRESENT | kernel::PTE_RW);  // identity all RAM
+	// Identity-map all RAM with 2 MiB huge pages (round the top up to 2 MiB) — cheap for many GiB.
+	uint64_t mapTop = (topOfRam + 0x1FFFFF) & ~0x1FFFFFull;
+	g_kspace->mapRangeHuge(0, 0, mapTop, kernel::PTE_PRESENT | kernel::PTE_RW);
 	g_kernelDirPhys = g_kspace->directoryPhys();
 
 	__asm__ __volatile__("cli");

@@ -744,7 +744,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-usb verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-usb verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -765,7 +765,15 @@ smoke-usb: image64
 smoke-uefi: image64
 	bash scripts/smoke-uefi.sh
 
+# `smoke-bigmem` boots with 6 GiB RAM (a usable region above the 4 GiB PCI hole) to prove the 64-bit
+# memory map + 2 MiB huge-page kernel identity map — the gap that breaks boot on a >4 GiB real machine.
+smoke-bigmem: image64
+	bash scripts/smoke-bigmem.sh
+
 # `verify64` = the full x86_64 gate: host tests (test64) + BIOS + UEFI + live-USB boot smokes.
+# NOTE: smoke-bigmem is intentionally NOT in verify64 yet — booting with >1 GiB RAM is blocked on the
+# kernel-identity / user-window VA overlap (see docs/superpowers/specs the VA-layout redesign). Run it
+# manually (`make smoke-bigmem`) to track that work; it is wired into verify64 once the redesign lands.
 verify64: test64 smoke-x86_64 smoke-uefi smoke-usb
 	@echo "x86_64 verify: host tests + BIOS + UEFI + live-USB boot smokes all passed."
 

@@ -39,9 +39,9 @@ extern "C" void bootSetMultibootInfo(unsigned long mb) {
 
 namespace arch {
 
-uint32_t bootMemTop() {
+uint64_t bootMemTop() {
 	kernel::MultibootInfo* mbi = (kernel::MultibootInfo*) g_mbInfo;
-	uint32_t top = mbi ? kernel::highestUsableAddr(mbi) : 0;
+	uint64_t top = mbi ? kernel::highestUsableAddr(mbi) : 0;   // 64-bit, capped at the frame-pool cap
 	return top ? top : 0x8000000;   // fallback: 128 MiB
 }
 
