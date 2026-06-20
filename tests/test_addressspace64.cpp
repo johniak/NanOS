@@ -312,3 +312,23 @@ TEST_CASE("mapRangeHuge maps 2 MiB pages and translate() resolves them") {
 	CHECK(as.translate(VA + 0x200000) == VA + 0x200000);      // second 2 MiB page
 	CHECK(as.translate(VA + 0x400000) == NOPE);               // unmapped just past the range
 }
+
+TEST_CASE("dropPde over a huge identity entry: private + mappable, kernel dir untouched") {
+	FakeMem* m = makeMem();
+	AddressSpace kern(envOf(m));
+	const uint64_t MODVA = 0x40000000;                       // a module-window VA (1 GiB), pdpt[1]
+	// Simulate the >1 GiB kernel identity map: a 2 MiB huge page covering the module-window VA.
+	REQUIRE(kern.mapRangeHuge(MODVA, MODVA, 0x200000, PTE_PRESENT | PTE_RW));
+	CHECK(kern.translate(MODVA) == MODVA);
+
+	// Build a user space like mmuCreateAddressSpace does: share the kernel half, privatize a window,
+	// then drop the module window (the new behaviour the fix adds for pdpt[1]).
+	AddressSpace proc(envOf(m));
+	proc.adoptKernelDirectory(kern.directoryPhys(), 0x800000);   // privatize the program window
+	proc.dropPde(MODVA);                                          // privatize + clear the module window
+
+	CHECK(proc.translate(MODVA) == NOPE);                    // user: module window now empty (not huge id)
+	REQUIRE(proc.map(MODVA, 0xAB000, PTE_PRESENT | PTE_RW | PTE_USER));   // 4 KiB user map succeeds
+	CHECK(proc.translate(MODVA) == 0xAB000u);                // resolves to the user frame
+	CHECK(kern.translate(MODVA) == MODVA);                   // kernel dir's huge identity is UNCHANGED
+}
