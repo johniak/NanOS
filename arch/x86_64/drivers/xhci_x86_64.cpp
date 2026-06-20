@@ -164,6 +164,39 @@ int epTypeOf(UsbXfer type, UsbDir dir) {
     return 4;   // control
 }
 
+// xHCI Extended Capability: USB Legacy Support (id 1). USBLEGSUP bit16=BIOS owned, bit24=OS owned;
+// USBLEGCTLSTS (+4) holds SMI enables (low) + RW1C SMI status (high). Claim OS ownership, wait for
+// BIOS to release (bounded), then silence the SMIs. No Legacy cap (e.g. QEMU) => no-op.
+void biosHandoff() {
+    uint32_t hcc1 = cap32(CAP_HCCPARAMS1);
+    uint32_t xecp = (hcc1 >> 16) & 0xFFFF;            // xECP: dword offset from MMIO base
+    if (!xecp) return;
+    volatile uint32_t* cap = (volatile uint32_t*) (g_mmio + (uintptr_t)xecp * 4);
+    for (int guard = 0; guard < 256; guard++) {
+        uint32_t c = cap[0];
+        uint8_t id = (uint8_t) (c & 0xFF);
+        if (id == 1) {                                 // USB Legacy Support
+            cap[0] = c | (1u << 24);                   // HC OS Owned Semaphore
+            for (int i = 0; i < 1000000 && (cap[0] & (1u << 16)); i++) ioWaitSpin();
+            uint32_t enableMask = (1u<<0)|(1u<<4)|(1u<<13)|(1u<<14)|(1u<<15);   // SMI enables
+            uint32_t rw1cMask   = (1u<<20)|(1u<<29)|(1u<<30)|(1u<<31);          // SMI status (write 1 to clear)
+            cap[1] = (cap[1] & ~enableMask) | rw1cMask;
+            return;
+        }
+        uint8_t next = (uint8_t) ((c >> 8) & 0xFF);    // next: dword stride (0 = end)
+        if (!next) return;
+        cap = (volatile uint32_t*) ((volatile uint8_t*) cap + (uintptr_t)next * 4);
+    }
+}
+
+// Intel chipsets (vendor 0x8086) share USB2 ports between EHCI and xHCI; route them to xHCI. Harmless
+// on EHCI-less PCHs (Skylake+, incl. the Comet Lake target). Guarded so it never touches non-Intel HW.
+void intelPortRoute(const PciDevice& d) {
+    if (d.vendor != 0x8086) return;
+    Pci::write32(d.bus, d.dev, d.func, 0xD8, 0xFFFFFFFFu);   // XUSB2PR: USB2 ports -> xHCI
+    Pci::write32(d.bus, d.dev, d.func, 0xD0, 0xFFFFFFFFu);   // USB3_PSSEN: enable SuperSpeed
+}
+
 // ---- controller bring-up ----
 void controllerInit() {
     while (op32(OP_USBSTS) & USBSTS_CNR) ioWaitSpin();        // wait Controller Not Ready clear
@@ -450,6 +483,8 @@ void xhciInit() {
     Console::writeHex((uint64_t) g_mmioPhys);
     Console::writeLine("");
 
+    biosHandoff();          // take the controller from BIOS/SMM (no-op on QEMU)
+    intelPortRoute(d);      // route USB2 ports to xHCI on Intel (no-op elsewhere)
     controllerInit();
     usbHcRegister((UsbHc*) g_mmio, &OPS);
 }
