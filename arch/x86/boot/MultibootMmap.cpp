@@ -1,4 +1,5 @@
 #include "MultibootMmap.h"
+#include "FrameAllocator.h"   // CAPACITY_BYTES — cap top-of-RAM at what the frame pool can track
 
 namespace kernel {
 
@@ -25,8 +26,9 @@ void accumulateTop(void* ctx, uint64_t base, uint64_t length, uint32_t type) {
 	if (regionEnd > a->top)
 		a->top = regionEnd;
 }
-uint32_t clamp32(uint64_t v) {
-	return v > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t) v;
+// Cap top-of-RAM at the frame pool's bitmap capacity (16 GiB); 64-bit, never truncated to 4 GiB.
+uint64_t capPool(uint64_t v) {
+	return v > FrameAllocator::CAPACITY_BYTES ? FrameAllocator::CAPACITY_BYTES : v;
 }
 }
 
@@ -42,13 +44,13 @@ void parseMmap(const MultibootInfo* mbi, void* ctx, MmapCallback cb) {
 	parseMmapBuffer((const void*) (uintptr_t) mbi->mmap_addr, mbi->mmap_length, ctx, cb);
 }
 
-uint32_t highestUsableAddr(const MultibootInfo* mbi) {
+uint64_t highestUsableAddr(const MultibootInfo* mbi) {
 	if (mbi->flags & MB_FLAG_MMAP)
-		return clamp32(highestUsableInBuffer(
+		return capPool(highestUsableInBuffer(
 				(const void*) (uintptr_t) mbi->mmap_addr, mbi->mmap_length));
 	if (mbi->flags & MB_FLAG_MEM)
 		// mem_upper is KB above 1MB; total usable top = 1MB + mem_upper*1KB.
-		return clamp32(0x100000ull + (uint64_t) mbi->mem_upper * 1024ull);
+		return capPool(0x100000ull + (uint64_t) mbi->mem_upper * 1024ull);
 	return 0;
 }
 

@@ -27,8 +27,8 @@ uint64_t highestUsableInBuffer(const void* mmap, uint32_t len);
 // Convenience: iterate the map referenced by `mbi` (no-op without the flag).
 void parseMmap(const MultibootInfo* mbi, void* ctx, MmapCallback cb);
 
-// Highest usable physical byte, clamped to 0xFFFFFFFF. Uses the mmap when
-// present, else the mem_upper fallback, else 0.
-uint32_t highestUsableAddr(const MultibootInfo* mbi);
+// Highest usable physical byte (64-bit), capped at the frame-pool capacity (16 GiB). Uses the
+// mmap when present, else the mem_upper fallback, else 0.
+uint64_t highestUsableAddr(const MultibootInfo* mbi);
 
 }

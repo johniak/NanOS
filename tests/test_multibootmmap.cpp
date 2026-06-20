@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "MultibootInfo.h"
 #include "MultibootMmap.h"
+#include "FrameAllocator.h"   // FrameAllocator::CAPACITY_BYTES (the top-of-RAM cap)
 #include <cstring>
 #include <cstdint>
 
@@ -130,12 +131,20 @@ TEST_CASE("highestUsableAddr falls back to mem_upper when no mmap flag") {
 	CHECK(highestUsableAddr(&mbi) == 0x8000000u);
 }
 
-TEST_CASE("highestUsableAddr clamps a mem_upper past 4GiB to 0xFFFFFFFF") {
+TEST_CASE("highestUsableAddr keeps a 64-bit top under the 16 GiB cap (no 4GiB clamp)") {
 	MultibootInfo mbi;
 	memset(&mbi, 0, sizeof(mbi));
 	mbi.flags = MB_FLAG_MEM;
-	mbi.mem_upper = 0x500000;       // 0x500000 KB = 0x140000000 > 4GiB
-	CHECK(highestUsableAddr(&mbi) == 0xFFFFFFFFu);
+	mbi.mem_upper = 0x500000;       // 0x500000 KB = 0x140000000 (5 GiB) — was wrongly clamped to 4 GiB
+	CHECK(highestUsableAddr(&mbi) == 0x100000ull + 0x140000000ull);   // 1 MiB + 5 GiB, un-clamped
+}
+
+TEST_CASE("highestUsableAddr caps a huge top at the 16 GiB frame-pool capacity") {
+	MultibootInfo mbi;
+	memset(&mbi, 0, sizeof(mbi));
+	mbi.flags = MB_FLAG_MEM;
+	mbi.mem_upper = 0x5000000;      // 0x5000000 KB = 0x1400000000 (80 GiB) > 16 GiB cap
+	CHECK(highestUsableAddr(&mbi) == FrameAllocator::CAPACITY_BYTES);
 }
 
 TEST_CASE("highestUsableAddr returns 0 when neither mmap nor mem flags are set") {
