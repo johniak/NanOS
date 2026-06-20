@@ -4,6 +4,7 @@
 #include "Console.h"
 #include "Scheduler.h"
 #include "Pci.h"
+#include "MsiRouter.h"   // MSI/MSI-X capability walk + programming (host-tested)
 #include "knx_net.h"   // knx_map_mmio / knx_dma_alloc / knx_add_net_dev / knx_netif_rx (NetCore.cpp)
 #include "memory_manager.h"
 #include <arch/irq.h>
@@ -17,6 +18,16 @@ static SynthFs* g_root = 0;
 static int g_nextInput = 1;   // /dev/input0 is the kernel-side keyboard evdev; modules get >=1
 
 void kernelExportsInit(SynthFs* root) { g_root = root; }
+
+// LAPIC accessors (arch/x86_64/cpu/lapic_x86_64.cpp) used by knx_register_msi below.
+uint8_t lapicId();
+int     lapicAllocVector();
+
+// MSI handler slot + trampoline (Phase 1: one active NIC vector). arch::registerTrapHandler installs
+// msiTrampoline on the LAPIC vector msiSetup allocated; it forwards to the module's handler + ctx.
+static void (*g_msiHandler)(void*) = 0;
+static void* g_msiCtx = 0;
+static void msiTrampoline(arch::TrapFrame*) { if (g_msiHandler) g_msiHandler(g_msiCtx); }
 
 // ---- the exported kernel API (stable C ABI; bodies are thin wrappers over kernel internals) ----
 extern "C" {
@@ -94,6 +105,25 @@ uint32_t knx_pci_cfg_read32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off)
 }
 void knx_pci_cfg_write32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint32_t v) {
 	Pci::write32(bus, dev, func, off, v);
+}
+
+// Set up MSI-X (preferred) or MSI for a PCI function: walk the cap list, allocate a LAPIC vector,
+// program the capability and install `h(ctx)` on that vector. Returns 0, or <0 if neither MSI-X nor
+// MSI is available (the driver then falls back to legacy INTx via knx_register_irq).
+int knx_register_msi(uint8_t bus, uint8_t dev, uint8_t func, void (*h)(void*), void* ctx) {
+	MsiEnv env;
+	env.cfgRead     = [](uint8_t b, uint8_t d, uint8_t f, uint8_t o) { return Pci::read32(b, d, f, o); };
+	env.cfgWrite    = [](uint8_t b, uint8_t d, uint8_t f, uint8_t o, uint32_t v) { Pci::write32(b, d, f, o, v); };
+	env.mapMmio     = [](uint32_t p, uint32_t l) -> void* { return knx_map_mmio(p, l); };
+	env.allocVector = []() { return lapicAllocVector(); };
+	env.lapicId     = []() { return lapicId(); };
+	MsiResult r = msiSetup(env, bus, dev, func);
+	if (r.kind == MSI_NONE)
+		return -1;
+	g_msiHandler = h;
+	g_msiCtx = ctx;
+	arch::registerTrapHandler((unsigned) r.vector, msiTrampoline);
+	return 0;
 }
 
 }  // extern "C"
