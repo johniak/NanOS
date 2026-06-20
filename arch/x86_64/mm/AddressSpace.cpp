@@ -54,6 +54,21 @@ void AddressSpace::unmap(uint64_t va) {
 		*pte = 0;
 }
 
+bool AddressSpace::mapRangeHuge(uint64_t va, uint64_t pa, uint64_t len, uint64_t flags) {
+	if (!m_topPhys)
+		return false;
+	const uint64_t HP = 0x200000;                       // 2 MiB
+	uint64_t pages = (len + HP - 1) / HP;
+	for (uint64_t i = 0; i < pages; i++) {
+		uint64_t v = va + i * HP, a = pa + i * HP;
+		uint64_t* p4 = top();
+		uint64_t* p3 = nextTable(p4, pml4Index(v), true); if (!p3) return false;
+		uint64_t* p2 = nextTable(p3, pdptIndex(v), true); if (!p2) return false;
+		p2[pdIndex(v)] = makeEntry(a, flags | PTE_PS);   // 2 MiB leaf at the PD level
+	}
+	return true;
+}
+
 bool AddressSpace::mapRange(uint64_t va, uint64_t pa, uint64_t len, uint64_t flags) {
 	uint64_t pages = (len + FRAME_SIZE - 1) / FRAME_SIZE;
 	for (uint64_t p = 0; p < pages; p++)
@@ -63,12 +78,19 @@ bool AddressSpace::mapRange(uint64_t va, uint64_t pa, uint64_t len, uint64_t fla
 }
 
 uint64_t AddressSpace::translate(uint64_t va) const {
-	// const walk: read-only, never allocates (create=false). Cast away const for the shared
-	// helper, which does not mutate when create is false.
-	uint64_t* pte = const_cast<AddressSpace*>(this)->walk(va, false);
-	if (!pte || !entryPresent(*pte))
-		return 0xFFFFFFFFFFFFFFFFULL;
-	return entryAddr(*pte) | pageOffset(va);
+	// Read-only descent (create=false). Stops at a 2 MiB huge PD entry (PTE_PS) if present, else
+	// descends to the 4 KiB PTE. Cast away const for the shared helpers (they don't mutate here).
+	AddressSpace* self = const_cast<AddressSpace*>(this);
+	uint64_t* p4 = self->top();
+	uint64_t* p3 = self->nextTable(p4, pml4Index(va), false); if (!p3) return 0xFFFFFFFFFFFFFFFFULL;
+	uint64_t* p2 = self->nextTable(p3, pdptIndex(va), false); if (!p2) return 0xFFFFFFFFFFFFFFFFULL;
+	uint64_t pde = p2[pdIndex(va)];
+	if (!entryPresent(pde)) return 0xFFFFFFFFFFFFFFFFULL;
+	if (pde & PTE_PS) return entryAddr(pde) | (va & 0x1FFFFF);   // 2 MiB huge page
+	uint64_t* p1 = self->nextTable(p2, pdIndex(va), false); if (!p1) return 0xFFFFFFFFFFFFFFFFULL;
+	uint64_t pte = p1[ptIndex(va)];
+	if (!entryPresent(pte)) return 0xFFFFFFFFFFFFFFFFULL;
+	return entryAddr(pte) | pageOffset(va);
 }
 
 uint64_t* AddressSpace::privatizeChild(uint64_t* parent, uint64_t idx) {

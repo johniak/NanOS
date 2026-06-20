@@ -301,3 +301,14 @@ TEST_CASE("dropPde privatizes the path and unmaps just that PD-entry region") {
 	// The kernel's own mapping is untouched.
 	CHECK(kern.translate(0x400000) == 0x222000u);
 }
+
+TEST_CASE("mapRangeHuge maps 2 MiB pages and translate() resolves them") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	const uint64_t VA = 5ULL * 1024 * 1024 * 1024;            // 5 GiB (exercises a high VA/PA)
+	REQUIRE(as.mapRangeHuge(VA, VA, 4ULL * 1024 * 1024, PTE_PRESENT | PTE_RW));
+	CHECK(as.translate(VA) == VA);                            // start of the first 2 MiB page
+	CHECK(as.translate(VA + 0x1FFFFF) == VA + 0x1FFFFF);      // last byte of the first 2 MiB page
+	CHECK(as.translate(VA + 0x200000) == VA + 0x200000);      // second 2 MiB page
+	CHECK(as.translate(VA + 0x400000) == NOPE);               // unmapped just past the range
+}

@@ -17,6 +17,7 @@ const uint64_t PTE_PRESENT = 0x1;
 const uint64_t PTE_RW      = 0x2;
 const uint64_t PTE_USER    = 0x4;
 const uint64_t PTE_NX      = 1ULL << 63;                 // No-Execute (honored when EFER.NXE=1)
+const uint64_t PTE_PS      = 1ULL << 7;                  // Page Size: a PD entry with this maps a 2 MiB page
 const uint64_t PTE_PRIV    = 1ULL << 9;                  // AVL bit 9 (ignored by HW): this entry points
                                                          // at a PER-PROCESS private table — re-privatize
                                                          // is a no-op, and teardown frees it. Cleared on

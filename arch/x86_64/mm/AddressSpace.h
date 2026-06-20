@@ -27,6 +27,9 @@ public:
 	bool map(uint64_t va, uint64_t pa, uint64_t flags);   // alloc intermediate tables on demand
 	void unmap(uint64_t va);                              // clear the PTE (keep the tables)
 	bool mapRange(uint64_t va, uint64_t pa, uint64_t len, uint64_t flags);
+	// Identity/normal map a range using 2 MiB huge pages (PD entries with PTE_PS). va/pa/len are
+	// rounded up to 2 MiB. Cheap for many-GiB ranges (one PD entry per 2 MiB, no PT level).
+	bool mapRangeHuge(uint64_t va, uint64_t pa, uint64_t len, uint64_t flags);
 
 	// Copy all 512 PML4 entries from another space (the kernel's) into this one — sharing
 	// every kernel lower table — then privatize the path to `userVa` (a private PML4->PDPT->PD
