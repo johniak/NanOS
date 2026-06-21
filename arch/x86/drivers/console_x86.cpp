@@ -155,4 +155,8 @@ void consoleSize(unsigned* cols, unsigned* rows) {
 	}
 }
 
+// Early-boot POST-code bars are an x86_64-on-real-hardware bring-up aid; i686 boots via BIOS
+// with VGA text output, so this is a no-op here.
+void debugBar(unsigned) {}
+
 }  // namespace arch

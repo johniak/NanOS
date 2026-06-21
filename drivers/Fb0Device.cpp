@@ -3,7 +3,7 @@
 namespace kernel {
 
 Fb0Device::Fb0Device(const FbInfo& fb)
-	: m_fb(fb), m_lfb((uint8_t*) fb.phys), m_len(fb.pitch * fb.height) {}
+	: m_fb(fb), m_lfb((uint8_t*) (uintptr_t) fb.phys), m_len(fb.pitch * fb.height) {}
 
 int Fb0Device::read(unsigned off, void* buf, unsigned n) {
 	return fbdevRead(m_lfb, m_len, off, buf, n);

@@ -97,9 +97,10 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {   // contrac
 
 uint32_t mmuKernelDirPhys() { return g_kernelDirPhys; }
 
-void mmuMapKernelMmio(uint32_t phys, uint32_t bytes) {
-	uint32_t base = phys & kernel::PAGE_MASK;
-	uint32_t end = (phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
+void mmuMapKernelMmio(uint64_t phys, uint32_t bytes) {
+	// i686 physical space is 32-bit; the 64-bit contract just narrows here.
+	uint32_t base = (uint32_t) phys & kernel::PAGE_MASK;
+	uint32_t end = ((uint32_t) phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
 	// Map into the live kernel directory; these VAs were never touched, so no stale TLB.
 	g_kspace->mapRange(base, base, end - base, kernel::PTE_PRESENT | kernel::PTE_RW);
 }
@@ -179,10 +180,11 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 
 uint32_t mmuSpaceDirPhys(AddressSpace* s) { return s->impl.directoryPhys(); }
 
-uint32_t mmuMapUserFb(AddressSpace* s, uint32_t fbPhys, uint32_t bytes) {
+uint32_t mmuMapUserFb(AddressSpace* s, uint64_t fbPhys, uint32_t bytes) {
 	const uint32_t FB_USER_VA = 0x58000000;   // 1.375 GiB: above RAM, outside every other window
-	uint32_t base = fbPhys & kernel::PAGE_MASK;
-	uint32_t off = fbPhys - base;
+	// i686 physical space is 32-bit; the 64-bit contract just narrows here.
+	uint32_t base = (uint32_t) fbPhys & kernel::PAGE_MASK;
+	uint32_t off = (uint32_t) fbPhys - base;
 	uint32_t len = (off + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;
 	// Allocating + zeroing page-table frames touches arbitrary physical RAM by identity,
 	// which is only safe under the kernel directory (the process dir's user-window PDE

@@ -48,7 +48,11 @@ uint32_t mmuKernelDirPhys();
 // RAM and is therefore NOT covered by the kernel identity map) into the kernel
 // directory, present+writable, supervisor. Call after mmuInitKernel and BEFORE any
 // per-process address space is created, so the new PDE is shared by every process.
-void mmuMapKernelMmio(uint32_t phys, uint32_t bytes);
+// phys is 64-bit: PCI MMIO BARs (framebuffer, NIC, xHCI) on real x86_64 hardware are
+// routinely programmed above 4 GiB. Truncating to 32 bits maps the wrong page and the
+// first access triple-faults on the metal (QEMU/OVMF places them low, hiding it). The
+// i686 impl narrows internally (its physical space is 32-bit anyway).
+void mmuMapKernelMmio(uint64_t phys, uint32_t bytes);
 
 // Read/load the active page-directory physical address (CR3 on x86). MI code uses
 // these to stage a spawned child under the kernel identity map, then restore the
@@ -76,7 +80,7 @@ uint32_t mmuSpaceDirPhys(AddressSpace*);
 // Map a framebuffer's physical region into a process address space at a fixed user VA
 // (above RAM, separate from the 1 MiB user window), present+writable+user. Returns the
 // user virtual address of the framebuffer, or 0 on failure. Used by mmap of /dev/fb0.
-uint32_t mmuMapUserFb(AddressSpace*, uint32_t fbPhys, uint32_t bytes);
+uint32_t mmuMapUserFb(AddressSpace*, uint64_t fbPhys, uint32_t bytes);   // fbPhys 64-bit: real HW LFB >4 GiB
 
 // Growable anonymous user heap (the brk/sbrk region). It lives at a fixed high VA,
 // above RAM and the framebuffer window, so it is independent of the 4 MiB user window.

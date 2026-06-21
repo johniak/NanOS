@@ -165,4 +165,25 @@ void consoleSize(unsigned* cols, unsigned* rows) {
 	}
 }
 
+// Early-boot POST-code bars. Writes pixels straight at the framebuffer's physical address
+// (identity-mapped — by the loader's 64 GiB early map before initPaging, by mmuInitKernel
+// after). Assumes 32bpp (every GOP/VBE mode we request is 32bpp). Each call drops one band
+// lower so a whole ladder stays on screen; the lowest band reached is the last milestone
+// before a reset. Deliberately does NOT touch the FbConsole state, so it works even before
+// the console is activated.
+void debugBar(unsigned rgb) {
+	const BootFramebuffer* fb = bootFramebuffer();
+	if (!fb || fb->bpp != 32)
+		return;
+	static unsigned slot = 0;
+	const unsigned band = 28;             // pixels tall per band (incl. a 4 px gap)
+	volatile uint32_t* px = (volatile uint32_t*) (uintptr_t) fb->addr;
+	unsigned ppl = fb->pitch / 4;         // pixels per scanline (pitch may exceed width*4)
+	unsigned y0 = slot * band;
+	for (unsigned y = y0; y < y0 + band - 4 && y < fb->height; y++)
+		for (unsigned x = 0; x < fb->width; x++)
+			px[(unsigned long) y * ppl + x] = rgb;
+	slot++;
+}
+
 }  // namespace arch

@@ -25,7 +25,7 @@ IMAGE_GRUB2_PART=$(IMAGE_GRUB2)?offset=1048576
 # + an ext4 partition for /disks/main. Same partition layout/offset as the i686 image.
 IMAGE64_GRUB2=disk/image64-grub2.img
 # Hybrid GPT+Limine layout: the ext4 root (P3) starts at 34 MiB (after bios_boot @1MiB + ESP @2MiB,32MiB).
-IMAGE64_GRUB2_PART=$(IMAGE64_GRUB2)?offset=35651584
+IMAGE64_GRUB2_PART=$(IMAGE64_GRUB2)?offset=69206016
 
 DOCKER_IMAGE=nanos-build
 # Build the image for the host's NATIVE architecture (no --platform): the i686-elf cross

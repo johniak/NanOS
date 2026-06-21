@@ -45,10 +45,14 @@ stack_top:
 align 4096
 p4_table:                       ; PML4
     resb 4096
-p3_table:                       ; PDPT
+p3_table:                       ; PDPT (64 entries used -> 64 PDs)
     resb 4096
-p2_table:                       ; PD (512 * 2 MiB = 1 GiB identity)
-    resb 4096
+p2_tables:                      ; 64 contiguous PDs = 64 * 512 * 2 MiB = 64 GiB identity.
+    resb 4096 * 64              ; the loader's 1 GiB map was too small: on real x86_64 firmware
+                                ; (Dell) the Multiboot info / E820 mmap / framebuffer can sit
+                                ; above 1 GiB, and initPaging reads the mmap UNDER this map
+                                ; (before mmuInitKernel swaps CR3) -> a >1 GiB access triple-
+                                ; faulted with no output. 64 GiB covers any laptop's RAM+MMIO.
 
 section .text
 bits 32
@@ -68,17 +72,27 @@ setup_page_tables:
     mov eax, p3_table
     or  eax, 0b11               ; present | writable
     mov [p4_table], eax
-    mov eax, p2_table
-    or  eax, 0b11
-    mov [p3_table], eax
-    xor ecx, ecx                ; ecx = page index 0..511
+    ; Point the first 64 PDPT entries at the 64 contiguous PD tables.
+    xor ecx, ecx
+.set_p3:
+    mov eax, ecx
+    shl eax, 12                 ; eax = ecx * 4096 (per-PD offset)
+    add eax, p2_tables
+    or  eax, 0b11               ; present | writable
+    mov [p3_table + ecx * 8], eax
+    inc ecx
+    cmp ecx, 64
+    jne .set_p3
+    ; Fill 64 * 512 = 32768 PD entries with 2 MiB huge pages -> identity-map [0, 64 GiB).
+    xor ecx, ecx                ; ecx = 2 MiB page index 0..32767
 .map_p2:
     mov eax, 0x200000           ; 2 MiB
-    mul ecx                     ; edx:eax = 2 MiB * ecx (< 1 GiB so edx = 0)
+    mul ecx                     ; edx:eax = 2 MiB * ecx (64-bit; > 4 GiB past index 2047)
     or  eax, 0b10000011         ; present | writable | huge (PS bit 7)
-    mov [p2_table + ecx * 8], eax
+    mov [p2_tables + ecx * 8], eax
+    mov [p2_tables + ecx * 8 + 4], edx   ; high phys bits (needed beyond 4 GiB)
     inc ecx
-    cmp ecx, 512
+    cmp ecx, 32768
     jne .map_p2
     ret
 

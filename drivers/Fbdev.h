@@ -51,7 +51,7 @@ enum {
 
 // A framebuffer description (the MI mirror of arch::BootFramebuffer).
 struct FbInfo {
-	uint32_t phys;             // physical base (identity-mapped in the kernel)
+	uint64_t phys;             // physical base (identity-mapped in the kernel; 64-bit: real HW LFB >4 GiB)
 	uint32_t pitch, width, height;
 	uint8_t  bpp;
 };

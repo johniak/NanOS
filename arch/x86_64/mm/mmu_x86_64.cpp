@@ -39,6 +39,12 @@ void* physToVirt(void*, uint64_t pa) { return (void*) (uintptr_t) pa; }  // iden
 kernel::PagingEnv g_env = { allocFrame, freeFrame, physToVirt, 0 };
 kernel::AddressSpace* g_kspace = 0;
 uint64_t g_kernelDirPhys = 0;
+// Top of the kernel huge-page identity map ([0, g_identityTop) is mapped RW with 2 MiB huge
+// pages). MMIO below this is ALREADY identity-mapped; re-mapping it with a 4 KiB mapRange would
+// collide with the live 2 MiB huge PDE (mapRange would walk the huge entry as a page-table ptr
+// -> corruption). This bit the LAPIC (0xFEE00000) and framebuffer on real 8-16 GiB hardware,
+// where topOfRam exceeds those MMIO addresses; QEMU (512 MiB) put them above the map, hiding it.
+uint64_t g_identityTop = 0;
 
 }  // namespace
 
@@ -80,17 +86,21 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 	// Identity-map all RAM with 2 MiB huge pages (round the top up to 2 MiB) — cheap for many GiB.
 	uint64_t mapTop = (topOfRam + 0x1FFFFF) & ~0x1FFFFFull;
 	g_kspace->mapRangeHuge(0, 0, mapTop, kernel::PTE_PRESENT | kernel::PTE_RW);
+	g_identityTop = mapTop;   // MMIO below this is already mapped (see g_identityTop note)
 	g_kernelDirPhys = g_kspace->directoryPhys();
 
 	__asm__ __volatile__("cli");
 	kernel::enableNxe();                 // honor the NX bit on later USER mappings
 	kernel::loadCr3(g_kernelDirPhys);    // switch off the Plan-1 temporary map onto our PML4
 	kernel::enablePaging();              // re-assert CR0.PG (already on in long mode)
-	// Local APIC MMIO (architectural default 0xFEE00000) sits above RAM, outside the huge identity
-	// map. Map its register page now, on the LIVE kernel space (same path as the framebuffer/xHCI
-	// MMIO maps), so lapicInit() at cpuInit time only WRITES it and never allocates page tables —
-	// a late page-table allocation there hands out a frame overlapping the live kernel stack.
-	g_kspace->mapRange(0xFEE00000, 0xFEE00000, 0x1000, kernel::PTE_PRESENT | kernel::PTE_RW);
+	// Local APIC MMIO (architectural default 0xFEE00000). On small-RAM machines (QEMU) it sits
+	// ABOVE the huge identity map and needs an explicit 4 KiB mapping. On real 8-16 GiB hardware it
+	// falls WITHIN [0, mapTop) and is already identity-mapped by a 2 MiB huge page — mapping it
+	// again with a 4 KiB mapRange would collide with that huge PDE (mapRange walks the huge entry as
+	// a page-table pointer -> corruption -> the fault that stopped boot after the WHITE POST bar).
+	// Map explicitly only when it is above the huge map.
+	if (0xFEE00000ull + 0x1000 > mapTop)
+		g_kspace->mapRange(0xFEE00000, 0xFEE00000, 0x1000, kernel::PTE_PRESENT | kernel::PTE_RW);
 	__asm__ __volatile__("sti");
 	// Now that the LAPIC register page is mapped on the live kernel space, bring the Local APIC up.
 	// (cpuInit — which installs the IDT incl. the MSI gates — already ran; lapicInit fires no
@@ -100,9 +110,17 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 
 uint32_t mmuKernelDirPhys() { return (uint32_t) g_kernelDirPhys; }
 
-void mmuMapKernelMmio(uint32_t phys, uint32_t bytes) {
+void mmuMapKernelMmio(uint64_t phys, uint32_t bytes) {
 	uint64_t base = phys & kernel::PAGE_MASK;
-	uint64_t end_ = ((uint64_t) phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
+	uint64_t end_ = (phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
+	// Anything below the huge identity map is already mapped (identity, RW). Re-mapping it with a
+	// 4 KiB mapRange would collide with the live 2 MiB huge PDE (see g_identityTop). Map only the
+	// part above the map; if the whole region is below it, there is nothing to do. (Real-HW MMIO
+	// like the framebuffer at ~3 GiB falls inside the map; QEMU put it above, hiding the collision.)
+	if (base < g_identityTop)
+		base = g_identityTop;
+	if (base >= end_)
+		return;
 	g_kspace->mapRange(base, base, end_ - base, kernel::PTE_PRESENT | kernel::PTE_RW);
 }
 
@@ -175,9 +193,9 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 
 uint32_t mmuSpaceDirPhys(AddressSpace* s) { return (uint32_t) s->impl.directoryPhys(); }
 
-uint32_t mmuMapUserFb(AddressSpace* s, uint32_t fbPhys, uint32_t bytes) {
+uint32_t mmuMapUserFb(AddressSpace* s, uint64_t fbPhys, uint32_t bytes) {
 	uint64_t base = fbPhys & kernel::PAGE_MASK;
-	uint64_t off = (uint64_t) fbPhys - base;
+	uint64_t off = fbPhys - base;
 	uint64_t len = (off + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;
 	// Allocating + zeroing page-table frames touches arbitrary RAM by identity, only safe under
 	// the kernel directory (the process PML4's user windows do NOT identity-map all RAM).

@@ -21,9 +21,12 @@ mkdir -p "$(dirname "$IMAGE_PATH")"
 
 if [ "$NANOS_BOOT" = limine ]; then
     # ---- Hybrid GPT + Limine (BIOS + UEFI) ----
-    # Layout (parted aligns to 1 MiB): P1 bios_boot @1MiB(1MiB), P2 ESP/FAT @2MiB(32MiB),
-    # P3 ext4 root @34MiB(rest). The P3 byte offset is fixed at 35651584 — the Makefile uses it too.
-    ROOT_OFFSET=35651584
+    # Layout (parted aligns to 1 MiB): P1 bios_boot @1MiB(1MiB), P2 ESP/FAT32 @2MiB(64MiB),
+    # P3 ext4 root @66MiB(rest). The P3 byte offset is fixed at 69206016 — the Makefile uses it too.
+    # ESP is FAT32 (NOT FAT16): the UEFI spec mandates FAT32 for the ESP, and real firmware (Dell
+    # Latitude) silently resets instead of reading a FAT16 ESP — QEMU/OVMF tolerated FAT16, the
+    # metal does not. FAT32 needs >=~34 MiB of clusters, hence the 64 MiB ESP.
+    ROOT_OFFSET=69206016
     echo "Creating hybrid GPT+Limine image (BIOS+UEFI)..."
 
     # 320 MiB disk (root ~286 MiB after the 34 MiB boot area).
@@ -32,23 +35,25 @@ if [ "$NANOS_BOOT" = limine ]; then
     parted -s "$IMAGE_PATH" mklabel gpt
     parted -s "$IMAGE_PATH" mkpart bios_boot 1MiB 2MiB
     parted -s "$IMAGE_PATH" set 1 bios_grub on
-    parted -s "$IMAGE_PATH" mkpart ESP fat16 2MiB 34MiB
+    parted -s "$IMAGE_PATH" mkpart ESP fat32 2MiB 66MiB
     parted -s "$IMAGE_PATH" set 2 esp on
     # End the root at 318 MiB (NOT 100%): the last ~2 MiB holds the backup GPT header — letting the
     # ext4 fill to the disk end would overwrite it ("secondary header not valid" on limine install).
-    parted -s "$IMAGE_PATH" mkpart NANOS ext4 34MiB 318MiB
+    parted -s "$IMAGE_PATH" mkpart NANOS ext4 66MiB 318MiB
     echo "Created GPT partition table (bios_boot + ESP + ext4 root)"
 
-    # ESP (FAT) built in a separate file with mtools, then dd'd into P2 (offset 2 MiB).
-    dd if=/dev/zero of=/tmp/esp.img bs=1M count=32 status=none
-    mformat -i /tmp/esp.img -v ESP ::
+    # ESP (FAT32) built in a separate file with mtools, then dd'd into P2 (offset 2 MiB). -F forces
+    # FAT32 (mtools would otherwise pick FAT16 at this size) — required for real UEFI firmware.
+    dd if=/dev/zero of=/tmp/esp.img bs=1M count=64 status=none
+    mformat -F -i /tmp/esp.img -v ESP ::
     mmd -i /tmp/esp.img ::/EFI ::/EFI/BOOT
     mcopy -i /tmp/esp.img /usr/local/share/limine/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
     # BIOS stage 2: Limine's bios-install (into the bios_boot partition) still loads limine-bios.sys
     # from a filesystem — it searches the root / boot / limine dirs of a readable partition.
     mcopy -i /tmp/esp.img /usr/local/share/limine/limine-bios.sys ::/limine-bios.sys
     cat > /tmp/limine.conf <<'LCONF'
-timeout: 0
+timeout: 5
+verbose: yes
 serial: yes
 /NanOS
     protocol: multiboot1

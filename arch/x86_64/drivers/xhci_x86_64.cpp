@@ -34,7 +34,7 @@ enum { OP_USBCMD = 0x00, OP_USBSTS = 0x04, OP_PAGESIZE = 0x08, OP_CRCR = 0x18,
 enum { USBCMD_RS = 0x1, USBCMD_HCRST = 0x2 };
 enum { USBSTS_HCH = 0x1, USBSTS_CNR = 0x800 };
 // PORTSC bits.
-enum { PORTSC_CCS = 0x1, PORTSC_PED = 0x2, PORTSC_PR = 0x10, PORTSC_PRC = 0x200000 };
+enum { PORTSC_CCS = 0x1, PORTSC_PED = 0x2, PORTSC_PR = 0x10, PORTSC_PP = 0x200, PORTSC_PRC = 0x200000 };
 const uint32_t PORTSC_RW1C = 0xFE0000;   // CSC..CEC change bits (write-1-to-clear); preserve on RMW.
 // Runtime interrupter-0 registers (bytes from g_rt).
 enum { RT_IR0 = 0x20, IR_ERSTSZ = 0x08, IR_ERSTBA = 0x10, IR_ERDP = 0x18 };
@@ -486,6 +486,22 @@ void xhciInit() {
     biosHandoff();          // take the controller from BIOS/SMM (no-op on QEMU)
     intelPortRoute(d);      // route USB2 ports to xHCI on Intel (no-op elsewhere)
     controllerInit();
+
+    // Real xHCI hardware powers root-hub ports OFF until software sets Port Power (PP), and a
+    // freshly connected device needs a debounce interval before it asserts Connect Status (CCS).
+    // QEMU powers ports and sets CCS instantly, so this was never needed there — on the Dell it is
+    // why enumeration found 0 devices (the very stick we booted from). Power every port, then poll
+    // for a connection to settle before usbEnumerateAll() runs.
+    for (int p = 1; p <= g_maxPorts; p++)
+        wportsc(p, PORTSC_PP);
+    for (int tries = 0; tries < 300; tries++) {
+        bool any = false;
+        for (int p = 1; p <= g_maxPorts; p++)
+            if (portsc(p) & PORTSC_CCS) { any = true; break; }
+        if (any) break;
+        for (int k = 0; k < 20000; k++) ioWaitSpin();
+    }
+
     usbHcRegister((UsbHc*) g_mmio, &OPS);
 }
 

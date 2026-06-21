@@ -841,7 +841,7 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 			uint64_t phys = 0; unsigned dlen = 0;
 			if (g_sys->mmapInfo(fd, &phys, &dlen) >= 0) {
 				unsigned want = (length && length < dlen) ? length : dlen;
-				unsigned va = arch::mmuMapUserFb(space, (uint32_t) phys, want);   // (uint32_t) until Plan 3 widens mmuMapUserFb fbPhys to 64-bit
+				unsigned va = arch::mmuMapUserFb(space, phys, want);   // phys is 64-bit: real HW LFB sits >4 GiB
 				ret = va ? (long) va : -12;   // -ENOMEM
 				break;
 			}

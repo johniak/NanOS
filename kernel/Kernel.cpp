@@ -219,7 +219,7 @@ void Kernel::initPaging() {
 	uint64_t top = arch::bootMemTop();   // 64-bit top-of-RAM (capped at the 16 GiB frame-pool capacity)
 	g_frames.init(top);
 	arch::bootMemForEachUsable(&g_frames, markFree);
-	arch::mmuInitKernel(g_frames, top);
+	arch::mmuInitKernel(g_frames, top);  // builds the full huge-page map, swaps CR3, brings up LAPIC
 
 	// If the bootloader gave us a graphics framebuffer (vesafb model), map its MMIO into
 	// the kernel now — before any per-process space is created, so the mapping is shared —
@@ -227,7 +227,7 @@ void Kernel::initPaging() {
 	// as pixel glyphs on the framebuffer.
 	const arch::BootFramebuffer* fb = arch::bootFramebuffer();
 	if (fb) {
-		arch::mmuMapKernelMmio((uint32_t) fb->addr, fb->pitch * fb->height);
+		arch::mmuMapKernelMmio(fb->addr, fb->pitch * fb->height);   // fb->addr is 64-bit: real HW puts the LFB >4 GiB
 		arch::consoleActivateFramebuffer();
 	}
 	// Boot splash (now that the framebuffer console is up). Subsystems that came up
@@ -354,7 +354,7 @@ void Kernel::start() {
 	const arch::BootFramebuffer* fbdev = arch::bootFramebuffer();
 	if (fbdev) {
 		okBegin("Graphics device /dev/fb0");
-		FbInfo info = { (uint32_t) fbdev->addr, fbdev->pitch, fbdev->width,
+		FbInfo info = { fbdev->addr, fbdev->pitch, fbdev->width,
 				fbdev->height, fbdev->bpp };
 		root->addChar(root->dev(), "fb0", new Fb0Device(info), 0666);
 		okEnd();

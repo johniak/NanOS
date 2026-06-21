@@ -10,7 +10,7 @@ void fbdevFillFix(fb_fix_screeninfo* f, const FbInfo& fb) {
 	const char* id = "nanosfb";
 	for (int i = 0; id[i] && i < 15; i++)
 		f->id[i] = id[i];
-	f->smem_start = fb.phys;
+	f->smem_start = (unsigned long) fb.phys;
 	f->smem_len = fb.pitch * fb.height;
 	f->type = 0;            // FB_TYPE_PACKED_PIXELS
 	f->visual = 2;          // FB_VISUAL_TRUECOLOR
