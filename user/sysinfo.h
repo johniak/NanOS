@@ -108,4 +108,22 @@ static void sysinfo_uptime_str(char *out, int cap)
 	else        snprintf(out, cap, "%us", sec);
 }
 
+/* Framebuffer resolution from /dev/fb0 via the fbdev FBIOGET_VSCREENINFO ioctl (the same call
+ * fbtest uses). fb_var_screeninfo starts with uint32 xres, yres, xres_virtual, yres_virtual,
+ * xoffset, yoffset, bits_per_pixel — so indices 0, 1 and 6 give what About shows. Formats e.g.
+ * "1024x768 @ 32-bit"; "no framebuffer" when there is none (VGA-text boot). */
+static inline void sysinfo_display_str(char *out, int cap)
+{
+	extern int ioctl(int fd, unsigned long request, ...);
+	out[0] = 0;
+	int fd = open("/dev/fb0", O_RDONLY);
+	if (fd < 0) { snprintf(out, cap, "no framebuffer"); return; }
+	unsigned var[40];
+	for (int i = 0; i < 40; i++) var[i] = 0;
+	int rc = ioctl(fd, 0x4600 /*FBIOGET_VSCREENINFO*/, var);
+	close(fd);
+	if (rc < 0 || var[0] == 0) { snprintf(out, cap, "unknown"); return; }
+	snprintf(out, cap, "%ux%u @ %u-bit", var[0], var[1], var[6]);
+}
+
 #endif /* NX_SYSINFO_H */

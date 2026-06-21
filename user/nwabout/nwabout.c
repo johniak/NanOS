@@ -36,15 +36,16 @@ static nwui_node *info_row(nwui *u, const char *key, const char *val)
 
 int main(void)
 {
-	nwui *u = nwui_open("About This Computer", 360, 240);
+	nwui *u = nwui_open("About This Computer", 360, 270);
 	if (!u)
 		return 1;
 
-	char ver[128], cpu[80], mem[24], up[24];
+	char ver[128], cpu[80], mem[24], up[24], disp[32];
 	sysinfo_version(ver, sizeof ver);
 	sysinfo_cpu(cpu, sizeof cpu);
 	sysinfo_mem_str(mem, sizeof mem);
 	sysinfo_uptime_str(up, sizeof up);
+	sysinfo_display_str(disp, sizeof disp);
 
 	/* the branded NanOS logo (falls back to a plain tile if the artwork is not installed) */
 	int lw = 0, lh = 0;
@@ -55,6 +56,7 @@ int main(void)
 	nwui_node *rows = nwui_gap(nwui_pad(nwui_vbox(u), 12), 8);
 	nwui_add(rows, info_row(u, "Processor", cpu));
 	nwui_add(rows, info_row(u, "Memory",    mem));
+	nwui_add(rows, info_row(u, "Display",   disp));
 	nwui_add(rows, info_row(u, "Uptime",    up));
 	nwui_colors(rows, 0, 0x00ffffff);
 
