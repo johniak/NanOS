@@ -142,7 +142,7 @@ static void csi_final(vt *t, unsigned char f)
 	mark(t, t->cy);
 }
 
-enum { S_NORM, S_ESC, S_CSI, S_OSC };
+enum { S_NORM, S_ESC, S_ESCINT, S_CSI, S_OSC };
 
 static void feed_one(vt *t, unsigned char c)
 {
@@ -161,8 +161,16 @@ static void feed_one(vt *t, unsigned char c)
 		if (c == ']') { t->state = S_OSC; return; }   // OSC (title/clipboard): swallow to ST/BEL
 		if (c == '7') { t->savecx = t->cx; t->savecy = t->cy; }
 		else if (c == '8') { t->cx = t->savecx; t->cy = t->savecy; }
-		/* '(' ')' charset, '=' '>' keypad, etc.: a single trailing byte, already consumed here. */
+		/* ESC + an intermediate byte (0x20-0x2f): '(' ')' '*' '+' charset designators, '#' DECALN,
+		 * etc. The intermediate is followed by a *final* byte (the selector, e.g. 'B' in ESC(B that
+		 * ncurses emits on every attribute reset) which must be consumed, not printed. */
+		else if (c >= 0x20 && c <= 0x2f) { t->state = S_ESCINT; return; }
+		/* '=' '>' keypad and other lone final bytes: complete here, nothing trails. */
 		t->state = S_NORM;
+		return;
+	case S_ESCINT:
+		if (c >= 0x20 && c <= 0x2f) return;   // further intermediates
+		t->state = S_NORM;                    // the final byte (selector) — swallowed
 		return;
 	case S_CSI:
 		/* Private/extension markers ('?' DEC, '<' '=' '>' xterm): note + ignore the sequence's

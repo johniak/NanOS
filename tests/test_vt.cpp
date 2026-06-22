@@ -33,6 +33,34 @@ TEST_CASE("vt: OSC, xterm private markers, and CSI intermediates are swallowed w
 	CHECK(t.grid[0][0].fg == 4);
 }
 
+TEST_CASE("vt: charset-designation escapes (ESC ( B etc.) are swallowed, not leaked") {
+	vt t; vt_init(&t, 80, 25);
+	// ncurses emits `\033(B` (designate G0 = US-ASCII) as part of every attribute reset. The
+	// trailing selector 'B' is a *final* byte and must be consumed, not printed as a glyph.
+	feed(t, "\x1b(BX");
+	CHECK(t.grid[0][0].ch == 'X');
+	CHECK(t.cx == 1);
+	// G1 designation `ESC ) 0` (VT100 line-drawing) likewise swallows its '0' selector.
+	vt_init(&t, 80, 25);
+	feed(t, "\x1b)0Y");
+	CHECK(t.grid[0][0].ch == 'Y');
+	CHECK(t.cx == 1);
+	// ESC '#' '8' (DECALN) — ESC + intermediate '#' + final '8' — is consumed whole too.
+	vt_init(&t, 80, 25);
+	feed(t, "\x1b#8Z");
+	CHECK(t.grid[0][0].ch == 'Z');
+	CHECK(t.cx == 1);
+	// A realistic ncurses-style burst: SGR colour, charset reset, then text. Only the text lands,
+	// in the chosen colour — no stray 'B' between the reset and the glyph (the htop bug).
+	vt_init(&t, 80, 25);
+	feed(t, "\x1b[32m\x1b(BCPU");
+	CHECK(t.grid[0][0].ch == 'C');
+	CHECK(t.grid[0][0].fg == 2);
+	CHECK(t.grid[0][1].ch == 'P');
+	CHECK(t.grid[0][2].ch == 'U');
+	CHECK(t.cx == 3);
+}
+
 TEST_CASE("vt: CR/LF move the cursor; absolute CSI H positions it (1-based)") {
 	vt t; vt_init(&t, 80, 25);
 	feed(t, "hi\r\n");
