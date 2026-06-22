@@ -563,3 +563,23 @@ TEST_CASE("textarea find, goto-line, select-all, insert-text") {
 	CHECK(strncmp(tb, "X\nYfoo", 6) == 0); CHECK(ta->caret == 3);
 	delete u;
 }
+
+TEST_CASE("textarea copy/cut/paste via clipboard events") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "hello";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1; ta->anchor = 0; ta->caret = 3;   // "hel" selected
+
+	nw_event c; memset(&c, 0, sizeof c); c.type = NW_EV_COPY; c.cut = 1;
+	nwui_dispatch(u, &c);
+	CHECK(u->clip_set == 1); CHECK(u->clip_len == 3);
+	CHECK(strncmp(u->clip_buf, "hel", 3) == 0);
+	CHECK(strcmp(tb, "lo") == 0);                                     // cut removed "hel"
+
+	nw_event p; memset(&p, 0, sizeof p); p.type = NW_EV_PASTE;
+	p.text = "XY"; p.text_len = 2; ta->caret = 0; ta->anchor = 0;
+	nwui_dispatch(u, &p);
+	CHECK(strcmp(tb, "XYlo") == 0);
+	delete u;
+}

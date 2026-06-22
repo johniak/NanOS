@@ -401,6 +401,15 @@ static int ta_insert(nwui_node *n, char ch)
 	n->tbuf[n->caret] = ch; n->caret++; n->tlen++; n->anchor = n->caret;
 	n->tbuf[n->tlen] = 0; return 1;
 }
+static void ta_copy(nwui *u, nwui_node *n)       /* selection (or whole buffer) -> clipboard */
+{
+	int lo = has_sel(n) ? sel_lo(n) : 0;
+	int hi = has_sel(n) ? sel_hi(n) : n->tlen;
+	int k = hi - lo;
+	if (k > (int) sizeof u->clip_buf) k = (int) sizeof u->clip_buf;
+	for (int i = 0; i < k; i++) u->clip_buf[i] = n->tbuf[lo + i];
+	u->clip_len = k; u->clip_set = 1;
+}
 /* offset of the start of the logical line containing byte position p */
 static int ta_line_start(const nwui_node *n, int p)
 {
@@ -828,6 +837,13 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		if (u->focus && u->focus->kind == NWUI_TEXTFIELD) {
 			tf_copy(u, u->focus);                    /* nwui.c forwards clip_buf to the server */
 			if (ev->cut) { tf_del_sel(u->focus); tf_changed(u->focus); }
+		} else if (u->focus && u->focus->kind == NWUI_TEXTAREA) {
+			ta_copy(u, u->focus);
+			if (ev->cut && has_sel(u->focus)) {
+				ta_del_range(u->focus, sel_lo(u->focus), sel_hi(u->focus));
+				u->focus->dirty = 1;
+				if (u->focus->on_change) u->focus->on_change(u->focus, u->focus->user);
+			}
 		}
 		break;
 
@@ -837,6 +853,14 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			for (int i = 0; i < ev->text_len; i++)
 				changed |= tf_insert(u->focus, ev->text[i]);
 			if (changed) tf_changed(u->focus);
+		} else if (u->focus && u->focus->kind == NWUI_TEXTAREA && ev->text) {
+			int changed = 0;
+			for (int i = 0; i < ev->text_len; i++)
+				changed |= ta_insert(u->focus, ev->text[i]);
+			if (changed) {
+				ta_scroll_to_caret(u->focus); u->focus->dirty = 1;
+				if (u->focus->on_change) u->focus->on_change(u->focus, u->focus->user);
+			}
 		}
 		break;
 
