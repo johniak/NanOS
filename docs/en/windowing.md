@@ -181,13 +181,26 @@ nwui_run(u);                                            /* event loop until clos
 
 - **Widgets**: `nwui_label`, `nwui_button`, `nwui_textfield` (over an app-owned buffer),
   `nwui_list` (+ `nwui_list_set`/`nwui_list_selected`, single-click select, double-click/Enter
-  activate, scrollbar), `nwui_image`.
+  activate, scrollbar), `nwui_image`, `nwui_checkbox` (app-owned flag), and
+  `nwui_textarea` — a full multiline editor over an app-owned buffer (caret + selection,
+  arrow/Home/End/PgUp/PgDn, vertical scroll, optional word-wrap, mouse caret + drag-select,
+  clipboard). Helpers: `nwui_textarea_caret` (line/col), `_set_wrap`, `_total_rows`, `_find`,
+  `_goto_line`, `_select_all`, `_insert_text`.
 - **Containers**: variadic `nwui_column`/`nwui_row`/`nwui_box`; FFI-friendly `nwui_vbox`/`nwui_hbox`
   + `nwui_add`.
 - **Layout props** (chainable): `nwui_pad`, `nwui_gap`, `nwui_flex`, `nwui_size`, `nwui_colors`.
-- **State**: `nwui_set_text`/`nwui_get_text` mark the node dirty → repaint.
+- **State**: `nwui_set_text`/`nwui_get_text` mark the node dirty → repaint; `nwui_focus` sets the
+  focused widget.
 - **App menu**: `nwui_menu` / `nwui_menu_item` / `nwui_menu_separator` populate the global
   macOS-style menu bar (the first menu's title is the app name); a pick fires the item callback.
+- **Keyboard accelerators**: `nwui_accel(u, ctrl, key, fkey, cb, user)` — Ctrl+&lt;letter&gt; or a
+  function key (`NWUI_KEY_F3`/`F5`). The core tracks Ctrl itself from raw scancodes (no compositor
+  change) and accelerators share the menu callbacks.
+- **Modal dialogs**: `nwui_open_modal`/`nwui_close_modal`/`nwui_modal_open` show a centered,
+  input-capturing sub-tree over a dimmed backdrop. Built on it: `nwui_message` (alert/About),
+  `nwui_prompt` (label + field + OK/Cancel), and `nwui_file_dialog` (Open/Save — a directory list +
+  editable path field; pure path helpers `nwui_path_join`/`nwui_path_up`). `nwui_post_copy`/
+  `nwui_post_paste` drive the focused field's clipboard from a menu item.
 - **`nwui_spawn`** launches another program (e.g. the file manager opening an app).
 
 ---
@@ -231,7 +244,7 @@ see filesystem.md and the graphics stack.)
 | `nwexp` | libnwui | file explorer (list widget, directory nav) |
 | `nwform` | libnwui | greeting form (textfield + buttons) — the toolkit demo |
 | `nwabout` | libnwui | about dialog |
-| `nwnote` | **libnw** (direct) | text note + clipboard demo |
+| `nwnote` | libnwui | **Notepad** — a Windows XP-style editor (menus, accelerators, find/replace/go-to, open/save, status bar) on the `nwui_textarea` + modal widgets |
 | `rustform` | libnwui via **Rust** FFI | the same form in Rust — proves the C ABI is language-agnostic |
 
 At boot the compositor spawns `nwterm`, `nwset`, `nwexp` (Files last → on top + focused).
