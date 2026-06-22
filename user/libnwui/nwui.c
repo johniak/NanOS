@@ -82,6 +82,11 @@ void nwui_run(nwui *u)
 			if (ev.type == NW_EV_MENU) {       /* a global-menu item was chosen */
 				nwui_menu_dispatch(u, ev.menu, ev.item);
 			} else {
+				/* A resize must realloc the client draw buffer to the new size BEFORE we relayout
+				 * and repaint at it — otherwise paint() keeps drawing into the old (smaller) buffer
+				 * and everything past the old bounds vanishes when the window is enlarged. */
+				if (ev.type == NW_EV_CONFIGURE)
+					nw_win_resize(io->win, ev.x, ev.y);
 				u->now_ms = now_ms();          /* stamp time so the core can detect double-clicks */
 				if (!nwui_dispatch(u, &ev)) { alive = 0; break; }   /* CLOSE */
 				if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }
