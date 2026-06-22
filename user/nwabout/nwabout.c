@@ -34,9 +34,23 @@ static nwui_node *info_row(nwui *u, const char *key, const char *val)
 	                         nwui_label(u, val)), 8);
 }
 
+/* Centre a node on the cross axis: a row of [flex spacer][item][flex spacer]. A column stretches
+ * its children to full width but draws an image/label left-aligned in that cell, so the logo and
+ * title need this to sit centred (macOS About style). */
+static nwui_node *center_h(nwui *u, nwui_node *item)
+{
+	nwui_node *h = nwui_hbox(u);
+	nwui_add(h, nwui_flex(nwui_box(u, (nwui_node *) 0), 1));
+	nwui_add(h, item);
+	nwui_add(h, nwui_flex(nwui_box(u, (nwui_node *) 0), 1));
+	return h;
+}
+
 int main(void)
 {
-	nwui *u = nwui_open("About This Computer", 360, 270);
+	/* Tall enough for the whole column (logo + title + version + 4 info rows); the toolkit lays
+	 * out at a fixed size with no auto-fit, so an undersized window clips the lower rows. */
+	nwui *u = nwui_open("About This Computer", 360, 350);
 	if (!u)
 		return 1;
 
@@ -61,9 +75,9 @@ int main(void)
 	nwui_colors(rows, 0, 0x00ffffff);
 
 	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 20), 10);
-	nwui_add(col, logo);
-	nwui_add(col, nwui_label(u, "NanoOS"));
-	nwui_add(col, nwui_colors(nwui_label(u, ver), 0x657184, 0));
+	nwui_add(col, center_h(u, logo));
+	nwui_add(col, center_h(u, nwui_label(u, "NanoOS")));
+	nwui_add(col, center_h(u, nwui_colors(nwui_label(u, ver), 0x657184, 0)));
 	nwui_add(col, rows);
 
 	nwui_set_root(u, col);
