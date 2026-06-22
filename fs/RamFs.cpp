@@ -206,7 +206,7 @@ int RamFs::create(String path, unsigned mode) {
 		if (node) free(node);
 		return E_NOSPC;
 	}
-	node->mode = mode & 0777;
+	node->mode = mode & 07777;
 	return 0;
 }
 
@@ -227,7 +227,7 @@ int RamFs::mknod(String path, unsigned mode) {
 		return E_NOSPC;
 	}
 	node->isSocket = ((mode & 0xF000u) == 0xC000u);
-	node->mode = mode & 0777;
+	node->mode = mode & 07777;
 	return 0;
 }
 
@@ -244,7 +244,7 @@ int RamFs::mkdir(String path, unsigned mode) {
 		if (node) free(node);
 		return E_NOSPC;
 	}
-	node->mode = mode & 0777;
+	node->mode = mode & 07777;
 	return 0;
 }
 
@@ -284,7 +284,7 @@ static void fillStat(FileStat& out, RamNode* n) {
 	out.type = n->isSymlink ? NODE_SYMLINK : n->isDir ? NODE_DIR : n->isSocket ? NODE_OTHER : NODE_FILE;
 	out.size = n->isSymlink ? (n->link ? (unsigned) strlen(n->link) : 0) : (n->isDir || n->isSocket ? 0 : n->size);
 	unsigned fmt = n->isSymlink ? 0xA000u : n->isDir ? 0x4000u : n->isSocket ? 0xC000u : 0x8000u;
-	out.mode = fmt | (n->mode & 0777);
+	out.mode = fmt | (n->mode & 07777);
 	out.nlink = (unsigned) (n->nlink < 1 ? 1 : n->nlink);
 	out.uid = n->uid;
 	out.gid = n->gid;
@@ -446,7 +446,7 @@ int RamFs::truncate(String path, unsigned length) {
 int RamFs::chmod(String path, unsigned mode) {
 	RamNode* n = walkFollow((char*) path, 0);
 	if (!n) return E_NOENT;
-	n->mode = mode & 0777;
+	n->mode = mode & 07777;
 	return 0;
 }
 

@@ -105,7 +105,99 @@ FileSystem* Vfs::resolve(String path, String& relative) {
 	return best;
 }
 
+// ---- DAC policy layer -------------------------------------------------------------------
+
+int Vfs::statNoCheck(String path, FileStat& out) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->stat(rel, out);
+}
+
+// The directory holding `path`: strip the last '/component'. Root's parent is root.
+String Vfs::parentOf(String path) {
+	const char* p = (char*) path;
+	int len = (int) strlen(p);
+	int cut = -1;
+	for (int i = len - 1; i >= 0; i--)
+		if (p[i] == '/') { cut = i; break; }
+	if (cut <= 0) return String("/");
+	char buf[256];
+	if (cut >= (int) sizeof(buf)) cut = (int) sizeof(buf) - 1;
+	for (int i = 0; i < cut; i++) buf[i] = p[i];
+	buf[cut] = 0;
+	return String(buf);
+}
+
+// Search (x) on every ANCESTOR directory of `path` (not the final component).
+int Vfs::maySearch(String path) {
+	const Cred* c = caller();
+	if (!c) return 0;                       // no provider installed -> kernel/root context
+	const char* s = (char*) path;
+	char acc[256];
+	int n = 0;
+	acc[n++] = '/';
+	for (int i = 1; s[i]; i++) {
+		if (s[i] == '/') {
+			acc[n] = 0;
+			FileStat st;
+			if (statNoCheck(String(acc), st) < 0) return -2;   // -ENOENT
+			int pc = credAccess(*c, st.uid, st.gid, st.mode, 1 /*x*/, false);
+			if (pc < 0) return pc;
+		}
+		if (n < 255) acc[n++] = s[i];
+	}
+	return 0;
+}
+
+int Vfs::permission(String path, int want) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	const Cred* c = caller();
+	if (!c) return 0;
+	FileStat st;
+	if (statNoCheck(path, st) < 0) return -2;
+	return credAccess(*c, st.uid, st.gid, st.mode, want, false);
+}
+
+int Vfs::mayCreate(String path) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	const Cred* c = caller();
+	if (!c) return 0;
+	FileStat pd;
+	if (statNoCheck(parentOf(path), pd) < 0) return -2;
+	return credAccess(*c, pd.uid, pd.gid, pd.mode, 2 /*w*/, false);
+}
+
+int Vfs::mayDelete(String path) {
+	int mc = mayCreate(path);               // search + W on the parent directory
+	if (mc < 0) return mc;
+	const Cred* c = caller();
+	if (!c) return 0;
+	FileStat pd;
+	statNoCheck(parentOf(path), pd);
+	if (pd.mode & 01000) {                  // sticky parent: only owner/dir-owner/root may remove
+		FileStat ts;
+		if (statNoCheck(path, ts) < 0) return -2;
+		return credMaySticky(*c, pd.uid, ts.uid);
+	}
+	return 0;
+}
+
+int Vfs::chownNoCheck(String path, unsigned uid, unsigned gid) {
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0) return -1;
+	return fs->chown(rel, uid, gid);
+}
+
+// ---- public operations (gated) ----------------------------------------------------------
+
 int Vfs::read(String path, unsigned size, unsigned off, void* buf) {
+	int pc = permission(path, 4);
+	if (pc < 0) return pc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -114,14 +206,14 @@ int Vfs::read(String path, unsigned size, unsigned off, void* buf) {
 }
 
 int Vfs::stat(String path, FileStat& out) {
-	String rel;
-	FileSystem* fs = resolve(path, rel);
-	if (fs == 0)
-		return -1;
-	return fs->stat(rel, out);
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	return statNoCheck(path, out);
 }
 
 int Vfs::lstat(String path, FileStat& out) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -130,6 +222,8 @@ int Vfs::lstat(String path, FileStat& out) {
 }
 
 int Vfs::readlink(String path, char* buf, unsigned size) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -138,6 +232,9 @@ int Vfs::readlink(String path, char* buf, unsigned size) {
 }
 
 int Vfs::readdir(String path, List<DirEntry>& out) {
+	// readdir reads the directory's contents: search on ancestors + R on the directory itself.
+	int pc = permission(path, 4);
+	if (pc < 0) return pc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -146,6 +243,8 @@ int Vfs::readdir(String path, List<DirEntry>& out) {
 }
 
 int Vfs::write(String path, unsigned size, unsigned off, const void* buf) {
+	int pc = permission(path, 2);
+	if (pc < 0) return pc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -198,15 +297,43 @@ int Vfs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
 	return fs->mmapInfo(rel, physOut, lenOut);
 }
 
+// Give a freshly-created object the caller's identity: owner = fsuid; group = the parent
+// directory's group when it is setgid, else the caller's fsgid; a setgid parent also
+// propagates its S_ISGID bit onto a new sub-directory (BSD/Linux semantics).
+void Vfs::ownNewObject(String path, bool isDir) {
+	const Cred* c = caller();
+	if (!c) return;
+	FileStat pd;
+	if (statNoCheck(parentOf(path), pd) < 0) return;
+	unsigned g = (pd.mode & 02000) ? pd.gid : c->fsgid;
+	chownNoCheck(path, c->fsuid, g);
+	if (isDir && (pd.mode & 02000)) {
+		FileStat ns;
+		if (statNoCheck(path, ns) >= 0) {
+			String rel;
+			FileSystem* fs = resolve(path, rel);
+			if (fs) fs->chmod(rel, ns.mode | 02000);
+		}
+	}
+}
+
 int Vfs::create(String path, unsigned mode) {
+	FileStat ex;
+	bool exists = statNoCheck(path, ex) >= 0;
+	if (exists) { int pc = permission(path, 2); if (pc < 0) return pc; }   // truncate needs W on file
+	else        { int mc = mayCreate(path);    if (mc < 0) return mc; }    // new file needs W on parent
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
 		return -1;
-	return fs->create(rel, mode);
+	int rc = fs->create(rel, mode);
+	if (rc == 0 && !exists) ownNewObject(path, false);
+	return rc;
 }
 
 int Vfs::unlink(String path) {
+	int dc = mayDelete(path);
+	if (dc < 0) return dc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -225,18 +352,28 @@ int Vfs::mkdir(String path, unsigned mode) {
 	const char* r = (char*) rel;
 	if (r[0] == '/' && r[1] == 0)
 		return -17;   // -EEXIST
-	return fs->mkdir(rel, mode);
+	int mc = mayCreate(path);
+	if (mc < 0) return mc;
+	int rc = fs->mkdir(rel, mode);
+	if (rc == 0) ownNewObject(path, true);
+	return rc;
 }
 
 int Vfs::mknod(String path, unsigned mode) {
+	int mc = mayCreate(path);
+	if (mc < 0) return mc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
 		return -1;
-	return fs->mknod(rel, mode);
+	int rc = fs->mknod(rel, mode);
+	if (rc == 0) ownNewObject(path, false);
+	return rc;
 }
 
 int Vfs::rmdir(String path) {
+	int dc = mayDelete(path);
+	if (dc < 0) return dc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -245,6 +382,8 @@ int Vfs::rmdir(String path) {
 }
 
 int Vfs::truncate(String path, unsigned length) {
+	int pc = permission(path, 2);
+	if (pc < 0) return pc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -253,6 +392,10 @@ int Vfs::truncate(String path, unsigned length) {
 }
 
 int Vfs::rename(String oldpath, String newpath) {
+	int dc = mayDelete(oldpath);          // remove from old parent (+ sticky)
+	if (dc < 0) return dc;
+	int cc = mayCreate(newpath);          // create in new parent
+	if (cc < 0) return cc;
 	String relOld, relNew;
 	FileSystem* fo = resolve(oldpath, relOld);
 	FileSystem* fn = resolve(newpath, relNew);
@@ -264,6 +407,10 @@ int Vfs::rename(String oldpath, String newpath) {
 }
 
 int Vfs::link(String oldpath, String newpath) {
+	int sc = maySearch(oldpath);          // must be able to reach the source
+	if (sc < 0) return sc;
+	int cc = mayCreate(newpath);          // and create the new name
+	if (cc < 0) return cc;
 	String relOld, relNew;
 	FileSystem* fo = resolve(oldpath, relOld);
 	FileSystem* fn = resolve(newpath, relNew);
@@ -275,14 +422,30 @@ int Vfs::link(String oldpath, String newpath) {
 }
 
 int Vfs::symlink(String target, String path) {
+	int cc = mayCreate(path);
+	if (cc < 0) return cc;
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
 		return -1;
-	return fs->symlink(target, rel);   // target is the link's content, stored verbatim
+	int rc = fs->symlink(target, rel);   // target is the link's content, stored verbatim
+	if (rc == 0) ownNewObject(path, false);
+	return rc;
 }
 
+// chmod: must own the file (or be root). Drop S_ISGID if a non-root setter is not in the
+// file's group (Linux clears setgid to prevent privilege via a group it can't claim).
 int Vfs::chmod(String path, unsigned mode) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	FileStat st;
+	if (statNoCheck(path, st) < 0) return -2;
+	const Cred* c = caller();
+	if (c) {
+		int mc = credMayChmod(*c, st.uid);
+		if (mc < 0) return mc;
+		if (c->euid != 0 && !credInGroup(*c, st.gid)) mode &= ~02000u;   // strip setgid
+	}
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -290,15 +453,38 @@ int Vfs::chmod(String path, unsigned mode) {
 	return fs->chmod(rel, mode);
 }
 
+// chown: changing owner is root-only; an owner may change group to one it belongs to. On a
+// successful non-root chown, the setuid/setgid bits are cleared.
 int Vfs::chown(String path, unsigned uid, unsigned gid) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	FileStat st;
+	if (statNoCheck(path, st) < 0) return -2;
+	const Cred* c = caller();
+	if (c) {
+		int mc = credMayChown(*c, st.uid, (int) uid, (int) gid);
+		if (mc < 0) return mc;
+	}
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
 		return -1;
-	return fs->chown(rel, uid, gid);
+	int rc = fs->chown(rel, uid, gid);
+	if (rc == 0 && c && c->euid != 0 && (st.mode & 06000))
+		fs->chmod(rel, st.mode & ~06000u);   // drop setuid/setgid on ownership change
+	return rc;
 }
 
 int Vfs::lchown(String path, unsigned uid, unsigned gid) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	FileStat st;
+	if (statNoCheck(path, st) < 0) return -2;   // lstat would do, but the owner is the same field
+	const Cred* c = caller();
+	if (c) {
+		int mc = credMayChown(*c, st.uid, (int) uid, (int) gid);
+		if (mc < 0) return mc;
+	}
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -307,6 +493,20 @@ int Vfs::lchown(String path, unsigned uid, unsigned gid) {
 }
 
 int Vfs::utimes(String path, unsigned atime, unsigned mtime) {
+	int sc = maySearch(path);
+	if (sc < 0) return sc;
+	FileStat st;
+	if (statNoCheck(path, st) < 0) return -2;
+	const Cred* c = caller();
+	if (c) {
+		// We cannot tell utimes(NULL) ("now") from explicit times at this layer; treat as
+		// explicit (the stricter owner-or-root rule). The syscall layer maps NULL->now.
+		int mc = credMayUtimes(*c, st.uid, false);
+		if (mc < 0) {
+			// Fall back to the "now" rule: write permission also authorizes a timestamp touch.
+			if (credAccess(*c, st.uid, st.gid, st.mode, 2, false) < 0) return mc;
+		}
+	}
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)

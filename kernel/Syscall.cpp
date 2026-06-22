@@ -120,7 +120,7 @@ int Syscalls::open(String path, int flags) {
 	// read-only fs create() returns -EROFS; if the file already exists we ignore that
 	// and open it read-only, otherwise the open fails.
 	if (flags & (O_CREAT | O_TRUNC)) {
-		int cr = vfs->create(path, 0644);
+		int cr = vfs->create(path, 0666 & ~m_umask);   // honor the file-creation mask (POSIX)
 		if (cr == 0) {
 			st.size = 0;
 			exists = true;
@@ -543,7 +543,7 @@ int Syscalls::unlink(String path) {
 }
 
 int Syscalls::mkdir(String path, int mode) {
-	return vfs->mkdir(resolvePath(path), (unsigned) mode);
+	return vfs->mkdir(resolvePath(path), (unsigned) mode & ~m_umask);   // apply umask (POSIX)
 }
 
 int Syscalls::rmdir(String path) {

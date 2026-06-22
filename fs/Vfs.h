@@ -2,6 +2,7 @@
 #include "BlockDevice.h"
 #include "String.h"
 #include "List.h"
+#include "Cred.h"
 
 namespace kernel {
 
@@ -118,7 +119,24 @@ class Vfs {
 	// mountpoint does not fit (rejected rather than silently truncated -> wrong routing).
 	int addMount(String mountpoint, FileSystem* fs);
 
+	// ---- DAC policy layer (the inode_permission() analogue). The caller's credentials come
+	// from a CredProvider hook; a null provider (early boot / kernel context) bypasses checks.
+	typedef const Cred* (*CredProviderFn)();
+	CredProviderFn credProvider;
+	const Cred* caller() { return credProvider ? credProvider() : 0; }
+	int statNoCheck(String path, FileStat& out);          // FS stat with NO permission check
+	int maySearch(String path);                            // x on every ancestor dir; 0 / -EACCES
+	int permission(String path, int want);                 // walk + want on the final object
+	int mayCreate(String path);                            // walk + W on parent dir
+	int mayDelete(String path);                            // walk + W on parent + sticky
+	int chownNoCheck(String path, unsigned uid, unsigned gid);   // ownership set on create (no check)
+	void ownNewObject(String path, bool isDir);           // stamp a new file/dir with caller identity
+	static String parentOf(String path);                  // the directory holding `path`
+
 public:
+	Vfs() : credProvider(0) {}
+	void setCredProvider(CredProviderFn p) { credProvider = p; }
+	int checkExec(String path) { return permission(path, 1); }   // X on the file (for execve)
 	void registerType(FileSystemType* type);
 	int mount(String mountpoint, String fstype, BlockDevice* dev, unsigned partitionLba);
 	// Mount an already-built filesystem (e.g. the synthetic root, which has no
