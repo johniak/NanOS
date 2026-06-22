@@ -1021,3 +1021,40 @@ void nwui_menu_dispatch(nwui *u, int menu, int item)
 	if (item < 0 || item >= m->nitems) return;
 	if (m->item[item].cb) m->item[item].cb(0, m->item[item].user);   /* self=0: a menu, no node */
 }
+
+/* ---- convenience dialogs (pure composition of widgets + the modal overlay; no I/O) ---- */
+static void dlg_close(nwui_node *self, void *u) { (void) self; nwui_close_modal((nwui *) u); }
+
+void nwui_message(nwui *u, const char *title, const char *text)
+{
+	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 14), 10);
+	nwui_add(col, nwui_colors(nwui_label(u, title), 0x172130, 0));
+	nwui_add(col, nwui_label(u, text));
+	nwui_add(col, nwui_button(u, "OK", dlg_close, u));
+	nwui_colors(col, 0, 0x00ffffff);
+	nwui_open_modal(u, col, 0, 0);
+}
+
+static struct { nwui *u; nwui_cb on_ok; void *user; } g_prompt;   /* one prompt modal at a time */
+static void prompt_ok(nwui_node *self, void *unused)
+{
+	(void) self; (void) unused;
+	nwui *u = g_prompt.u;
+	nwui_cb cb = g_prompt.on_ok;
+	void *usr = g_prompt.user;
+	nwui_close_modal(u);
+	if (cb) cb(0, usr);
+}
+void nwui_prompt(nwui *u, const char *title, char *buf, int cap, nwui_cb on_ok, void *user)
+{
+	g_prompt.u = u; g_prompt.on_ok = on_ok; g_prompt.user = user;
+	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 14), 10);
+	nwui_add(col, nwui_colors(nwui_label(u, title), 0x172130, 0));
+	nwui_add(col, nwui_textfield(u, buf, cap, 0, 0));
+	nwui_node *btns = nwui_gap(nwui_hbox(u), 8);
+	nwui_add(btns, nwui_button(u, "OK", prompt_ok, 0));
+	nwui_add(btns, nwui_button(u, "Cancel", dlg_close, u));
+	nwui_add(col, btns);
+	nwui_colors(col, 0, 0x00ffffff);
+	nwui_open_modal(u, col, 0, 0);
+}

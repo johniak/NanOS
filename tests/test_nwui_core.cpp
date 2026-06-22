@@ -652,3 +652,28 @@ TEST_CASE("modal captures input and routes to its subtree") {
 	CHECK(g_modal_closed == 1);
 	delete u;
 }
+
+TEST_CASE("nwui_message opens a modal that OK closes; nwui_prompt fires on_ok") {
+	nwui *u = new nwui; nwui_init(u);
+	nwui_node *root = nwui_label(u, "main"); nwui_set_root(u, root);
+	u->win_w = 400; u->win_h = 300; nwui_layout(u);
+
+	nwui_message(u, "About", "NanOS Notepad");
+	CHECK(nwui_modal_open(u) == 1);
+	nwui_node *ok = u->modal->child[u->modal->nchild - 1];   // OK is the last child
+	nwui_layout(u);
+	click(u, ok->x + ok->w / 2, ok->y + ok->h / 2);
+	CHECK(nwui_modal_open(u) == 0);
+
+	static int prompthits = 0; prompthits = 0;
+	char buf[16] = "";
+	nwui_prompt(u, "Go To", buf, sizeof buf, on_accel, &prompthits);
+	CHECK(nwui_modal_open(u) == 1);
+	nwui_node *btns = u->modal->child[u->modal->nchild - 1];  // the OK/Cancel row
+	nwui_node *okb = btns->child[0];
+	nwui_layout(u);
+	click(u, okb->x + okb->w / 2, okb->y + okb->h / 2);       // OK -> closes + fires on_ok
+	CHECK(nwui_modal_open(u) == 0);
+	CHECK(prompthits == 1);
+	delete u;
+}

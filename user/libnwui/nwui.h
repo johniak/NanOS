@@ -74,6 +74,12 @@ void       nwui_open_modal(nwui *u, nwui_node *subtree, nwui_cb on_close, void *
 void       nwui_close_modal(nwui *u);
 int        nwui_modal_open(const nwui *u);
 
+/* Info dialog: a title, a body line, an OK button that closes the modal (About boxes, alerts). */
+void       nwui_message(nwui *u, const char *title, const char *text);
+/* Input dialog over an APP-OWNED buffer: title + textfield + OK/Cancel. OK fires on_ok then
+ * closes; Cancel just closes. (Find, Go To, rename, …) */
+void       nwui_prompt(nwui *u, const char *title, char *buf, int cap, nwui_cb on_ok, void *user);
+
 /* A labeled toggle over an APP-OWNED int flag (0/1). Click or Space flips it. */
 nwui_node *nwui_checkbox(nwui *u, const char *label, int *value, nwui_cb on_change, void *user);
 
