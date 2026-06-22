@@ -68,6 +68,10 @@ void nw_get_clipboard(nw_display *d);
  * dialog uses. Fire-and-forget; the new program connects as its own client. */
 void nw_spawn(nw_display *d, const char *cmd);
 
+/* Ask the compositor to re-read its settings file (settings.yaml) and recompose. Fire-and-forget;
+ * the Settings app calls this right after writing the file so changes apply live. */
+void nw_reload_settings(nw_display *d);
+
 /* Declare this window's application menu for the global menu bar. `spec` lists top menus split
  * by 0x1e; within a menu, fields split by 0x1f are title then item labels ("-" = separator).
  * When the user picks an item, the server sends NW_EV_MENU with menu+item indices. */

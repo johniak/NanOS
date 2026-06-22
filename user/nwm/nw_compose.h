@@ -26,6 +26,8 @@ struct nw_backdrop_ctx {
 	int                frame_ctr;   /* compositor frame counter (for fast-drag cadence)     */
 	int                drag_win;    /* window index being dragged this frame, or -1          */
 	int                rebuild_budget; /* max NON-priority fresh blur rebuilds per frame      */
+	int                win_alpha;   /* glass body alpha for light windows (0 => compiled default) */
+	int                dark_alpha;  /* glass body alpha for dark windows  (0 => compiled default) */
 };
 
 /* Paint the desktop + every window back-to-front into `back`, WITHOUT the cursor. The shell

@@ -50,6 +50,16 @@ TEST_CASE("a newly created window defaults to NORMAL, glass-enabled") {
 	CHECK(s.win[idx].glass == 1);
 }
 
+TEST_CASE("RELOAD_SETTINGS request raises want_reload for the shell") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	CHECK(s.want_reload == 0);
+	nw_msg m{}; m.type = NW_REQ_RELOAD_SETTINGS;
+	nw_client_msg(&s, 0, &m, 0);
+	CHECK(s.want_reload == 1);
+	CHECK(s.dirty == 1);
+}
+
 TEST_CASE("create window emits CONFIGURE and focuses it") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());

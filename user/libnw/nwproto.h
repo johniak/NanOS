@@ -31,6 +31,7 @@ enum {
 	NW_REQ_SPAWN          = 7,   /* payload=command/path; server launches it (like Run)     */
 	NW_REQ_SET_MENU       = 8,   /* payload=menu spec: menus split 0x1e, fields split 0x1f  */
 	                             /*   field[0]=title, field[1..]=item labels ("-"=separator) */
+	NW_REQ_RELOAD_SETTINGS = 9,  /* no payload; server re-reads settings.yaml + recomposes   */
 
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */

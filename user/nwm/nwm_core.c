@@ -798,6 +798,10 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		if (idx == s->focus) { damage(s, 0, 0, s->screen_w, NW_PANEL_H); s->dirty = 1; }
 		break;
 	}
+	case NW_REQ_RELOAD_SETTINGS:
+		s->want_reload = 1;            /* shell re-reads settings.yaml + recomposes */
+		s->dirty = 1;
+		break;
 	case NW_REQ_DESTROY_WINDOW: {
 		int idx = find_by_id(s, m->window);
 		if (idx < 0 || s->win[idx].client != client)

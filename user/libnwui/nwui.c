@@ -25,6 +25,12 @@ void nwui_spawn(nwui *u, const char *cmd)
 	nw_spawn(io->d, cmd);
 }
 
+void nwui_reload_settings(nwui *u)
+{
+	struct nwui_io *io = (struct nwui_io *) u->io;
+	nw_reload_settings(io->d);
+}
+
 nwui *nwui_open(const char *title, int w, int h)
 {
 	nw_display *d = nw_connect();

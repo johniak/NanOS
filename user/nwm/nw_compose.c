@@ -377,7 +377,10 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		const struct nw_window *w = &s->win[idx];
 		if (!w->used || w->minimized) continue;       /* minimized windows live only on the taskbar */
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
-		int alpha = (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA;
+		int dark = (w->title[0] == '\x01');
+		int alpha = dark ? DARK_ALPHA : WIN_ALPHA;     /* compiled fallback */
+		if (bdc && bdc->win_alpha > 0)                 /* runtime override from settings */
+			alpha = dark ? bdc->dark_alpha : bdc->win_alpha;
 		int force = 0;
 		if (bdc && idx == bdc->drag_win)
 			force = (bdc->frame_ctr % NW_BD_FASTDRAG_N) == 0;

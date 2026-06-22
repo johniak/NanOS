@@ -78,6 +78,10 @@ const char *nwui_get_text(nwui_node *n);
  * Run dialog does — used e.g. by a file manager to open/run an app. Fire-and-forget. */
 void        nwui_spawn(nwui *u, const char *cmd);
 
+/* Ask the compositor to re-read its settings file and recompose (used by the Settings app,
+ * right after it writes settings.yaml, so preference changes apply live). */
+void        nwui_reload_settings(nwui *u);
+
 /* ---- application menu (shown in the global macOS-style menu bar) ----
  * Declare top menus + items before nwui_run; the toolkit sends them to the compositor and
  * invokes the item's callback when the user picks it. The first menu's title is the app name. */

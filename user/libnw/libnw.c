@@ -163,6 +163,11 @@ void nw_spawn(nw_display *d, const char *cmd)
 	if (len) write_all(d->reqfd, cmd, len);
 }
 
+void nw_reload_settings(nw_display *d)
+{
+	send_hdr(d->reqfd, NW_REQ_RELOAD_SETTINGS, 0, 0, 0, 0, 0, 0);
+}
+
 void nw_set_menu(nw_display *d, const char *spec)
 {
 	int len = 0;

@@ -24,6 +24,7 @@
 #include "nwproto.h"
 #include "nw_gfx.h"
 #include "png.h"                  /* decode the branded wallpaper.png at runtime */
+#include "nw_settings.h"          /* desktop preferences (blur/transparency) from settings.yaml */
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
 
 /* Power the machine off via the kernel (privileged port I/O lives in the kernel). */
@@ -72,6 +73,27 @@ static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop sc
 static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
 static struct nw_surface g_bd_surf;
 static struct nw_backdrop_ctx g_bdc;
+static struct nw_settings g_set;           /* live desktop preferences (settings.yaml)    */
+static int g_blur_on;                      /* derived: backdrop blur currently enabled    */
+
+/* (Re)load settings.yaml and fold it into the compositor's runtime knobs. Missing/garbled file
+ * just leaves the defaults (blur off, glass on). Caller marks the scene dirty to recompose. */
+static void apply_settings(void)
+{
+	nw_settings_defaults(&g_set);
+	int fd = open(NW_SETTINGS_PATH, O_RDONLY);
+	if (fd >= 0) {
+		char buf[1024];
+		int n = (int) read(fd, buf, sizeof buf - 1);
+		close(fd);
+		if (n > 0) nw_settings_parse(buf, n, &g_set);
+	}
+	g_blur_on = g_set.blur && g_set.transparency;   /* blur only shows through translucent glass */
+	g_bdc.win_alpha  = nw_settings_win_alpha(&g_set);
+	g_bdc.dark_alpha = nw_settings_dark_alpha(&g_set);
+	int r = nw_settings_blur_radius(&g_set);
+	g_bdc.radius = r > 0 ? r : NW_BD_BLUR_RADIUS;
+}
 
 /* per-client shell state (parallel to nw_server's client slots) */
 static int             cl_req[NW_MAX_CLIENTS], cl_evt[NW_MAX_CLIENTS], cl_pid[NW_MAX_CLIENTS];
@@ -398,6 +420,7 @@ static void present(void)
 		g_bdc.frame_ctr = S.frame_ctr;
 		g_bdc.drag_win  = S.drag_win;
 		g_bdc.rebuild_budget = 2;   /* NW_BD_REBUILD_K: max non-priority fresh rebuilds/frame */
+		g_bdc.bd = g_blur_on ? &g_bd_surf : 0;   /* blur disabled -> classic flat-tint glass */
 		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf, &g_bdc);
 		nw_surface_noclip(&g_scene_surf);
 		nw_surface_noclip(&g_scratch_surf);
@@ -526,6 +549,7 @@ int main(void)
 	g_bd_surf.stride = (int) g_xres; nw_surface_noclip(&g_bd_surf);
 	g_bdc.bd = &g_bd_surf; g_bdc.lo = g_bdlo; g_bdc.lo_cap = lopx;
 	g_bdc.factor = NW_BD_DOWNSAMPLE; g_bdc.radius = NW_BD_BLUR_RADIUS; g_bdc.passes = NW_BD_BLUR_PASSES;
+	apply_settings();                          /* load /nanos/config/settings.yaml (or defaults) */
 	if (!load_wallpaper(g_wall, g_xres, g_yres))  /* branded wallpaper if installed... */
 		nw_render_wallpaper(&g_wall_surf);        /* ...else the procedural gradient desktop */
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
@@ -592,6 +616,12 @@ int main(void)
 		}
 		if (S.want_quit)                       /* Quit button: leave the desktop */
 			break;
+
+		if (S.want_reload) {                   /* Settings app changed a preference -> apply live */
+			S.want_reload = 0;
+			apply_settings();
+			S.dirty = 1;
+		}
 
 		char cmd[NW_RUN_MAX];                  /* Run dialog (Super+R): launch the typed app */
 		if (nw_run_take_spawn(&S, cmd, sizeof cmd)) {

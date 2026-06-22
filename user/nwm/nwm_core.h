@@ -122,6 +122,7 @@ struct nw_server {
 	int   client_dead[NW_MAX_CLIENTS];  /* output overran its ring -> shell disconnects */
 
 	int   want_quit, want_shutdown; /* a panel button was clicked -> the shell acts       */
+	int   want_reload;              /* a client asked to reload settings.yaml -> shell acts */
 
 	/* Super+R "Run" launcher dialog (WM chrome). While open it captures the keyboard. */
 	int   run_open;
