@@ -526,3 +526,18 @@ TEST_CASE("textarea word-wrap multiplies visual rows") {
 	CHECK(nwui_textarea_total_rows(ta) == 1);
 	delete u;
 }
+
+TEST_CASE("textarea click places caret, drag extends selection") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "abcd\nefgh";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	int bx = ta->x + 4, by = ta->y + 2;
+	pointer(u, bx + 2 * NW_FONT_W, by, 1);    // press over col 2 of row 0
+	pointer(u, bx + 2 * NW_FONT_W, by, 0);
+	CHECK(ta->caret == 2); CHECK(ta->anchor == 2);
+	pointer(u, bx + 1 * NW_FONT_W, by, 1);    // press col 1
+	pointer(u, bx + 3 * NW_FONT_W, by, 1);    // drag to col 3 (still pressed)
+	CHECK(ta->anchor == 1); CHECK(ta->caret == 3);
+	delete u;
+}

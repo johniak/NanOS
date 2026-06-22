@@ -502,6 +502,31 @@ void nwui_textarea_set_wrap(nwui_node *n, int on)
 }
 int nwui_textarea_total_rows(nwui_node *n) { return ta_total_rows(n); }
 
+/* byte offset at a pixel point inside the textarea (wrap-aware, uses scroll) */
+static int ta_pos_at(const nwui_node *n, int px, int py)
+{
+	int row = n->scroll + (py - (n->y + NWUI_TA_PAD)) / NW_FONT_H;
+	if (row < 0) row = 0;
+	int col = (px - (n->x + NWUI_TA_PAD) + NW_FONT_W / 2) / NW_FONT_W;
+	if (col < 0) col = 0;
+	int ls = 0, rr = 0;                       /* walk visual rows to the target row */
+	for (;;) {
+		int le = ta_line_end(n, ls), lr = ta_line_rows(n, ls, le);
+		if (rr + lr > row) {                  /* target is within this logical line */
+			int within = row - rr;
+			int start = ls + (n->wrap ? within * ta_cols(n) : 0);
+			int rowlen = n->wrap ? ta_cols(n) : (le - ls);
+			int p = start + col;
+			if (p > start + rowlen) p = start + rowlen;
+			if (p > le) p = le;
+			return p;
+		}
+		rr += lr;
+		if (le >= n->tlen) return n->tlen;
+		ls = le + 1;
+	}
+}
+
 /* ---- list ---- */
 static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
 static int list_max_scroll(const nwui_node *L)   /* largest valid scroll (0 if everything fits) */
@@ -634,6 +659,11 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				int c = char_at_x(over, ev->x);
 				over->caret = c; over->anchor = c; over->dirty = 1;   /* place caret, clear sel */
 			}
+			else if (over && over->kind == NWUI_TEXTAREA) {
+				set_focus(u, over);
+				int p = ta_pos_at(over, ev->x, ev->y);
+				over->caret = p; over->anchor = p; over->dirty = 1;   /* place caret, clear sel */
+			}
 			else if (over && over->kind == NWUI_LIST) {
 				set_focus(u, over);
 				int sb_x = over->x + over->w - NWUI_SB_W;
@@ -664,6 +694,9 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			}
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTFIELD) {
 			u->armed->caret = char_at_x(u->armed, ev->x);            /* drag-select */
+			u->armed->dirty = 1;
+		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTAREA) {
+			u->armed->caret = ta_pos_at(u->armed, ev->x, ev->y);     /* drag-select */
 			u->armed->dirty = 1;
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_LIST && u->armed->sb_drag) {
 			list_sb_set_from_y(u->armed, ev->y);                     /* drag the scrollbar thumb */
