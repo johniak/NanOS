@@ -477,3 +477,23 @@ TEST_CASE("textarea inserts printable chars and newlines, backspace deletes") {
 	CHECK(strcmp(tb, "hi\n") == 0);
 	delete u;
 }
+
+TEST_CASE("textarea caret moves by line and reports line/col") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "ab\ncde\nf";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1;
+	ta->caret = 0; ta->anchor = 0;
+
+	int ln, col;
+	keyc(u, NWUI_SC_DOWN, 0, 0);              // into "cde", aim col 1
+	nwui_textarea_caret(ta, &ln, &col); CHECK(ln == 2); CHECK(col == 1);
+	keyc(u, NWUI_SC_END, 0, 0);
+	nwui_textarea_caret(ta, &ln, &col); CHECK(ln == 2); CHECK(col == 4);  // after "cde"
+	keyc(u, NWUI_SC_DOWN, 0, 0);              // "f" is shorter -> clamp to end
+	nwui_textarea_caret(ta, &ln, &col); CHECK(ln == 3); CHECK(col == 2);
+	keyc(u, NWUI_SC_HOME, 0, 0);
+	nwui_textarea_caret(ta, &ln, &col); CHECK(ln == 3); CHECK(col == 1);
+	delete u;
+}

@@ -385,7 +385,9 @@ static void tf_changed(nwui_node *tf) { tf->dirty = 1; if (tf->on_change) tf->on
 /* ---- textarea (multiline) editing: shares tbuf/tlen/caret/anchor + sel_* helpers ---- */
 static void ta_del_range(nwui_node *n, int lo, int hi)
 {
-	if (lo < 0) lo = 0; if (hi > n->tlen) hi = n->tlen; if (lo >= hi) return;
+	if (lo < 0) lo = 0;
+	if (hi > n->tlen) hi = n->tlen;
+	if (lo >= hi) return;
 	int k = hi - lo;
 	for (int i = lo; i + k <= n->tlen; i++) n->tbuf[i] = n->tbuf[i + k];
 	n->tlen -= k; n->tbuf[n->tlen] = 0; n->caret = lo; n->anchor = lo;
@@ -398,6 +400,47 @@ static int ta_insert(nwui_node *n, char ch)
 	for (int i = n->tlen; i > n->caret; i--) n->tbuf[i] = n->tbuf[i - 1];
 	n->tbuf[n->caret] = ch; n->caret++; n->tlen++; n->anchor = n->caret;
 	n->tbuf[n->tlen] = 0; return 1;
+}
+/* offset of the start of the logical line containing byte position p */
+static int ta_line_start(const nwui_node *n, int p)
+{
+	while (p > 0 && n->tbuf[p - 1] != '\n') p--;
+	return p;
+}
+/* offset of the end (the '\n' or tlen) of the line containing p */
+static int ta_line_end(const nwui_node *n, int p)
+{
+	while (p < n->tlen && n->tbuf[p] != '\n') p++;
+	return p;
+}
+static void ta_move(nwui_node *n, int pos, int extend)
+{
+	if (pos < 0) pos = 0;
+	if (pos > n->tlen) pos = n->tlen;
+	n->caret = pos;
+	if (!extend) n->anchor = pos;
+	n->dirty = 1;
+}
+/* move up/down one logical line, keeping the column (clamped to the target line) */
+static void ta_move_vert(nwui_node *n, int dir, int extend)
+{
+	int ls = ta_line_start(n, n->caret);
+	int col = n->caret - ls;
+	int target;
+	if (dir < 0) { if (ls == 0) return; target = ta_line_start(n, ls - 1); }
+	else { int le = ta_line_end(n, n->caret); if (le >= n->tlen) return; target = le + 1; }
+	int te = ta_line_end(n, target);
+	int p = target + col; if (p > te) p = te;
+	ta_move(n, p, extend);
+}
+
+void nwui_textarea_caret(nwui_node *n, int *line, int *col)
+{
+	int ln = 1;
+	for (int i = 0; i < n->caret; i++) if (n->tbuf[i] == '\n') ln++;
+	int ls = ta_line_start(n, n->caret);
+	if (line) *line = ln;
+	if (col) *col = n->caret - ls + 1;
 }
 
 /* ---- list ---- */
@@ -594,12 +637,23 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		}
 		if (u->focus && u->focus->kind == NWUI_TEXTAREA) {
 			nwui_node *n = u->focus;
-			if (ev->ch == 8) {                       /* backspace */
-				if (has_sel(n)) ta_del_range(n, sel_lo(n), sel_hi(n));
-				else if (n->caret > 0) ta_del_range(n, n->caret - 1, n->caret);
-				n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
-			} else if (ta_insert(n, ev->ch)) {
-				n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
+			int shift = ev->mods & 1;
+			switch (ev->code) {
+			case NWUI_SC_LEFT:  ta_move(n, (shift || !has_sel(n)) ? n->caret - 1 : sel_lo(n), shift); break;
+			case NWUI_SC_RIGHT: ta_move(n, (shift || !has_sel(n)) ? n->caret + 1 : sel_hi(n), shift); break;
+			case NWUI_SC_HOME:  ta_move(n, ta_line_start(n, n->caret), shift); break;
+			case NWUI_SC_END:   ta_move(n, ta_line_end(n, n->caret), shift); break;
+			case NWUI_SC_UP:    ta_move_vert(n, -1, shift); break;
+			case NWUI_SC_DOWN:  ta_move_vert(n, +1, shift); break;
+			default:
+				if (ev->ch == 8) {                       /* backspace */
+					if (has_sel(n)) ta_del_range(n, sel_lo(n), sel_hi(n));
+					else if (n->caret > 0) ta_del_range(n, n->caret - 1, n->caret);
+					n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
+				} else if (ta_insert(n, ev->ch)) {
+					n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
+				}
+				break;
 			}
 			break;
 		}
