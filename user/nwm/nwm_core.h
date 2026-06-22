@@ -135,6 +135,7 @@ struct nw_server {
 	int   menu_from_start;          /* the open menu is the Start menu -> anchor it above the taskbar */
 	char  clock[8];                 /* "HH:MM" shown at the right of the bar (shell sets) */
 
+	int   frame_ctr;                /* bumped by the shell each present() — drives fast-drag cadence */
 	int   dirty;                    /* the SCENE changed -> shell recomposes it          */
 	/* Accumulated scene-damage bounding box (screen px) since the last present; the shell
 	 * blits only this region of the recomposed scene to the framebuffer. */

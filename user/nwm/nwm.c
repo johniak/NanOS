@@ -394,6 +394,9 @@ static void present(void)
 			nw_surface_noclip(&g_scene_surf);
 			nw_surface_noclip(&g_scratch_surf);
 		}
+		S.frame_ctr++;
+		g_bdc.frame_ctr = S.frame_ctr;
+		g_bdc.drag_win  = S.drag_win;
 		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf, &g_bdc);
 		nw_surface_noclip(&g_scene_surf);
 		nw_surface_noclip(&g_scratch_surf);

@@ -23,6 +23,8 @@ struct nw_backdrop_ctx {
 	uint32_t          *lo;
 	int                lo_cap;
 	int                factor, radius, passes;
+	int                frame_ctr;   /* compositor frame counter (for fast-drag cadence)     */
+	int                drag_win;    /* window index being dragged this frame, or -1          */
 };
 
 /* Paint the desktop + every window back-to-front into `back`, WITHOUT the cursor. The shell

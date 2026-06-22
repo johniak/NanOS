@@ -119,6 +119,7 @@ TEST_CASE("backdrop: glass window blurs a sharp edge in the scene below it") {
 	nw_surface bds; bds.px = bd.data(); bds.w = W; bds.h = H; bds.stride = W; nw_surface_noclip(&bds);
 	nw_backdrop_ctx ctx{}; ctx.bd = &bds; ctx.lo = lo.data(); ctx.lo_cap = (int) lo.size();
 	ctx.factor = 4; ctx.radius = NW_BD_BLUR_RADIUS; ctx.passes = NW_BD_BLUR_PASSES;
+	ctx.drag_win = -1;                               // not dragging in this test
 
 	std::vector<uint32_t> pa((size_t) W * H, 0), pb((size_t) W * H, 0);
 	nw_surface backA; backA.px = pa.data(); backA.w = W; backA.h = H; backA.stride = W; nw_surface_noclip(&backA);
