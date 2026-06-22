@@ -140,6 +140,25 @@ int getrlimit(int resource, struct rlimit* rl) {
 }
 int setrlimit(int resource, const struct rlimit* rl) { (void) resource; (void) rl; return 0; }
 
+/* getpriority/setpriority: NanOS's scheduler has no per-process nice level, so every process
+ * reports the normal priority (0) and a renice is accepted-and-ignored. htop reads/sets these
+ * for its NICE column + the F7/F8 renice keys; "normal, can't change" is the honest answer. */
+int getpriority(int which, int who) { (void) which; (void) who; return 0; }
+int setpriority(int which, int who, int prio) { (void) which; (void) who; (void) prio; return 0; }
+
+/* syscall(): NanOS has no Linux-style numeric syscall multiplexer in userland — syscalls are
+ * exposed as named libc functions (libc.ndl imports). Ports that call syscall() directly (htop's
+ * capget capability probe) get -ENOSYS; those paths are not reached at runtime here (every NanOS
+ * process runs as root, so htop never probes capabilities). */
+long syscall(long number, ...) { (void) number; errno = ENOSYS; return -1; }
+
+/* dlfcn: NanOS has no runtime shared-object loading; dlopen() always fails so callers (htop's
+ * SystemdMeter, which dlopens libsystemd.so.0) degrade to "feature unavailable". */
+void* dlopen(const char* file, int mode) { (void) file; (void) mode; return 0; }
+void* dlsym(void* handle, const char* name) { (void) handle; (void) name; return 0; }
+int   dlclose(void* handle) { (void) handle; return 0; }
+char* dlerror(void) { return (char*) "dynamic loading not supported on NanOS"; }
+
 /* sigaltstack: no alternate signal stack (handlers run on the normal stack). Report "disabled"
  * and accept any request, so crash-handler setup (vim, bash) succeeds as a no-op. */
 int sigaltstack(const stack_t* ss, stack_t* old) {

@@ -177,7 +177,7 @@ ifeq ($(ARCH),x86_64)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(HTOP_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
 	  -e SDK=/sdk -e NX_HOST=x86_64-nanos -e NX_LP64=1 \
-	  -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone -include nx-dllimport.h" \
+	  -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone -include nx-dllimport.h -include nx-getopt-import.h" \
 	  -e LDFLAGS="-no-pie" -e LIBS="-lncurses -ltinfo" \
 	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
