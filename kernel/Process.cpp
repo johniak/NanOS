@@ -337,6 +337,8 @@ static void fillInfo(const Process* p, ProcInfo* out) {
 	out->utime = p->utime;
 	out->stime = p->stime;
 	out->starttime = p->starttime;
+	out->memKb = (p->brkCur >= p->brkBase) ? (p->brkCur - p->brkBase) / 1024u : 0u;
+	out->nthreads = p->threadCount;
 	copyName(out->comm, sizeof out->comm, p->comm);
 	copyName(out->cmdline, sizeof out->cmdline, p->cmdline);
 }

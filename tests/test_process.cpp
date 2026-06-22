@@ -261,6 +261,26 @@ TEST_CASE("snapshot/infoByPid: fields + state char from the task / exit flag") {
 	CHECK(!ProcTable::infoByPid(9999, &pi));      // absent pid
 }
 
+TEST_CASE("infoByPid: memKb from the brk-heap extent + nthreads from threadCount") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	p->brkBase = 0x800000;
+	p->brkCur = 0x800000 + 64 * 1024;   // 64 KiB of heap grown
+	p->threadCount = 3;
+
+	ProcInfo pi;
+	REQUIRE(ProcTable::infoByPid(p->pid, &pi));
+	CHECK(pi.memKb == 64u);             // (brkCur - brkBase) / 1024
+	CHECK(pi.nthreads == 3);
+
+	// brkCur < brkBase (uninitialized window) -> 0, never underflows.
+	p->brkCur = 0;
+	REQUIRE(ProcTable::infoByPid(p->pid, &pi));
+	CHECK(pi.memKb == 0u);
+}
+
 TEST_CASE("snapshot into a ProcTable::MAX buffer captures every process — no truncation") {
 	ProcTable::init();
 	// Fill the table to its hard ceiling.

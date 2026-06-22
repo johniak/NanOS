@@ -152,6 +152,8 @@ struct ProcInfo {
 	unsigned utime;      // user / system CPU ticks + creation tick (Linux stat fields 14,15,22)
 	unsigned stime;
 	unsigned starttime;
+	unsigned memKb;      // brk-heap extent (brkCur-brkBase) in KiB — NanOS's memory proxy (no full RSS accounting)
+	int nthreads;        // live threads in the group (Linux stat field 20, status Threads)
 	char comm[16];
 	char cmdline[128];
 };
