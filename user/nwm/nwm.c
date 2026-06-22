@@ -68,6 +68,10 @@ static struct nw_surface g_scratch_surf;
 static struct nw_surface g_wall_surf;
 static struct nw_surface g_fb_surf;       /* wraps the LFB (stride = pitch/4)             */
 static int g_prev_cx = -1, g_prev_cy = -1;/* last drawn cursor position                   */
+static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
+static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
+static struct nw_surface g_bd_surf;
+static struct nw_backdrop_ctx g_bdc;
 
 /* per-client shell state (parallel to nw_server's client slots) */
 static int             cl_req[NW_MAX_CLIENTS], cl_evt[NW_MAX_CLIENTS], cl_pid[NW_MAX_CLIENTS];
@@ -382,7 +386,7 @@ static void present(void)
 			nw_surface_noclip(&g_scene_surf);
 			nw_surface_noclip(&g_scratch_surf);
 		}
-		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf);
+		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf, &g_bdc);
 		nw_surface_noclip(&g_scene_surf);
 		nw_surface_noclip(&g_scratch_surf);
 		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it */
@@ -501,6 +505,15 @@ int main(void)
 	g_scratch_surf.stride = (int) g_xres; nw_surface_noclip(&g_scratch_surf);
 	g_wall_surf.px = g_wall; g_wall_surf.w = (int) g_xres; g_wall_surf.h = (int) g_yres;
 	g_wall_surf.stride = (int) g_xres; nw_surface_noclip(&g_wall_surf);
+	g_bd   = (uint32_t *) malloc(fbpx);
+	int lopx = ((int) g_xres / NW_BD_DOWNSAMPLE + 1) * ((int) g_yres / NW_BD_DOWNSAMPLE + 1);
+	g_bdlo = (uint32_t *) malloc((size_t) lopx * 4);
+	if (!g_bd || !g_bdlo) { printf("nwm: no memory for backdrop buffers\n"); return 1; }
+	memset(g_bd, 0, fbpx);
+	g_bd_surf.px = g_bd; g_bd_surf.w = (int) g_xres; g_bd_surf.h = (int) g_yres;
+	g_bd_surf.stride = (int) g_xres; nw_surface_noclip(&g_bd_surf);
+	g_bdc.bd = &g_bd_surf; g_bdc.lo = g_bdlo; g_bdc.lo_cap = lopx;
+	g_bdc.factor = NW_BD_DOWNSAMPLE; g_bdc.radius = NW_BD_BLUR_RADIUS; g_bdc.passes = NW_BD_BLUR_PASSES;
 	if (!load_wallpaper(g_wall, g_xres, g_yres))  /* branded wallpaper if installed... */
 		nw_render_wallpaper(&g_wall_surf);        /* ...else the procedural gradient desktop */
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
