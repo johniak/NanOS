@@ -69,6 +69,48 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			nw_fill_rect(s, tx + n->caret * NW_FONT_W, ty, 2, NW_FONT_H, COL_TF_FOC);
 		break;
 	}
+	case NWUI_TEXTAREA: {
+		nw_fill_round(s, n->x, n->y, n->w, n->h, 6, COL_TF_BG, 255);
+		int pad = 4;
+		int cols = (n->w - 2 * pad) / NW_FONT_W; if (cols < 1) cols = 1;
+		int vis  = n->h / NW_FONT_H;             if (vis  < 1) vis  = 1;
+		int lo = n->anchor < n->caret ? n->anchor : n->caret;
+		int hi = n->anchor > n->caret ? n->anchor : n->caret;
+		int tx0 = n->x + pad, ty0 = n->y + pad;
+		int caret_px = -1, caret_py = -1;
+		int ls = 0, vrow = 0, drawn = 0;
+		if (n->tbuf) for (;;) {
+			int lend = ls;
+			while (lend < n->tlen && n->tbuf[lend] != '\n') lend++;   /* logical line [ls,lend) */
+			int seg = ls;
+			do {                                  /* one or more visual rows per logical line */
+				int segend = n->wrap ? (seg + cols < lend ? seg + cols : lend) : lend;
+				if (vrow >= n->scroll && drawn < vis) {
+					int yy = ty0 + drawn * NW_FONT_H;
+					for (int i = seg; i < segend; i++) {
+						int seld = (n->anchor != n->caret && i >= lo && i < hi);
+						int xx = tx0 + (i - seg) * NW_FONT_W;
+						if (seld) nw_fill_rect(s, xx, yy, NW_FONT_W, NW_FONT_H, COL_SEL);
+						char ch[2] = { n->tbuf[i], 0 };
+						nw_text(s, xx, yy, ch, seld ? 0x00ffffff : COL_INK);
+					}
+					if (n->focused && n->caret >= seg && n->caret <= segend) {
+						caret_px = tx0 + (n->caret - seg) * NW_FONT_W;
+						caret_py = yy;
+					}
+					drawn++;
+				}
+				vrow++;
+				seg = segend;
+			} while (n->wrap && seg < lend);
+			if (lend >= n->tlen) break;
+			ls = lend + 1;
+		}
+		if (caret_px >= 0) nw_fill_rect(s, caret_px, caret_py, 2, NW_FONT_H, COL_TF_FOC);
+		nw_stroke_round(s, n->x, n->y, n->w, n->h, 6,
+		                n->focused ? COL_TF_FOC : COL_TF_BRD, n->focused ? 255 : 200);
+		break;
+	}
 	case NWUI_LIST: {
 		nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
 		int maxs = n->count - n->h / NWUI_ROW_H;
@@ -95,6 +137,17 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			int ty = n->y + 3 + (maxs > 0 ? (track - th) * n->scroll / maxs : 0);
 			nw_fill_round(s, sbx + 2, ty, NWUI_SB_W - 5, th, (NWUI_SB_W - 5) / 2, COL_SB_THUMB, 255);
 		}
+		break;
+	}
+	case NWUI_CHECKBOX: {
+		int bs = 14, by = n->y + (n->h - bs) / 2;
+		nw_fill_round(s, n->x, by, bs, bs, 3, COL_TF_BG, 255);
+		nw_stroke_round(s, n->x, by, bs, bs, 3, n->focused ? COL_TF_FOC : COL_TF_BRD, 255);
+		if (n->vbool && *n->vbool) {            /* a simple check mark from two strokes */
+			nw_fill_rect(s, n->x + 3, by + 6, 3, 3, COL_SEL);
+			nw_fill_rect(s, n->x + 6, by + 3, 3, 6, COL_SEL);
+		}
+		nw_text(s, n->x + bs + 6, n->y + (n->h - NW_FONT_H) / 2, n->text, COL_INK);
 		break;
 	}
 	default:   /* row/column/box: paint own background if set (else transparent) */
@@ -163,6 +216,14 @@ int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int
 		nw_fill_rect(s, 0, 0, u->win_w, u->win_h, COL_WIN);
 		paint_all(u->root, s);
 		draw_menu(u, s);
+		if (u->modal) {                                   /* dim backdrop + the modal on top */
+			nw_blend_rect(s, 0, 0, u->win_w, u->win_h, 0x00000000, 90);
+			nw_fill_round(s, u->modal->x - 8, u->modal->y - 8,
+			              u->modal->w + 16, u->modal->h + 16, 10, 0x00f4f8fd, 255);
+			nw_stroke_round(s, u->modal->x - 8, u->modal->y - 8,
+			                u->modal->w + 16, u->modal->h + 16, 10, 0x00b8c6d8, 220);
+			paint_all(u->modal, s);
+		}
 		clear_dirty(u->root);
 		*x = 0; *y = 0; *w = u->win_w; *h = u->win_h;
 		return 1;
