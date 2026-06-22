@@ -88,6 +88,27 @@ int open(const char* p, int fl, ...) {
 	return reterr(sys3(SYS_open, (int) p, fl, 0));   // kernel resolves relative paths vs the cwd
 }
 int close(int fd)                       { return reterr(sys3(SYS_close, fd, 0, 0)); }
+
+/* ---- process credentials: real syscalls so userland sees + changes the kernel's per-process
+ * Cred (these used to be single-user-root stubs in posixstubs.c). getuid/getgid never fail. */
+uid_t getuid(void)   { return (uid_t) sys3(SYS_getuid, 0, 0, 0); }
+uid_t geteuid(void)  { return (uid_t) sys3(SYS_geteuid, 0, 0, 0); }
+gid_t getgid(void)   { return (gid_t) sys3(SYS_getgid, 0, 0, 0); }
+gid_t getegid(void)  { return (gid_t) sys3(SYS_getegid, 0, 0, 0); }
+int setuid(uid_t u)  { return reterr(sys3(SYS_setuid, (int) u, 0, 0)); }
+int setgid(gid_t g)  { return reterr(sys3(SYS_setgid, (int) g, 0, 0)); }
+int seteuid(uid_t u) { return reterr(sys3(SYS_setresuid, -1, (int) u, -1)); }   /* glibc routes via setresuid */
+int setegid(gid_t g) { return reterr(sys3(SYS_setresgid, -1, (int) g, -1)); }
+int setreuid(uid_t r, uid_t e) { return reterr(sys3(SYS_setreuid, (int) r, (int) e, 0)); }
+int setregid(gid_t r, gid_t e) { return reterr(sys3(SYS_setregid, (int) r, (int) e, 0)); }
+int setresuid(uid_t r, uid_t e, uid_t s) { return reterr(sys3(SYS_setresuid, (int) r, (int) e, (int) s)); }
+int setresgid(gid_t r, gid_t e, gid_t s) { return reterr(sys3(SYS_setresgid, (int) r, (int) e, (int) s)); }
+int getresuid(uid_t* r, uid_t* e, uid_t* s) { return reterr(sys3(SYS_getresuid, (int) r, (int) e, (int) s)); }
+int getresgid(gid_t* r, gid_t* e, gid_t* s) { return reterr(sys3(SYS_getresgid, (int) r, (int) e, (int) s)); }
+int setfsuid(uid_t u) { return sys3(SYS_setfsuid, (int) u, 0, 0); }   /* returns the PREVIOUS fsuid */
+int setfsgid(gid_t g) { return sys3(SYS_setfsgid, (int) g, 0, 0); }
+int getgroups(int n, gid_t* list) { return reterr(sys3(SYS_getgroups, n, (int) list, 0)); }
+int setgroups(int n, const gid_t* list) { return reterr(sys3(SYS_setgroups, n, (int) list, 0)); }
 /* pipe/dup/dup2: descriptor plumbing for shells (pipelines, redirection) and the terminal
  * (the child puts the pty slave on fd 0/1/2 via dup2). */
 int pipe(int fd[2])                     { return reterr(sys3(SYS_pipe, (int) fd, 0, 0)); }

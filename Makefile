@@ -1842,7 +1842,7 @@ $(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_impor
 # (getentropy/sigprocmask). Instead our glue overrides those, and we export-all the rest of
 # picolibc via the generated --undefined list below (see the libc.elf rule).
 LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $(BINFOLDER)termios.o \
-  $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
+  $(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o $(BINFOLDER)grp_shadow.o $(BINFOLDER)posixstubs.o $(BINFOLDER)sockets.o $(BINFOLDER)resolv.o \
   $(BINFOLDER)resolv_parse.o $(BINFOLDER)stdio_ext.o $(BINFOLDER)ptyutil.o $(BINFOLDER)ifname.o \
   $(BINFOLDER)crypt.o $(BINFOLDER)tls.o $(BINFOLDER)retarget_lock.o $(BINFOLDER)getdelim.o $(LIBC_PTHREAD_OBJS)
 # Phase 4: the vendored musl pthread internals (user/libc-glue/pthread/, musl 1.2.5),

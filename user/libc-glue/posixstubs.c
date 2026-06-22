@@ -60,22 +60,10 @@ int uname(struct utsname* buf) {
 	return 0;
 }
 
-/* ---- identity: single-user root ---- */
-uid_t getuid(void)   { return 0; }
-uid_t geteuid(void)  { return 0; }
-gid_t getgid(void)   { return 0; }
-gid_t getegid(void)  { return 0; }
-int setuid(uid_t u)  { (void) u; return 0; }
-int seteuid(uid_t u) { (void) u; return 0; }
-int setgid(gid_t g)  { (void) g; return 0; }
-int setegid(gid_t g) { (void) g; return 0; }
-int setreuid(uid_t r, uid_t e) { (void) r; (void) e; return 0; }
-int setregid(gid_t r, gid_t e) { (void) r; (void) e; return 0; }
-int getgroups(int n, gid_t* list) { (void) n; (void) list; return 0; }
-int setgroups(int n, const gid_t* list) { (void) n; (void) list; return 0; }
-/* initgroups: single-user NanOS has no supplementary-group database; a no-op succeed (sshd/login
- * call it when dropping into a session). */
-int initgroups(const char* user, gid_t group) { (void) user; (void) group; return 0; }
+/* ---- identity ---- the real getuid/setuid/... credential wrappers live in syscalls.c (they
+ * issue the actual SYS_* calls so userland sees and changes the kernel's per-process Cred).
+ * initgroups + getgrouplist live in grp_shadow.c (they consult /etc/group). They used to be
+ * single-user-root stubs here when NanOS had no credential model. */
 
 /* ---- permission ops ---- chmod/fchmod/chown/lchown/fchown now call the real syscalls (the ext
  * FS is read-write); their implementations live in syscalls.c beside the other file-metadata ops.
@@ -343,20 +331,12 @@ int ttyname_r(int fd, char* buf, size_t len) {
 	return 0;
 }
 
-/* user/group database: getpwuid/getpwnam/getgrgid live in pwd_grp.c (they read /etc/passwd);
- * here are the thin remainders. getgrnam delegates to getgrgid so the root entry has one
- * source of truth; enumeration is empty (only root exists). */
-struct group* getgrgid(gid_t);
+/* user/group database: getpwuid/getpwnam live in pwd_grp.c; getgrgid/getgrnam/getgrent/
+ * setgrent/endgrent + getspnam + getgrouplist/initgroups live in grp_shadow.c (real /etc/group
+ * and /etc/shadow parsing). Only the passwd-enumeration remainders stay here (rarely used). */
 struct passwd* getpwent(void) { return 0; }
 void setpwent(void) {}
 void endpwent(void) {}
-struct group* getgrnam(const char* name) {
-	if (!name || strcmp(name, "root") != 0) return 0;
-	return getgrgid(0);
-}
-struct group* getgrent(void) { return 0; }
-void setgrent(void) {}
-void endgrent(void) {}
 char* getlogin(void) { return (char*) "root"; }
 
 /* sysconf: the few values shells query. */

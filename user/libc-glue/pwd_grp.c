@@ -14,7 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PASSWD_PATH "/disks/main/nanos/config/passwd"
+/* /etc/passwd is a symlink to the persistent DB at /disks/main/nanos/config/passwd. Field 2
+ * is "x" (the password hash lives in /etc/shadow; see grp_shadow.c). */
+#define PASSWD_PATH "/etc/passwd"
 
 /* Storage for the most recent lookup: the parsed line (fields point into it) + the struct.
  * Matches the classic getpwnam contract — the returned pointer is valid until the next call. */
@@ -81,14 +83,5 @@ static struct passwd* lookup(int by_uid, uid_t uid, const char* name) {
 struct passwd* getpwuid(uid_t uid) { return lookup(1, uid, 0); }
 struct passwd* getpwnam(const char* name) { return lookup(0, 0, name); }
 
-struct group* getgrgid(gid_t gid) {
-	if (gid != 0)
-		return 0;                 // no such group (only the root group exists)
-	static struct group gr;
-	static char* members[] = { 0 };
-	gr.gr_name = (char*) "root";  // gid 0 is "root" on Linux (BSD names it "wheel")
-	gr.gr_passwd = (char*) "x";
-	gr.gr_gid = 0;
-	gr.gr_mem = members;          // empty, NULL-terminated (callers iterate this)
-	return &gr;
-}
+/* getgrnam/getgrgid/getgrent + getspnam + getgrouplist/initgroups live in grp_shadow.c
+ * (they parse /etc/group and /etc/shadow with member lists). */
