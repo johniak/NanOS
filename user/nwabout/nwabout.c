@@ -73,12 +73,16 @@ int main(void)
 	nwui_add(rows, info_row(u, "Display",   disp));
 	nwui_add(rows, info_row(u, "Uptime",    up));
 	nwui_colors(rows, 0, 0x00ffffff);
+	/* Pin the info card to a fixed width (measure clamps mw to pref_w). A column always stretches
+	 * its children to the full inner width, so without this the card — and the flex-pushed values
+	 * inside it — would grow with the window when resized; pinned + centered, it stays put. */
+	nwui_size(rows, 312, 0);
 
 	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 20), 10);
 	nwui_add(col, center_h(u, logo));
 	nwui_add(col, center_h(u, nwui_label(u, "NanoOS")));
 	nwui_add(col, center_h(u, nwui_colors(nwui_label(u, ver), 0x657184, 0)));
-	nwui_add(col, rows);
+	nwui_add(col, center_h(u, rows));
 
 	nwui_set_root(u, col);
 	nwui_run(u);
