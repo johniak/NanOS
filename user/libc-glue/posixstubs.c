@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>   /* PATH_MAX for realpath() */
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
@@ -151,6 +152,58 @@ int setpriority(int which, int who, int prio) { (void) which; (void) who; (void)
  * capget capability probe) get -ENOSYS; those paths are not reached at runtime here (every NanOS
  * process runs as root, so htop never probes capabilities). */
 long syscall(long number, ...) { (void) number; errno = ENOSYS; return -1; }
+
+/* realpath: canonicalize PATH lexically (make absolute via getcwd if relative, then collapse
+ * ".", ".." and duplicate slashes) and confirm it exists via stat(). Intermediate symlinks are
+ * not expanded here — NanOS's VFS resolves symlink components at access time, and realpath()'s
+ * callers (htop canonicalising its htoprc path) only need a canonical, existence-checked path.
+ * Writes into RESOLVED (must hold PATH_MAX) or, if RESOLVED is NULL, a malloc'd buffer; returns
+ * it, or NULL with errno set (ENOENT when the path does not exist) — POSIX-faithful for ports. */
+char* realpath(const char* path, char* resolved) {
+	if (!path || !path[0]) { errno = ENOENT; return 0; }
+
+	char abs[PATH_MAX];
+	int n = 0;
+	if (path[0] != '/') {                       /* relative -> prepend cwd */
+		if (!getcwd(abs, sizeof abs)) return 0;
+		n = (int) strlen(abs);
+	}
+	for (const char* p = path; *p && n < PATH_MAX - 1; p++) {
+		if (n == 0 || abs[n - 1] != '/' || *p != '/')   /* fold runs of '/' as we copy */
+			abs[n++] = *p;
+	}
+	abs[n] = 0;
+
+	char out[PATH_MAX];                         /* canonical result, built component by component */
+	int o = 0;
+	const char* s = abs;
+	while (*s) {
+		while (*s == '/') s++;
+		if (!*s) break;
+		const char* start = s;
+		while (*s && *s != '/') s++;
+		int len = (int) (s - start);
+		if (len == 1 && start[0] == '.') {
+			continue;                           /* "." -> no-op */
+		} else if (len == 2 && start[0] == '.' && start[1] == '.') {
+			while (o > 0 && out[o - 1] != '/') o--;   /* drop last component name */
+			if (o > 0) o--;                            /* and its leading slash */
+		} else {
+			if (o < PATH_MAX - 1) out[o++] = '/';
+			for (int i = 0; i < len && o < PATH_MAX - 1; i++) out[o++] = start[i];
+		}
+	}
+	if (o == 0) out[o++] = '/';                 /* everything collapsed -> root */
+	out[o] = 0;
+
+	struct stat st;
+	if (stat(out, &st) != 0) return 0;          /* errno (ENOENT/…) set by stat */
+
+	char* dst = resolved ? resolved : (char*) malloc((size_t) o + 1);
+	if (!dst) { errno = ENOMEM; return 0; }
+	strcpy(dst, out);
+	return dst;
+}
 
 /* dlfcn: NanOS has no runtime shared-object loading; dlopen() always fails so callers (htop's
  * SystemdMeter, which dlopens libsystemd.so.0) degrade to "feature unavailable". */

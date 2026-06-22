@@ -177,6 +177,43 @@ TEST_CASE("statmString: size==resident==memKb/4 pages, rest zero") {
 	CHECK(strcmp(b, "1024 1024 0 0 0 0 0\n") == 0);
 }
 
+TEST_CASE("SynthFs exposes /proc/<pid>/task/<pid> thread dir (htop main-thread scan)") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	SynthFs fs;
+	char base[32], tbase[48];
+	snprintf(base, sizeof base, "/proc/%d", p->pid);
+	snprintf(tbase, sizeof tbase, "/proc/%d/task/%d", p->pid, p->pid);
+
+	// /proc/<pid> readdir includes "task"
+	List<DirEntry> e;
+	REQUIRE(fs.readdir(String(base), e) >= 0);
+	CHECK(listed(e, "task"));
+
+	// /proc/<pid>/task is a directory listing the main tid
+	FileStat st;
+	char taskdir[40]; snprintf(taskdir, sizeof taskdir, "/proc/%d/task", p->pid);
+	REQUIRE(fs.stat(String(taskdir), st) >= 0);
+	CHECK(st.type == NODE_DIR);
+	List<DirEntry> te;
+	REQUIRE(fs.readdir(String(taskdir), te) >= 0);
+	char tidname[12]; int kk = 0; { int v=p->pid; char tmp[12]; int n=0; if(v==0)tmp[n++]='0'; while(v){tmp[n++]='0'+v%10;v/=10;} while(n)tidname[kk++]=tmp[--n]; tidname[kk]=0; }
+	CHECK(listed(te, tidname));
+
+	// /proc/<pid>/task/<pid>/stat reads the same content as /proc/<pid>/stat
+	char tstat[64], pstat[48];
+	snprintf(tstat, sizeof tstat, "%s/stat", tbase);
+	snprintf(pstat, sizeof pstat, "%s/stat", base);
+	char b1[256] = {0}, b2[256] = {0};
+	int n1 = fs.read(String(tstat), sizeof b1, 0, b1);
+	int n2 = fs.read(String(pstat), sizeof b2, 0, b2);
+	CHECK(n1 > 0);
+	CHECK(n1 == n2);
+	CHECK(strcmp(b1, b2) == 0);
+}
+
 TEST_CASE("SynthFs serves /proc/<pid>/statm for a live process") {
 	ProcTable::init();
 	Process* p = ProcTable::alloc(0);
@@ -234,8 +271,12 @@ TEST_CASE("SynthFs /proc/<pid>/stat carries real vsize/rss and num_threads") {
 	int n = fs.read(path, sizeof buf, 0, buf);
 	REQUIRE(n > 0);
 	CHECK(strstr(buf, " 8388608 ") != 0);   // field 23: vsize (bytes)
-	CHECK(strstr(buf, " 2048\n") != 0);      // field 24: rss (pages), end of line
 	CHECK(strstr(buf, " 4 ") != 0);          // field 20: num_threads
+	// htop's stat parser reads through field 39 (processor); the line must carry >=39
+	// space-separated fields or htop drops the process. Count the spaces.
+	int spaces = 0;
+	for (const char* c = buf; *c && *c != '\n'; c++) if (*c == ' ') spaces++;
+	CHECK(spaces >= 38);                      // 39 fields => >=38 separators
 }
 
 TEST_CASE("SynthFs errors on missing paths and bad ops") {

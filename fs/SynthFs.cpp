@@ -532,7 +532,19 @@ SynthNode* SynthFs::walk(const char* path) {
 // ---- dynamic /proc (per-process directories, Linux-style) -----------------
 // Classify a path against the live process table:
 //   1 = "/proc" itself (readdir appends one dir per pid), 2 = "/proc/<pid>",
-//   3 = "/proc/<pid>/<file>", 0 = not a dynamic /proc path (e.g. /proc/uptime).
+//   3 = "/proc/<pid>/<file>", 4 = "/proc/<pid>/task" (lists the thread ids), 0 = not a dynamic
+//   /proc path (e.g. /proc/uptime).
+//
+// The optional ".../task/<tid>" level is collapsed onto the thread id: a "/proc/<pid>/task/<tid>"
+// path returns 2 with *pidOut = <tid>, and "/proc/<pid>/task/<tid>/<file>" returns 3 with
+// *pidOut = <tid> — so the per-pid renderers serve the main thread (tid == pid) unchanged. htop's
+// per-process scan reads the main thread via /proc/<pid>/task/<pid>/stat, so this level is required.
+static bool parseUint(const char* s, int* i, int* out) {
+	int v = 0, d = 0;
+	for (; s[*i] >= '0' && s[*i] <= '9'; (*i)++) { v = v * 10 + (s[*i] - '0'); d++; }
+	*out = v;
+	return d > 0;
+}
 static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	const char* pre = "/proc";
 	int i = 0;
@@ -546,12 +558,8 @@ static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	i++;
 	if (path[i] == 0)
 		return 1;                       // "/proc/"
-	int pid = 0, digits = 0;
-	for (; path[i] >= '0' && path[i] <= '9'; i++) {
-		pid = pid * 10 + (path[i] - '0');
-		digits++;
-	}
-	if (digits == 0)
+	int pid = 0;
+	if (!parseUint(path, &i, &pid))
 		return 0;                       // non-numeric child (e.g. "uptime")
 	*pidOut = pid;
 	if (path[i] == 0)
@@ -561,6 +569,30 @@ static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	i++;
 	if (path[i] == 0)
 		return 2;                       // "/proc/<pid>/"
+	// "/proc/<pid>/task[...]" — the thread group directory.
+	const char* task = "task";
+	int t = 0;
+	for (; task[t]; t++)
+		if (path[i + t] != task[t]) break;
+	if (task[t] == 0 && (path[i + t] == 0 || path[i + t] == '/')) {
+		i += t;
+		if (path[i] == 0 || (path[i] == '/' && path[i + 1] == 0))
+			return 4;                   // "/proc/<pid>/task" (or trailing slash) -> thread listing
+		i++;                            // skip '/'
+		int tid = 0;
+		if (!parseUint(path, &i, &tid))
+			return 0;
+		*pidOut = tid;                  // collapse onto the thread id (main thread: tid == pid)
+		if (path[i] == 0)
+			return 2;                   // "/proc/<pid>/task/<tid>"
+		if (path[i] != '/')
+			return 0;
+		i++;
+		if (path[i] == 0)
+			return 2;                   // "/proc/<pid>/task/<tid>/"
+		*fileOut = path + i;            // "/proc/<pid>/task/<tid>/<file>"
+		return 3;
+	}
 	*fileOut = path + i;                // "/proc/<pid>/<file>"
 	return 3;
 }
@@ -624,6 +656,11 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p += utoa(pi.memKb * 1024u, buf + p);                   // 23: vsize (bytes)
 		p = appendStr(buf, p, cap, " ");
 		p += utoa(pi.memKb / 4u, buf + p);                      // 24: rss (pages)
+		// Fields 25-52 (rsslim, startcode, ..., exit_signal, processor, ...). htop's stat parser
+		// reads through field 39 (processor) and bails if any field 23-39 is missing, so emit the
+		// full Linux field count as zeros. processor (39) = 0: NanOS is single-CPU.
+		for (int f = 25; f <= 52; f++)
+			p = appendStr(buf, p, cap, " 0");
 		p = appendStr(buf, p, cap, "\n");
 	} else if (streq(file, "statm")) {
 		p = statmString(buf, cap, pi.memKb);
@@ -739,15 +776,15 @@ int SynthFs::stat(String path, FileStat& out) {
 	int pid = 0;
 	const char* file = 0;
 	int c = classifyProc((char*) path, &pid, &file);
-	if (c == 2 || c == 3) {                 // /proc/<pid> dir, or /proc/<pid>/<file>
+	if (c == 2 || c == 3 || c == 4) {       // /proc/<pid>[/task[/<tid>]] dir, or .../<file>
 		ProcInfo pi;
 		if (!ProcTable::infoByPid(pid, &pi))
 			return -1;
 		if (c == 3 && !isProcFile(file))
 			return -1;
-		out.type = (c == 2) ? NODE_DIR : NODE_FILE;
+		out.type = (c == 3) ? NODE_FILE : NODE_DIR;
 		out.size = 0;
-		out.mode = (c == 2) ? (0x4000 | 0555) : (0x8000 | 0444);
+		out.mode = (c == 3) ? (0x8000 | 0444) : (0x4000 | 0555);
 		out.nlink = 1;
 		out.uid = out.gid = out.mtime = 0;
 		out.ino = 0x50000000u + (unsigned) pid;   // synthetic /proc ino, clear of disk inodes
@@ -798,7 +835,8 @@ static void pushDotEntries(List<DirEntry>& out) {
 int SynthFs::readdir(String path, List<DirEntry>& out) {
 	int pid = 0;
 	const char* file = 0;
-	if (classifyProc((char*) path, &pid, &file) == 2) {   // /proc/<pid> -> per-pid files
+	int pc = classifyProc((char*) path, &pid, &file);
+	if (pc == 2) {                                       // /proc/<pid>[/task/<tid>] -> per-pid files
 		ProcInfo pi;
 		if (!ProcTable::infoByPid(pid, &pi))
 			return -1;
@@ -812,6 +850,24 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 			de.type = NODE_FILE;
 			out.add(de);
 		}
+		// The thread-group dir: ps/htop read the main thread via /proc/<pid>/task/<pid>/stat.
+		DirEntry td;
+		const char* tn = "task";
+		int tk = 0; for (; tn[tk]; tk++) td.name[tk] = tn[tk]; td.name[tk] = 0;
+		td.type = NODE_DIR;
+		out.add(td);
+		return 0;
+	}
+	if (pc == 4) {                                       // /proc/<pid>/task -> one entry per thread id
+		ProcInfo pi;
+		if (!ProcTable::infoByPid(pid, &pi))
+			return -1;
+		pushDotEntries(out);
+		DirEntry de;                                    // main thread: tid == pid (NanOS exposes the leader)
+		int k = utoa((unsigned) pid, de.name);
+		de.name[k] = 0;
+		de.type = NODE_DIR;
+		out.add(de);
 		return 0;
 	}
 
