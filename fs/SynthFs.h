@@ -49,6 +49,11 @@ int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned l
 int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci);
 int versionString(char* buf, int cap);
 
+// Render Linux-style /proc/<pid>/statm ("size resident shared text lib data dt", in 4 KiB
+// pages) into buf; returns its length. NanOS has no page/text/shared split, so size==resident
+// (all resident — no swap) == memKb/4 and the rest is 0. Pure -> host-testable.
+int statmString(char* buf, int cap, unsigned memKb);
+
 // Live system memory figures in kB. Implemented in the kernel (Kernel.cpp) over the
 // frame allocator + byte heap + boot memory map; stubbed in the host test harness.
 unsigned sysMemTotalKb();

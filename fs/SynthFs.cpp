@@ -157,6 +157,19 @@ int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci) {
 	return p;
 }
 
+// /proc/<pid>/statm: size resident shared text lib data dt, in 4 KiB pages. NanOS tracks only a
+// brk-heap proxy (memKb) and has no swap, so size == resident == memKb/4 and the rest is 0.
+int statmString(char* buf, int cap, unsigned memKb) {
+	unsigned pages = memKb / 4u;                 // 4 KiB pages
+	int p = 0;
+	p = putUint(buf, p, cap, pages);             // size
+	p = putStr(buf, p, cap, " ");
+	p = putUint(buf, p, cap, pages);             // resident (no swap: all resident)
+	p = putStr(buf, p, cap, " 0 0 0 0 0\n");     // shared text lib data dt
+	buf[p] = 0;
+	return p;
+}
+
 // /proc/version: the kernel identification string.
 int versionString(char* buf, int cap) {
 	int p = putStr(buf, 0, cap, "NanOS version 0.1 (i686) #1 SMP\n");
@@ -527,7 +540,7 @@ static bool streq(const char* a, const char* b) {
 	return a[i] == b[i];
 }
 
-static const char* const PROC_FILES[] = { "comm", "cmdline", "stat", "status", 0 };
+static const char* const PROC_FILES[] = { "comm", "cmdline", "stat", "statm", "status", 0 };
 static bool isProcFile(const char* name) {
 	for (int i = 0; PROC_FILES[i]; i++)
 		if (streq(name, PROC_FILES[i]))
@@ -573,6 +586,8 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p = appendStr(buf, p, cap, " 0 0 20 0 1 0 ");           // 16-21: cutime cstime prio nice threads itreal
 		p += utoa(pi.starttime, buf + p);                       // 22: starttime
 		p = appendStr(buf, p, cap, " 0 0\n");                   // 23-24: vsize rss
+	} else if (streq(file, "statm")) {
+		p = statmString(buf, cap, pi.memKb);
 	} else if (streq(file, "status")) {
 		p = appendStr(buf, p, cap, "Name:\t");
 		p = appendStr(buf, p, cap, pi.comm);

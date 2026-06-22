@@ -170,6 +170,37 @@ TEST_CASE("meminfoString emits the keys htop reads (MemAvailable/Buffers/Cached/
 	CHECK(strstr(b, "SwapFree:") != 0);
 }
 
+TEST_CASE("statmString: size==resident==memKb/4 pages, rest zero") {
+	char b[64];
+	int n = statmString(b, sizeof b, 4096 /*KiB*/);   // 1024 pages
+	CHECK(n > 0);
+	CHECK(strcmp(b, "1024 1024 0 0 0 0 0\n") == 0);
+}
+
+TEST_CASE("SynthFs serves /proc/<pid>/statm for a live process") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	p->brkBase = 0x800000;
+	p->brkCur = 0x800000 + 4096 * 1024;   // 4096 KiB -> 1024 pages
+
+	char path[32];
+	snprintf(path, sizeof path, "/proc/%d/statm", p->pid);
+	SynthFs fs;
+	char buf[64] = {0};
+	int n = fs.read(path, sizeof buf, 0, buf);
+	REQUIRE(n > 0);
+	CHECK(strcmp(buf, "1024 1024 0 0 0 0 0\n") == 0);
+
+	// statm appears in the per-pid directory listing.
+	List<DirEntry> e;
+	char dir[32];
+	snprintf(dir, sizeof dir, "/proc/%d", p->pid);
+	REQUIRE(fs.readdir(dir, e) >= 0);
+	CHECK(listed(e, "statm"));
+}
+
 TEST_CASE("SynthFs errors on missing paths and bad ops") {
 	SynthFs fs;
 	FileStat st;
