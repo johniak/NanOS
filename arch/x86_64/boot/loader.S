@@ -24,12 +24,15 @@ align 4
     dd 0                            ; bss_end_addr
     dd 0                            ; entry_addr
     ; Graphics request (flag bit 2), offsets 32..44. mode_type 0 = linear framebuffer.
-    ; GRUB sets this mode (VBE on BIOS, GOP on UEFI) and reports the framebuffer in the
-    ; Multiboot info; bootinfo_x86_64.cpp reads back the real width/height/pitch/bpp.
+    ; width/height = 0 means "no preference" (Multiboot1 §3.1.6): the bootloader keeps the
+    ; firmware's current GOP mode, i.e. the panel's NATIVE resolution on real UEFI hardware
+    ; (the Dell), instead of being forced to 1024x768. We still prefer 32bpp. The kernel reads
+    ; the actual width/height/pitch/bpp back from the Multiboot info (bootinfo_x86_64.cpp), so it
+    ; adapts to whatever mode is set.
     dd 0                            ; mode_type = 0 (linear graphics)
-    dd 1024                         ; width
-    dd 768                          ; height
-    dd 32                           ; depth (bits per pixel)
+    dd 0                            ; width  = no preference (native)
+    dd 0                            ; height = no preference (native)
+    dd 32                           ; depth (bits per pixel) — prefer 32bpp
 
 section .bss
 align 16
