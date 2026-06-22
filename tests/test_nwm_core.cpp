@@ -40,6 +40,16 @@ static uint32_t create_win(nw_server& s, int client, int w, int h, const char* t
 	return s.win[s.focus].id;
 }
 
+TEST_CASE("a newly created window defaults to NORMAL, glass-enabled") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 300, 200, "w");
+	int idx = s.focus;
+	CHECK(s.win[idx].used == 1);
+	CHECK(s.win[idx].type == NW_WIN_NORMAL);
+	CHECK(s.win[idx].glass == 1);
+}
+
 TEST_CASE("create window emits CONFIGURE and focuses it") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());

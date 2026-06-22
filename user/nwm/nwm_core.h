@@ -59,6 +59,9 @@ enum { NW_RESIZE_GRIP = 16, NW_MIN_CW = 160, NW_MIN_CH = 80 };   /* bottom-right
 /* Taskbar (bottom bar): the Start button + one button per open window. */
 enum { NW_TB_NONE = 0, NW_TB_START = 1, NW_TB_TASK = 2 };
 
+/* Window kind — drives backdrop-blur recursion scope + update priority (Phase 5). */
+enum nw_win_type { NW_WIN_NORMAL = 0, NW_WIN_MENU, NW_WIN_POPUP, NW_WIN_DIALOG, NW_WIN_TOOLTIP };
+
 struct nw_window {
 	int       used;
 	uint32_t  id;
@@ -71,6 +74,7 @@ struct nw_window {
 	int       frame_dirty; /* the cached frame is stale and must be re-rendered. Set on content
 	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
 	uint8_t   glass;       /* 1 => this window gets a blurred backdrop (default for all)      */
+	uint8_t   type;        /* enum nw_win_type; default NW_WIN_NORMAL                         */
 	int       minimized;   /* hidden from the scene (taskbar button stays); restored from the taskbar */
 	int       maximized;   /* filling the work area (between menu bar and taskbar)                    */
 	int       sx, sy, scw, sch;   /* geometry saved before maximizing, restored on un-maximize        */
