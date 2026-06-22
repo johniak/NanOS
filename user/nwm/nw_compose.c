@@ -306,13 +306,24 @@ void nw_render_dirty_frames(struct nw_server *s)
  * downsamples it into bdc->lo, blurs the small copy with nw_blur_rect, then bilinearly
  * upscales the window-rect portion back into bdc->bd. Returns 1 if bd was filled, else 0
  * (region empty, or lo scratch too small -> caller composites without a backdrop). */
-/* allow_slide: during a drag, between forced rebuilds, reuse the last blur (resampled at the
- * moved rect's size) instead of recomputing — keeps the move fluid at the cost of an approximate
- * (slightly stretched) backdrop until the next forced rebuild snaps it back to exact. */
-static int build_backdrop(const struct nw_surface *back, const struct nw_backdrop_ctx *bdc,
-                          struct nw_window *w, int x, int y, int fw, int fh,
-                          int force_rebuild, int allow_slide)
+/* Fill bdc->bd with the blurred backdrop under window `w`'s rect. Decides between four sources:
+ *  - reuse:  the per-window cache is valid for this exact rect (not dirty/moved) -> upsample it;
+ *  - slide:  during a drag between forced rebuilds (allow_slide) -> reuse the last blur, resampled
+ *            at the moved rect's size (approximate, snaps back on the next forced rebuild);
+ *  - fresh:  allow_fresh -> downsample+blur the live scene and persist into the cache (*did_fresh=1);
+ *  - stale:  a fresh rebuild is needed but not allowed (budget exhausted) and a cache exists ->
+ *            reuse the stale cache rather than render empty.
+ * Returns 1 if bd was filled; 0 only when the region is empty/too small OR a fresh build was needed,
+ * not allowed, and there is no cache to fall back on (caller then composites with no blur this frame).
+ *
+ * NOTE (cost-only concession, per plan): the blur is computed over the full cache_rect even when the
+ * window is partly occluded by a window above it. nw_rect_visible_band() exists to shrink that work,
+ * but wiring it here would desync the cache rect used for reuse matching; left as a future refinement. */
+static int build_backdrop_ex(const struct nw_surface *back, const struct nw_backdrop_ctx *bdc,
+                             struct nw_window *w, int x, int y, int fw, int fh,
+                             int force_rebuild, int allow_slide, int allow_fresh, int *did_fresh)
 {
+	if (did_fresh) *did_fresh = 0;
 	int cx0, cy0, cx1, cy1;
 	nw_surface_bounds(back, &cx0, &cy0, &cx1, &cy1);          /* honours the damage scissor */
 	nw_rect clip = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
@@ -325,10 +336,11 @@ static int build_backdrop(const struct nw_surface *back, const struct nw_backdro
 	int reuse = w->bd_blur && !force_rebuild &&
 	            nw_backdrop_reusable(w->bd_rect, want, w->bd_dirty) &&
 	            w->bd_lw == lw && w->bd_lh == lh;
+	int have_cache = w->bd_blur && w->bd_lw > 0;
 	if (!reuse) {
-		if (allow_slide && w->bd_blur && w->bd_lw > 0) {
-			lw = w->bd_lw; lh = w->bd_lh;       /* reuse last blur at its size (approx during drag) */
-		} else {
+		if (allow_slide && have_cache) {
+			lw = w->bd_lw; lh = w->bd_lh;       /* drag: reuse last blur, resampled to the new size */
+		} else if (allow_fresh) {
 			nw_downsample_box(back->px + (long) want.y * back->stride + want.x,
 			                  lw * f, lh * f, back->stride, bdc->lo, f);
 			struct nw_surface lo = { bdc->lo, lw, lh, lw, 0,0,0,0 };
@@ -338,6 +350,11 @@ static int build_backdrop(const struct nw_surface *back, const struct nw_backdro
 				for (int i = 0; i < lw * lh; i++) w->bd_blur[i] = bdc->lo[i];
 				w->bd_lw = lw; w->bd_lh = lh; w->bd_rect = want; w->bd_dirty = 0;
 			}
+			if (did_fresh) *did_fresh = 1;
+		} else if (have_cache) {
+			lw = w->bd_lw; lh = w->bd_lh;       /* budget exhausted: reuse the stale cache, never blank */
+		} else {
+			return 0;                            /* nothing to draw from -> compose with no blur */
 		}
 	}
 	const uint32_t *lo_src = reuse ? w->bd_blur : (w->bd_blur ? w->bd_blur : bdc->lo);
@@ -354,6 +371,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 	if (wall) nw_blit(back, 0, 0, wall, 0, 0, back->w, back->h);
 	else      nw_fill_rect(back, 0, 0, back->w, back->h, 0x1e2a3a);
 
+	int budget = bdc ? bdc->rebuild_budget : 0;    /* non-priority fresh blur rebuilds left this frame */
 	for (int z = 0; z < s->zn; z++) {
 		int idx = s->zorder[z];
 		const struct nw_window *w = &s->win[idx];
@@ -364,10 +382,19 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		if (bdc && idx == bdc->drag_win)
 			force = (bdc->frame_ctr % NW_BD_FASTDRAG_N) == 0;
 		int allow_slide = bdc && idx == bdc->drag_win && !force;
+		/* The active window + all non-NORMAL (menu/popup/dialog/tooltip) windows always rebuild
+		 * fresh; background NORMAL windows draw fresh rebuilds from a per-frame budget so a screen
+		 * full of glass stays responsive (they fall back to their last blur when the budget runs out). */
+		int prio = (idx == s->focus) || (w->type != NW_WIN_NORMAL);
+		int allow_fresh = prio || budget > 0;
 		const struct nw_surface *bd = 0;
-		if (bdc && bdc->bd && w->glass &&
-		    build_backdrop(back, bdc, (struct nw_window *) w, w->x, w->y, fw, fh, force, allow_slide))
-			bd = bdc->bd;
+		if (bdc && bdc->bd && w->glass) {
+			int did_fresh = 0;
+			if (build_backdrop_ex(back, bdc, (struct nw_window *) w, w->x, w->y, fw, fh,
+			                      force, allow_slide, allow_fresh, &did_fresh))
+				bd = bdc->bd;
+			if (did_fresh && !prio && budget > 0) budget--;
+		}
 		if (w->frame) {                          /* cached frame: composite window-local source */
 			struct nw_surface fs;
 			fs.px = w->frame; fs.w = fw; fs.h = fh; fs.stride = fw;

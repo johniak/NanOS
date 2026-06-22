@@ -84,6 +84,26 @@ int nw_backdrop_reusable(nw_rect cached, nw_rect want, int dirty)
 	       cached.w == want.w && cached.h == want.h;
 }
 
+nw_rect nw_rect_visible_band(nw_rect r, nw_rect over)
+{
+	nw_rect c = nw_rect_intersect(r, over);
+	if (nw_rect_empty(c)) return r;                  /* nothing hidden */
+	nw_rect cand[4] = {
+		{ r.x, r.y, r.w, c.y - r.y },                            /* above the cover */
+		{ r.x, c.y + c.h, r.w, r.y + r.h - (c.y + c.h) },        /* below */
+		{ r.x, r.y, c.x - r.x, r.h },                            /* left  */
+		{ c.x + c.w, r.y, r.x + r.w - (c.x + c.w), r.h },        /* right */
+	};
+	nw_rect best = { 0, 0, 0, 0 };
+	long ba = 0;
+	for (int i = 0; i < 4; i++) {
+		if (cand[i].w <= 0 || cand[i].h <= 0) continue;
+		long a = (long) cand[i].w * cand[i].h;
+		if (a > ba) { ba = a; best = cand[i]; }
+	}
+	return best;
+}
+
 /* Map output pixel centers back into lo-res space in 16.16 fixed point, then bilinearly
  * blend the four neighbours with nw_lerp (per-channel linear interpolation). For a single
  * lo column/row the step is 0, so every output samples lo[0] (constant) — matches the tests. */

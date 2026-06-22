@@ -44,4 +44,9 @@ void nw_upsample_bilinear(const uint32_t *lo, int lw, int lh,
  * (same size and origin, and not flagged dirty); else 0 (must rebuild). */
 int nw_backdrop_reusable(nw_rect cached, nw_rect want, int dirty);
 
+/* Largest single axis-aligned sub-rect of `r` not covered by `over` — used to skip blur work
+ * under the part of a window hidden by a window above it. Returns `r` if they do not overlap,
+ * an empty rect if `over` fully covers `r`, else the bigger of the four border slabs. */
+nw_rect nw_rect_visible_band(nw_rect r, nw_rect over);
+
 #endif /* NW_BACKDROP_H */

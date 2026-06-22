@@ -76,3 +76,11 @@ TEST_CASE("cache reuse only when rect matches exactly and not dirty") {
 	CHECK(nw_backdrop_reusable(a, (nw_rect){11,10,100,80}, 0) == 0); // moved
 	CHECK(nw_backdrop_reusable(a, (nw_rect){10,10,101,80}, 0) == 0); // resized
 }
+
+TEST_CASE("visible band: uncovered rect returned as-is; fully covered -> empty") {
+	nw_rect r = {0,0,100,100};
+	CHECK(nw_rect_visible_band(r, (nw_rect){200,200,10,10}).w == 100);    // disjoint
+	CHECK(nw_rect_empty(nw_rect_visible_band(r, (nw_rect){-5,-5,110,110})) == 1); // covered
+	nw_rect b = nw_rect_visible_band(r, (nw_rect){0,0,100,40});           // top 40 covered
+	CHECK(b.y == 40); CHECK(b.h == 60);                                  // bottom slab survives
+}

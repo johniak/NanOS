@@ -397,6 +397,7 @@ static void present(void)
 		S.frame_ctr++;
 		g_bdc.frame_ctr = S.frame_ctr;
 		g_bdc.drag_win  = S.drag_win;
+		g_bdc.rebuild_budget = 2;   /* NW_BD_REBUILD_K: max non-priority fresh rebuilds/frame */
 		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf, &g_bdc);
 		nw_surface_noclip(&g_scene_surf);
 		nw_surface_noclip(&g_scratch_surf);
