@@ -135,7 +135,7 @@ TEST_CASE("uptimeString renders seconds and the raw tick count") {
 
 TEST_CASE("SynthFs /proc/meminfo is readable Linux-style text and terminates") {
 	SynthFs fs;
-	char buf[256] = {0};
+	char buf[512] = {0};
 	int n = fs.read("/proc/meminfo", sizeof buf, 0, buf);
 	CHECK(n > 0);
 	CHECK(strstr(buf, "MemTotal:") != 0);
@@ -155,6 +155,128 @@ TEST_CASE("meminfoString renders the kB rows and computes MemUsed") {
 	CHECK(strstr(b, "11072 kB") != 0);          // 131072 - 120000
 	CHECK(strstr(b, "KHeapFree:") != 0);
 	CHECK(strstr(b, "5000 kB") != 0);
+}
+
+TEST_CASE("meminfoString emits the keys htop reads (MemAvailable/Buffers/Cached/Swap)") {
+	char b[512];
+	int n = meminfoString(b, sizeof b, 4096, 1024, 256, 128);
+	CHECK(n > 0);
+	CHECK(strstr(b, "MemTotal:") != 0);
+	CHECK(strstr(b, "MemFree:") != 0);
+	CHECK(strstr(b, "MemAvailable:") != 0);   // htop: available memory (== free here)
+	CHECK(strstr(b, "Buffers:") != 0);
+	CHECK(strstr(b, "Cached:") != 0);
+	CHECK(strstr(b, "SwapTotal:") != 0);
+	CHECK(strstr(b, "SwapFree:") != 0);
+}
+
+TEST_CASE("statmString: size==resident==memKb/4 pages, rest zero") {
+	char b[64];
+	int n = statmString(b, sizeof b, 4096 /*KiB*/);   // 1024 pages
+	CHECK(n > 0);
+	CHECK(strcmp(b, "1024 1024 0 0 0 0 0\n") == 0);
+}
+
+TEST_CASE("SynthFs exposes /proc/<pid>/task/<pid> thread dir (htop main-thread scan)") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	SynthFs fs;
+	char base[32], tbase[48];
+	snprintf(base, sizeof base, "/proc/%d", p->pid);
+	snprintf(tbase, sizeof tbase, "/proc/%d/task/%d", p->pid, p->pid);
+
+	// /proc/<pid> readdir includes "task"
+	List<DirEntry> e;
+	REQUIRE(fs.readdir(String(base), e) >= 0);
+	CHECK(listed(e, "task"));
+
+	// /proc/<pid>/task is a directory listing the main tid
+	FileStat st;
+	char taskdir[40]; snprintf(taskdir, sizeof taskdir, "/proc/%d/task", p->pid);
+	REQUIRE(fs.stat(String(taskdir), st) >= 0);
+	CHECK(st.type == NODE_DIR);
+	List<DirEntry> te;
+	REQUIRE(fs.readdir(String(taskdir), te) >= 0);
+	char tidname[12]; int kk = 0; { int v=p->pid; char tmp[12]; int n=0; if(v==0)tmp[n++]='0'; while(v){tmp[n++]='0'+v%10;v/=10;} while(n)tidname[kk++]=tmp[--n]; tidname[kk]=0; }
+	CHECK(listed(te, tidname));
+
+	// /proc/<pid>/task/<pid>/stat reads the same content as /proc/<pid>/stat
+	char tstat[64], pstat[48];
+	snprintf(tstat, sizeof tstat, "%s/stat", tbase);
+	snprintf(pstat, sizeof pstat, "%s/stat", base);
+	char b1[256] = {0}, b2[256] = {0};
+	int n1 = fs.read(String(tstat), sizeof b1, 0, b1);
+	int n2 = fs.read(String(pstat), sizeof b2, 0, b2);
+	CHECK(n1 > 0);
+	CHECK(n1 == n2);
+	CHECK(strcmp(b1, b2) == 0);
+}
+
+TEST_CASE("SynthFs serves /proc/<pid>/statm for a live process") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	p->brkBase = 0x800000;
+	p->brkCur = 0x800000 + 4096 * 1024;   // 4096 KiB -> 1024 pages
+
+	char path[32];
+	snprintf(path, sizeof path, "/proc/%d/statm", p->pid);
+	SynthFs fs;
+	char buf[64] = {0};
+	int n = fs.read(path, sizeof buf, 0, buf);
+	REQUIRE(n > 0);
+	CHECK(strcmp(buf, "1024 1024 0 0 0 0 0\n") == 0);
+
+	// statm appears in the per-pid directory listing.
+	List<DirEntry> e;
+	char dir[32];
+	snprintf(dir, sizeof dir, "/proc/%d", p->pid);
+	REQUIRE(fs.readdir(dir, e) >= 0);
+	CHECK(listed(e, "statm"));
+}
+
+TEST_CASE("statusString includes Uid, Gid, VmSize, VmRSS, Threads for htop") {
+	ProcInfo pi;
+	memset(&pi, 0, sizeof pi);
+	pi.pid = 7; pi.ppid = 1; pi.pgid = 7; pi.sid = 7;
+	pi.state = 'R'; pi.memKb = 2048; pi.nthreads = 3;
+	strcpy(pi.comm, "demo");
+	char b[512];
+	int n = statusString(b, sizeof b, pi);
+	CHECK(n > 0);
+	CHECK(strstr(b, "Name:\tdemo") != 0);
+	CHECK(strstr(b, "Uid:\t0\t0\t0\t0") != 0);
+	CHECK(strstr(b, "Gid:\t0\t0\t0\t0") != 0);
+	CHECK(strstr(b, "VmSize:\t2048 kB") != 0);
+	CHECK(strstr(b, "VmRSS:\t2048 kB") != 0);
+	CHECK(strstr(b, "Threads:\t3") != 0);
+}
+
+TEST_CASE("SynthFs /proc/<pid>/stat carries real vsize/rss and num_threads") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	p->brkBase = 0x800000;
+	p->brkCur = 0x800000 + 8192 * 1024;   // 8192 KiB -> vsize 8388608 bytes, rss 2048 pages
+	p->threadCount = 4;
+
+	char path[32];
+	snprintf(path, sizeof path, "/proc/%d/stat", p->pid);
+	SynthFs fs;
+	char buf[384] = {0};
+	int n = fs.read(path, sizeof buf, 0, buf);
+	REQUIRE(n > 0);
+	CHECK(strstr(buf, " 8388608 ") != 0);   // field 23: vsize (bytes)
+	CHECK(strstr(buf, " 4 ") != 0);          // field 20: num_threads
+	// htop's stat parser reads through field 39 (processor); the line must carry >=39
+	// space-separated fields or htop drops the process. Count the spaces.
+	int spaces = 0;
+	for (const char* c = buf; *c && *c != '\n'; c++) if (*c == ' ') spaces++;
+	CHECK(spaces >= 38);                      // 39 fields => >=38 separators
 }
 
 TEST_CASE("SynthFs errors on missing paths and bad ops") {

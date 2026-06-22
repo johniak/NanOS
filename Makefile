@@ -153,6 +153,40 @@ else
 endif
 	@echo "staged $(BINFOLDER)vim.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /apps/vim"
 
+# htop (interactive process monitor). x86_64-ONLY (like the vim port): builds from source via the
+# reproducible nanos-port driver against the x86_64-nanos sysroot, linking libncurses.a/libtinfo.a
+# from the ncurses port. hooks/pre_configure.sh maps *nanos* to htop's Linux /proc backend, which
+# reads NanOS's Linux-style /proc (SynthFs). Requires `make ARCH=x86_64 ncurses` first. `make
+# image*` never depends on this; a missing artifact is skipped by _image64.
+HTOP_PORT := $(SDK_WORK)/htop-port
+HTOP_TRIPLE := x86_64-nanos
+htop:
+ifeq ($(ARCH),x86_64)
+	$(NXPORT_PREREQ)
+	@test -d "$(SDK_TC)/$(HTOP_TRIPLE)/include" || { echo "nanos-sdk $(HTOP_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -f "$(SDK_TC)/$(HTOP_TRIPLE)/lib/libtinfo.a" || { echo "libtinfo.a not in the $(HTOP_TRIPLE) sysroot — run 'make ARCH=x86_64 ncurses' first"; exit 1; }
+	@test -f "$(HTOP_PORT)/nxport.toml" || { echo "htop port not found at $(HTOP_PORT)/nxport.toml"; exit 1; }
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(HTOP_TRIPLE)/include/"
+	cp kernel/SyscallNr.h            "$(SDK_TC)/$(HTOP_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(HTOP_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/$(HTOP_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/$(HTOP_TRIPLE)/lib/libc.ndl"
+	cp $(BINFOLDER)crt0.o            "$(SDK_TC)/$(HTOP_TRIPLE)/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o           "$(SDK_TC)/$(HTOP_TRIPLE)/lib/nxhdr.o"
+	cp $(BINFOLDER)mknx64            "$(SDK_TC)/bin/$(HTOP_TRIPLE)-mknx"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(HTOP_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e SDK=/sdk -e NX_HOST=x86_64-nanos -e NX_LP64=1 \
+	  -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone -include nx-dllimport.h -include nx-getopt-import.h" \
+	  -e LDFLAGS="-no-pie" -e LIBS="-lncurses -ltinfo" \
+	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	cp "$(HTOP_PORT)/htop.nxe" $(BINFOLDER)htop.nxe
+else
+	@echo "htop port is x86_64-only — run 'make ARCH=x86_64 htop'"; exit 1
+endif
+	@echo "staged $(BINFOLDER)htop.nxe — run 'make image64' to install it into /nanos/bin"
+
 bzip2:
 ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
@@ -673,7 +707,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -1131,6 +1165,11 @@ _image64: _all _userland64 _kext
 	fi
 	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
 	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# htop (optional, external): interactive process monitor built by `make ARCH=x86_64 htop` (the
+	# nanos-sdk port), staged into bin/htop.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
+	if [ -f $(BINFOLDER)htop.nxe ]; then \
+	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# ping (optional, external): GNU inetutils ping built by `make ARCH=x86_64 ping` (the nanos-sdk
 	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.

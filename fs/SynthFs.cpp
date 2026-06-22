@@ -41,7 +41,10 @@ int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 	struct Row { const char* key; unsigned val; };
 	Row rows[] = {
 		{ "MemTotal:", memTotalKb }, { "MemFree:", memFreeKb },
+		{ "MemAvailable:", memFreeKb },                 // no reclaim accounting: available == free
 		{ "MemUsed:", memTotalKb > memFreeKb ? memTotalKb - memFreeKb : 0 },
+		{ "Buffers:", 0 }, { "Cached:", 0 },            // no page/buffer cache accounting yet
+		{ "SwapTotal:", 0 }, { "SwapFree:", 0 },        // NanOS has no swap
 		{ "KHeapTotal:", heapTotalKb }, { "KHeapFree:", heapFreeKb },
 	};
 	int p = 0;
@@ -150,6 +153,52 @@ int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci) {
 	p = putStr(buf, p, cap, "flags\t\t: ");
 	p = putStr(buf, p, cap, ci.flags[0] ? ci.flags : "fpu");
 	p = putStr(buf, p, cap, "\n\n");
+	buf[p] = 0;
+	return p;
+}
+
+// /proc/<pid>/statm: size resident shared text lib data dt, in 4 KiB pages. NanOS tracks only a
+// brk-heap proxy (memKb) and has no swap, so size == resident == memKb/4 and the rest is 0.
+int statmString(char* buf, int cap, unsigned memKb) {
+	unsigned pages = memKb / 4u;                 // 4 KiB pages
+	int p = 0;
+	p = putUint(buf, p, cap, pages);             // size
+	p = putStr(buf, p, cap, " ");
+	p = putUint(buf, p, cap, pages);             // resident (no swap: all resident)
+	p = putStr(buf, p, cap, " 0 0 0 0 0\n");     // shared text lib data dt
+	buf[p] = 0;
+	return p;
+}
+
+// /proc/<pid>/status: the human-readable per-process summary. Carries the fields htop/ps read,
+// including Uid/Gid (NanOS is single-user -> 0), VmSize/VmRSS (the brk-heap memKb proxy) and
+// Threads. Shares one renderer between production and host tests.
+int statusString(char* buf, int cap, const ProcInfo& pi) {
+	char st[2] = { pi.state, 0 };
+	int p = 0;
+	p = putStr(buf, p, cap, "Name:\t");
+	p = putStr(buf, p, cap, pi.comm);
+	p = putStr(buf, p, cap, "\nState:\t");
+	p = putStr(buf, p, cap, st);
+	p = putStr(buf, p, cap, "\nPid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.pid);
+	p = putStr(buf, p, cap, "\nPPid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.ppid);
+	p = putStr(buf, p, cap, "\nPgid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.pgid);
+	p = putStr(buf, p, cap, "\nSid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.sid);
+	p = putStr(buf, p, cap, "\nKthread:\t");
+	p = putStr(buf, p, cap, pi.kthread ? "1" : "0");
+	p = putStr(buf, p, cap, "\nUid:\t0\t0\t0\t0");        // NanOS is single-user (root)
+	p = putStr(buf, p, cap, "\nGid:\t0\t0\t0\t0");
+	p = putStr(buf, p, cap, "\nVmSize:\t");
+	p = putUint(buf, p, cap, pi.memKb);
+	p = putStr(buf, p, cap, " kB\nVmRSS:\t");
+	p = putUint(buf, p, cap, pi.memKb);
+	p = putStr(buf, p, cap, " kB\nThreads:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.nthreads);
+	p = putStr(buf, p, cap, "\n");
 	buf[p] = 0;
 	return p;
 }
@@ -285,7 +334,7 @@ static int gen_uptime(unsigned off, void* buf, unsigned n) {
 
 // Snapshot file: render live /proc/meminfo (served by offset so `cat` terminates).
 static int gen_meminfo(unsigned off, void* buf, unsigned n) {
-	static char s[256];
+	static char s[384];   // 10 Linux-style rows (incl. MemAvailable/Buffers/Cached/Swap for htop)
 	int len = meminfoString(s, sizeof s, sysMemTotalKb(), sysMemFreeKb(),
 			sysHeapTotalKb(), sysHeapFreeKb());
 	if (off >= (unsigned) len)
@@ -483,7 +532,19 @@ SynthNode* SynthFs::walk(const char* path) {
 // ---- dynamic /proc (per-process directories, Linux-style) -----------------
 // Classify a path against the live process table:
 //   1 = "/proc" itself (readdir appends one dir per pid), 2 = "/proc/<pid>",
-//   3 = "/proc/<pid>/<file>", 0 = not a dynamic /proc path (e.g. /proc/uptime).
+//   3 = "/proc/<pid>/<file>", 4 = "/proc/<pid>/task" (lists the thread ids), 0 = not a dynamic
+//   /proc path (e.g. /proc/uptime).
+//
+// The optional ".../task/<tid>" level is collapsed onto the thread id: a "/proc/<pid>/task/<tid>"
+// path returns 2 with *pidOut = <tid>, and "/proc/<pid>/task/<tid>/<file>" returns 3 with
+// *pidOut = <tid> — so the per-pid renderers serve the main thread (tid == pid) unchanged. htop's
+// per-process scan reads the main thread via /proc/<pid>/task/<pid>/stat, so this level is required.
+static bool parseUint(const char* s, int* i, int* out) {
+	int v = 0, d = 0;
+	for (; s[*i] >= '0' && s[*i] <= '9'; (*i)++) { v = v * 10 + (s[*i] - '0'); d++; }
+	*out = v;
+	return d > 0;
+}
 static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	const char* pre = "/proc";
 	int i = 0;
@@ -497,12 +558,8 @@ static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	i++;
 	if (path[i] == 0)
 		return 1;                       // "/proc/"
-	int pid = 0, digits = 0;
-	for (; path[i] >= '0' && path[i] <= '9'; i++) {
-		pid = pid * 10 + (path[i] - '0');
-		digits++;
-	}
-	if (digits == 0)
+	int pid = 0;
+	if (!parseUint(path, &i, &pid))
 		return 0;                       // non-numeric child (e.g. "uptime")
 	*pidOut = pid;
 	if (path[i] == 0)
@@ -512,6 +569,30 @@ static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	i++;
 	if (path[i] == 0)
 		return 2;                       // "/proc/<pid>/"
+	// "/proc/<pid>/task[...]" — the thread group directory.
+	const char* task = "task";
+	int t = 0;
+	for (; task[t]; t++)
+		if (path[i + t] != task[t]) break;
+	if (task[t] == 0 && (path[i + t] == 0 || path[i + t] == '/')) {
+		i += t;
+		if (path[i] == 0 || (path[i] == '/' && path[i + 1] == 0))
+			return 4;                   // "/proc/<pid>/task" (or trailing slash) -> thread listing
+		i++;                            // skip '/'
+		int tid = 0;
+		if (!parseUint(path, &i, &tid))
+			return 0;
+		*pidOut = tid;                  // collapse onto the thread id (main thread: tid == pid)
+		if (path[i] == 0)
+			return 2;                   // "/proc/<pid>/task/<tid>"
+		if (path[i] != '/')
+			return 0;
+		i++;
+		if (path[i] == 0)
+			return 2;                   // "/proc/<pid>/task/<tid>/"
+		*fileOut = path + i;            // "/proc/<pid>/task/<tid>/<file>"
+		return 3;
+	}
 	*fileOut = path + i;                // "/proc/<pid>/<file>"
 	return 3;
 }
@@ -524,7 +605,7 @@ static bool streq(const char* a, const char* b) {
 	return a[i] == b[i];
 }
 
-static const char* const PROC_FILES[] = { "comm", "cmdline", "stat", "status", 0 };
+static const char* const PROC_FILES[] = { "comm", "cmdline", "stat", "statm", "status", 0 };
 static bool isProcFile(const char* name) {
 	for (int i = 0; PROC_FILES[i]; i++)
 		if (streq(name, PROC_FILES[i]))
@@ -567,25 +648,24 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p += utoa(pi.utime, buf + p);                           // 14: utime
 		p = appendStr(buf, p, cap, " ");
 		p += utoa(pi.stime, buf + p);                           // 15: stime
-		p = appendStr(buf, p, cap, " 0 0 20 0 1 0 ");           // 16-21: cutime cstime prio nice threads itreal
+		p = appendStr(buf, p, cap, " 0 0 20 0 ");               // 16-19: cutime cstime priority nice
+		p += utoa((unsigned) pi.nthreads, buf + p);             // 20: num_threads
+		p = appendStr(buf, p, cap, " 0 ");                      // 21: itrealvalue
 		p += utoa(pi.starttime, buf + p);                       // 22: starttime
-		p = appendStr(buf, p, cap, " 0 0\n");                   // 23-24: vsize rss
-	} else if (streq(file, "status")) {
-		p = appendStr(buf, p, cap, "Name:\t");
-		p = appendStr(buf, p, cap, pi.comm);
-		p = appendStr(buf, p, cap, "\nState:\t");
-		p = appendStr(buf, p, cap, st);
-		p = appendStr(buf, p, cap, "\nPid:\t");
-		p += utoa((unsigned) pi.pid, buf + p);
-		p = appendStr(buf, p, cap, "\nPPid:\t");
-		p += utoa((unsigned) pi.ppid, buf + p);
-		p = appendStr(buf, p, cap, "\nPgid:\t");
-		p += utoa((unsigned) pi.pgid, buf + p);
-		p = appendStr(buf, p, cap, "\nSid:\t");
-		p += utoa((unsigned) pi.sid, buf + p);
-		p = appendStr(buf, p, cap, "\nKthread:\t");
-		p = appendStr(buf, p, cap, pi.kthread ? "1" : "0");
+		p = appendStr(buf, p, cap, " ");
+		p += utoa(pi.memKb * 1024u, buf + p);                   // 23: vsize (bytes)
+		p = appendStr(buf, p, cap, " ");
+		p += utoa(pi.memKb / 4u, buf + p);                      // 24: rss (pages)
+		// Fields 25-52 (rsslim, startcode, ..., exit_signal, processor, ...). htop's stat parser
+		// reads through field 39 (processor) and bails if any field 23-39 is missing, so emit the
+		// full Linux field count as zeros. processor (39) = 0: NanOS is single-CPU.
+		for (int f = 25; f <= 52; f++)
+			p = appendStr(buf, p, cap, " 0");
 		p = appendStr(buf, p, cap, "\n");
+	} else if (streq(file, "statm")) {
+		p = statmString(buf, cap, pi.memKb);
+	} else if (streq(file, "status")) {
+		p = statusString(buf, cap, pi);
 	} else {
 		return -1;
 	}
@@ -600,7 +680,7 @@ int SynthFs::read(String path, unsigned size, unsigned off, void* buf) {
 		ProcInfo pi;
 		if (!isProcFile(file) || !ProcTable::infoByPid(pid, &pi))
 			return -1;
-		char tmp[320];
+		char tmp[512];   // per-pid status now carries Uid/Gid/Vm*/Threads lines
 		int len = renderProcFile(file, tmp, sizeof tmp, pi);
 		if (len < 0 || off >= (unsigned) len)
 			return len < 0 ? -1 : 0;
@@ -696,15 +776,15 @@ int SynthFs::stat(String path, FileStat& out) {
 	int pid = 0;
 	const char* file = 0;
 	int c = classifyProc((char*) path, &pid, &file);
-	if (c == 2 || c == 3) {                 // /proc/<pid> dir, or /proc/<pid>/<file>
+	if (c == 2 || c == 3 || c == 4) {       // /proc/<pid>[/task[/<tid>]] dir, or .../<file>
 		ProcInfo pi;
 		if (!ProcTable::infoByPid(pid, &pi))
 			return -1;
 		if (c == 3 && !isProcFile(file))
 			return -1;
-		out.type = (c == 2) ? NODE_DIR : NODE_FILE;
+		out.type = (c == 3) ? NODE_FILE : NODE_DIR;
 		out.size = 0;
-		out.mode = (c == 2) ? (0x4000 | 0555) : (0x8000 | 0444);
+		out.mode = (c == 3) ? (0x8000 | 0444) : (0x4000 | 0555);
 		out.nlink = 1;
 		out.uid = out.gid = out.mtime = 0;
 		out.ino = 0x50000000u + (unsigned) pid;   // synthetic /proc ino, clear of disk inodes
@@ -755,7 +835,8 @@ static void pushDotEntries(List<DirEntry>& out) {
 int SynthFs::readdir(String path, List<DirEntry>& out) {
 	int pid = 0;
 	const char* file = 0;
-	if (classifyProc((char*) path, &pid, &file) == 2) {   // /proc/<pid> -> per-pid files
+	int pc = classifyProc((char*) path, &pid, &file);
+	if (pc == 2) {                                       // /proc/<pid>[/task/<tid>] -> per-pid files
 		ProcInfo pi;
 		if (!ProcTable::infoByPid(pid, &pi))
 			return -1;
@@ -769,6 +850,24 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 			de.type = NODE_FILE;
 			out.add(de);
 		}
+		// The thread-group dir: ps/htop read the main thread via /proc/<pid>/task/<pid>/stat.
+		DirEntry td;
+		const char* tn = "task";
+		int tk = 0; for (; tn[tk]; tk++) td.name[tk] = tn[tk]; td.name[tk] = 0;
+		td.type = NODE_DIR;
+		out.add(td);
+		return 0;
+	}
+	if (pc == 4) {                                       // /proc/<pid>/task -> one entry per thread id
+		ProcInfo pi;
+		if (!ProcTable::infoByPid(pid, &pi))
+			return -1;
+		pushDotEntries(out);
+		DirEntry de;                                    // main thread: tid == pid (NanOS exposes the leader)
+		int k = utoa((unsigned) pid, de.name);
+		de.name[k] = 0;
+		de.type = NODE_DIR;
+		out.add(de);
 		return 0;
 	}
 
