@@ -1773,12 +1773,11 @@ $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BI
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
 $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
-# nwnote links the libnw import library (+ libc.ndl.a for crt0's exit thunk) and declares only
-# --need libnw.ndl; the recursive loader auto-loads libc.ndl (libnw's dependency), exactly like
-# a Windows app that links user32 and gets ntdll transitively.
-$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwnote.elf $@ --need libnw.ndl
+# nwnote (the Notepad) is now a pure toolkit client like nwform/nwexp: --need libnwui.ndl pulls
+# the whole chain libnwui->libnw->libc via the recursive loader.
+$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwnote.elf $@ --need libnwui.ndl
 # nwform uses ONLY the toolkit (+ libc for snprintf/exit); --need libnwui.ndl pulls the whole
 # chain libnwui->libnw->libc via the recursive loader.
 $(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)

@@ -171,7 +171,7 @@ nwui_node *nwui_colors(nwui_node *n, uint32_t fg, uint32_t bg)
 
 void nwui_set_text(nwui_node *n, const char *text)
 {
-	if (n->kind == NWUI_TEXTFIELD) {            /* set/replace the field's value + reset caret */
+	if (n->kind == NWUI_TEXTFIELD || n->kind == NWUI_TEXTAREA) {   /* set value + reset caret/scroll */
 		int i = 0;
 		if (text && n->tbuf)
 			for (; text[i] && i < n->tcap - 1; i++)
@@ -180,6 +180,7 @@ void nwui_set_text(nwui_node *n, const char *text)
 		n->tlen = i;
 		n->caret = i;
 		n->anchor = i;
+		n->scroll = 0;
 	} else {
 		set_caption(n, text);
 	}
@@ -1077,3 +1078,21 @@ void nwui_prompt(nwui *u, const char *title, char *buf, int cap, nwui_cb on_ok, 
 	nwui_colors(col, 0, 0x00ffffff);
 	nwui_open_modal(u, col, 0, 0);
 }
+
+/* ---- programmatic clipboard (so menu items can Cut/Copy/Paste the focused field) ---- */
+void nwui_post_copy(nwui *u, int cut)
+{
+	if (!u->focus) return;
+	if (u->focus->kind == NWUI_TEXTAREA) {
+		ta_copy(u, u->focus);
+		if (cut && has_sel(u->focus)) {
+			ta_del_range(u->focus, sel_lo(u->focus), sel_hi(u->focus));
+			u->focus->dirty = 1;
+			if (u->focus->on_change) u->focus->on_change(u->focus, u->focus->user);
+		}
+	} else if (u->focus->kind == NWUI_TEXTFIELD) {
+		tf_copy(u, u->focus);
+		if (cut) { tf_del_sel(u->focus); tf_changed(u->focus); }
+	}
+}
+void nwui_post_paste(nwui *u) { u->clip_get = 1; }   /* run loop -> nw_get_clipboard -> PASTE */

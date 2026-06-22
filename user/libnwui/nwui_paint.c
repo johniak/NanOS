@@ -211,7 +211,7 @@ int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int
 {
 	if (!u->root)
 		return 0;
-	if (u->layout_dirty) {
+	if (u->layout_dirty || u->modal) {   /* a modal always forces a full repaint so it stays on top */
 		nwui_layout(u);
 		nw_fill_rect(s, 0, 0, u->win_w, u->win_h, COL_WIN);
 		paint_all(u->root, s);

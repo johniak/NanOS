@@ -62,6 +62,11 @@ void       nwui_textarea_select_all(nwui_node *n);
 /* Insert a C string at the caret. */
 void       nwui_textarea_insert_text(nwui_node *n, const char *s);
 
+/* Programmatic clipboard for the focused field (so a menu item can drive it): copy/cut the
+ * selection to the clipboard; paste asks the compositor (reply arrives as a paste event). */
+void       nwui_post_copy(nwui *u, int cut);
+void       nwui_post_paste(nwui *u);
+
 /* ---- keyboard accelerators (menu shortcuts) ----
  * Register Ctrl+<letter> (ctrl=1, key='s') or a function key (key=0, fkey=NWUI_SC_F3). On a
  * matching key the callback fires and the keystroke is consumed; share the menu callbacks. */

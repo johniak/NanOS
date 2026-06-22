@@ -694,3 +694,21 @@ TEST_CASE("path join and path-up") {
 	strcpy(p, "/one"); nwui_path_up(p);
 	CHECK(strcmp(p, "/") == 0);
 }
+
+TEST_CASE("nwui_post_copy cuts the focused textarea, nwui_post_paste requests the clipboard") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "hello";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1; ta->anchor = 1; ta->caret = 4;   // "ell" selected
+
+	nwui_post_copy(u, 1);                     // cut
+	CHECK(u->clip_set == 1); CHECK(u->clip_len == 3);
+	CHECK(strncmp(u->clip_buf, "ell", 3) == 0);
+	CHECK(strcmp(tb, "ho") == 0);
+
+	u->clip_get = 0;
+	nwui_post_paste(u);
+	CHECK(u->clip_get == 1);                  // run loop will turn this into nw_get_clipboard
+	delete u;
+}
