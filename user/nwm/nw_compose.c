@@ -301,8 +301,43 @@ void nw_render_dirty_frames(struct nw_server *s)
 	}
 }
 
+/* Fill bdc->bd over the window rect (x,y,w,h) with a blurred copy of `back` beneath it.
+ * Samples a cache_rect (window expanded by the blur radius, clamped to the scissor+screen),
+ * downsamples it into bdc->lo, blurs the small copy with nw_blur_rect, then bilinearly
+ * upscales the window-rect portion back into bdc->bd. Returns 1 if bd was filled, else 0
+ * (region empty, or lo scratch too small -> caller composites without a backdrop). */
+static int build_backdrop(const struct nw_surface *back, const struct nw_backdrop_ctx *bdc,
+                          int x, int y, int w, int h)
+{
+	int cx0, cy0, cx1, cy1;
+	nw_surface_bounds(back, &cx0, &cy0, &cx1, &cy1);          /* honours the damage scissor */
+	nw_rect clip = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
+	nw_rect cr = nw_rect_intersect(nw_cache_rect((nw_rect){x, y, w, h}, bdc->radius,
+	                                             back->w, back->h), clip);
+	if (nw_rect_empty(cr)) return 0;
+	int f = bdc->factor;
+	int lw = cr.w / f, lh = cr.h / f;
+	if (lw < 1 || lh < 1) return 0;
+	if (lw * lh > bdc->lo_cap) return 0;                      /* shouldn't happen; safety */
+
+	/* downsample back[cr] -> lo */
+	nw_downsample_box(back->px + (long) cr.y * back->stride + cr.x,
+	                  lw * f, lh * f, back->stride, bdc->lo, f);
+	/* blur the small copy in place (reuse the existing separable box blur) */
+	struct nw_surface lo;
+	lo.px = bdc->lo; lo.w = lw; lo.h = lh; lo.stride = lw;
+	nw_surface_noclip(&lo);
+	nw_blur_rect(&lo, 0, 0, lw, lh, bdc->radius / f > 0 ? bdc->radius / f : 1, bdc->passes);
+	/* upscale lo back into bd over the SAME cr region (aligned with `back`) */
+	nw_upsample_bilinear(bdc->lo, lw, lh,
+	                     bdc->bd->px + (long) cr.y * bdc->bd->stride + cr.x,
+	                     cr.w - (cr.w % f), cr.h - (cr.h % f), bdc->bd->stride);
+	return 1;
+}
+
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
-                      const struct nw_surface *scratch, const struct nw_surface *wall)
+                      const struct nw_surface *scratch, const struct nw_surface *wall,
+                      const struct nw_backdrop_ctx *bdc)
 {
 	if (wall) nw_blit(back, 0, 0, wall, 0, 0, back->w, back->h);
 	else      nw_fill_rect(back, 0, 0, back->w, back->h, 0x1e2a3a);
@@ -313,15 +348,18 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		if (!w->used || w->minimized) continue;       /* minimized windows live only on the taskbar */
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
 		int alpha = (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA;
+		const struct nw_surface *bd = 0;
+		if (bdc && bdc->bd && w->glass && build_backdrop(back, bdc, w->x, w->y, fw, fh))
+			bd = bdc->bd;
 		if (w->frame) {                          /* cached frame: composite window-local source */
 			struct nw_surface fs;
 			fs.px = w->frame; fs.w = fw; fs.h = fh; fs.stride = fw;
 			nw_surface_noclip(&fs);
-			composite_round(back, &fs, w->x, w->y, fw, fh, NW_RADIUS, alpha, w->x, w->y, 0);
+			composite_round(back, &fs, w->x, w->y, fw, fh, NW_RADIUS, alpha, w->x, w->y, bd);
 			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
 		} else if (scratch) {                    /* screen-space scratch: render live + composite */
 			draw_window_to(scratch, w, focused, w->x, w->y);
-			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS, alpha, 0, 0, 0);
+			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS, alpha, 0, 0, bd);
 			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
 		} else {
 			draw_window_to(back, w, focused, w->x, w->y);     /* simple/host path: opaque, square */
@@ -349,6 +387,6 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 
 void nw_compose(const struct nw_server *s, const struct nw_surface *back)
 {
-	nw_compose_scene(s, back, 0, 0);
+	nw_compose_scene(s, back, 0, 0, 0);
 	nw_draw_cursor(back, s->cursor_x, s->cursor_y);
 }

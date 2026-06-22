@@ -70,6 +70,7 @@ struct nw_window {
 	                        * shell allocates it. NULL = render straight to the scene (host path). */
 	int       frame_dirty; /* the cached frame is stale and must be re-rendered. Set on content
 	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
+	uint8_t   glass;       /* 1 => this window gets a blurred backdrop (default for all)      */
 	int       minimized;   /* hidden from the scene (taskbar button stays); restored from the taskbar */
 	int       maximized;   /* filling the work area (between menu bar and taskbar)                    */
 	int       sx, sy, scw, sch;   /* geometry saved before maximizing, restored on un-maximize        */

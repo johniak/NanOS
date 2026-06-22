@@ -758,6 +758,7 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		w->ch     = m->b > 0 ? m->b : 1;
 		w->buf    = 0;
 		w->frame  = 0; w->frame_dirty = 1;   /* shell binds the frame buffer; render it once bound */
+		w->glass  = 1;                       /* every window gets a blurred backdrop by default     */
 		/* The first few windows get a designed spread (the demo desktop layout); beyond that,
 		 * new windows cascade from the top-left. */
 		static const int LX[4] = { 90, 520, 150, 70 };

@@ -9,9 +9,21 @@
 
 #include "nwm_core.h"
 #include "nw_gfx.h"
+#include "nw_backdrop.h"
 
 /* Arrow cursor extent (for damage/overlay math in the I/O shell). */
 enum { NW_CURSOR_W = 11, NW_CURSOR_H = 16 };
+
+/* Caller-owned scratch for backdrop blur. `bd` is a screen-aligned full-res surface the
+ * compositor fills with the blurred backdrop under each glass window before compositing it;
+ * `lo` is a downsample scratch of at least lo_cap pixels (>= (bd->w/factor)*(bd->h/factor)).
+ * NULL ctx (or bd) => no blur, the classic flat-tint glass. */
+struct nw_backdrop_ctx {
+	struct nw_surface *bd;
+	uint32_t          *lo;
+	int                lo_cap;
+	int                factor, radius, passes;
+};
 
 /* Paint the desktop + every window back-to-front into `back`, WITHOUT the cursor. The shell
  * caches this "scene" and only recomposes it when the scene actually changes; the cursor is
@@ -22,7 +34,8 @@ enum { NW_CURSOR_W = 11, NW_CURSOR_H = 16 };
  * composited onto the scene with rounded corners + translucency (NULL = opaque square path,
  * used by simple/host paths). Both are caller-owned. */
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
-                      const struct nw_surface *scratch, const struct nw_surface *wall);
+                      const struct nw_surface *scratch, const struct nw_surface *wall,
+                      const struct nw_backdrop_ctx *bdc);
 
 /* Re-render every window whose cached frame is marked dirty (content/focus/create changed) into
  * its window-local frame buffer, clearing the flag. Run this before nw_compose_scene: windows

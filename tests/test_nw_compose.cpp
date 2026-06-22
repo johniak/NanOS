@@ -76,7 +76,7 @@ TEST_CASE("cached-frame compose equals fresh compose pixel-for-pixel (glass path
 	std::vector<uint32_t> pf((size_t) W * H, 0);
 	nw_surface bf; bf.px = pf.data(); bf.w = W; bf.h = H; bf.stride = W; nw_surface_noclip(&bf);
 	s.win[a].frame = s.win[b].frame = 0;
-	nw_compose_scene(&s, &bf, &sc, 0);
+	nw_compose_scene(&s, &bf, &sc, 0, 0);
 
 	// CACHED: allocate per-window frames, render them dirty, then compose from the cache.
 	auto fw = [&](int i){ return s.win[i].cw + 2 * NW_BORDER; };
@@ -89,9 +89,50 @@ TEST_CASE("cached-frame compose equals fresh compose pixel-for-pixel (glass path
 	CHECK(s.win[b].frame_dirty == 0);
 	std::vector<uint32_t> pc((size_t) W * H, 0);
 	nw_surface bc; bc.px = pc.data(); bc.w = W; bc.h = H; bc.stride = W; nw_surface_noclip(&bc);
-	nw_compose_scene(&s, &bc, &sc, 0);
+	nw_compose_scene(&s, &bc, &sc, 0, 0);
 
 	CHECK(pf == pc);                                        // bit-identical full scene
+}
+
+TEST_CASE("backdrop: glass window blurs a sharp edge in the scene below it") {
+	// 200x200 scene whose wallpaper has a hard vertical edge at x=100 (black|white). A glass
+	// window covers the centre; with the blurred backdrop the edge seen through the glass is
+	// gradual (small left/right jump), without it the hard edge bleeds straight through.
+	const int W = 200, H = 200;
+	nw_server s; nw_server_init(&s, W, H);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	nw_msg cm{}; cm.type = NW_REQ_CREATE_WINDOW; cm.a = 120; cm.b = 120; cm.length = 1;
+	nw_client_msg(&s, 0, &cm, (const unsigned char*) "g");
+	int wi = s.focus; s.win[wi].x = 40; s.win[wi].y = 40;
+	CHECK(s.win[wi].glass == 1);                              // glass on by default
+
+	std::vector<uint32_t> scratch((size_t) W * H, 0);
+	nw_surface sc; sc.px = scratch.data(); sc.w = W; sc.h = H; sc.stride = W; nw_surface_noclip(&sc);
+
+	std::vector<uint32_t> wall((size_t) W * H, 0u);
+	for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
+		wall[(size_t) y * W + x] = x < 100 ? 0x00000000u : 0x00ffffffu;
+	nw_surface wl; wl.px = wall.data(); wl.w = W; wl.h = H; wl.stride = W; nw_surface_noclip(&wl);
+
+	std::vector<uint32_t> bd((size_t) W * H, 0u);
+	std::vector<uint32_t> lo((size_t)(W / 4 + 1) * (H / 4 + 1) + 16, 0u);
+	nw_surface bds; bds.px = bd.data(); bds.w = W; bds.h = H; bds.stride = W; nw_surface_noclip(&bds);
+	nw_backdrop_ctx ctx{}; ctx.bd = &bds; ctx.lo = lo.data(); ctx.lo_cap = (int) lo.size();
+	ctx.factor = 4; ctx.radius = NW_BD_BLUR_RADIUS; ctx.passes = NW_BD_BLUR_PASSES;
+
+	std::vector<uint32_t> pa((size_t) W * H, 0), pb((size_t) W * H, 0);
+	nw_surface backA; backA.px = pa.data(); backA.w = W; backA.h = H; backA.stride = W; nw_surface_noclip(&backA);
+	nw_surface backB; backB.px = pb.data(); backB.w = W; backB.h = H; backB.stride = W; nw_surface_noclip(&backB);
+
+	nw_compose_scene(&s, &backA, &sc, &wl, 0);      // no blur: hard edge bleeds through the glass
+	nw_compose_scene(&s, &backB, &sc, &wl, &ctx);   // blurred backdrop: soft edge
+
+	auto chan = [](uint32_t c){ return (int)((c >> 16) & 0xff); };
+	auto iabs = [](int v){ return v < 0 ? -v : v; };
+	int yrow = 100;
+	int jumpA = iabs(chan(pa[(size_t) yrow * W + 98]) - chan(pa[(size_t) yrow * W + 102]));
+	int jumpB = iabs(chan(pb[(size_t) yrow * W + 98]) - chan(pb[(size_t) yrow * W + 102]));
+	CHECK(jumpB < jumpA);                            // blur softened the edge seen through the glass
 }
 
 TEST_CASE("moving a cached window does NOT dirty its frame (drag is re-render-free)") {
