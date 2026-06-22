@@ -18,6 +18,11 @@ static void key(nwui *u, char ch) {
 	e.type = NW_EV_KEY; e.down = 1; e.ch = ch;
 	nwui_dispatch(u, &e);
 }
+static void keyc(nwui *u, int code, char ch, int mods) {
+	nw_event e; memset(&e, 0, sizeof e);
+	e.type = NW_EV_KEY; e.down = 1; e.ch = ch; e.code = code; e.mods = mods;
+	nwui_dispatch(u, &e);
+}
 
 TEST_CASE("column layout stacks children, stretches them to width, honors pad+gap") {
 	nwui *u = new nwui; nwui_init(u);
@@ -453,5 +458,22 @@ TEST_CASE("nwui menu: encode builds the wire spec; dispatch invokes the right ca
 	nwui_menu_dispatch(u, 0, 0);     // Files > New (null cb) -> no crash
 	nwui_menu_dispatch(u, 9, 9);     // out of range -> no-op
 	CHECK(g_menu_fired == 0);
+	delete u;
+}
+
+TEST_CASE("textarea inserts printable chars and newlines, backspace deletes") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta);
+	u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1;          // textarea is focused
+
+	key(u, 'h'); key(u, 'i'); keyc(u, 0x1C, '\n', 0); key(u, 'x');
+	CHECK(strcmp(tb, "hi\nx") == 0);
+	CHECK(ta->caret == 4);
+
+	key(u, 8);                                // backspace
+	CHECK(strcmp(tb, "hi\n") == 0);
 	delete u;
 }

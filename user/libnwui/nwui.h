@@ -44,6 +44,24 @@ nwui_node *nwui_image(nwui *u, const uint32_t *px, int w, int h);
 /* An editable field over an APP-OWNED buffer (the app reads the typed value straight from it). */
 nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *user);
 
+/* A multiline text editor over an APP-OWNED buffer: caret + selection + scroll + optional
+ * word-wrap. The reusable heart of any text app (Notepad, log viewer, code box). */
+nwui_node *nwui_textarea(nwui *u, char *buf, int cap, nwui_cb on_change, void *user);
+/* Report the caret position as 1-based line + column (for a status bar). */
+void       nwui_textarea_caret(nwui_node *n, int *line, int *col);
+/* Turn word-wrap on/off (off = one visual row per logical line). */
+void       nwui_textarea_set_wrap(nwui_node *n, int on);
+/* Total visual rows under the current wrap setting (for scrollbar sizing). */
+int        nwui_textarea_total_rows(nwui_node *n);
+/* Search from the caret; on a hit select the match + scroll to it, return 1 (else 0). */
+int        nwui_textarea_find(nwui_node *n, const char *needle, int matchcase, int wrap_around);
+/* Move the caret to the start of 1-based line `line1` (clamped) + scroll to it. */
+void       nwui_textarea_goto_line(nwui_node *n, int line1);
+/* Select the whole buffer. */
+void       nwui_textarea_select_all(nwui_node *n);
+/* Insert a C string at the caret. */
+void       nwui_textarea_insert_text(nwui_node *n, const char *s);
+
 /* A scrollable list of rows. Items are an APP-OWNED array of strings (set with nwui_list_set).
  * A single click selects a row; a DOUBLE-click (or Enter) fires on_activate ("open"); arrows
  * move the selection and a scrollbar appears when rows overflow. The app reads which row fired

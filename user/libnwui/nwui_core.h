@@ -10,7 +10,8 @@
 #include "nwui.h"
 #include "libnw.h"     /* struct nw_event + NW_EV_* / NW_BTN_* — the core only READS events */
 
-enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST, NWUI_IMAGE };
+enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST, NWUI_IMAGE,
+       NWUI_TEXTAREA, NWUI_CHECKBOX };
 
 enum { NWUI_ROW_H = 18 };   /* list item row height */
 enum { NWUI_SB_W = 12, NWUI_SB_MIN = 16 };   /* list scrollbar: width, min thumb height */
@@ -44,6 +45,9 @@ struct nwui_node {
 	char      *tbuf;                  /* textfield: app-owned buffer */
 	int        tcap, tlen, caret;
 	int        anchor;               /* selection anchor; selection = [min,max) when != caret */
+
+	int        wrap;                 /* textarea: word-wrap on/off */
+	int       *vbool;                /* checkbox: app-owned bound flag */
 
 	const uint32_t *img;             /* image: app-owned w*h pixel buffer (0x00RRGGBB) */
 	const char *const *items;        /* list: app-owned array of item strings */
@@ -100,7 +104,9 @@ enum { NWUI_MENU_W = 110, NWUI_MENU_ITEM_H = 20 };
 enum {
 	NWUI_SC_LEFT  = 0xCB, NWUI_SC_RIGHT = 0xCD,
 	NWUI_SC_UP    = 0xC8, NWUI_SC_DOWN  = 0xD0,
-	NWUI_SC_HOME  = 0xC7, NWUI_SC_END   = 0xCF, NWUI_SC_ESC = 0x01
+	NWUI_SC_HOME  = 0xC7, NWUI_SC_END   = 0xCF, NWUI_SC_ESC = 0x01,
+	NWUI_SC_PGUP  = 0xC9, NWUI_SC_PGDN  = 0xD1, NWUI_SC_DEL = 0xD3,
+	NWUI_SC_CTRL  = 0x1D, NWUI_SC_RCTRL = 0x9D, NWUI_SC_F3  = 0x3D, NWUI_SC_F5 = 0x3F
 };
 
 /* ---- core (pure) ---- */

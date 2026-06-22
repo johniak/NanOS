@@ -66,6 +66,16 @@ nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *
 	return n;
 }
 
+nwui_node *nwui_textarea(nwui *u, char *buf, int cap, nwui_cb on_change, void *user)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_TEXTAREA);
+	n->tbuf = buf; n->tcap = cap;
+	n->tlen = buf ? (int) strlen(buf) : 0;
+	n->caret = 0; n->anchor = 0; n->scroll = 0;
+	n->on_change = on_change; n->user = user; n->focusable = 1;
+	return n;
+}
+
 nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user)
 {
 	nwui_node *n = nwui_alloc(u, NWUI_LIST);
@@ -192,6 +202,9 @@ void nwui_measure(nwui_node *n)
 	case NWUI_TEXTFIELD:
 		n->mw = NWUI_TF_DEFW;
 		n->mh = NW_FONT_H + 2 * NWUI_TF_PAD;
+		break;
+	case NWUI_TEXTAREA:
+		n->mw = 240; n->mh = 6 * NW_FONT_H;
 		break;
 	case NWUI_LIST:
 		n->mw = 220;
@@ -368,6 +381,24 @@ static void tf_copy(nwui *u, nwui_node *tf)       /* selection (or all) -> the c
 	u->clip_set = 1;
 }
 static void tf_changed(nwui_node *tf) { tf->dirty = 1; if (tf->on_change) tf->on_change(tf, tf->user); }
+
+/* ---- textarea (multiline) editing: shares tbuf/tlen/caret/anchor + sel_* helpers ---- */
+static void ta_del_range(nwui_node *n, int lo, int hi)
+{
+	if (lo < 0) lo = 0; if (hi > n->tlen) hi = n->tlen; if (lo >= hi) return;
+	int k = hi - lo;
+	for (int i = lo; i + k <= n->tlen; i++) n->tbuf[i] = n->tbuf[i + k];
+	n->tlen -= k; n->tbuf[n->tlen] = 0; n->caret = lo; n->anchor = lo;
+}
+static int ta_insert(nwui_node *n, char ch)
+{
+	if (ch != '\n' && ch != '\t' && (unsigned char) ch < 32) return 0;
+	if (has_sel(n)) ta_del_range(n, sel_lo(n), sel_hi(n));
+	if (n->tlen >= n->tcap - 1) return 0;
+	for (int i = n->tlen; i > n->caret; i--) n->tbuf[i] = n->tbuf[i - 1];
+	n->tbuf[n->caret] = ch; n->caret++; n->tlen++; n->anchor = n->caret;
+	n->tbuf[n->tlen] = 0; return 1;
+}
 
 /* ---- list ---- */
 static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
@@ -558,6 +589,17 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				L->sel++; list_scroll_to(L); L->dirty = 1;
 			} else if (ev->ch == '\n' || ev->ch == '\r') {
 				list_activate(L);
+			}
+			break;
+		}
+		if (u->focus && u->focus->kind == NWUI_TEXTAREA) {
+			nwui_node *n = u->focus;
+			if (ev->ch == 8) {                       /* backspace */
+				if (has_sel(n)) ta_del_range(n, sel_lo(n), sel_hi(n));
+				else if (n->caret > 0) ta_del_range(n, n->caret - 1, n->caret);
+				n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
+			} else if (ta_insert(n, ev->ch)) {
+				n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
 			}
 			break;
 		}
