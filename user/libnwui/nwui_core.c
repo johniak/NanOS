@@ -443,6 +443,30 @@ void nwui_textarea_caret(nwui_node *n, int *line, int *col)
 	if (col) *col = n->caret - ls + 1;
 }
 
+static int ta_visible_rows(const nwui_node *n) { int v = n->h / NW_FONT_H; return v < 1 ? 1 : v; }
+static int ta_caret_row(const nwui_node *n)     /* logical row index of the caret */
+{
+	int r = 0;
+	for (int i = 0; i < n->caret; i++) if (n->tbuf[i] == '\n') r++;
+	return r;
+}
+static int ta_total_rows(const nwui_node *n)
+{
+	int r = 1;
+	for (int i = 0; i < n->tlen; i++) if (n->tbuf[i] == '\n') r++;
+	return r;
+}
+static void ta_scroll_to_caret(nwui_node *n)
+{
+	int row = ta_caret_row(n), vis = ta_visible_rows(n);
+	if (row < n->scroll) n->scroll = row;
+	else if (row >= n->scroll + vis) n->scroll = row - vis + 1;
+	int maxs = ta_total_rows(n) - vis;
+	if (maxs < 0) maxs = 0;
+	if (n->scroll > maxs) n->scroll = maxs;
+	if (n->scroll < 0) n->scroll = 0;
+}
+
 /* ---- list ---- */
 static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
 static int list_max_scroll(const nwui_node *L)   /* largest valid scroll (0 if everything fits) */
@@ -645,6 +669,13 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			case NWUI_SC_END:   ta_move(n, ta_line_end(n, n->caret), shift); break;
 			case NWUI_SC_UP:    ta_move_vert(n, -1, shift); break;
 			case NWUI_SC_DOWN:  ta_move_vert(n, +1, shift); break;
+			case NWUI_SC_PGUP:  for (int k = 0; k < ta_visible_rows(n); k++) ta_move_vert(n, -1, shift); break;
+			case NWUI_SC_PGDN:  for (int k = 0; k < ta_visible_rows(n); k++) ta_move_vert(n, +1, shift); break;
+			case NWUI_SC_DEL:
+				if (has_sel(n)) ta_del_range(n, sel_lo(n), sel_hi(n));
+				else if (n->caret < n->tlen) ta_del_range(n, n->caret, n->caret + 1);
+				n->dirty = 1; if (n->on_change) n->on_change(n, n->user);
+				break;
 			default:
 				if (ev->ch == 8) {                       /* backspace */
 					if (has_sel(n)) ta_del_range(n, sel_lo(n), sel_hi(n));
@@ -655,6 +686,7 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				}
 				break;
 			}
+			ta_scroll_to_caret(n);
 			break;
 		}
 		if (!u->focus || u->focus->kind != NWUI_TEXTFIELD) break;

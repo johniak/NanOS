@@ -497,3 +497,19 @@ TEST_CASE("textarea caret moves by line and reports line/col") {
 	nwui_textarea_caret(ta, &ln, &col); CHECK(ln == 3); CHECK(col == 1);
 	delete u;
 }
+
+TEST_CASE("textarea delete key and page motion scroll the view") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[128] = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 200; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1; ta->caret = 0; ta->anchor = 0;
+	ta->h = 4 * NW_FONT_H;                    // 4 visible rows
+
+	keyc(u, NWUI_SC_DEL, 0, 0);               // deletes 'l' of l1
+	CHECK(strncmp(tb, "1\n", 2) == 0);
+
+	for (int i = 0; i < 6; i++) keyc(u, NWUI_SC_DOWN, 0, 0);  // caret onto a low line
+	CHECK(ta->scroll > 0);                    // view scrolled to follow caret
+	delete u;
+}
