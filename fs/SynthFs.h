@@ -54,6 +54,12 @@ int versionString(char* buf, int cap);
 // (all resident — no swap) == memKb/4 and the rest is 0. Pure -> host-testable.
 int statmString(char* buf, int cap, unsigned memKb);
 
+// Render Linux-style /proc/<pid>/status into buf; returns its length. Carries the fields
+// htop/ps read: Name/State/Pid/PPid/Pgid/Sid plus Uid/Gid (NanOS is single-user -> 0),
+// VmSize/VmRSS (the brk-heap memKb proxy) and Threads. Pure -> host-testable.
+struct ProcInfo;
+int statusString(char* buf, int cap, const ProcInfo& pi);
+
 // Live system memory figures in kB. Implemented in the kernel (Kernel.cpp) over the
 // frame allocator + byte heap + boot memory map; stubbed in the host test harness.
 unsigned sysMemTotalKb();

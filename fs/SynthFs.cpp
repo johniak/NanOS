@@ -170,6 +170,39 @@ int statmString(char* buf, int cap, unsigned memKb) {
 	return p;
 }
 
+// /proc/<pid>/status: the human-readable per-process summary. Carries the fields htop/ps read,
+// including Uid/Gid (NanOS is single-user -> 0), VmSize/VmRSS (the brk-heap memKb proxy) and
+// Threads. Shares one renderer between production and host tests.
+int statusString(char* buf, int cap, const ProcInfo& pi) {
+	char st[2] = { pi.state, 0 };
+	int p = 0;
+	p = putStr(buf, p, cap, "Name:\t");
+	p = putStr(buf, p, cap, pi.comm);
+	p = putStr(buf, p, cap, "\nState:\t");
+	p = putStr(buf, p, cap, st);
+	p = putStr(buf, p, cap, "\nPid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.pid);
+	p = putStr(buf, p, cap, "\nPPid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.ppid);
+	p = putStr(buf, p, cap, "\nPgid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.pgid);
+	p = putStr(buf, p, cap, "\nSid:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.sid);
+	p = putStr(buf, p, cap, "\nKthread:\t");
+	p = putStr(buf, p, cap, pi.kthread ? "1" : "0");
+	p = putStr(buf, p, cap, "\nUid:\t0\t0\t0\t0");        // NanOS is single-user (root)
+	p = putStr(buf, p, cap, "\nGid:\t0\t0\t0\t0");
+	p = putStr(buf, p, cap, "\nVmSize:\t");
+	p = putUint(buf, p, cap, pi.memKb);
+	p = putStr(buf, p, cap, " kB\nVmRSS:\t");
+	p = putUint(buf, p, cap, pi.memKb);
+	p = putStr(buf, p, cap, " kB\nThreads:\t");
+	p = putUint(buf, p, cap, (unsigned) pi.nthreads);
+	p = putStr(buf, p, cap, "\n");
+	buf[p] = 0;
+	return p;
+}
+
 // /proc/version: the kernel identification string.
 int versionString(char* buf, int cap) {
 	int p = putStr(buf, 0, cap, "NanOS version 0.1 (i686) #1 SMP\n");
@@ -583,27 +616,19 @@ static int renderProcFile(const char* file, char* buf, int cap, const ProcInfo& 
 		p += utoa(pi.utime, buf + p);                           // 14: utime
 		p = appendStr(buf, p, cap, " ");
 		p += utoa(pi.stime, buf + p);                           // 15: stime
-		p = appendStr(buf, p, cap, " 0 0 20 0 1 0 ");           // 16-21: cutime cstime prio nice threads itreal
+		p = appendStr(buf, p, cap, " 0 0 20 0 ");               // 16-19: cutime cstime priority nice
+		p += utoa((unsigned) pi.nthreads, buf + p);             // 20: num_threads
+		p = appendStr(buf, p, cap, " 0 ");                      // 21: itrealvalue
 		p += utoa(pi.starttime, buf + p);                       // 22: starttime
-		p = appendStr(buf, p, cap, " 0 0\n");                   // 23-24: vsize rss
+		p = appendStr(buf, p, cap, " ");
+		p += utoa(pi.memKb * 1024u, buf + p);                   // 23: vsize (bytes)
+		p = appendStr(buf, p, cap, " ");
+		p += utoa(pi.memKb / 4u, buf + p);                      // 24: rss (pages)
+		p = appendStr(buf, p, cap, "\n");
 	} else if (streq(file, "statm")) {
 		p = statmString(buf, cap, pi.memKb);
 	} else if (streq(file, "status")) {
-		p = appendStr(buf, p, cap, "Name:\t");
-		p = appendStr(buf, p, cap, pi.comm);
-		p = appendStr(buf, p, cap, "\nState:\t");
-		p = appendStr(buf, p, cap, st);
-		p = appendStr(buf, p, cap, "\nPid:\t");
-		p += utoa((unsigned) pi.pid, buf + p);
-		p = appendStr(buf, p, cap, "\nPPid:\t");
-		p += utoa((unsigned) pi.ppid, buf + p);
-		p = appendStr(buf, p, cap, "\nPgid:\t");
-		p += utoa((unsigned) pi.pgid, buf + p);
-		p = appendStr(buf, p, cap, "\nSid:\t");
-		p += utoa((unsigned) pi.sid, buf + p);
-		p = appendStr(buf, p, cap, "\nKthread:\t");
-		p = appendStr(buf, p, cap, pi.kthread ? "1" : "0");
-		p = appendStr(buf, p, cap, "\n");
+		p = statusString(buf, cap, pi);
 	} else {
 		return -1;
 	}
@@ -618,7 +643,7 @@ int SynthFs::read(String path, unsigned size, unsigned off, void* buf) {
 		ProcInfo pi;
 		if (!isProcFile(file) || !ProcTable::infoByPid(pid, &pi))
 			return -1;
-		char tmp[320];
+		char tmp[512];   // per-pid status now carries Uid/Gid/Vm*/Threads lines
 		int len = renderProcFile(file, tmp, sizeof tmp, pi);
 		if (len < 0 || off >= (unsigned) len)
 			return len < 0 ? -1 : 0;

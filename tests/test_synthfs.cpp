@@ -201,6 +201,43 @@ TEST_CASE("SynthFs serves /proc/<pid>/statm for a live process") {
 	CHECK(listed(e, "statm"));
 }
 
+TEST_CASE("statusString includes Uid, Gid, VmSize, VmRSS, Threads for htop") {
+	ProcInfo pi;
+	memset(&pi, 0, sizeof pi);
+	pi.pid = 7; pi.ppid = 1; pi.pgid = 7; pi.sid = 7;
+	pi.state = 'R'; pi.memKb = 2048; pi.nthreads = 3;
+	strcpy(pi.comm, "demo");
+	char b[512];
+	int n = statusString(b, sizeof b, pi);
+	CHECK(n > 0);
+	CHECK(strstr(b, "Name:\tdemo") != 0);
+	CHECK(strstr(b, "Uid:\t0\t0\t0\t0") != 0);
+	CHECK(strstr(b, "Gid:\t0\t0\t0\t0") != 0);
+	CHECK(strstr(b, "VmSize:\t2048 kB") != 0);
+	CHECK(strstr(b, "VmRSS:\t2048 kB") != 0);
+	CHECK(strstr(b, "Threads:\t3") != 0);
+}
+
+TEST_CASE("SynthFs /proc/<pid>/stat carries real vsize/rss and num_threads") {
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	const char* av[] = { "demo", 0 };
+	ProcTable::setCommand(p, av, 1);
+	p->brkBase = 0x800000;
+	p->brkCur = 0x800000 + 8192 * 1024;   // 8192 KiB -> vsize 8388608 bytes, rss 2048 pages
+	p->threadCount = 4;
+
+	char path[32];
+	snprintf(path, sizeof path, "/proc/%d/stat", p->pid);
+	SynthFs fs;
+	char buf[384] = {0};
+	int n = fs.read(path, sizeof buf, 0, buf);
+	REQUIRE(n > 0);
+	CHECK(strstr(buf, " 8388608 ") != 0);   // field 23: vsize (bytes)
+	CHECK(strstr(buf, " 2048\n") != 0);      // field 24: rss (pages), end of line
+	CHECK(strstr(buf, " 4 ") != 0);          // field 20: num_threads
+}
+
 TEST_CASE("SynthFs errors on missing paths and bad ops") {
 	SynthFs fs;
 	FileStat st;
