@@ -1106,16 +1106,17 @@ _image64: _all _userland64 _kext
 	# PID 1: the real user/init.c (dynamically linked against libc.ndl), which execve()s the
 	# login shell. The kernel execs /disks/main/nanos/core/init.nxe and runs it in ring 3.
 	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "set_inode_field /nanos/core/init.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"   # executables need +x (exec-perm enforced)
 	# The shared C library the dynamic loader binds every program against -> /nanos/lib.
 	printf "rm /nanos/lib/libc.ndl\nwrite $(BINFOLDER)libc.ndl /nanos/lib/libc.ndl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# The shell + the sbase coreutils -> /nanos/bin (nsh resolves a bare command name here first).
 	for p in $(X64_SYS_PROGS); do \
-	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
 	# NanWM compositor (a system GUI program) -> /nanos/bin, and the NanWM client shared libs
 	# (libnw.ndl / libnwui.ndl) -> /nanos/lib (the NetSurf libnsfb backend binds libnw.ndl at load).
 	for p in $(X64_GUI_PROGS); do \
-	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
 	for l in $(X64_GUI_LIBS); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
@@ -1124,7 +1125,7 @@ _image64: _all _userland64 _kext
 	# the layout nwm spawns them from. Mirrors the i686 APP_PROGS loop.
 	for p in $(X64_GUI_APPS); do \
 	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
@@ -1163,7 +1164,7 @@ _image64: _all _userland64 _kext
 	-printf "mkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	if [ -f $(BINFOLDER)bash.nxe ]; then \
 	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
