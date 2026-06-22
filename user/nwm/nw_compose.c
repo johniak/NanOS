@@ -22,8 +22,8 @@
 #define COL_CTRL       0x44516a   /* window control glyphs           */
 #define COL_CTRL_D     0xc6d2e6
 #define COL_CLOSE_HOV  0xe81123
-#define WIN_ALPHA      234        /* translucent "glass" body over the pre-blurred backdrop */
-#define DARK_ALPHA     236
+#define WIN_ALPHA      206        /* translucent "glass" body over the pre-blurred backdrop */
+#define DARK_ALPHA     214
 
 #define COL_PANEL      0xeef7ff   /* top bar tint (translucent)       */
 #define COL_PANEL_FG   0x141d2e
