@@ -513,3 +513,16 @@ TEST_CASE("textarea delete key and page motion scroll the view") {
 	CHECK(ta->scroll > 0);                    // view scrolled to follow caret
 	delete u;
 }
+
+TEST_CASE("textarea word-wrap multiplies visual rows") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "aaaaaaaaaa";               // 10 chars, no newline
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 200; u->win_h = 200; nwui_layout(u);
+	ta->w = 5 * NW_FONT_W + 2 * 4;            // ~5 columns of text width
+	nwui_textarea_set_wrap(ta, 1);
+	CHECK(nwui_textarea_total_rows(ta) == 2); // 10 chars / 5 cols = 2 rows
+	nwui_textarea_set_wrap(ta, 0);
+	CHECK(nwui_textarea_total_rows(ta) == 1);
+	delete u;
+}

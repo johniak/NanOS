@@ -443,18 +443,45 @@ void nwui_textarea_caret(nwui_node *n, int *line, int *col)
 	if (col) *col = n->caret - ls + 1;
 }
 
-static int ta_visible_rows(const nwui_node *n) { int v = n->h / NW_FONT_H; return v < 1 ? 1 : v; }
-static int ta_caret_row(const nwui_node *n)     /* logical row index of the caret */
+enum { NWUI_TA_PAD = 4 };
+static int ta_cols(const nwui_node *n)
 {
-	int r = 0;
-	for (int i = 0; i < n->caret; i++) if (n->tbuf[i] == '\n') r++;
-	return r;
+	int c = (n->w - 2 * NWUI_TA_PAD) / NW_FONT_W;
+	return c < 1 ? 1 : c;
 }
+/* visual rows a logical line [ls,le) occupies under the current wrap setting */
+static int ta_line_rows(const nwui_node *n, int ls, int le)
+{
+	if (!n->wrap) return 1;
+	int len = le - ls, cols = ta_cols(n);
+	return len <= 0 ? 1 : (len + cols - 1) / cols;
+}
+static int ta_visible_rows(const nwui_node *n) { int v = n->h / NW_FONT_H; return v < 1 ? 1 : v; }
 static int ta_total_rows(const nwui_node *n)
 {
-	int r = 1;
-	for (int i = 0; i < n->tlen; i++) if (n->tbuf[i] == '\n') r++;
-	return r;
+	int rows = 0, ls = 0;
+	for (;;) {
+		int le = ta_line_end(n, ls);
+		rows += ta_line_rows(n, ls, le);
+		if (le >= n->tlen) break;
+		ls = le + 1;
+	}
+	return rows;
+}
+static int ta_caret_row(const nwui_node *n)     /* visual row index of the caret */
+{
+	int rows = 0, ls = 0;
+	for (;;) {
+		int le = ta_line_end(n, ls);
+		if (n->caret <= le) {
+			rows += n->wrap ? (n->caret - ls) / ta_cols(n) : 0;
+			break;
+		}
+		rows += ta_line_rows(n, ls, le);
+		if (le >= n->tlen) break;
+		ls = le + 1;
+	}
+	return rows;
 }
 static void ta_scroll_to_caret(nwui_node *n)
 {
@@ -466,6 +493,14 @@ static void ta_scroll_to_caret(nwui_node *n)
 	if (n->scroll > maxs) n->scroll = maxs;
 	if (n->scroll < 0) n->scroll = 0;
 }
+
+void nwui_textarea_set_wrap(nwui_node *n, int on)
+{
+	n->wrap = on ? 1 : 0;
+	n->dirty = 1;
+	if (n->owner) n->owner->layout_dirty = 1;
+}
+int nwui_textarea_total_rows(nwui_node *n) { return ta_total_rows(n); }
 
 /* ---- list ---- */
 static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
