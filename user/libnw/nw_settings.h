@@ -15,11 +15,21 @@
 
 #define NW_SETTINGS_PATH "/disks/main/nanos/config/settings.yaml"
 
+/* Wallpaper mode (the `wallpaper:` key). */
+enum { NW_WALL_BRANDED = 0, NW_WALL_GRADIENT = 1, NW_WALL_SOLID = 2 };
+
 struct nw_settings {
 	int blur;                /* backdrop blur enabled (0/1)        */
 	int blur_level;          /* blur strength, 0..100              */
 	int transparency;        /* glass translucency enabled (0/1)   */
 	int transparency_level;  /* translucency strength, 0..100      */
+	unsigned accent;         /* UI accent colour, 0xRRGGBB         */
+	int wallpaper;           /* NW_WALL_* mode                     */
+	unsigned wallpaper_color;/* fill colour for NW_WALL_SOLID      */
+	int clock_24h;           /* 1=24-hour, 0=12-hour clock         */
+	int clock_seconds;       /* show seconds on the bar clock      */
+	int shadow;              /* draw window drop shadows (0/1)     */
+	int corner_radius;       /* window corner radius px, 0..20     */
 };
 
 /* Reset to the shipped defaults (blur OFF — it is expensive; translucency ON). */

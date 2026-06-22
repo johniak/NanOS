@@ -93,6 +93,7 @@ static void apply_settings(void)
 	g_bdc.dark_alpha = nw_settings_dark_alpha(&g_set);
 	int r = nw_settings_blur_radius(&g_set);
 	g_bdc.radius = r > 0 ? r : NW_BD_BLUR_RADIUS;
+	nw_compose_set_theme(g_set.accent, g_set.corner_radius, g_set.shadow);
 }
 
 /* per-client shell state (parallel to nw_server's client slots) */
@@ -355,13 +356,20 @@ static void update_clock(void)
 {
 	struct timespec ts;
 	if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return;
-	long sec = ts.tv_sec; int h = (int) ((sec / 3600) % 24), m = (int) ((sec / 60) % 60);
-	char c[8] = { (char) ('0' + h / 10), (char) ('0' + h % 10), ':',
-	              (char) ('0' + m / 10), (char) ('0' + m % 10), 0 };
-	for (int i = 0; i < 6; i++) if (S.clock[i] != c[i]) {
-		for (int j = 0; j < 6; j++) S.clock[j] = c[j];
-		S.dirty = 1;            /* minute changed -> recompose so the bar clock updates */
-		break;
+	long sec = ts.tv_sec;
+	int h = (int) ((sec / 3600) % 24), m = (int) ((sec / 60) % 60), s = (int) (sec % 60);
+	char c[12]; int suffix = 0;
+	if (g_set.clock_24h) {
+		if (g_set.clock_seconds) snprintf(c, sizeof c, "%02d:%02d:%02d", h, m, s);
+		else                     snprintf(c, sizeof c, "%02d:%02d", h, m);
+	} else {
+		int hh = h % 12; if (hh == 0) hh = 12; suffix = (h >= 12);
+		if (g_set.clock_seconds) snprintf(c, sizeof c, "%d:%02d:%02d %s", hh, m, s, suffix ? "PM" : "AM");
+		else                     snprintf(c, sizeof c, "%d:%02d %s", hh, m, suffix ? "PM" : "AM");
+	}
+	if (strcmp(S.clock, c) != 0) {
+		for (int j = 0; c[j] || S.clock[j]; j++) { S.clock[j] = c[j]; if (!c[j]) break; }
+		S.dirty = 1;            /* time changed -> recompose so the bar clock updates */
 	}
 }
 
@@ -518,6 +526,21 @@ static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 	return 1;
 }
 
+/* Fill g_wall per the wallpaper setting: branded PNG (fallback gradient), procedural gradient,
+ * or a solid colour. Called at boot and on every settings reload. */
+static void refresh_wallpaper(void)
+{
+	if (g_set.wallpaper == NW_WALL_GRADIENT) {
+		nw_render_wallpaper(&g_wall_surf);
+	} else if (g_set.wallpaper == NW_WALL_SOLID) {
+		size_t n = (size_t) g_xres * g_yres;
+		for (size_t i = 0; i < n; i++) g_wall[i] = g_set.wallpaper_color;
+	} else {                                   /* NW_WALL_BRANDED */
+		if (!load_wallpaper(g_wall, g_xres, g_yres))
+			nw_render_wallpaper(&g_wall_surf);
+	}
+}
+
 int main(void)
 {
 	int fbfd = open("/dev/fb0", O_RDWR);
@@ -550,8 +573,7 @@ int main(void)
 	g_bdc.bd = &g_bd_surf; g_bdc.lo = g_bdlo; g_bdc.lo_cap = lopx;
 	g_bdc.factor = NW_BD_DOWNSAMPLE; g_bdc.radius = NW_BD_BLUR_RADIUS; g_bdc.passes = NW_BD_BLUR_PASSES;
 	apply_settings();                          /* load /nanos/config/settings.yaml (or defaults) */
-	if (!load_wallpaper(g_wall, g_xres, g_yres))  /* branded wallpaper if installed... */
-		nw_render_wallpaper(&g_wall_surf);        /* ...else the procedural gradient desktop */
+	refresh_wallpaper();                       /* render the wallpaper per the chosen mode */
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
 	g_fb_surf.stride = (int) (g_pitch / 4); nw_surface_noclip(&g_fb_surf);
 
@@ -620,6 +642,11 @@ int main(void)
 		if (S.want_reload) {                   /* Settings app changed a preference -> apply live */
 			S.want_reload = 0;
 			apply_settings();
+			refresh_wallpaper();               /* wallpaper mode/colour may have changed */
+			for (int i = 0; i < NW_MAX_WINDOWS; i++)
+				if (S.win[i].used) S.win[i].frame_dirty = 1;   /* accent is baked into the focus dot */
+			S.dmg = 1; S.dmg_x0 = 0; S.dmg_y0 = 0;             /* full repaint: theme touches everything */
+			S.dmg_x1 = (int) g_xres; S.dmg_y1 = (int) g_yres;
 			S.dirty = 1;
 		}
 

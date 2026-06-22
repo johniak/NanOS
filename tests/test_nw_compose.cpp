@@ -120,6 +120,7 @@ TEST_CASE("backdrop: glass window blurs a sharp edge in the scene below it") {
 	nw_backdrop_ctx ctx{}; ctx.bd = &bds; ctx.lo = lo.data(); ctx.lo_cap = (int) lo.size();
 	ctx.factor = 4; ctx.radius = NW_BD_BLUR_RADIUS; ctx.passes = NW_BD_BLUR_PASSES;
 	ctx.drag_win = -1;                               // not dragging in this test
+	nw_compose_set_theme(0x12a8f4u, 11, 0);          // isolate the blur: no drop-shadow confound
 
 	std::vector<uint32_t> pa((size_t) W * H, 0), pb((size_t) W * H, 0);
 	nw_surface backA; backA.px = pa.data(); backA.w = W; backA.h = H; backA.stride = W; nw_surface_noclip(&backA);
@@ -134,6 +135,7 @@ TEST_CASE("backdrop: glass window blurs a sharp edge in the scene below it") {
 	int jumpA = iabs(chan(pa[(size_t) yrow * W + 98]) - chan(pa[(size_t) yrow * W + 102]));
 	int jumpB = iabs(chan(pb[(size_t) yrow * W + 98]) - chan(pb[(size_t) yrow * W + 102]));
 	CHECK(jumpB < jumpA);                            // blur softened the edge seen through the glass
+	nw_compose_set_theme(0x12a8f4u, 11, 1);          // restore default theme for any later test
 }
 
 TEST_CASE("moving a cached window does NOT dirty its frame (drag is re-render-free)") {

@@ -15,6 +15,16 @@ static nwui          *g_u;
 static struct nw_settings g_set;
 static nwui_node     *g_blur_btn, *g_trans_btn;     /* On/Off toggle buttons     */
 static nwui_node     *g_blurlvl_lbl, *g_translvl_lbl;/* numeric level value labels */
+static nwui_node     *g_accent_btn, *g_wall_btn;    /* accent / wallpaper cycle buttons */
+static nwui_node     *g_clk24_btn, *g_clksec_btn, *g_shadow_btn;  /* On/Off toggles */
+static nwui_node     *g_radius_lbl;                 /* corner-radius value label */
+
+static const unsigned ACCENTS[]     = { 0x12a8f4, 0x7d3ff2, 0x6fd033, 0xff9d00, 0xe81123, 0x657184 };
+static const char *const ACC_NAMES[]= { "Blue", "Purple", "Green", "Orange", "Red", "Graphite" };
+enum { NACC = 6 };
+static const char *const WALL_NAMES[] = { "Branded", "Gradient", "Solid" };
+
+static int accent_index(unsigned c) { for (int i = 0; i < NACC; i++) if (ACCENTS[i] == c) return i; return 0; }
 
 static void m_close(nwui_node *self, void *u) { (void) self; (void) u; _exit(0); }
 
@@ -50,9 +60,16 @@ static void refresh_labels(void)
 	nwui_set_text(g_trans_btn, g_set.transparency ? "On" : "Off");
 	snprintf(b, sizeof b, "%d", g_set.blur_level);          nwui_set_text(g_blurlvl_lbl, b);
 	snprintf(b, sizeof b, "%d", g_set.transparency_level);  nwui_set_text(g_translvl_lbl, b);
+	nwui_set_text(g_accent_btn, ACC_NAMES[accent_index(g_set.accent)]);
+	nwui_set_text(g_wall_btn,   WALL_NAMES[g_set.wallpaper % 3]);
+	nwui_set_text(g_clk24_btn,  g_set.clock_24h ? "24h" : "12h");
+	nwui_set_text(g_clksec_btn, g_set.clock_seconds ? "On" : "Off");
+	nwui_set_text(g_shadow_btn, g_set.shadow ? "On" : "Off");
+	snprintf(b, sizeof b, "%d", g_set.corner_radius);       nwui_set_text(g_radius_lbl, b);
 }
 
 static int clampL(int v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
+static int clampR(int v) { return v < 0 ? 0 : (v > 20 ? 20 : v); }
 
 static void cb_blur(nwui_node *s, void *u)  { (void) s; (void) u; g_set.blur = !g_set.blur; refresh_labels(); save_and_apply(); }
 static void cb_trans(nwui_node *s, void *u) { (void) s; (void) u; g_set.transparency = !g_set.transparency; refresh_labels(); save_and_apply(); }
@@ -60,6 +77,13 @@ static void cb_blur_dn(nwui_node *s, void *u)  { (void) s; (void) u; g_set.blur_
 static void cb_blur_up(nwui_node *s, void *u)  { (void) s; (void) u; g_set.blur_level = clampL(g_set.blur_level + 10); refresh_labels(); save_and_apply(); }
 static void cb_trans_dn(nwui_node *s, void *u) { (void) s; (void) u; g_set.transparency_level = clampL(g_set.transparency_level - 10); refresh_labels(); save_and_apply(); }
 static void cb_trans_up(nwui_node *s, void *u) { (void) s; (void) u; g_set.transparency_level = clampL(g_set.transparency_level + 10); refresh_labels(); save_and_apply(); }
+static void cb_accent(nwui_node *s, void *u) { (void) s; (void) u; g_set.accent = ACCENTS[(accent_index(g_set.accent) + 1) % NACC]; refresh_labels(); save_and_apply(); }
+static void cb_wall(nwui_node *s, void *u)   { (void) s; (void) u; g_set.wallpaper = (g_set.wallpaper + 1) % 3; refresh_labels(); save_and_apply(); }
+static void cb_clk24(nwui_node *s, void *u)  { (void) s; (void) u; g_set.clock_24h = !g_set.clock_24h; refresh_labels(); save_and_apply(); }
+static void cb_clksec(nwui_node *s, void *u) { (void) s; (void) u; g_set.clock_seconds = !g_set.clock_seconds; refresh_labels(); save_and_apply(); }
+static void cb_shadow(nwui_node *s, void *u) { (void) s; (void) u; g_set.shadow = !g_set.shadow; refresh_labels(); save_and_apply(); }
+static void cb_radius_dn(nwui_node *s, void *u) { (void) s; (void) u; g_set.corner_radius = clampR(g_set.corner_radius - 2); refresh_labels(); save_and_apply(); }
+static void cb_radius_up(nwui_node *s, void *u) { (void) s; (void) u; g_set.corner_radius = clampR(g_set.corner_radius + 2); refresh_labels(); save_and_apply(); }
 
 static nwui_node *nav(nwui *u, const char *text, int sel)
 {
@@ -92,7 +116,7 @@ static nwui_node *stepper(nwui *u, nwui_cb dn, nwui_cb up, nwui_node **out_lbl)
 int main(void)
 {
 	load_settings();
-	nwui *u = nwui_open("Settings", 470, 340);
+	nwui *u = nwui_open("Settings", 500, 460);
 	if (!u)
 		return 1;
 	g_u = u;
@@ -106,16 +130,28 @@ int main(void)
 	nwui_add(side, nav(u, "Accounts", 0));
 	nwui_colors(side, 0, 0x00eef3f9); nwui_size(side, 132, 0);
 
-	g_blur_btn  = nwui_button(u, "Off", cb_blur, 0);
-	g_trans_btn = nwui_button(u, "Off", cb_trans, 0);
-	nwui_node *blur_step  = stepper(u, cb_blur_dn,  cb_blur_up,  &g_blurlvl_lbl);
-	nwui_node *trans_step = stepper(u, cb_trans_dn, cb_trans_up, &g_translvl_lbl);
+	g_blur_btn   = nwui_button(u, "Off", cb_blur, 0);
+	g_trans_btn  = nwui_button(u, "Off", cb_trans, 0);
+	g_accent_btn = nwui_button(u, "Blue", cb_accent, 0);
+	g_wall_btn   = nwui_button(u, "Branded", cb_wall, 0);
+	g_clk24_btn  = nwui_button(u, "24h", cb_clk24, 0);
+	g_clksec_btn = nwui_button(u, "Off", cb_clksec, 0);
+	g_shadow_btn = nwui_button(u, "On", cb_shadow, 0);
+	nwui_node *blur_step   = stepper(u, cb_blur_dn,   cb_blur_up,   &g_blurlvl_lbl);
+	nwui_node *trans_step  = stepper(u, cb_trans_dn,  cb_trans_up,  &g_translvl_lbl);
+	nwui_node *radius_step = stepper(u, cb_radius_dn, cb_radius_up, &g_radius_lbl);
 
-	nwui_node *card = nwui_gap(nwui_pad(nwui_vbox(u), 14), 11);
+	nwui_node *card = nwui_gap(nwui_pad(nwui_vbox(u), 14), 9);
 	nwui_add(card, ctrl_row(u, "Backdrop blur",      g_blur_btn));
 	nwui_add(card, ctrl_row(u, "Blur strength",      blur_step));
 	nwui_add(card, ctrl_row(u, "Transparency",       g_trans_btn));
 	nwui_add(card, ctrl_row(u, "Transparency level", trans_step));
+	nwui_add(card, ctrl_row(u, "Accent colour",      g_accent_btn));
+	nwui_add(card, ctrl_row(u, "Wallpaper",          g_wall_btn));
+	nwui_add(card, ctrl_row(u, "Window shadow",      g_shadow_btn));
+	nwui_add(card, ctrl_row(u, "Corner radius",      radius_step));
+	nwui_add(card, ctrl_row(u, "Clock format",       g_clk24_btn));
+	nwui_add(card, ctrl_row(u, "Clock seconds",      g_clksec_btn));
 	nwui_colors(card, 0, 0x00ffffff);
 
 	nwui_node *main_col = nwui_gap(nwui_pad(nwui_vbox(u), 18), 10);

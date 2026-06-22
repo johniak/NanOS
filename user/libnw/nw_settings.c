@@ -6,6 +6,13 @@ void nw_settings_defaults(struct nw_settings *s)
 	s->blur_level         = 60;
 	s->transparency       = 1;    /* glass on */
 	s->transparency_level = 50;
+	s->accent             = 0x12a8f4u;   /* NanoOS blue */
+	s->wallpaper          = NW_WALL_BRANDED;
+	s->wallpaper_color    = 0x1e2a3au;   /* slate, for solid mode */
+	s->clock_24h          = 1;
+	s->clock_seconds      = 0;
+	s->shadow             = 1;
+	s->corner_radius      = 11;
 }
 
 static int clamp100(int v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
@@ -46,6 +53,34 @@ static int parse_int(const char *tok, int tn)
 	return v;
 }
 
+/* Parse a colour: hex with optional 0x/# prefix (0x12a8f4, #12a8f4, 12a8f4). */
+static unsigned parse_hex(const char *tok, int tn)
+{
+	int i = 0;
+	if (i < tn && tok[i] == '#') i++;
+	else if (i + 1 < tn && tok[i] == '0' && (tok[i + 1] == 'x' || tok[i + 1] == 'X')) i += 2;
+	unsigned v = 0;
+	for (; i < tn; i++) {
+		char c = tok[i]; int d;
+		if (c >= '0' && c <= '9') d = c - '0';
+		else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+		else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+		else break;
+		v = (v << 4) | (unsigned) d;
+	}
+	return v & 0xffffffu;
+}
+
+static int parse_wallpaper(const char *tok, int tn, int fallback)
+{
+	if (tok_eq(tok, tn, "branded"))  return NW_WALL_BRANDED;
+	if (tok_eq(tok, tn, "gradient")) return NW_WALL_GRADIENT;
+	if (tok_eq(tok, tn, "solid"))    return NW_WALL_SOLID;
+	return fallback;
+}
+
+static int clamp_radius(int v) { return v < 0 ? 0 : (v > 20 ? 20 : v); }
+
 void nw_settings_parse(const char *buf, int len, struct nw_settings *s)
 {
 	int i = 0;
@@ -78,6 +113,13 @@ void nw_settings_parse(const char *buf, int len, struct nw_settings *s)
 		else if (tok_eq(p, klen, "blur_level"))         s->blur_level = clamp100(parse_int(v, vn));
 		else if (tok_eq(p, klen, "transparency"))       s->transparency = parse_bool(v, vn, s->transparency);
 		else if (tok_eq(p, klen, "transparency_level")) s->transparency_level = clamp100(parse_int(v, vn));
+		else if (tok_eq(p, klen, "accent"))             s->accent = parse_hex(v, vn);
+		else if (tok_eq(p, klen, "wallpaper"))          s->wallpaper = parse_wallpaper(v, vn, s->wallpaper);
+		else if (tok_eq(p, klen, "wallpaper_color"))    s->wallpaper_color = parse_hex(v, vn);
+		else if (tok_eq(p, klen, "clock_24h"))          s->clock_24h = parse_bool(v, vn, s->clock_24h);
+		else if (tok_eq(p, klen, "clock_seconds"))      s->clock_seconds = parse_bool(v, vn, s->clock_seconds);
+		else if (tok_eq(p, klen, "shadow"))             s->shadow = parse_bool(v, vn, s->shadow);
+		else if (tok_eq(p, klen, "corner_radius"))      s->corner_radius = clamp_radius(parse_int(v, vn));
 	}
 }
 
@@ -103,6 +145,23 @@ static int emit_int(char *out, int *pos, int cap, int v)
 	return emit(out, pos, cap, tmp);
 }
 
+/* append "0xRRGGBB" */
+static int emit_hex(char *out, int *pos, int cap, unsigned v)
+{
+	static const char H[] = "0123456789abcdef";
+	if (!emit(out, pos, cap, "0x")) return 0;
+	for (int sh = 20; sh >= 0; sh -= 4) {
+		if (*pos >= cap - 1) return 0;
+		out[(*pos)++] = H[(v >> sh) & 0xf];
+	}
+	return 1;
+}
+
+static const char *wall_name(int w)
+{
+	return w == NW_WALL_GRADIENT ? "gradient" : (w == NW_WALL_SOLID ? "solid" : "branded");
+}
+
 int nw_settings_serialize(const struct nw_settings *s, char *out, int cap)
 {
 	int pos = 0;
@@ -116,6 +175,24 @@ int nw_settings_serialize(const struct nw_settings *s, char *out, int cap)
 	ok &= emit(out, &pos, cap, s->transparency ? "true\n" : "false\n");
 	ok &= emit(out, &pos, cap, "transparency_level: ");
 	ok &= emit_int(out, &pos, cap, clamp100(s->transparency_level));
+	ok &= emit(out, &pos, cap, "\n");
+	ok &= emit(out, &pos, cap, "accent: ");
+	ok &= emit_hex(out, &pos, cap, s->accent);
+	ok &= emit(out, &pos, cap, "\n");
+	ok &= emit(out, &pos, cap, "wallpaper: ");
+	ok &= emit(out, &pos, cap, wall_name(s->wallpaper));
+	ok &= emit(out, &pos, cap, "\n");
+	ok &= emit(out, &pos, cap, "wallpaper_color: ");
+	ok &= emit_hex(out, &pos, cap, s->wallpaper_color);
+	ok &= emit(out, &pos, cap, "\n");
+	ok &= emit(out, &pos, cap, "clock_24h: ");
+	ok &= emit(out, &pos, cap, s->clock_24h ? "true\n" : "false\n");
+	ok &= emit(out, &pos, cap, "clock_seconds: ");
+	ok &= emit(out, &pos, cap, s->clock_seconds ? "true\n" : "false\n");
+	ok &= emit(out, &pos, cap, "shadow: ");
+	ok &= emit(out, &pos, cap, s->shadow ? "true\n" : "false\n");
+	ok &= emit(out, &pos, cap, "corner_radius: ");
+	ok &= emit_int(out, &pos, cap, clamp_radius(s->corner_radius));
 	ok &= emit(out, &pos, cap, "\n");
 	if (!ok) return 0;
 	out[pos] = 0;

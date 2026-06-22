@@ -37,9 +37,11 @@ TEST_CASE("parse clamps levels into 0..100") {
 	CHECK(s.blur_level == 100);
 }
 
-TEST_CASE("serialize then parse round-trips") {
+TEST_CASE("serialize then parse round-trips all fields") {
 	nw_settings a; nw_settings_defaults(&a);
 	a.blur = 1; a.blur_level = 40; a.transparency = 1; a.transparency_level = 25;
+	a.accent = 0x7d3ff2u; a.wallpaper = NW_WALL_SOLID; a.wallpaper_color = 0x101820u;
+	a.clock_24h = 0; a.clock_seconds = 1; a.shadow = 0; a.corner_radius = 6;
 	char buf[256];
 	int n = nw_settings_serialize(&a, buf, sizeof buf);
 	CHECK(n > 0);
@@ -49,6 +51,27 @@ TEST_CASE("serialize then parse round-trips") {
 	CHECK(b.blur_level == a.blur_level);
 	CHECK(b.transparency == a.transparency);
 	CHECK(b.transparency_level == a.transparency_level);
+	CHECK(b.accent == a.accent);
+	CHECK(b.wallpaper == a.wallpaper);
+	CHECK(b.wallpaper_color == a.wallpaper_color);
+	CHECK(b.clock_24h == a.clock_24h);
+	CHECK(b.clock_seconds == a.clock_seconds);
+	CHECK(b.shadow == a.shadow);
+	CHECK(b.corner_radius == a.corner_radius);
+}
+
+TEST_CASE("parse colours (0x/#/bare hex), wallpaper names, clamps radius") {
+	nw_settings s; nw_settings_defaults(&s);
+	const char *txt =
+		"accent: #ff9d00\n"
+		"wallpaper: gradient\n"
+		"wallpaper_color: 0x010203\n"
+		"corner_radius: 99\n";
+	nw_settings_parse(txt, (int) strlen(txt), &s);
+	CHECK(s.accent == 0xff9d00u);
+	CHECK(s.wallpaper == NW_WALL_GRADIENT);
+	CHECK(s.wallpaper_color == 0x010203u);
+	CHECK(s.corner_radius == 20);          // clamped to max
 }
 
 TEST_CASE("derive: translucency off => opaque; on => more transparent at higher level") {

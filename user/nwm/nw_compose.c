@@ -32,6 +32,20 @@
 #define COL_CURSOR_FG  0x101620
 #define COL_CURSOR_BG  0xffffff
 
+/* Runtime theme (set by the shell from settings.yaml; defaults match the compiled-in look).
+ * Module-static because the per-window frame cache render (draw_window_to) and the live scene
+ * compose both consult them without a server handle in scope. */
+static uint32_t s_accent = 0x12a8f4u;   /* UI accent: focus dots, highlights, the N mark */
+static int      s_radius = NW_RADIUS;    /* window corner radius (applied at composite time) */
+static int      s_shadow = 1;            /* draw window drop shadows */
+
+void nw_compose_set_theme(uint32_t accent, int radius, int shadow)
+{
+	s_accent = accent ? accent : 0x12a8f4u;
+	s_radius = (radius >= 0 && radius <= 20) ? radius : NW_RADIUS;
+	s_shadow = shadow ? 1 : 0;
+}
+
 /* Classic 11x16 arrow cursor: 'X' outline, '.' fill, ' ' transparent. */
 static const char *const CURSOR[16] = {
 	"X          ", "XX         ", "X.X        ", "X..X       ",
@@ -96,7 +110,7 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	/* title text (with a little app dot to the left) */
 	uint32_t tfg = dark ? COL_TITLE_DFG : COL_TITLE_FG;
 	int ty = oy + (NW_TITLEBAR_H - NW_FONT_H) / 2;
-	nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? 0x12a8f4 : 0x9fb2cc, 255);
+	nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? s_accent : 0x9fb2cc, 255);
 	nw_text(sc, ox + 28, ty, title, tfg);                 /* bg 0 = ignored (opaque text bg) */
 
 	/* window controls on the right: —  □  × */
@@ -189,11 +203,11 @@ void nw_draw_cursor(const struct nw_surface *dst, int x, int y)
 static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 {
 	int bw = sz / 3;
-	nw_vgrad_rect(s, x, y, bw, sz, 0x12a8f4, 0x7d3ff2);                 /* left  bar */
+	nw_vgrad_rect(s, x, y, bw, sz, s_accent, 0x7d3ff2);                 /* left  bar */
 	nw_vgrad_rect(s, x + sz - bw, y, bw, sz, 0xff9d00, 0x6fd033);       /* right bar */
 	for (int i = 0; i < sz; i++) {                                       /* diagonal */
 		int dx = x + i * (sz - bw) / sz, dy = y + i;
-		nw_blend_rect(s, dx, dy - bw / 2, bw, bw, 0x12a8f4, 255);
+		nw_blend_rect(s, dx, dy - bw / 2, bw, bw, s_accent, 255);
 	}
 }
 
@@ -261,7 +275,7 @@ static void draw_taskbar(const struct nw_server *s, const struct nw_surface *bac
 	/* Start button: the NanoOS "N" mark + "Start", highlighted while the Start menu is open. */
 	int bx, by, bw, bh;
 	nw_start_rect(s, &bx, &by, &bw, &bh);
-	if (s->menu_open && s->menu_from_start) nw_blend_rect(back, bx, by, bw, bh, 0x12a8f4, 130);
+	if (s->menu_open && s->menu_from_start) nw_blend_rect(back, bx, by, bw, bh, s_accent, 130);
 	draw_nanomark(back, bx + 8, by + (bh - 16) / 2, 16);
 	nw_text(back, bx + 30, by + (bh - NW_FONT_H) / 2, "Start", COL_PANEL_FG);
 
@@ -276,7 +290,7 @@ static void draw_taskbar(const struct nw_server *s, const struct nw_surface *bac
 		nw_fill_round(back, bx + 3, by + 5, bw - 6, bh - 10, 6,
 		              focused ? 0x2b3650 : 0x1b2336, focused ? 255 : (w->minimized ? 120 : 205));
 		const char *title = (w->title[0] == '\x01') ? w->title + 1 : w->title;
-		nw_fill_round(back, bx + 10, by + (bh - 10) / 2, 10, 10, 3, focused ? 0x12a8f4 : 0x9fb2cc, 255);
+		nw_fill_round(back, bx + 10, by + (bh - 10) / 2, 10, 10, 3, focused ? s_accent : 0x9fb2cc, 255);
 		char t[19]; int k = 0; for (; title[k] && k < (int) sizeof t - 1; k++) t[k] = title[k]; t[k] = 0;
 		nw_text(back, bx + 26, by + (bh - NW_FONT_H) / 2, t, focused ? 0xffffff : 0xc6d2e6);
 	}
@@ -398,16 +412,21 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 				bd = bdc->bd;
 			if (did_fresh && !prio && budget > 0) budget--;
 		}
+		if (s_shadow && (w->frame || scratch)) {  /* soft drop shadow cast on the layers below */
+			for (int k = 0; k < 4; k++)
+				nw_fill_round(back, w->x - k, w->y - k + 5, fw + 2 * k, fh + 2 * k,
+				              s_radius + k, 0x000000, 26);
+		}
 		if (w->frame) {                          /* cached frame: composite window-local source */
 			struct nw_surface fs;
 			fs.px = w->frame; fs.w = fw; fs.h = fh; fs.stride = fw;
 			nw_surface_noclip(&fs);
-			composite_round(back, &fs, w->x, w->y, fw, fh, NW_RADIUS, alpha, w->x, w->y, bd);
-			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
+			composite_round(back, &fs, w->x, w->y, fw, fh, s_radius, alpha, w->x, w->y, bd);
+			nw_stroke_round(back, w->x, w->y, fw, fh, s_radius, COL_BORDER, 150);
 		} else if (scratch) {                    /* screen-space scratch: render live + composite */
 			draw_window_to(scratch, w, focused, w->x, w->y);
-			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS, alpha, 0, 0, bd);
-			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
+			composite_round(back, scratch, w->x, w->y, fw, fh, s_radius, alpha, 0, 0, bd);
+			nw_stroke_round(back, w->x, w->y, fw, fh, s_radius, COL_BORDER, 150);
 		} else {
 			draw_window_to(back, w, focused, w->x, w->y);     /* simple/host path: opaque, square */
 		}
