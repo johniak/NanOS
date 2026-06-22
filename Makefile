@@ -1138,7 +1138,16 @@ _image64: _all _userland64 _kext
 	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
+	# passwd (x in field 2), shadow (hashes, 0600 root), group (with members), sudoers (%wheel).
+	# The kernel copies all four into the writable /etc tmpfs at boot (Kernel.cpp populateEtc).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "rm /nanos/config/shadow\nwrite config/shadow /nanos/config/shadow\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "rm /nanos/config/group\nwrite config/group /nanos/config/group\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "rm /nanos/config/sudoers\nwrite config/sudoers /nanos/config/sudoers\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	-printf "set_inode_field /nanos/config/shadow mode 0100600\nset_inode_field /nanos/config/sudoers mode 0100440\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	# jan's home directory (uid/gid 1000), owned by jan so the login shell can write there.
+	-printf "mkdir /home\nmkdir /home/jan\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "set_inode_field /home/jan uid 1000\nset_inode_field /home/jan gid 1000\nset_inode_field /home/jan mode 040755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
 	# tmpfs at boot, see Kernel.cpp populateEtc). /etc/shells in particular lists the valid login
 	# shells: dropbear's getusershell() rejects an SSH login whose passwd shell isn't there. Mirrors

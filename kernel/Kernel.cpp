@@ -157,7 +157,7 @@ static void extRwSelftest(Vfs* vfs) {
 // read-only, so we copy the templates into the tmpfs at boot (DHCP later rewrites resolv.conf).
 static void populateEtc(Vfs* vfs) {
 	static const char* files[] = { "resolv.conf", "hosts", "nsswitch.conf", "protocols", "services", "shells", 0 };
-	char buf[512];
+	char buf[2048];
 	for (int i = 0; files[i]; i++) {
 		String src = String("/disks/main/nanos/config/etc/") + String(files[i]);
 		String dst = String("/etc/") + String(files[i]);
@@ -166,6 +166,24 @@ static void populateEtc(Vfs* vfs) {
 			continue;
 		if (vfs->create(dst, 0644) == 0)
 			vfs->write(dst, (unsigned) n, 0, buf);
+	}
+	// The account database: /etc/{passwd,group,shadow,sudoers} are loaded into the writable /etc
+	// tmpfs from the persistent on-disk copies under /nanos/config. shadow is root-only (0600) and
+	// sudoers 0440 so an unprivileged user cannot read hashes or the sudo policy. (Runtime edits
+	// live in tmpfs; the persistent source is /disks/main/nanos/config, regenerated each boot.)
+	static const char* acct[] = { "passwd", "group", "shadow", "sudoers", 0 };
+	static const unsigned acctMode[] = { 0644u, 0644u, 0600u, 0440u };
+	for (int i = 0; acct[i]; i++) {
+		String src = String("/disks/main/nanos/config/") + String(acct[i]);
+		String dst = String("/etc/") + String(acct[i]);
+		int n = vfs->read(src, sizeof(buf), 0, buf);
+		if (n <= 0)
+			continue;
+		if (vfs->create(dst, acctMode[i]) == 0) {
+			vfs->write(dst, (unsigned) n, 0, buf);
+			vfs->chmod(dst, acctMode[i]);   // create masks via umask; force the intended mode
+			vfs->chown(dst, 0, 0);          // owned by root
+		}
 	}
 }
 
