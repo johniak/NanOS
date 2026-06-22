@@ -135,7 +135,7 @@ TEST_CASE("uptimeString renders seconds and the raw tick count") {
 
 TEST_CASE("SynthFs /proc/meminfo is readable Linux-style text and terminates") {
 	SynthFs fs;
-	char buf[256] = {0};
+	char buf[512] = {0};
 	int n = fs.read("/proc/meminfo", sizeof buf, 0, buf);
 	CHECK(n > 0);
 	CHECK(strstr(buf, "MemTotal:") != 0);
@@ -155,6 +155,19 @@ TEST_CASE("meminfoString renders the kB rows and computes MemUsed") {
 	CHECK(strstr(b, "11072 kB") != 0);          // 131072 - 120000
 	CHECK(strstr(b, "KHeapFree:") != 0);
 	CHECK(strstr(b, "5000 kB") != 0);
+}
+
+TEST_CASE("meminfoString emits the keys htop reads (MemAvailable/Buffers/Cached/Swap)") {
+	char b[512];
+	int n = meminfoString(b, sizeof b, 4096, 1024, 256, 128);
+	CHECK(n > 0);
+	CHECK(strstr(b, "MemTotal:") != 0);
+	CHECK(strstr(b, "MemFree:") != 0);
+	CHECK(strstr(b, "MemAvailable:") != 0);   // htop: available memory (== free here)
+	CHECK(strstr(b, "Buffers:") != 0);
+	CHECK(strstr(b, "Cached:") != 0);
+	CHECK(strstr(b, "SwapTotal:") != 0);
+	CHECK(strstr(b, "SwapFree:") != 0);
 }
 
 TEST_CASE("SynthFs errors on missing paths and bad ops") {

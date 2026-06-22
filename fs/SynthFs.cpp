@@ -41,7 +41,10 @@ int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 	struct Row { const char* key; unsigned val; };
 	Row rows[] = {
 		{ "MemTotal:", memTotalKb }, { "MemFree:", memFreeKb },
+		{ "MemAvailable:", memFreeKb },                 // no reclaim accounting: available == free
 		{ "MemUsed:", memTotalKb > memFreeKb ? memTotalKb - memFreeKb : 0 },
+		{ "Buffers:", 0 }, { "Cached:", 0 },            // no page/buffer cache accounting yet
+		{ "SwapTotal:", 0 }, { "SwapFree:", 0 },        // NanOS has no swap
 		{ "KHeapTotal:", heapTotalKb }, { "KHeapFree:", heapFreeKb },
 	};
 	int p = 0;
@@ -285,7 +288,7 @@ static int gen_uptime(unsigned off, void* buf, unsigned n) {
 
 // Snapshot file: render live /proc/meminfo (served by offset so `cat` terminates).
 static int gen_meminfo(unsigned off, void* buf, unsigned n) {
-	static char s[256];
+	static char s[384];   // 10 Linux-style rows (incl. MemAvailable/Buffers/Cached/Swap for htop)
 	int len = meminfoString(s, sizeof s, sysMemTotalKb(), sysMemFreeKb(),
 			sysHeapTotalKb(), sysHeapFreeKb());
 	if (off >= (unsigned) len)
