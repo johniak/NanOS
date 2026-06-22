@@ -338,6 +338,28 @@ TEST_CASE("sys credentials + open() permission enforcement") {
 	CHECK(sc.open("/hello.txt", 1) == -13);    // O_WRONLY -> needs w (other lacks it) -> -EACCES
 }
 
+TEST_CASE("Syscalls reads identity from an injected Cred") {
+	Cred cred; credInitRoot(cred); cred.ruid = 1000; cred.euid = 1000;
+	Syscalls s(mountFixture(), sink); s.setCred(&cred);
+	CHECK(s.getuid() == 1000);
+	CHECK(s.geteuid() == 1000);
+}
+
+TEST_CASE("Syscalls credential setters enforce POSIX rules via Cred") {
+	Cred cred; credInitRoot(cred); cred.ruid = cred.euid = cred.suid = 1000;
+	cred.rgid = cred.egid = cred.sgid = 1000; cred.fsuid = 1000; cred.fsgid = 1000;
+	Syscalls s(mountFixture(), sink); s.setCred(&cred);
+	CHECK(s.seteuid(0) == -1);                    // can't gain root
+	CHECK(s.setresuid(-1, 1000, -1) == 0);
+	int ru, eu, su; CHECK(s.getresuid(&ru, &eu, &su) == 0);
+	CHECK(ru == 1000); CHECK(eu == 1000); CHECK(su == 1000);
+	unsigned g[2] = {10, 20};
+	CHECK(s.setgroups(2, g) == -1);               // non-root
+	cred.euid = 0;                                 // become root
+	CHECK(s.setgroups(2, g) == 0);
+	unsigned out[8]; CHECK(s.getgroups(8, out) == 2);
+}
+
 TEST_CASE("sys errors: bad fd, missing path, closed fd") {
 	Syscalls sc(mountFixture(), sink);
 	char buf[8];

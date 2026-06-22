@@ -10,6 +10,7 @@
 #define SYSCALL_H_
 
 #include "SyscallNr.h"   // SYS_* numbers (shared with userland, plain C)
+#include "Cred.h"        // process credentials + pure DAC decisions
 #include "Pipe.h"
 #include "CharDevice.h"  // POLLIN/POLLOUT/... (single source) + device interface
 #include "Termios.h"     // console terminal settings carried by TCGETS/TCSETS
@@ -123,8 +124,11 @@ class Syscalls {
 	Termios consoleTermios;   // real terminal settings for the console fds (0/1/2)
 	String m_cwd;             // current working directory (absolute); inherited on fork, kept on execve
 	unsigned m_umask;         // file-creation mask (default 022); applied by mkdir/creat
-	unsigned m_uid, m_gid;    // real user/group id (process credentials; 0 = root)
-	unsigned m_euid, m_egid;  // effective ids — used for permission checks; inherited on fork
+	// Process credentials live on the owning Process (Process::cred). `cred` points there;
+	// `ownCred` is the fallback target for a standalone Syscalls (host tests / early boot)
+	// so the pointer is never null. setCred() re-points it (fork: at the child's Process::cred).
+	Cred ownCred;
+	Cred* cred;
 	bool exited;
 	int exitCode;
 
@@ -172,13 +176,28 @@ public:
 	int renameat2(int oldfd, String oldpath, int newfd, String newpath, int flags);  // NOREPLACE/EXCHANGE
 	unsigned currentTime();                                 // wall-clock seconds (0 until a clock is set)
 
-	// Process credentials. uid 0 (root) bypasses read/write permission checks. Inherited on fork.
+	// Process credentials live in *cred (Process::cred). setCred re-points it; a null arg
+	// falls back to the embedded ownCred so a standalone Syscalls always has a valid target.
+	void setCred(Cred* c) { cred = c ? c : &ownCred; }
+	Cred* credPtr() { return cred; }
 	int getuid();
 	int geteuid();
 	int getgid();
 	int getegid();
 	int setuid(int uid);
 	int setgid(int gid);
+	int seteuid(int euid);
+	int setegid(int egid);
+	int setreuid(int ruid, int euid);
+	int setregid(int rgid, int egid);
+	int setresuid(int r, int e, int s);
+	int setresgid(int r, int e, int s);
+	int getresuid(int* r, int* e, int* s);
+	int getresgid(int* r, int* e, int* s);
+	int setfsuid(int u);
+	int setfsgid(int g);
+	int getgroups(int size, unsigned* list);
+	int setgroups(int n, const unsigned* list);
 	// Permission test against the calling process's effective ids: `want` is r/w/x bits
 	// (4/2/1). Returns 0 if allowed, -EACCES otherwise. Used by open().
 	int permCheck(const FileStat& st, int want);

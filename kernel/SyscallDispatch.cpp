@@ -752,6 +752,36 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 	case SYS_setgid: case SYS_setgid32:
 		ret = g_sys->setgid((int) a0);
 		break;
+	case SYS_setreuid:
+		ret = g_sys->setreuid((int) a0, (int) a1);
+		break;
+	case SYS_setregid:
+		ret = g_sys->setregid((int) a0, (int) a1);
+		break;
+	case SYS_setresuid:
+		ret = g_sys->setresuid((int) a0, (int) a1, (int) a2);
+		break;
+	case SYS_setresgid:
+		ret = g_sys->setresgid((int) a0, (int) a1, (int) a2);
+		break;
+	case SYS_getresuid:
+		ret = g_sys->getresuid((int*) a0, (int*) a1, (int*) a2);
+		break;
+	case SYS_getresgid:
+		ret = g_sys->getresgid((int*) a0, (int*) a1, (int*) a2);
+		break;
+	case SYS_setfsuid:
+		ret = g_sys->setfsuid((int) a0);
+		break;
+	case SYS_setfsgid:
+		ret = g_sys->setfsgid((int) a0);
+		break;
+	case SYS_getgroups:
+		ret = g_sys->getgroups((int) a0, (unsigned*) a1);
+		break;
+	case SYS_setgroups:
+		ret = g_sys->setgroups((int) a0, (const unsigned*) a1);
+		break;
 	case SYS_chdir:
 		ret = g_sys->chdir(String((char*) a0));
 		break;

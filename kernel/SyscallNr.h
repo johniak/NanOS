@@ -95,6 +95,17 @@
 #define SYS_setgid 106
 #define SYS_geteuid 107
 #define SYS_getegid 108
+/* credential family (real Linux x86_64 numbers; verified free in this block) */
+#define SYS_setreuid   113
+#define SYS_setregid   114
+#define SYS_getgroups  115
+#define SYS_setgroups  116
+#define SYS_setresuid  117
+#define SYS_getresuid  118
+#define SYS_setresgid  119
+#define SYS_getresgid  120
+#define SYS_setfsuid   122
+#define SYS_setfsgid   123
 #define SYS_rt_sigpending 127
 #define SYS_rt_sigsuspend 130
 #define SYS_setitimer 38     /* ITIMER_REAL interval timer (alarm()/editor timeouts) */
@@ -212,6 +223,28 @@
 #define SYS_setuid32 213
 #define SYS_setgid 46
 #define SYS_setgid32 214
+/* credential family — real Linux i386 numbers (verified free in this block). i686 is frozen;
+ * these exist so the SHARED dispatch's case labels compile. */
+#define SYS_setreuid   70
+#define SYS_setregid   71
+#define SYS_getgroups  80
+#define SYS_setgroups  81
+#define SYS_setfsuid   138
+#define SYS_setfsgid   139
+#define SYS_setresuid  164
+#define SYS_getresuid  165
+#define SYS_setresgid  170
+#define SYS_getresgid  171
+#define SYS_setreuid32 203
+#define SYS_setregid32 204
+#define SYS_getgroups32 205
+#define SYS_setgroups32 206
+#define SYS_setresuid32 208
+#define SYS_getresuid32 209
+#define SYS_setresgid32 210
+#define SYS_getresgid32 211
+#define SYS_setfsuid32 215
+#define SYS_setfsgid32 216
 #define SYS_chdir 12
 #define SYS_getcwd 183
 #define SYS_execve 11

@@ -48,7 +48,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	this->exitCode = 0;
 	this->m_cwd = String("/");
 	this->m_umask = 0022;
-	this->m_uid = this->m_gid = this->m_euid = this->m_egid = 0;   // start as root
+	credInitRoot(ownCred); cred = &ownCred;   // start as root; a Process re-points via setCred
 	initCookedTermios(consoleTermios);
 	for (int i = 0; i < MAXFD; i++) {
 		fds[i].used = false;
@@ -78,8 +78,7 @@ Syscalls::Syscalls(const Syscalls& o) {
 	consoleTermios = o.consoleTermios;   // inherit the parent's terminal settings
 	m_cwd = o.m_cwd;                     // child inherits the parent's working directory
 	m_umask = o.m_umask;                 // and the file-creation mask
-	m_uid = o.m_uid; m_gid = o.m_gid;    // and the credentials
-	m_euid = o.m_euid; m_egid = o.m_egid;
+	ownCred = *o.cred; cred = &ownCred;  // child gets its own copy of the parent's credentials
 	exited = o.exited;
 	exitCode = o.exitCode;
 	for (int i = 0; i < MAXFD; i++) {
@@ -754,37 +753,34 @@ unsigned Syscalls::currentTime() {
 	return wallClockSeconds();
 }
 
-int Syscalls::getuid()  { return (int) m_uid; }
-int Syscalls::geteuid() { return (int) m_euid; }
-int Syscalls::getgid()  { return (int) m_gid; }
-int Syscalls::getegid() { return (int) m_egid; }
-// Root may set any id; a non-root process may only switch among ids it already holds (here just
-// its own), so a real uid change is root-only — enough to model privilege drop.
-int Syscalls::setuid(int uid) {
-	if (m_euid != 0 && (unsigned) uid != m_uid && (unsigned) uid != m_euid) return -1;   // -EPERM
-	m_uid = m_euid = (unsigned) uid;
-	return 0;
+int Syscalls::getuid()  { return (int) cred->ruid; }
+int Syscalls::geteuid() { return (int) cred->euid; }
+int Syscalls::getgid()  { return (int) cred->rgid; }
+int Syscalls::getegid() { return (int) cred->egid; }
+// All credential transitions delegate to the pure POSIX rules in Cred.cpp.
+int Syscalls::setuid(int uid)  { return credSetuid(*cred, (unsigned) uid); }
+int Syscalls::setgid(int gid)  { return credSetgid(*cred, (unsigned) gid); }
+int Syscalls::seteuid(int euid){ return credSeteuid(*cred, (unsigned) euid); }
+int Syscalls::setegid(int egid){ return credSetegid(*cred, (unsigned) egid); }
+int Syscalls::setreuid(int r, int e){ return credSetreuid(*cred, r, e); }
+int Syscalls::setregid(int r, int e){ return credSetregid(*cred, r, e); }
+int Syscalls::setresuid(int r, int e, int s){ return credSetresuid(*cred, r, e, s); }
+int Syscalls::setresgid(int r, int e, int s){ return credSetresgid(*cred, r, e, s); }
+int Syscalls::getresuid(int* r, int* e, int* s){ *r=(int)cred->ruid; *e=(int)cred->euid; *s=(int)cred->suid; return 0; }
+int Syscalls::getresgid(int* r, int* e, int* s){ *r=(int)cred->rgid; *e=(int)cred->egid; *s=(int)cred->sgid; return 0; }
+int Syscalls::setfsuid(int u){ return (int) credSetfsuid(*cred, (unsigned) u); }   // returns prev fsuid
+int Syscalls::setfsgid(int g){ return (int) credSetfsgid(*cred, (unsigned) g); }
+int Syscalls::getgroups(int size, unsigned* list) {
+	if (size == 0) return cred->ngroups;
+	if (size < cred->ngroups) return -22;          // -EINVAL
+	for (int i = 0; i < cred->ngroups; i++) list[i] = cred->groups[i];
+	return cred->ngroups;
 }
-int Syscalls::setgid(int gid) {
-	if (m_euid != 0 && (unsigned) gid != m_gid && (unsigned) gid != m_egid) return -1;
-	m_gid = m_egid = (unsigned) gid;
-	return 0;
-}
+int Syscalls::setgroups(int n, const unsigned* list) { return credSetgroups(*cred, list, n); }
 
-// POSIX permission check for `want` (r=4/w=2/x=1) against the file's mode + owner, using the
-// process's effective ids. Root (euid 0) gets r/w unconditionally and x if any execute bit is set.
+// POSIX permission check for `want` (r=4/w=2/x=1): forwards to the pure credAccess using fsuid/fsgid.
 int Syscalls::permCheck(const FileStat& st, int want) {
-	if (want == 0) return 0;
-	unsigned mode = st.mode;
-	if (m_euid == 0) {
-		if ((want & 1) && (mode & 0111) == 0) return -13;     // -EACCES (root still needs an x bit)
-		return 0;
-	}
-	unsigned bits;
-	if (st.uid == m_euid)        bits = (mode >> 6) & 7;       // owner
-	else if (st.gid == m_egid)   bits = (mode >> 3) & 7;       // group
-	else                         bits = mode & 7;             // other
-	return ((bits & (unsigned) want) == (unsigned) want) ? 0 : -13;
+	return credAccess(*cred, st.uid, st.gid, st.mode, want, /*useReal*/false);
 }
 
 int Syscalls::utime(String path, const void* times) {
