@@ -1094,6 +1094,15 @@ _image64: _all _userland64 _kext
 	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
+	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
+	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
+	# Mirrors the i686 _image artwork block (was missing here, so x86_64 booted without them).
+	if [ -f $(BINFOLDER)wallpaper.raw ]; then \
+	  printf "rm /nanos/share/wallpaper.raw\nwrite $(BINFOLDER)wallpaper.raw /nanos/share/wallpaper.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	if [ -f $(BINFOLDER)logo.raw ]; then \
+	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
