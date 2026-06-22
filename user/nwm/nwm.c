@@ -23,6 +23,7 @@
 #include "nw_compose.h"
 #include "nwproto.h"
 #include "nw_gfx.h"
+#include "png.h"                  /* decode the branded wallpaper.png at runtime */
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
 
 /* Power the machine off via the kernel (privileged port I/O lives in the kernel). */
@@ -411,21 +412,50 @@ static void present(void)
 	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
 
-/* Load the branded wallpaper (flat 32bpp: [u32 w][u32 h][w*h pixels], produced by `make assets`)
- * into `dst` when it matches the screen size. Returns 1 on success; the caller falls back to the
- * procedural gradient wallpaper otherwise. */
+/* Load the branded wallpaper.png, decode it in-process, and cover-fit it (preserve aspect, crop the
+ * overflow, centered) to the actual screen size `w`x`h` — so it fills ANY resolution the firmware
+ * gave us instead of needing a build-time-sized raw. Returns 1 on success; the caller falls back to
+ * the procedural gradient otherwise. */
 static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 {
-	int fd = open("/disks/main/nanos/share/wallpaper.raw", O_RDONLY);
+	int fd = open("/disks/main/nanos/share/wallpaper.png", O_RDONLY);
 	if (fd < 0) return 0;
-	uint32_t hdr[2]; int ok = 0;
-	if (read(fd, hdr, sizeof hdr) == (int) sizeof hdr && hdr[0] == w && hdr[1] == h) {
-		size_t need = (size_t) w * h * 4, got = 0; char *p = (char *) dst;
-		for (;;) { int n = read(fd, p + got, (unsigned) (need - got)); if (n <= 0) break; got += n; if (got >= need) break; }
-		ok = (got == need);
+	/* Slurp the file. */
+	uint8_t *file = 0; unsigned cap = 0, got = 0;
+	for (;;) {
+		if (got == cap) { cap = cap ? cap * 2 : (1u << 20); uint8_t *n = (uint8_t *) realloc(file, cap); if (!n) { free(file); close(fd); return 0; } file = n; }
+		int r = read(fd, file + got, cap - got);
+		if (r < 0) { free(file); close(fd); return 0; }
+		if (r == 0) break;
+		got += (unsigned) r;
 	}
 	close(fd);
-	return ok;
+
+	int iw = 0, ih = 0;
+	uint32_t *src = png_decode(file, got, &iw, &ih);
+	free(file);
+	if (!src || iw <= 0 || ih <= 0) { free(src); return 0; }
+
+	/* Cover-fit: source pixels per screen pixel = min(iw/w, ih/h) in 16.16 fixed point (the smaller
+	 * step zooms in to fill, cropping the other axis); center the sampled region. */
+	uint64_t stepx = ((uint64_t) iw << 16) / w;
+	uint64_t stepy = ((uint64_t) ih << 16) / h;
+	uint64_t step = stepx < stepy ? stepx : stepy;
+	long sx0 = (long) (((uint64_t) iw << 16) - (uint64_t) w * step) / 2;
+	long sy0 = (long) (((uint64_t) ih << 16) - (uint64_t) h * step) / 2;
+	for (unsigned y = 0; y < h; y++) {
+		long sy = (sy0 + (long) ((uint64_t) y * step)) >> 16;
+		if (sy < 0) sy = 0; else if (sy >= ih) sy = ih - 1;
+		const uint32_t *srow = src + (size_t) sy * iw;
+		uint32_t *drow = dst + (size_t) y * w;
+		for (unsigned x = 0; x < w; x++) {
+			long sx = (sx0 + (long) ((uint64_t) x * step)) >> 16;
+			if (sx < 0) sx = 0; else if (sx >= iw) sx = iw - 1;
+			drow[x] = srow[sx];
+		}
+	}
+	free(src);
+	return 1;
 }
 
 int main(void)

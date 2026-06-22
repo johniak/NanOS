@@ -1094,11 +1094,11 @@ _image64: _all _userland64 _kext
 	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
-	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
-	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
-	# Mirrors the i686 _image artwork block (was missing here, so x86_64 booted without them).
-	if [ -f $(BINFOLDER)wallpaper.raw ]; then \
-	  printf "rm /nanos/share/wallpaper.raw\nwrite $(BINFOLDER)wallpaper.raw /nanos/share/wallpaper.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	# Desktop artwork. The wallpaper ships as the source PNG; NanWM decodes it and cover-fits it to
+	# the live resolution at runtime (so it fills ANY panel). The logo stays a fixed 96x96 raw (About
+	# blits it directly, no scaling). Mirrors the i686 _image artwork block.
+	if [ -f assets/wallpaper.png ]; then \
+	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)logo.raw ]; then \
 	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
@@ -1388,10 +1388,10 @@ _image: _all _userland _kext _grub2-image
 	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
-	# Desktop artwork (optional, `make assets`): the branded wallpaper + logo as flat 32bpp surfaces
-	# under /nanos/share. The compositor blits wallpaper.raw as the background; About shows logo.raw.
-	if [ -f $(BINFOLDER)wallpaper.raw ]; then \
-	  printf "rm /nanos/share/wallpaper.raw\nwrite $(BINFOLDER)wallpaper.raw /nanos/share/wallpaper.raw\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	# Desktop artwork. The wallpaper ships as the source PNG; NanWM decodes it and cover-fits it to
+	# the live resolution at runtime. The logo stays a fixed 96x96 raw (About blits it directly).
+	if [ -f assets/wallpaper.png ]; then \
+	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)logo.raw ]; then \
 	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
@@ -1733,7 +1733,7 @@ $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
-$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
+$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)png.o
 # nwnote links the libnw import library (+ libc.ndl.a for crt0's exit thunk) and declares only
 # --need libnw.ndl; the recursive loader auto-loads libc.ndl (libnw's dependency), exactly like
 # a Windows app that links user32 and gets ntdll transitively.
