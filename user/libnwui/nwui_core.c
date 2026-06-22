@@ -671,6 +671,29 @@ static void menu_action(nwui *u, int item)
 	}
 }
 
+void nwui_accel(nwui *u, int ctrl, char key, int fkey, nwui_cb cb, void *user)
+{
+	if (u->naccel >= 24) return;
+	int i = u->naccel++;
+	u->accel[i].ctrl = ctrl ? 1 : 0;
+	u->accel[i].key  = (key >= 'A' && key <= 'Z') ? key + 32 : key;
+	u->accel[i].fkey = fkey;
+	u->accel[i].cb = cb;
+	u->accel[i].user = user;
+}
+static int accel_fire(nwui *u, const struct nw_event *ev)
+{
+	char ch = ev->ch;
+	if (ch >= 'A' && ch <= 'Z') ch += 32;
+	for (int i = 0; i < u->naccel; i++) {
+		int hit = u->accel[i].fkey
+		              ? (ev->code == u->accel[i].fkey)
+		              : (u->accel[i].ctrl == u->ctrl_down && u->accel[i].key && u->accel[i].key == ch);
+		if (hit && u->accel[i].cb) { u->accel[i].cb(0, u->accel[i].user); return 1; }
+	}
+	return 0;
+}
+
 int nwui_dispatch(nwui *u, const struct nw_event *ev)
 {
 	switch (ev->type) {
@@ -767,7 +790,10 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 	}
 
 	case NW_EV_KEY: {
+		if (ev->code == NWUI_SC_CTRL || ev->code == NWUI_SC_RCTRL) { u->ctrl_down = ev->down; break; }
 		if (!ev->down) break;
+		if (accel_fire(u, ev)) break;            /* a shortcut consumed the key */
+		if (u->ctrl_down) break;                 /* suppress Ctrl+<key> from inserting/navigating */
 		if (u->menu_open) { if (ev->code == NWUI_SC_ESC) menu_close(u); break; }
 		if (u->focus && u->focus->kind == NWUI_LIST) {
 			nwui_node *L = u->focus;

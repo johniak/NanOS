@@ -94,6 +94,11 @@ struct nwui {
 	/* global (menu-bar) menus the app declares; sent to the compositor via nw_set_menu */
 	struct nwui_topmenu appmenu[6];
 	int nappmenu;
+
+	/* keyboard accelerators (Ctrl+<letter> or a function key) + tracked Ctrl state */
+	int ctrl_down;
+	struct { int ctrl, fkey; char key; nwui_cb cb; void *user; } accel[24];
+	int naccel;
 };
 
 /* Built-in context-menu items (indices). */

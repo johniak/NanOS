@@ -583,3 +583,28 @@ TEST_CASE("textarea copy/cut/paste via clipboard events") {
 	CHECK(strcmp(tb, "XYlo") == 0);
 	delete u;
 }
+
+static int g_accel_hits;
+static void on_accel(nwui_node *, void *u) { (*(int *) u)++; }
+
+TEST_CASE("ctrl and function-key accelerators fire and suppress typing") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1;
+	g_accel_hits = 0;
+	nwui_accel(u, 1, 's', 0, on_accel, &g_accel_hits);        // Ctrl+S
+	nwui_accel(u, 0, 0, NWUI_SC_F3, on_accel, &g_accel_hits); // F3
+
+	keyc(u, NWUI_SC_CTRL, 0, 0);              // Ctrl down
+	keyc(u, 0x1F, 's', 0);                    // 's' while Ctrl held
+	CHECK(g_accel_hits == 1);
+	CHECK(strcmp(tb, "") == 0);               // 's' was NOT inserted
+	keyc(u, NWUI_SC_CTRL, 0, 0); { nw_event e; memset(&e,0,sizeof e); e.type=NW_EV_KEY; e.down=0; e.code=NWUI_SC_CTRL; nwui_dispatch(u,&e); } // Ctrl up
+	keyc(u, NWUI_SC_F3, 0, 0);                // F3
+	CHECK(g_accel_hits == 2);
+	key(u, 'a');                              // normal typing still works (Ctrl released)
+	CHECK(strcmp(tb, "a") == 0);
+	delete u;
+}
