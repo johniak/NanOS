@@ -412,10 +412,23 @@ static void present(void)
 	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
 
+/* Linearly interpolate two 0x00RRGGBB pixels, per channel; t is the weight of `b` in 16.16
+ * (0 -> a, 65536 -> b). The building block of bilinear sampling. */
+static uint32_t lerp_px(uint32_t a, uint32_t b, unsigned t)
+{
+	int ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+	int br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+	int r  = ar + (((br - ar) * (int) t) >> 16);
+	int g  = ag + (((bg - ag) * (int) t) >> 16);
+	int bl = ab + (((bb - ab) * (int) t) >> 16);
+	return ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) bl;
+}
+
 /* Load the branded wallpaper.png, decode it in-process, and cover-fit it (preserve aspect, crop the
  * overflow, centered) to the actual screen size `w`x`h` — so it fills ANY resolution the firmware
- * gave us instead of needing a build-time-sized raw. Returns 1 on success; the caller falls back to
- * the procedural gradient otherwise. */
+ * gave us instead of needing a build-time-sized raw. Sampling is BILINEAR (4-tap), so scaling is
+ * smooth instead of the blocky nearest-neighbour look. Returns 1 on success; the caller falls back
+ * to the procedural gradient otherwise. */
 static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 {
 	int fd = open("/disks/main/nanos/share/wallpaper.png", O_RDONLY);
@@ -437,21 +450,29 @@ static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 	if (!src || iw <= 0 || ih <= 0) { free(src); return 0; }
 
 	/* Cover-fit: source pixels per screen pixel = min(iw/w, ih/h) in 16.16 fixed point (the smaller
-	 * step zooms in to fill, cropping the other axis); center the sampled region. */
+	 * step zooms in to fill, cropping the other axis); center the sampled region. Each destination
+	 * pixel samples the 4 source texels around its fractional position and blends them (bilinear). */
 	uint64_t stepx = ((uint64_t) iw << 16) / w;
 	uint64_t stepy = ((uint64_t) ih << 16) / h;
 	uint64_t step = stepx < stepy ? stepx : stepy;
 	long sx0 = (long) (((uint64_t) iw << 16) - (uint64_t) w * step) / 2;
 	long sy0 = (long) (((uint64_t) ih << 16) - (uint64_t) h * step) / 2;
 	for (unsigned y = 0; y < h; y++) {
-		long sy = (sy0 + (long) ((uint64_t) y * step)) >> 16;
-		if (sy < 0) sy = 0; else if (sy >= ih) sy = ih - 1;
-		const uint32_t *srow = src + (size_t) sy * iw;
+		long fy = sy0 + (long) ((uint64_t) y * step);
+		long iy = fy >> 16; unsigned ty = (unsigned) (fy & 0xFFFF);
+		long iy0 = iy < 0 ? 0 : (iy >= ih ? ih - 1 : iy);
+		long iy1 = iy + 1 < 0 ? 0 : (iy + 1 >= ih ? ih - 1 : iy + 1);
+		const uint32_t *r0 = src + (size_t) iy0 * iw;
+		const uint32_t *r1 = src + (size_t) iy1 * iw;
 		uint32_t *drow = dst + (size_t) y * w;
 		for (unsigned x = 0; x < w; x++) {
-			long sx = (sx0 + (long) ((uint64_t) x * step)) >> 16;
-			if (sx < 0) sx = 0; else if (sx >= iw) sx = iw - 1;
-			drow[x] = srow[sx];
+			long fx = sx0 + (long) ((uint64_t) x * step);
+			long ix = fx >> 16; unsigned tx = (unsigned) (fx & 0xFFFF);
+			long ix0 = ix < 0 ? 0 : (ix >= iw ? iw - 1 : ix);
+			long ix1 = ix + 1 < 0 ? 0 : (ix + 1 >= iw ? iw - 1 : ix + 1);
+			uint32_t top = lerp_px(r0[ix0], r0[ix1], tx);
+			uint32_t bot = lerp_px(r1[ix0], r1[ix1], tx);
+			drow[x] = lerp_px(top, bot, ty);
 		}
 	}
 	free(src);
