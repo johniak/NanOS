@@ -10,6 +10,7 @@
 #define PROCESS_H_
 
 #include "Signal.h"
+#include "Cred.h"
 
 namespace kernel {
 
@@ -85,6 +86,11 @@ struct Process {
 	char comm[16];       // short name (Linux `comm`)
 	char cmdline[128];   // full command line (argv joined by spaces)
 
+	// Process credentials (Linux task_struct->cred analogue). The canonical store; the
+	// process's Syscalls points its cred* here. fork copies the parent's; execve keeps it
+	// (bar setuid/setgid bits). Initialised to root by ProcTable::alloc.
+	Cred cred;
+
 	// brk/sbrk heap (the growable anonymous region at a high VA; see arch mmuSetUserBrk).
 	unsigned brkBase;    // fixed start of the heap window (== current break when empty)
 	unsigned brkCur;     // current program break
@@ -156,6 +162,11 @@ struct ProcInfo {
 	int nthreads;        // live threads in the group (Linux stat field 20, status Threads)
 	char comm[16];
 	char cmdline[128];
+	// Credential snapshot for /proc/<pid>/status (Uid/Gid/Groups lines).
+	unsigned ruid, euid, suid, fsuid;
+	unsigned rgid, egid, sgid, fsgid;
+	int ngroups;
+	unsigned groups[NGROUPS_MAX];
 };
 
 class ProcTable {

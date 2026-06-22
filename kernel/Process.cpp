@@ -152,6 +152,7 @@ Process* ProcTable::alloc(int parent) {
 			p->kthread = false;
 			p->comm[0] = 0;
 			p->cmdline[0] = 0;
+			credInitRoot(p->cred);       // start as root; fork copies the parent's, login drops it
 			sigInit(p->psig);
 			p->itReal.valueUs = 0;       // ITIMER_REAL disarmed (not inherited across fork)
 			p->itReal.intervalUs = 0;
@@ -341,6 +342,10 @@ static void fillInfo(const Process* p, ProcInfo* out) {
 	out->nthreads = p->threadCount;
 	copyName(out->comm, sizeof out->comm, p->comm);
 	copyName(out->cmdline, sizeof out->cmdline, p->cmdline);
+	out->ruid = p->cred.ruid; out->euid = p->cred.euid; out->suid = p->cred.suid; out->fsuid = p->cred.fsuid;
+	out->rgid = p->cred.rgid; out->egid = p->cred.egid; out->sgid = p->cred.sgid; out->fsgid = p->cred.fsgid;
+	out->ngroups = p->cred.ngroups;
+	for (int i = 0; i < p->cred.ngroups && i < NGROUPS_MAX; i++) out->groups[i] = p->cred.groups[i];
 }
 
 int ProcTable::snapshot(ProcInfo* out, int max) {

@@ -1079,12 +1079,21 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 	return ret;
 }
 
+// The VFS asks this for the calling process's credentials when it enforces DAC. Before pid 1
+// exists (early boot) it returns 0, which the VFS treats as a root/kernel context (no checks).
+static const Cred* currentCred() {
+	Process* p = ProcTable::current();
+	return p ? &p->cred : 0;
+}
+
 void installSyscalls(Vfs* vfs) {
 	ProcTable::init();
 	Process* p = ProcTable::alloc(0);          // pid 1: the boot/init process
 	p->sys = new Syscalls(vfs, consoleSink);
+	p->sys->setCred(&p->cred);                 // point its credentials at the canonical Process::cred
 	ProcTable::setCurrent(p);
 	g_vfs = vfs;
+	vfs->setCredProvider(currentCred);         // the VFS now enforces with the running process's Cred
 	arch::syscallInit();
 }
 

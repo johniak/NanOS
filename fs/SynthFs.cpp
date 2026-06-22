@@ -190,8 +190,21 @@ int statusString(char* buf, int cap, const ProcInfo& pi) {
 	p = putUint(buf, p, cap, (unsigned) pi.sid);
 	p = putStr(buf, p, cap, "\nKthread:\t");
 	p = putStr(buf, p, cap, pi.kthread ? "1" : "0");
-	p = putStr(buf, p, cap, "\nUid:\t0\t0\t0\t0");        // NanOS is single-user (root)
-	p = putStr(buf, p, cap, "\nGid:\t0\t0\t0\t0");
+	p = putStr(buf, p, cap, "\nUid:\t");                  // real / effective / saved-set / fs
+	p = putUint(buf, p, cap, pi.ruid); p = putStr(buf, p, cap, "\t");
+	p = putUint(buf, p, cap, pi.euid); p = putStr(buf, p, cap, "\t");
+	p = putUint(buf, p, cap, pi.suid); p = putStr(buf, p, cap, "\t");
+	p = putUint(buf, p, cap, pi.fsuid);
+	p = putStr(buf, p, cap, "\nGid:\t");
+	p = putUint(buf, p, cap, pi.rgid); p = putStr(buf, p, cap, "\t");
+	p = putUint(buf, p, cap, pi.egid); p = putStr(buf, p, cap, "\t");
+	p = putUint(buf, p, cap, pi.sgid); p = putStr(buf, p, cap, "\t");
+	p = putUint(buf, p, cap, pi.fsgid);
+	p = putStr(buf, p, cap, "\nGroups:\t");
+	for (int gi = 0; gi < pi.ngroups; gi++) {
+		p = putUint(buf, p, cap, pi.groups[gi]);
+		p = putStr(buf, p, cap, " ");
+	}
 	p = putStr(buf, p, cap, "\nVmSize:\t");
 	p = putUint(buf, p, cap, pi.memKb);
 	p = putStr(buf, p, cap, " kB\nVmRSS:\t");

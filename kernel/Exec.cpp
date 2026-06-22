@@ -139,6 +139,11 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		arch::mmuLoadDirPhys(userDir);
 		return -1;
 	}
+	int xc = vfs->checkExec(pp);          // execute permission on the file (+ search on ancestors)
+	if (xc < 0) {
+		arch::mmuLoadDirPhys(userDir);
+		return xc;
+	}
 	char* image = (char*) STAGE_BASE;
 	if (vfs->read(pp, st.size, 0, image) < 0) {
 		arch::mmuLoadDirPhys(userDir);
@@ -204,6 +209,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
 	sigExecReset(caller->sig, p->psig);      // caught handlers -> default across exec (calling thread)
 	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
+	credOnExec(p->cred, st.uid, st.gid, st.mode);   // honor setuid/setgid bits (su/sudo/passwd)
 	kernelSyscalls()->resetForRun();
 
 	arch::archFrameToUser(tf, entry, esp);   // iret will enter the new program ...
@@ -242,6 +248,8 @@ int forkProcess(arch::TrapFrame* tf) {
 	// child will bump past, never stale entries pointing into the child's own space.
 	child->mmapNext = parent->mmapNext;
 	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
+	child->cred = parent->cred;                // inherit credentials
+	child->sys->setCred(&child->cred);         // point at the CHILD's canonical Process::cred
 	child->kthread = false;
 	for (int i = 0; i < (int) sizeof child->comm; i++)
 		child->comm[i] = parent->comm[i];      // inherit name until the child exec's
