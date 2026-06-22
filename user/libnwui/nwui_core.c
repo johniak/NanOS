@@ -527,6 +527,50 @@ static int ta_pos_at(const nwui_node *n, int px, int py)
 	}
 }
 
+static int ci_eq(char a, char b, int mc)
+{
+	if (mc) return a == b;
+	if (a >= 'A' && a <= 'Z') a += 32;
+	if (b >= 'A' && b <= 'Z') b += 32;
+	return a == b;
+}
+int nwui_textarea_find(nwui_node *n, const char *needle, int matchcase, int wrap_around)
+{
+	int m = (int) strlen(needle);
+	if (m == 0) return 0;
+	for (int pass = 0; pass < (wrap_around ? 2 : 1); pass++) {
+		int from = pass == 0 ? n->caret : 0;
+		int to   = pass == 0 ? n->tlen  : n->caret;
+		for (int i = from; i + m <= to; i++) {
+			int k = 0;
+			while (k < m && ci_eq(n->tbuf[i + k], needle[k], matchcase)) k++;
+			if (k == m) {
+				n->anchor = i; n->caret = i + m;
+				ta_scroll_to_caret(n); n->dirty = 1;
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+void nwui_textarea_goto_line(nwui_node *n, int line1)
+{
+	int p = 0, ln = 1;
+	while (p < n->tlen && ln < line1) { if (n->tbuf[p] == '\n') ln++; p++; }
+	n->caret = p; n->anchor = p;
+	ta_scroll_to_caret(n); n->dirty = 1;
+}
+void nwui_textarea_select_all(nwui_node *n) { n->anchor = 0; n->caret = n->tlen; n->dirty = 1; }
+void nwui_textarea_insert_text(nwui_node *n, const char *s)
+{
+	int changed = 0;
+	for (const char *p = s; *p; p++) changed |= ta_insert(n, *p);
+	if (changed) {
+		ta_scroll_to_caret(n); n->dirty = 1;
+		if (n->on_change) n->on_change(n, n->user);
+	}
+}
+
 /* ---- list ---- */
 static int list_visible(const nwui_node *L) { int v = L->h / NWUI_ROW_H; return v < 1 ? 1 : v; }
 static int list_max_scroll(const nwui_node *L)   /* largest valid scroll (0 if everything fits) */

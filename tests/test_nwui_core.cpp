@@ -541,3 +541,25 @@ TEST_CASE("textarea click places caret, drag extends selection") {
 	CHECK(ta->anchor == 1); CHECK(ta->caret == 3);
 	delete u;
 }
+
+TEST_CASE("textarea find, goto-line, select-all, insert-text") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "foo\nBar\nbar baz";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	ta->caret = 0; ta->anchor = 0;
+
+	CHECK(nwui_textarea_find(ta, "bar", 0, 0) == 1);   // case-insensitive: hits "Bar"
+	CHECK(ta->anchor == 4); CHECK(ta->caret == 7);
+	CHECK(nwui_textarea_find(ta, "bar", 1, 0) == 1);   // case-sensitive from caret: "bar baz"
+	CHECK(ta->anchor == 8);
+	CHECK(nwui_textarea_find(ta, "zzz", 0, 0) == 0);
+
+	nwui_textarea_goto_line(ta, 2); CHECK(ta->caret == 4);
+	nwui_textarea_select_all(ta); CHECK(ta->anchor == 0); CHECK(ta->caret == ta->tlen);
+
+	ta->caret = 0; ta->anchor = 0;
+	nwui_textarea_insert_text(ta, "X\nY");
+	CHECK(strncmp(tb, "X\nYfoo", 6) == 0); CHECK(ta->caret == 3);
+	delete u;
+}
