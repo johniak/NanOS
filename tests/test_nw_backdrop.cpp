@@ -68,3 +68,11 @@ TEST_CASE("upsample: a horizontal two-pixel gradient is monotonic across the row
 	}
 	CHECK(((out[0] >> 16) & 0xff) == 0);     // leftmost samples the first lo pixel
 }
+
+TEST_CASE("cache reuse only when rect matches exactly and not dirty") {
+	nw_rect a = {10,10,100,80};
+	CHECK(nw_backdrop_reusable(a, a, 0) == 1);
+	CHECK(nw_backdrop_reusable(a, a, 1) == 0);                 // dirty
+	CHECK(nw_backdrop_reusable(a, (nw_rect){11,10,100,80}, 0) == 0); // moved
+	CHECK(nw_backdrop_reusable(a, (nw_rect){10,10,101,80}, 0) == 0); // resized
+}

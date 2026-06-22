@@ -83,6 +83,7 @@ static unsigned char  *cl_out[NW_MAX_CLIENTS];
  * g_winbuf = client content (cw*ch); g_winframe = the cached chrome+content frame (fw*fh). */
 static uint32_t *g_winbuf[NW_MAX_WINDOWS];
 static uint32_t *g_winframe[NW_MAX_WINDOWS];
+static uint32_t *g_winbackdrop[NW_MAX_WINDOWS];   /* per-window lo-res blurred-backdrop cache */
 
 /* --- Frame-time profiling (Phase 0). Off by default; build with -DNWM_PROFILE=1 to print the
  * cost of each recompose+blit (the per-frame cost paid while dragging) to stderr — the kernel
@@ -261,6 +262,7 @@ static void reconcile_buffers(void)
 		 * reallocating at the new size, or they leak (and the pointer is overwritten). */
 		if (g_winbuf[slot])   { free(g_winbuf[slot]);   g_winbuf[slot] = 0; }
 		if (g_winframe[slot]) { free(g_winframe[slot]); g_winframe[slot] = 0; }
+		if (g_winbackdrop[slot]) { free(g_winbackdrop[slot]); g_winbackdrop[slot] = 0; }
 		g_winbuf[slot] = (uint32_t *) malloc((size_t) w->cw * w->ch * 4);
 		if (g_winbuf[slot]) {
 			/* Pre-fill with the window material (light/dark per the title's dark flag) instead of
@@ -279,11 +281,17 @@ static void reconcile_buffers(void)
 		if (g_winframe[slot]) memset(g_winframe[slot], 0, (size_t) fw * fh * 4);
 		w->frame = g_winframe[slot];
 		w->frame_dirty = 1;            /* render it on the next compose */
+		/* per-window lo-res backdrop cache, sized to the worst-case cache_rect (full screen / F) */
+		g_winbackdrop[slot] = (uint32_t *) malloc((size_t) g_bdc.lo_cap * 4);
+		w->bd_blur = g_winbackdrop[slot];
+		w->bd_lw = w->bd_lh = 0; w->bd_dirty = 1;
+		w->bd_rect = (nw_rect){0,0,0,0};
 	}
 	for (int i = 0; i < NW_MAX_WINDOWS; i++)
 		if (!S.win[i].used) {
 			if (g_winbuf[i])   { free(g_winbuf[i]);   g_winbuf[i] = 0; }
 			if (g_winframe[i]) { free(g_winframe[i]); g_winframe[i] = 0; }
+			if (g_winbackdrop[i]) { free(g_winbackdrop[i]); g_winbackdrop[i] = 0; }
 		}
 }
 

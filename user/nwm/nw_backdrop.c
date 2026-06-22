@@ -77,6 +77,13 @@ void nw_downsample_box(const uint32_t *src, int sw, int sh, int src_stride,
 	}
 }
 
+int nw_backdrop_reusable(nw_rect cached, nw_rect want, int dirty)
+{
+	if (dirty) return 0;
+	return cached.x == want.x && cached.y == want.y &&
+	       cached.w == want.w && cached.h == want.h;
+}
+
 /* Map output pixel centers back into lo-res space in 16.16 fixed point, then bilinearly
  * blend the four neighbours with nw_lerp (per-channel linear interpolation). For a single
  * lo column/row the step is 0, so every output samples lo[0] (constant) — matches the tests. */

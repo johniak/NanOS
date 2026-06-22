@@ -307,31 +307,35 @@ void nw_render_dirty_frames(struct nw_server *s)
  * upscales the window-rect portion back into bdc->bd. Returns 1 if bd was filled, else 0
  * (region empty, or lo scratch too small -> caller composites without a backdrop). */
 static int build_backdrop(const struct nw_surface *back, const struct nw_backdrop_ctx *bdc,
-                          int x, int y, int w, int h)
+                          struct nw_window *w, int x, int y, int fw, int fh, int force_rebuild)
 {
 	int cx0, cy0, cx1, cy1;
 	nw_surface_bounds(back, &cx0, &cy0, &cx1, &cy1);          /* honours the damage scissor */
 	nw_rect clip = { cx0, cy0, cx1 - cx0, cy1 - cy0 };
-	nw_rect cr = nw_rect_intersect(nw_cache_rect((nw_rect){x, y, w, h}, bdc->radius,
-	                                             back->w, back->h), clip);
+	nw_rect want = nw_cache_rect((nw_rect){x, y, fw, fh}, bdc->radius, back->w, back->h);
+	nw_rect cr = nw_rect_intersect(want, clip);
 	if (nw_rect_empty(cr)) return 0;
-	int f = bdc->factor;
-	int lw = cr.w / f, lh = cr.h / f;
-	if (lw < 1 || lh < 1) return 0;
-	if (lw * lh > bdc->lo_cap) return 0;                      /* shouldn't happen; safety */
+	int f = bdc->factor, lw = want.w / f, lh = want.h / f;
+	if (lw < 1 || lh < 1 || lw * lh > bdc->lo_cap) return 0;
 
-	/* downsample back[cr] -> lo */
-	nw_downsample_box(back->px + (long) cr.y * back->stride + cr.x,
-	                  lw * f, lh * f, back->stride, bdc->lo, f);
-	/* blur the small copy in place (reuse the existing separable box blur) */
-	struct nw_surface lo;
-	lo.px = bdc->lo; lo.w = lw; lo.h = lh; lo.stride = lw;
-	nw_surface_noclip(&lo);
-	nw_blur_rect(&lo, 0, 0, lw, lh, bdc->radius / f > 0 ? bdc->radius / f : 1, bdc->passes);
-	/* upscale lo back into bd over the SAME cr region (aligned with `back`) */
-	nw_upsample_bilinear(bdc->lo, lw, lh,
-	                     bdc->bd->px + (long) cr.y * bdc->bd->stride + cr.x,
-	                     cr.w - (cr.w % f), cr.h - (cr.h % f), bdc->bd->stride);
+	int reuse = w->bd_blur && !force_rebuild &&
+	            nw_backdrop_reusable(w->bd_rect, want, w->bd_dirty) &&
+	            w->bd_lw == lw && w->bd_lh == lh;
+	if (!reuse) {
+		nw_downsample_box(back->px + (long) want.y * back->stride + want.x,
+		                  lw * f, lh * f, back->stride, bdc->lo, f);
+		struct nw_surface lo = { bdc->lo, lw, lh, lw, 0,0,0,0 };
+		nw_surface_noclip(&lo);
+		nw_blur_rect(&lo, 0, 0, lw, lh, bdc->radius / f > 0 ? bdc->radius / f : 1, bdc->passes);
+		if (w->bd_blur) {                       /* persist into the per-window cache */
+			for (int i = 0; i < lw * lh; i++) w->bd_blur[i] = bdc->lo[i];
+			w->bd_lw = lw; w->bd_lh = lh; w->bd_rect = want; w->bd_dirty = 0;
+		}
+	}
+	const uint32_t *lo_src = reuse ? w->bd_blur : (w->bd_blur ? w->bd_blur : bdc->lo);
+	nw_upsample_bilinear(lo_src, lw, lh,
+	                     bdc->bd->px + (long) want.y * bdc->bd->stride + want.x,
+	                     want.w - (want.w % f), want.h - (want.h % f), bdc->bd->stride);
 	return 1;
 }
 
@@ -349,7 +353,8 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		int fw = frame_w(w), fh = frame_h(w), focused = (idx == s->focus);
 		int alpha = (w->title[0] == '\x01') ? DARK_ALPHA : WIN_ALPHA;
 		const struct nw_surface *bd = 0;
-		if (bdc && bdc->bd && w->glass && build_backdrop(back, bdc, w->x, w->y, fw, fh))
+		if (bdc && bdc->bd && w->glass &&
+		    build_backdrop(back, bdc, (struct nw_window *) w, w->x, w->y, fw, fh, 0))
 			bd = bdc->bd;
 		if (w->frame) {                          /* cached frame: composite window-local source */
 			struct nw_surface fs;

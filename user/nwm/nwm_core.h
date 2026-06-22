@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include "nwproto.h"
+#include "nw_backdrop.h"   /* nw_rect (+ tunables) for the per-window backdrop cache */
 
 /* Limits + decoration geometry (frame = title bar on top, thin border elsewhere). */
 enum {
@@ -75,6 +76,10 @@ struct nw_window {
 	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
 	uint8_t   glass;       /* 1 => this window gets a blurred backdrop (default for all)      */
 	uint8_t   type;        /* enum nw_win_type; default NW_WIN_NORMAL                         */
+	uint32_t *bd_blur;     /* per-window LO-RES blurred backdrop cache (caller-allocated)     */
+	int       bd_lw, bd_lh;/* lo-res cache dimensions                                        */
+	nw_rect   bd_rect;     /* the cache_rect (screen coords) bd_blur was computed for         */
+	int       bd_dirty;    /* 1 => backdrop must be rebuilt next compose                      */
 	int       minimized;   /* hidden from the scene (taskbar button stays); restored from the taskbar */
 	int       maximized;   /* filling the work area (between menu bar and taskbar)                    */
 	int       sx, sy, scw, sch;   /* geometry saved before maximizing, restored on un-maximize        */

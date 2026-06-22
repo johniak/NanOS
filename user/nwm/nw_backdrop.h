@@ -40,4 +40,8 @@ void nw_downsample_box(const uint32_t *src, int sw, int sh, int src_stride,
 void nw_upsample_bilinear(const uint32_t *lo, int lw, int lh,
                           uint32_t *out, int ow, int oh, int out_stride);
 
+/* 1 if a window's cached blur for `cached` can be reused for the wanted cache_rect `want`
+ * (same size and origin, and not flagged dirty); else 0 (must rebuild). */
+int nw_backdrop_reusable(nw_rect cached, nw_rect want, int dirty);
+
 #endif /* NW_BACKDROP_H */
