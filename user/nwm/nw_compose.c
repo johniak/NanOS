@@ -138,7 +138,8 @@ static inline uint32_t cmix(uint32_t d, uint32_t s, int a)
  * screen-space buffer aligned with `back`. Fast: clip bounds resolved once; straight middle rows
  * are one tight blend loop (or memcpy when opaque); only the two corner bands pay per-pixel AA. */
 static void composite_round(const struct nw_surface *back, const struct nw_surface *sc,
-                            int x, int y, int w, int h, int r, int alpha, int sox, int soy)
+                            int x, int y, int w, int h, int r, int alpha, int sox, int soy,
+                            const struct nw_surface *backdrop)
 {
 	int bx0, by0, bx1, by1;
 	nw_surface_bounds(back, &bx0, &by0, &bx1, &by1);
@@ -148,11 +149,12 @@ static void composite_round(const struct nw_surface *back, const struct nw_surfa
 		int yy = py - y;
 		uint32_t       *drow = back->px + (long) py * back->stride;
 		const uint32_t *srow = sc->px   + (long) (py - soy) * sc->stride - sox;
+		const uint32_t *bdrow = backdrop ? backdrop->px + (long) py * backdrop->stride : drow;
 		if (yy >= r && yy < h - r) {                  /* straight middle row: no AA */
 			if (alpha >= 255)
 				for (int px = x0; px < x1; px++) drow[px] = srow[px];
 			else
-				for (int px = x0; px < x1; px++) drow[px] = cmix(drow[px], srow[px], alpha);
+				for (int px = x0; px < x1; px++) drow[px] = cmix(bdrow[px], srow[px], alpha);
 			continue;
 		}
 		for (int px = x0; px < x1; px++) {            /* corner band: per-pixel AA coverage */
@@ -166,7 +168,7 @@ static void composite_round(const struct nw_surface *back, const struct nw_surfa
 				if (!cov) continue;
 				a = cov * alpha / 255;
 			}
-			drow[px] = (a >= 255) ? srow[px] : cmix(drow[px], srow[px], a);
+			drow[px] = (a >= 255) ? srow[px] : cmix(bdrow[px], srow[px], a);
 		}
 	}
 }
@@ -315,11 +317,11 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 			struct nw_surface fs;
 			fs.px = w->frame; fs.w = fw; fs.h = fh; fs.stride = fw;
 			nw_surface_noclip(&fs);
-			composite_round(back, &fs, w->x, w->y, fw, fh, NW_RADIUS, alpha, w->x, w->y);
+			composite_round(back, &fs, w->x, w->y, fw, fh, NW_RADIUS, alpha, w->x, w->y, 0);
 			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
 		} else if (scratch) {                    /* screen-space scratch: render live + composite */
 			draw_window_to(scratch, w, focused, w->x, w->y);
-			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS, alpha, 0, 0);
+			composite_round(back, scratch, w->x, w->y, fw, fh, NW_RADIUS, alpha, 0, 0, 0);
 			nw_stroke_round(back, w->x, w->y, fw, fh, NW_RADIUS, COL_BORDER, 150);
 		} else {
 			draw_window_to(back, w, focused, w->x, w->y);     /* simple/host path: opaque, square */
