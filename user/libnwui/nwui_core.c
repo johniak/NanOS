@@ -627,6 +627,25 @@ void nwui_textarea_goto_line(nwui_node *n, int line1)
 	ta_scroll_to_caret(n); n->dirty = 1;
 }
 void nwui_textarea_select_all(nwui_node *n) { n->anchor = 0; n->caret = n->tlen; n->dirty = 1; }
+
+/* ---- path helpers (pure; for the file dialog) ---- */
+void nwui_path_join(const char *dir, const char *name, char *out, int cap)
+{
+	int n = 0;
+	for (const char *p = dir; *p && n < cap - 1; p++) out[n++] = *p;
+	if (n > 0 && out[n - 1] != '/' && n < cap - 1) out[n++] = '/';
+	for (const char *p = name; *p && n < cap - 1; p++) out[n++] = *p;
+	out[n] = 0;
+}
+void nwui_path_up(char *path)
+{
+	int n = (int) strlen(path);
+	while (n > 1 && path[n - 1] == '/') n--;          /* drop trailing slash */
+	while (n > 1 && path[n - 1] != '/') n--;          /* drop last component */
+	while (n > 1 && path[n - 1] == '/') n--;          /* drop the slash */
+	path[n] = 0;
+	if (n == 0) { path[0] = '/'; path[1] = 0; }
+}
 void nwui_textarea_insert_text(nwui_node *n, const char *s)
 {
 	int changed = 0;

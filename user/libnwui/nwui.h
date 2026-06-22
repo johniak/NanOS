@@ -80,6 +80,14 @@ void       nwui_message(nwui *u, const char *title, const char *text);
  * closes; Cancel just closes. (Find, Go To, rename, …) */
 void       nwui_prompt(nwui *u, const char *title, char *buf, int cap, nwui_cb on_ok, void *user);
 
+/* ---- path helpers (pure) + the file open/save dialog ---- */
+void       nwui_path_join(const char *dir, const char *name, char *out, int cap);
+void       nwui_path_up(char *path);
+/* A modal file chooser: a directory listing + an editable path field (bound to out_path) +
+ * Open/Save & Cancel. save=1 = "Save As". OK fires on_ok with out_path set. */
+void       nwui_file_dialog(nwui *u, int save, const char *start_dir,
+                            char *out_path, int cap, nwui_cb on_ok, void *user);
+
 /* A labeled toggle over an APP-OWNED int flag (0/1). Click or Space flips it. */
 nwui_node *nwui_checkbox(nwui *u, const char *label, int *value, nwui_cb on_change, void *user);
 

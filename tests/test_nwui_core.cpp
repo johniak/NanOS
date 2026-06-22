@@ -677,3 +677,20 @@ TEST_CASE("nwui_message opens a modal that OK closes; nwui_prompt fires on_ok") 
 	CHECK(prompthits == 1);
 	delete u;
 }
+
+TEST_CASE("path join and path-up") {
+	char out[64];
+	nwui_path_join("/disks/main", "notes.txt", out, sizeof out);
+	CHECK(strcmp(out, "/disks/main/notes.txt") == 0);
+	nwui_path_join("/", "a", out, sizeof out);
+	CHECK(strcmp(out, "/a") == 0);
+	nwui_path_join("/d/", "b", out, sizeof out);     // already-trailing slash: no double
+	CHECK(strcmp(out, "/d/b") == 0);
+	char p[64];
+	strcpy(p, "/disks/main/sub"); nwui_path_up(p);
+	CHECK(strcmp(p, "/disks/main") == 0);
+	strcpy(p, "/"); nwui_path_up(p);
+	CHECK(strcmp(p, "/") == 0);
+	strcpy(p, "/one"); nwui_path_up(p);
+	CHECK(strcmp(p, "/") == 0);
+}
