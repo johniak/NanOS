@@ -67,6 +67,9 @@ void       nwui_textarea_insert_text(nwui_node *n, const char *s);
  * matching key the callback fires and the keystroke is consumed; share the menu callbacks. */
 void       nwui_accel(nwui *u, int ctrl, char key, int fkey, nwui_cb cb, void *user);
 
+/* A labeled toggle over an APP-OWNED int flag (0/1). Click or Space flips it. */
+nwui_node *nwui_checkbox(nwui *u, const char *label, int *value, nwui_cb on_change, void *user);
+
 /* A scrollable list of rows. Items are an APP-OWNED array of strings (set with nwui_list_set).
  * A single click selects a row; a DOUBLE-click (or Enter) fires on_activate ("open"); arrows
  * move the selection and a scrollbar appears when rows overflow. The app reads which row fired

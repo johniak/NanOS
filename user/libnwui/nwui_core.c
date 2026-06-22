@@ -76,6 +76,14 @@ nwui_node *nwui_textarea(nwui *u, char *buf, int cap, nwui_cb on_change, void *u
 	return n;
 }
 
+nwui_node *nwui_checkbox(nwui *u, const char *label, int *value, nwui_cb on_change, void *user)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_CHECKBOX);
+	set_caption(n, label); n->vbool = value;
+	n->on_click = on_change; n->user = user; n->focusable = 1;
+	return n;
+}
+
 nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user)
 {
 	nwui_node *n = nwui_alloc(u, NWUI_LIST);
@@ -205,6 +213,10 @@ void nwui_measure(nwui_node *n)
 		break;
 	case NWUI_TEXTAREA:
 		n->mw = 240; n->mh = 6 * NW_FONT_H;
+		break;
+	case NWUI_CHECKBOX:
+		n->mw = 16 + 6 + (int) strlen(n->text) * NW_FONT_W;
+		n->mh = NW_FONT_H + 4;
 		break;
 	case NWUI_LIST:
 		n->mw = 220;
@@ -671,6 +683,13 @@ static void menu_action(nwui *u, int item)
 	}
 }
 
+static void cb_toggle(nwui_node *n)
+{
+	if (n->vbool) *n->vbool = !*n->vbool;
+	n->dirty = 1;
+	if (n->on_click) n->on_click(n, n->user);
+}
+
 void nwui_accel(nwui *u, int ctrl, char key, int fkey, nwui_cb cb, void *user)
 {
 	if (u->naccel >= 24) return;
@@ -740,6 +759,9 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				int p = ta_pos_at(over, ev->x, ev->y);
 				over->caret = p; over->anchor = p; over->dirty = 1;   /* place caret, clear sel */
 			}
+			else if (over && over->kind == NWUI_CHECKBOX) {
+				set_focus(u, over); over->pressed = 1; over->dirty = 1;
+			}
 			else if (over && over->kind == NWUI_LIST) {
 				set_focus(u, over);
 				int sb_x = over->x + over->w - NWUI_SB_W;
@@ -782,6 +804,10 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				u->armed->pressed = 0; u->armed->dirty = 1;
 				if (over == u->armed && over->on_click) over->on_click(over, over->user);
 			}
+			if (u->armed && u->armed->kind == NWUI_CHECKBOX) {
+				u->armed->pressed = 0; u->armed->dirty = 1;
+				if (over == u->armed) cb_toggle(u->armed);
+			}
 			if (u->armed && u->armed->kind == NWUI_LIST) u->armed->sb_drag = 0;
 			u->armed = 0;
 		}
@@ -804,6 +830,10 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			} else if (ev->ch == '\n' || ev->ch == '\r') {
 				list_activate(L);
 			}
+			break;
+		}
+		if (u->focus && u->focus->kind == NWUI_CHECKBOX) {
+			if (ev->ch == ' ') cb_toggle(u->focus);
 			break;
 		}
 		if (u->focus && u->focus->kind == NWUI_TEXTAREA) {

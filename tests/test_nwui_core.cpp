@@ -608,3 +608,18 @@ TEST_CASE("ctrl and function-key accelerators fire and suppress typing") {
 	CHECK(strcmp(tb, "a") == 0);
 	delete u;
 }
+
+TEST_CASE("checkbox toggles its bound value on click and Space") {
+	nwui *u = new nwui; nwui_init(u);
+	int v = 0;
+	nwui_node *cb = nwui_checkbox(u, "Wrap", &v, 0, 0);
+	nwui_set_root(u, cb); u->win_w = 200; u->win_h = 60; nwui_layout(u);
+	click(u, cb->x + 4, cb->y + 4);
+	CHECK(v == 1);
+	click(u, cb->x + 4, cb->y + 4);
+	CHECK(v == 0);
+	u->focus = cb; cb->focused = 1;
+	key(u, ' ');                              // Space toggles when focused
+	CHECK(v == 1);
+	delete u;
+}
