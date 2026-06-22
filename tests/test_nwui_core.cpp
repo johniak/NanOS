@@ -623,3 +623,32 @@ TEST_CASE("checkbox toggles its bound value on click and Space") {
 	CHECK(v == 1);
 	delete u;
 }
+
+static int g_modal_closed;
+static void on_modal_close(nwui_node *, void *u) { (*(int *) u)++; }
+
+TEST_CASE("modal captures input and routes to its subtree") {
+	nwui *u = new nwui; nwui_init(u);
+	int bg_clicks = 0;
+	nwui_node *bg_btn = nwui_button(u, "BG", on_click, &bg_clicks);
+	nwui_set_root(u, bg_btn);
+	u->win_w = 400; u->win_h = 300; nwui_layout(u);
+
+	int ok_clicks = 0;
+	nwui_node *ok = nwui_button(u, "OK", on_click, &ok_clicks);
+	nwui_node *dlg = nwui_pad(nwui_column(u, ok, (nwui_node *) 0), 10);
+	g_modal_closed = 0;
+	nwui_open_modal(u, dlg, on_modal_close, &g_modal_closed);
+	nwui_layout(u);
+	CHECK(nwui_modal_open(u) == 1);
+
+	click(u, 2, 2);                          // outside the modal -> must NOT reach background
+	CHECK(bg_clicks == 0);
+	click(u, ok->x + 2, ok->y + 2);          // OK inside the modal works
+	CHECK(ok_clicks == 1);
+
+	nwui_close_modal(u);
+	CHECK(nwui_modal_open(u) == 0);
+	CHECK(g_modal_closed == 1);
+	delete u;
+}

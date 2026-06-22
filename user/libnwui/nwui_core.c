@@ -313,6 +313,15 @@ void nwui_layout(nwui *u)
 	nwui_measure(u->root);
 	nwui_arrange(u->root, 0, 0, u->win_w, u->win_h);
 	mark_all_dirty(u->root);
+	if (u->modal) {                              /* lay the modal out centered (upper third) */
+		nwui_measure(u->modal);
+		int mw = u->modal->mw, mh = u->modal->mh;
+		int mx = (u->win_w - mw) / 2, my = (u->win_h - mh) / 3;
+		if (mx < 0) mx = 0;
+		if (my < 0) my = 0;
+		nwui_arrange(u->modal, mx, my, mw, mh);
+		mark_all_dirty(u->modal);
+	}
 	u->layout_dirty = 0;
 }
 
@@ -336,6 +345,42 @@ static void set_focus(nwui *u, nwui_node *n)
 	u->focus = n;
 	if (n) { n->focused = 1; n->dirty = 1; }
 }
+
+static nwui_node *first_focusable(nwui_node *n)
+{
+	if (!n) return 0;
+	if (n->focusable) return n;
+	for (int i = 0; i < n->nchild; i++) {
+		nwui_node *r = first_focusable(n->child[i]);
+		if (r) return r;
+	}
+	return 0;
+}
+void nwui_open_modal(nwui *u, nwui_node *subtree, nwui_cb on_close, void *user)
+{
+	u->modal = subtree;
+	u->saved_focus = u->focus;
+	if (u->focus) u->focus->focused = 0;
+	u->modal_close_cb = on_close;
+	u->modal_close_user = user;
+	u->focus = first_focusable(subtree);
+	if (u->focus) u->focus->focused = 1;
+	u->layout_dirty = 1;
+}
+void nwui_close_modal(nwui *u)
+{
+	nwui_cb cb = u->modal_close_cb;
+	void *usr = u->modal_close_user;
+	if (u->focus) u->focus->focused = 0;
+	u->modal = 0;
+	u->focus = u->saved_focus;
+	u->saved_focus = 0;
+	if (u->focus) u->focus->focused = 1;
+	u->modal_close_cb = 0;
+	u->layout_dirty = 1;
+	if (cb) cb(0, usr);
+}
+int nwui_modal_open(const nwui *u) { return u->modal != 0; }
 
 /* ---- textfield selection + editing (caret + anchor; selection = [lo,hi)) ---- */
 static int sel_lo(const nwui_node *tf) { return tf->anchor < tf->caret ? tf->anchor : tf->caret; }
@@ -742,7 +787,7 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			break;
 		}
 
-		nwui_node *over = nwui_hit(u->root, ev->x, ev->y);
+		nwui_node *over = nwui_hit(u->modal ? u->modal : u->root, ev->x, ev->y);
 		if (right && !pright && over && over->kind == NWUI_TEXTFIELD) {
 			set_focus(u, over);
 			menu_open(u, over, ev->x, ev->y);        /* right-click -> context menu */

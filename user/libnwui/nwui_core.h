@@ -99,6 +99,12 @@ struct nwui {
 	int ctrl_down;
 	struct { int ctrl, fkey; char key; nwui_cb cb; void *user; } accel[24];
 	int naccel;
+
+	/* modal overlay: a centered sub-tree that captures all input until dismissed */
+	nwui_node *modal;            /* modal subtree root, or NULL */
+	nwui_node *saved_focus;      /* focus to restore on close */
+	nwui_cb    modal_close_cb;
+	void      *modal_close_user;
 };
 
 /* Built-in context-menu items (indices). */

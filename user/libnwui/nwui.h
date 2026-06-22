@@ -67,6 +67,13 @@ void       nwui_textarea_insert_text(nwui_node *n, const char *s);
  * matching key the callback fires and the keystroke is consumed; share the menu callbacks. */
 void       nwui_accel(nwui *u, int ctrl, char key, int fkey, nwui_cb cb, void *user);
 
+/* ---- modal overlay ----
+ * Show `subtree` centered over the window; it captures ALL input until dismissed. Focus moves
+ * to its first focusable child; closing restores the prior focus and fires on_close (if set). */
+void       nwui_open_modal(nwui *u, nwui_node *subtree, nwui_cb on_close, void *user);
+void       nwui_close_modal(nwui *u);
+int        nwui_modal_open(const nwui *u);
+
 /* A labeled toggle over an APP-OWNED int flag (0/1). Click or Space flips it. */
 nwui_node *nwui_checkbox(nwui *u, const char *label, int *value, nwui_cb on_change, void *user);
 
