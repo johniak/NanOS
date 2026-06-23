@@ -359,6 +359,13 @@ void Kernel::start() {
 	vfs->mount("/tmp", new RamFs());
 	okEnd();
 
+	// Writable /run (RamFs), the runtime-state dir (sudo's auth-timestamp dir /run/sudo, pid files,
+	// ...). Like /tmp it is a transient tmpfs cleared on reboot; the synthetic root is read-only so
+	// programs that expect /run to be writable (sudo) need a real mount here.
+	okBegin("Mounting tmpfs at /run");
+	vfs->mount("/run", new RamFs());
+	okEnd();
+
 	// Writable /etc (RamFs), populated from the read-only on-disk template, so Linux network
 	// apps find /etc/{resolv.conf,hosts,nsswitch.conf,...} at the canonical path (DHCP rewrites
 	// resolv.conf in FAZA 10). The disk driver is read-only, so /etc lives in a tmpfs like /tmp.

@@ -97,16 +97,22 @@ gid_t getgid(void)   { return (gid_t) sys3(SYS_getgid, 0, 0, 0); }
 gid_t getegid(void)  { return (gid_t) sys3(SYS_getegid, 0, 0, 0); }
 int setuid(uid_t u)  { return reterr(sys3(SYS_setuid, (int) u, 0, 0)); }
 int setgid(gid_t g)  { return reterr(sys3(SYS_setgid, (int) g, 0, 0)); }
-int seteuid(uid_t u) { return reterr(sys3(SYS_setresuid, -1, (int) u, -1)); }   /* glibc routes via setresuid */
-int setegid(gid_t g) { return reterr(sys3(SYS_setresgid, -1, (int) g, -1)); }
-int setreuid(uid_t r, uid_t e) { return reterr(sys3(SYS_setreuid, (int) r, (int) e, 0)); }
-int setregid(gid_t r, gid_t e) { return reterr(sys3(SYS_setregid, (int) r, (int) e, 0)); }
-int setresuid(uid_t r, uid_t e, uid_t s) { return reterr(sys3(SYS_setresuid, (int) r, (int) e, (int) s)); }
-int setresgid(gid_t r, gid_t e, gid_t s) { return reterr(sys3(SYS_setresgid, (int) r, (int) e, (int) s)); }
+/* The POSIX "leave this id unchanged" sentinel is (uid_t)-1. picolibc's uid_t/gid_t are 16-bit,
+ * so (uid_t)-1 == 65535 — a plain (int) cast would hand the kernel 65535 (a real id), but the
+ * kernel recognises ONLY -1 as "unchanged". Map the sentinel to -1 here so the setres/setre
+ * family matches POSIX. (This was the sudo set_perms bug: it passed (uid_t)-1 and the kernel
+ * changed the id to 65535 instead of leaving it unchanged.) */
+static int idarg(uid_t v) { return v == (uid_t) -1 ? -1 : (int) v; }
+int seteuid(uid_t u) { return reterr(sys3(SYS_setresuid, -1, idarg(u), -1)); }   /* glibc routes via setresuid */
+int setegid(gid_t g) { return reterr(sys3(SYS_setresgid, -1, idarg(g), -1)); }
+int setreuid(uid_t r, uid_t e) { return reterr(sys3(SYS_setreuid, idarg(r), idarg(e), 0)); }
+int setregid(gid_t r, gid_t e) { return reterr(sys3(SYS_setregid, idarg(r), idarg(e), 0)); }
+int setresuid(uid_t r, uid_t e, uid_t s) { return reterr(sys3(SYS_setresuid, idarg(r), idarg(e), idarg(s))); }
+int setresgid(gid_t r, gid_t e, gid_t s) { return reterr(sys3(SYS_setresgid, idarg(r), idarg(e), idarg(s))); }
 int getresuid(uid_t* r, uid_t* e, uid_t* s) { return reterr(sys3(SYS_getresuid, (int) r, (int) e, (int) s)); }
 int getresgid(gid_t* r, gid_t* e, gid_t* s) { return reterr(sys3(SYS_getresgid, (int) r, (int) e, (int) s)); }
-int setfsuid(uid_t u) { return sys3(SYS_setfsuid, (int) u, 0, 0); }   /* returns the PREVIOUS fsuid */
-int setfsgid(gid_t g) { return sys3(SYS_setfsgid, (int) g, 0, 0); }
+int setfsuid(uid_t u) { return sys3(SYS_setfsuid, idarg(u), 0, 0); }   /* returns the PREVIOUS fsuid */
+int setfsgid(gid_t g) { return sys3(SYS_setfsgid, idarg(g), 0, 0); }
 int getgroups(int n, gid_t* list) { return reterr(sys3(SYS_getgroups, n, (int) list, 0)); }
 int setgroups(int n, const gid_t* list) { return reterr(sys3(SYS_setgroups, n, (int) list, 0)); }
 
