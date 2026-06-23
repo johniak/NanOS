@@ -1,9 +1,16 @@
 # NanOS — Roadmap „Real Hardware / Daily Driver" (zespół 30 osób, 18–24 mies.)
 
-> Dokument strategiczny — **główny roadmap NanOS**. Stan repo: gałąź `feat/pthread`
+> Dokument strategiczny — **główny roadmap NanOS**. Pierwotnie spisany na gałęzi `feat/pthread`
 > (multiprocessing + basic coreutils ukończone), 2026-06-16. Definiuje cel nadrzędny, model
 > pracy zespołu 30 osób, governance repo oraz 8-kwartałowy backbone milestone'ów prowadzący
 > NanOS od „działa w QEMU" do „bootuje i działa jako daily-driver na realnym laptopie".
+>
+> **AKTUALIZACJA 2026-06-23:** krytyczna ścieżka wyprzedziła plan — **x86_64 (Strumień A/B)**,
+> **stos USB (F)**, **NIC e1000e/I219 (E)** i **pierwszy boot bare-metal na realnym Dell
+> Latitude 5310 (D/G)** są **zrobione**, a doszedł nieplanowany **podsystem uprawnień
+> użytkowników (DAC/login/sudo)**. Szczegóły i mapowanie na strumienie/kwartały: sekcja
+> **„Zrealizowane od napisania roadmapy"** niżej. Backbone Q1–Q8 zostaje jako mapa kierunku
+> (zgodnie z zasadą „nie kasujemy funkcji z roadmapy" z §0).
 >
 > **Urządzenie docelowe: Dell Latitude 5310** (Comet Lake, 2020). Zastępuje wcześniejszy
 > cel (HP EliteBook 820 G3 / Skylake); różnice sprzętowe naniesione w macierzy §5 i kwartałach
@@ -39,6 +46,31 @@ realny ping/wget, **TLS/SSL/SSH** (OpenSSL + Dropbear), **NanWM** (compositor), 
 (bash/vim/grep/git/netsurf/...), oraz **basic coreutils** (`mkdir rmdir rm touch mv cp ln pwd chmod
 wc head tail true false env basename dirname`, 2026-06-16). Decyzje projektowe i wewnętrzne detale
 i686 — historia w gicie + `docs/superpowers/{specs,plans}/2026-06-07..16*`.
+
+---
+
+## Zrealizowane od napisania roadmapy (aktualizacja 2026-06-23)
+
+Roadmap powstał, gdy x86_64 dopiero wstawał (Q1 „częściowo"). Od tego czasu krytyczna ścieżka
+**A→F** została w większości domknięta w QEMU, a system **zabootował na realnym Latitude 5310**.
+Poniżej stan faktyczny zmapowany na strumienie/kwartały (`✅` = zrobione i zweryfikowane,
+`🟡` = działa w QEMU, weryfikacja sprzętowa częściowa, `⬜` = pozostaje):
+
+| Strumień / kwartał | Element | Status | Dowód / dokumentacja |
+|---|---|---|---|
+| **A** (Q1–Q2) | x86_64 long mode, **paging 4-poziomowy PML4** (NX, huge-page identity map), GDT/IDT/TSS 64-bit, `syscall`/`sysret`, numery syscalli x86_64 | ✅ | `docs/en/x86_64.md`, spec `2026-06-15-x86_64-migration-analysis.md`; **sufit ~1 GiB VA naprawiony** (privatyzacja okna per-proces; bootuje i używa >1 GiB RAM) |
+| **A/B** (Q2) | `arch/x86_64/` za kontraktami `<arch/...>`, `make check-arch`; `init.nxe` 64-bit; **boot z ext4 → `nsh`/bash**; rebuild ~wszystkich portów (bash/vim/grep/git/htop/netsurf/OpenSSL/Dropbear) | ✅ | `make image64`/`run64`; suite `verify64` (633+ testów + ATA + live-USB smoke) |
+| **C** (Q5) | SMP / prawdziwa równoległość (AP startup, per-CPU, scheduler SMP, TLB shootdown) | ⬜ | jednoprocesorowo; minimalny **LAPIC** już jest (inicjowany z `mmuInitKernel`) |
+| **E** (Q4) | NIC **e1000 → e1000e (82574L, ping-verified) → I219** (kext `ich9lan`); wspólny `E1000Core` + **single-vector MSI** | 🟡 | `docs/en/networking.md`; e1000e w QEMU ✅; **I219 nietestowany do czasu Della** |
+| **E** (Q3–Q4) | NVMe (M.2 5310), PCIe ECAM, GPT | ⬜ | dziś ATA PIO + USB-MSC; NVMe pozostaje |
+| **F** (Q3–Q4) | **Stos USB w jądrze**: xHCI + USB core + **HID (klawiatura/mysz)** + **mass storage (bulk/SCSI)** — live-USB read-write root | ✅ | Stream F 11/11; `docs/en/x86_64.md` (sekcja USB); live-USB smoke w `verify64` |
+| **D/G** (Q4 — KAMIEŃ MILOWY) | **Boot bare-metal**: dual-boot **Limine** (BIOS+UEFI) na hybrid GPT; **NanOS bootuje na realnym Dell Latitude 5310 z USB (init→shell)** | 🟡 | po 5 poprawkach HW (FAT32 ESP, mapa loadera 64 GiB, 64-bit MMIO, guard nakładania huge-page/4K-MMIO, per-sektor USB-MSC + zasilanie portów xHCI); **pozostaje: NVMe / I219 / natywna rozdzielczość** |
+| **(nowy, nieplanowany)** | **Uprawnienia użytkowników w stylu Linuksa**: `Cred` na `Process`, **VFS DAC** (`inode_permission`), setuid-at-exec, syscalle poświadczeń (setre/setres/setfs uid+gid), baza kont `/etc` (passwd/group/shadow/sudoers), `crypt($6$)`, wybór powłoki (chsh + `/etc/shells`), home pod **`/users`**; porty **toybox** (login/su/passwd/id) + **sudo** (`%wheel`) | ✅ | `docs/en/users.md`, spec `2026-06-22-linux-user-permissions-design.md`; QEMU-verified (login jan → `id`/`su`/`sudo`); branch `feat/linux-user-permissions` |
+
+**Wniosek dla planu:** Bramki **Q2** (jądro x86_64 + boot z ext4 + shell) i znaczna część **Q4**
+(USB + pierwszy bare-metal) są osiągnięte; otwarte pozostają przede wszystkim **SMP (C, Q5)**,
+**NVMe + PCIe (E, Q3–Q4)**, **firmware/ACPI/GOP natywne (D, Q3)** oraz **MM/hardening (G, Q6)**.
+Następny realny cel sprzętowy: **NVMe + I219 + natywna rozdzielczość na Latitude 5310**.
 
 ---
 

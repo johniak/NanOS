@@ -114,8 +114,3 @@ a thread that has it unblocked. Cancellation is implemented on top of this via a
   kernel heap returns to the byte with no leak; peak concurrent kernel-stack use (~32–64 live
   threads ≈ 1–2 MiB) stays well within the heap. The task-slot ceiling
   (`MAXTASKS = ProcTable::MAX + 8`) is ample and was deliberately **not** lowered.
-
-## Follow-up
-
-A Polish translation `docs/pl/threads.md` is a pending follow-up (docs are bilingual; see
-`docs/en/README.md`); it is not required to land this change.
