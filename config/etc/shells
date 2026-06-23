@@ -1,5 +1,5 @@
 # /etc/shells — valid login shells (getusershell(3)). chsh restricts a user's login shell to
 # one listed here; login/su/dropbear reject a passwd shell that is absent. Copied into the
-# writable /etc tmpfs at boot from this template. bash.nxe appears only when `make bash` staged it.
+# writable /etc tmpfs at boot from this template.
 /disks/main/nanos/bin/nsh.nxe
-/disks/main/bin/bash.nxe
+/disks/main/apps/bash/bash.nxe

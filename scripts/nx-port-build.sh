@@ -190,7 +190,7 @@ sudo)
 	./configure --host="$HOST_TRIPLE" --build=x86_64-pc-linux-gnu \
 		--disable-shared --enable-static-sudoers --disable-nls --without-pam --without-ldap \
 		--without-sssd --disable-pie --disable-hardening --disable-openssl \
-		CC="$CC" AWK=awk "CPPFLAGS=-D__nanos__ -include nx-getopt-import.h" \
+		CC="$CC" AWK=awk "CPPFLAGS=-D__nanos__ -include nx-getopt-import.h -include string.h" \
 		--cache-file="$STAGE/nx.cache" 2>&1 | tail -15
 	make 2>&1 | tail -20
 	BIN="$STAGE/src/sudo"

@@ -6,10 +6,6 @@
 #ifndef NX_COMPAT_DECLS_H
 #define NX_COMPAT_DECLS_H
 
-/* string.h up front: some ports (sudo) have a TU that uses memcpy/strlen without including it
- * directly, relying on transitive Linux-header pulls that picolibc doesn't replicate. */
-#include <string.h>
-
 struct stat;
 int lstat(const char* path, struct stat* buf);
 /* renameat: implemented in syscalls.c (SYS_renameat) but picolibc's <stdio.h> doesn't declare it
@@ -100,11 +96,24 @@ typedef jmp_buf sigjmp_buf;
 #define siglongjmp(env, val)     longjmp(env, val)
 #endif
 
-/* dprintf/vdprintf: picolibc's <stdio.h> doesn't declare them for the freestanding build (the
- * symbols are in libc.a). toybox's xprintf layer uses dprintf. */
-#include <stdarg.h>
-int dprintf(int fd, const char* fmt, ...);
-int vdprintf(int fd, const char* fmt, va_list ap);
+/* Credential transition family: now that libc.ndl exports these (the NanOS user-permission work),
+ * a port's configure detects them and uses them — but picolibc's <unistd.h> declares only
+ * setuid/setreuid, so declare the rest here so they are not implicitly-declared (or self-declared
+ * with a clashing signature). The definitions are the syscall wrappers in syscalls.c.
+ * (dprintf is deliberately NOT declared here: GNU bash has its OWN void-returning dprintf in
+ * externs.h, which a POSIX `int dprintf` decl would clash with. Ports that want POSIX dprintf get
+ * it from picolibc's <stdio.h> under _GNU_SOURCE; the symbol lives in libc.ndl.) */
+#include <sys/types.h>
+int seteuid(uid_t euid);
+int setegid(gid_t egid);
+int setreuid(uid_t ruid, uid_t euid);
+int setregid(gid_t rgid, gid_t egid);
+int setresuid(uid_t r, uid_t e, uid_t s);
+int setresgid(gid_t r, gid_t e, gid_t s);
+int getresuid(uid_t* r, uid_t* e, uid_t* s);
+int getresgid(gid_t* r, gid_t* e, gid_t* s);
+int setfsuid(uid_t u);
+int setfsgid(gid_t g);
 
 /* _PATH_DEFPATH: picolibc's <paths.h> omits it; login/su seed the session PATH from it. */
 #include <paths.h>
