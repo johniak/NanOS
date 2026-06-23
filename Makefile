@@ -1176,9 +1176,11 @@ _image64: _all _userland64 _kext
 	printf "rm /nanos/config/group\nwrite config/group /nanos/config/group\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	printf "rm /nanos/config/sudoers\nwrite config/sudoers /nanos/config/sudoers\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	-printf "set_inode_field /nanos/config/shadow mode 0100600\nset_inode_field /nanos/config/sudoers mode 0100440\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
-	# jan's home directory (uid/gid 1000), owned by jan so the login shell can write there.
-	-printf "mkdir /home\nmkdir /home/jan\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
-	-printf "set_inode_field /home/jan uid 1000\nset_inode_field /home/jan gid 1000\nset_inode_field /home/jan mode 040755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	# jan's home directory under /users (NanOS/macOS layout, not Linux /home), uid/gid 1000 so the
+	# login shell can write there. Remove any stale /home from an earlier (incremental) build.
+	-printf "rmdir /home/jan\nrmdir /home\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /users\nmkdir /users/jan\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "set_inode_field /users/jan uid 1000\nset_inode_field /users/jan gid 1000\nset_inode_field /users/jan mode 040755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
 	# tmpfs at boot, see Kernel.cpp populateEtc). /etc/shells in particular lists the valid login
 	# shells: dropbear's getusershell() rejects an SSH login whose passwd shell isn't there. Mirrors
