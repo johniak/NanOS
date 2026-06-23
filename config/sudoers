@@ -1,4 +1,7 @@
 Defaults !use_pty
 Defaults secure_path="/disks/main/nanos/bin:/disks/main/bin"
+# env_reset (the default) sanitises the environment; keep vim's runtime vars so `sudo vim` finds
+# its runtime and doesn't fail with "E1187: Failed to source defaults.vim" (set in /etc/profile).
+Defaults env_keep += "VIMRUNTIME VIMINIT"
 root ALL=(ALL) ALL
 %wheel ALL=(ALL) NOPASSWD: ALL

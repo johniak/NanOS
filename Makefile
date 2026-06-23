@@ -1265,7 +1265,7 @@ _image64: _all _userland64 _kext
 	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
 	if [ -f $(BINFOLDER)vim.nxe ]; then \
 	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
@@ -1288,7 +1288,7 @@ _image64: _all _userland64 _kext
 	# /dev/fb0 and reads /dev/input0, both now present on x86_64 (the framebuffer multiboot tag).
 	if [ -f $(BINFOLDER)doom.nxe ]; then \
 	  printf "mkdir /apps/doom\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/doom/doom.nxe\nwrite $(BINFOLDER)doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /apps/doom/doom.nxe\nwrite $(BINFOLDER)doom.nxe /apps/doom/doom.nxe\nset_inode_field /apps/doom/doom.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
@@ -1301,7 +1301,7 @@ _image64: _all _userland64 _kext
 	# Mirrors the i686 _image netsurf population.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
 	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  if [ -d $(BINFOLDER)netsurf-res ]; then \
@@ -1369,7 +1369,7 @@ _image: _all _userland _kext _grub2-image
 	# shell can run an app by name without knowing its bundle layout (à la /usr/local/bin).
 	for p in $(APP_PROGS); do \
 	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	done
@@ -1385,7 +1385,7 @@ _image: _all _userland _kext _grub2-image
 	# staged bin/bash.nxe from the external fork. Skipped silently otherwise.
 	if [ -f $(BINFOLDER)bash.nxe ]; then \
 	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
@@ -1394,7 +1394,7 @@ _image: _all _userland _kext _grub2-image
 	# into the bundle; vim itself runs without it (`-u NONE`). Skipped if bin/vim.nxe is absent.
 	if [ -f $(BINFOLDER)vim.nxe ]; then \
 	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
@@ -1441,7 +1441,7 @@ _image: _all _userland _kext _grub2-image
 	# Launch inside NanWM with `-f nanwm` (selects the NanWM libnsfb surface). Skipped if absent.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
 	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	  if [ -d $(BINFOLDER)netsurf-res ]; then \
