@@ -10,6 +10,8 @@ bits 64
 
 extern irq_handler
 extern schedPreempt
+extern bklEnter             ; kernel/Bkl.cpp — Big Kernel Lock (SMP serialization)
+extern bklExit
 
 %macro IRQ 2
   global irq%1
@@ -77,6 +79,9 @@ irq_common_stub:
     push r14
     push r15
 
+    call bklEnter         ; take the BKL across the handler AND the deferred schedPreempt below.
+                          ; From ring 0 this nests recursively (the CPU already holds it); from
+                          ; ring 3 it acquires. smpThisCpu() is GS-independent so this is safe here.
     mov rdi, rsp          ; arg0 = kernel::Registers*
     cld
     call irq_handler
@@ -91,6 +96,8 @@ irq_common_stub:
     jz .no_preempt
     call schedPreempt
 .no_preempt:
+    call bklExit          ; release the BKL (balances bklEnter; schedPreempt's own switch, if it
+                          ; ran, did its release/re-acquire handoff internally)
 
     pop r15
     pop r14

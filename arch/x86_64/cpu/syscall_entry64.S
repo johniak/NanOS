@@ -8,6 +8,8 @@
 [BITS 64]
 [GLOBAL syscall_entry]
 [EXTERN syscall_dispatch64]      ; void syscall_dispatch64(kernel::Registers*)
+[EXTERN bklEnter]                ; kernel/Bkl.cpp — Big Kernel Lock (SMP serialization)
+[EXTERN bklExit]
 
 syscall_entry:
     swapgs                       ; GS.base -> kernel per-CPU (IA32_KERNEL_GS_BASE)
@@ -41,9 +43,12 @@ syscall_entry:
     push r14
     push r15
 
+    call bklEnter                ; take the BKL for the whole syscall body (+ its signalDeliver)
     mov rdi, rsp                 ; arg0 = &Registers
     cld
     call syscall_dispatch64
+    call bklExit                 ; release before SYSRET (a procExit/exec path won't return here,
+                                 ; but its schedule()/archEnterUser already balanced the enter)
 
     pop r15                      ; restore GPRs (rax now holds the syscall result)
     pop r14

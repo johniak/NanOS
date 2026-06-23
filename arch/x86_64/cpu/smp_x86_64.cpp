@@ -45,12 +45,15 @@ int smpInit() {
     return __atomic_load_n(&g_online, __ATOMIC_ACQUIRE);   // CPUs that actually came online
 }
 
-// Dense CPU index from THIS cpu's per-CPU block. GS base = &g_percpu[idx] in post-swapgs kernel
-// context (syscall/IRQ body); the BSP boot path is index 0. cpuIndex sits at %gs:16 (PerCpu).
+// Dense CPU index of the calling CPU. Read from the LAPIC id (always available, no MMIO side
+// effects) and mapped through the enumerated id table — unlike a %gs read, this is correct in
+// EVERY kernel context (syscall body, IRQ from ring 0 or 3, kernel threads), because GS is only
+// the per-CPU block after a swapgs. Used by the BKL on every kernel entry, so it must never lie.
+// Before bring-up (g_cpuCount == 1) the table is empty and the BSP is index 0.
 int smpThisCpu() {
-    uint32_t idx;
-    __asm__ __volatile__("movl %%gs:16, %k0" : "=r"(idx));
-    return (int) idx;
+    uint8_t id = kernel::lapicId();
+    for (int i = 0; i < g_cpuCount; i++) if (g_lapicIds[i] == id) return i;
+    return 0;
 }
 
 void smpSendIpi(int cpu, uint8_t vector) {

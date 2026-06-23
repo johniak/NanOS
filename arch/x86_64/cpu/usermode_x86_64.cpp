@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 namespace arch { void syscallSetKernelStack(uint64_t top); }   // syscall_x86_64.cpp
+extern "C" void bklExit();   // kernel/Bkl.cpp — drop the BKL on the one-way ring-3 entry
 
 namespace {
 // User window: image at loadBase=0x800000 growing up; stack at the top of the user window
@@ -104,6 +105,11 @@ void archEnterUser(uintptr_t entry, uintptr_t userRsp, AddressSpace* space) {
 	// is fine; a picolibc program sets a real thread pointer via arch_prctl(ARCH_SET_FS) and
 	// the scheduler reloads it on context switch (Plan 4/8). See the note in the plan.
 	archSetUserFsBase(0);
+	// This is the one-way kernel->ring3 entry (exec / init): it iretq's and never returns, so the
+	// normal syscall/IRQ-exit bklExit can't run. Drop the BKL here so the process runs in ring 3
+	// WITHOUT the lock (its next syscall re-takes it). Reached at depth 1 — from init's kernel-
+	// thread body (runCurrentBody's enter) or from an execve syscall (the entry stub's enter).
+	bklExit();
 	// iretq down to ring 3: push SS, RSP, RFLAGS(IF=1), CS, RIP.
 	__asm__ __volatile__(
 		"mov $0x23, %%ax\n\t"     // user data selector (DPL3)

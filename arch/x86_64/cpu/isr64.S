@@ -6,6 +6,8 @@
 bits 64
 
 extern isr_handler
+extern bklEnter           ; kernel/Bkl.cpp — Big Kernel Lock (SMP serialization)
+extern bklExit
 
 ; No-error-code vector: push a dummy 0 so every frame has the same shape.
 %macro ISR_NOERRCODE 1
@@ -82,9 +84,13 @@ isr_common_stub:
     push r14
     push r15
 
+    call bklEnter         ; serialize the fault handler (recursive if it nests inside a syscall;
+                          ; a handler that kills the process won't return here, but its schedule()
+                          ; handoff balances this enter).
     mov rdi, rsp          ; arg0 = kernel::Registers* (rsp is 16-byte aligned; see plan note)
     cld                   ; System V: DF must be clear on entry to C
     call isr_handler
+    call bklExit          ; release (balances bklEnter)
 
     ; Restore the 15 GPRs in reverse push order.
     pop r15

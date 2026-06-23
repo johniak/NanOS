@@ -5,6 +5,7 @@
 #include <arch/cpu.h>         // cpuIrqSave/Restore: protect the schedule() state mutation
 #include "WaitQueue.h"        // sleepOn/wakeAll operate on these event lists
 #include "SignalDispatch.h"   // hasPendingSignalCurrent: don't sleep through a pending signal
+#include "Bkl.h"              // Big Kernel Lock: released across the context switch (SMP)
 
 namespace kernel {
 
@@ -61,7 +62,13 @@ bool Scheduler::shouldResched(unsigned sliceTicks, unsigned quantum, bool wokeSl
 // idle must voluntarily yield to anything that became runnable.
 static void idleBody() {
 	for (;;) {
+		// Drop the BKL so other CPUs (and an IRQ waker landing on this idle CPU) can run while
+		// we halt; re-take it before touching scheduler state. The idle task runs in ring 0, so
+		// the timer IRQ that wakes us does NOT preempt here (irq64.S skips schedPreempt for ring-0
+		// interruptees) — it only flags g_needResched, which the schedule() below acts on.
+		g_bkl.exit();
 		arch::halt_or_hlt();
+		g_bkl.enter();
 		Scheduler::schedule();
 	}
 }
@@ -169,7 +176,14 @@ void Scheduler::schedule() {
 	// (%gs:-relative) resolve to the right per-thread storage. 0 = the thread has no TLS yet.
 	arch::archLoadThreadTls(g_tasks[next].thread ? g_tasks[next].thread->tlsBase : 0);
 	arch::cpuIrqRestore(flags);
+	// BKL handoff: drop the lock so another CPU can enter the kernel while we switch, then
+	// re-acquire on the far side. schedule() is always reached at BKL depth 1 (syscalls and
+	// kernel threads enter at depth 1; schedPreempt only runs for ring-3 interruptees, also
+	// depth 1), so a single exit() fully releases it and the resumed task's enter() restores
+	// it. The switch itself touches only the two tasks' saved stacks — no shared state.
+	g_bkl.exit();
 	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
+	g_bkl.enter();
 }
 
 // Timer tick. Does NOT switch tasks itself: it only advances the clock, re-wakes the I/O
@@ -366,6 +380,12 @@ void Scheduler::start() {
 }
 
 void Scheduler::runCurrentBody() {
+	// A freshly-bootstrapped task starts executing kernel code here, reached directly via the
+	// arch task trampoline (NOT through schedule()'s re-acquire), so it must take the BKL itself.
+	// The matching release is whichever way the task leaves the kernel: schedule()/block() (the
+	// handoff exit), exit-to-ring-3 (archEnterUser's bklExit), or its final schedule() when body()
+	// returns (TASK_DONE).
+	g_bkl.enter();
 	g_tasks[g_cur].body();
 	g_tasks[g_cur].state = TASK_DONE;
 	schedule();
