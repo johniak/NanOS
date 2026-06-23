@@ -132,8 +132,11 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	String pp = p->sys->resolvePath(String((char*) path));
 	FileStat st;
 	if (vfs->stat(pp, st) < 0) {
-		arch::mmuLoadDirPhys(userDir);
-		return -2;   // -ENOENT
+		pp = p->sys->nxeAppend(pp);   // bare-name fallback: exec `id` -> `id.nxe` (sudo, scripts)
+		if (vfs->stat(pp, st) < 0) {
+			arch::mmuLoadDirPhys(userDir);
+			return -2;   // -ENOENT
+		}
 	}
 	if (st.size > STAGE_CAP) {            // too big to stage -> reject before overrunning the window
 		arch::mmuLoadDirPhys(userDir);

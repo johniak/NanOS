@@ -420,11 +420,22 @@ static void fillStat(LinuxStat* out, const FileStat& st) {
 	out->st_blocks = ((uint64_t) st.size + 511) / 512;
 }
 
+String Syscalls::nxeAppend(String path) {
+	const char* p = (char*) path;
+	int n = 0; while (p[n]) n++;
+	if (n >= 4 && p[n-4] == '.' && p[n-3] == 'n' && p[n-2] == 'x' && p[n-1] == 'e')
+		return path;                    // already a .nxe path
+	return path + String(".nxe");
+}
+
 int Syscalls::stat(String path, LinuxStat* out) {
 	path = resolvePath(path);
 	FileStat st;
-	if (vfs->stat(path, st) < 0)
-		return -ENOENT;
+	if (vfs->stat(path, st) < 0) {
+		path = nxeAppend(path);         // bare-name fallback: `id` -> `id.nxe`
+		if (vfs->stat(path, st) < 0)
+			return -ENOENT;
+	}
 	fillStat(out, st);
 	return 0;
 }
@@ -625,7 +636,11 @@ int Syscalls::utimes(String path, unsigned atime, unsigned mtime) {
 }
 int Syscalls::access(String path, int mode) {
 	FileStat st;
-	if (vfs->stat(resolvePath(path), st) < 0) return -2;     // -ENOENT
+	String p = resolvePath(path);
+	if (vfs->stat(p, st) < 0) {
+		p = nxeAppend(p);                                    // bare-name fallback: `id` -> `id.nxe`
+		if (vfs->stat(p, st) < 0) return -2;                 // -ENOENT
+	}
 	// We run as uid 0: read/write are always permitted; execute (X_OK=1) needs at least one
 	// of the file's execute bits set (matches Linux root semantics).
 	if ((mode & 1) && (st.mode & 0111) == 0) return -13;     // -EACCES

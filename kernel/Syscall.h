@@ -201,6 +201,10 @@ public:
 	// Permission test against the calling process's effective ids: `want` is r/w/x bits
 	// (4/2/1). Returns 0 if allowed, -EACCES otherwise. Used by open().
 	int permCheck(const FileStat& st, int want);
+	// NanOS executables carry a ".nxe" suffix; the shells append it, but tools that look a command
+	// up by bare name (sudo) do not. Append ".nxe" to a path that lacks it, so a caller can retry a
+	// failed lookup — `id` -> `id.nxe`. Returns the path unchanged if it already ends in ".nxe".
+	String nxeAppend(String path);
 	int statfs(String path, void* buf);            // fills LinuxStatfs
 	int fstatfs(int fd, void* buf);
 	int fsync(int fd);
