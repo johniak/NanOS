@@ -52,7 +52,13 @@ static void damage(struct nw_server *s, int x, int y, int w, int h)
 static void damage_frame(struct nw_server *s, int idx)
 {
 	struct nw_window *w = &s->win[idx];
-	damage(s, w->x, w->y, w->cw + 2 * NW_BORDER, NW_TITLEBAR_H + w->ch + NW_BORDER);
+	/* Expand by NW_SHADOW on every side: the soft drop shadow is cast OUTSIDE the frame rect
+	 * (~8 px below/right), so a move that damages only the frame leaves the old shadow behind as
+	 * a trail. Including the shadow extent makes the recompose erase it. (damage() clamps to the
+	 * screen, so the negative origin is safe.) */
+	damage(s, w->x - NW_SHADOW, w->y - NW_SHADOW,
+	       w->cw + 2 * NW_BORDER + 2 * NW_SHADOW,
+	       NW_TITLEBAR_H + w->ch + NW_BORDER + 2 * NW_SHADOW);
 }
 
 int nw_peek_damage(const struct nw_server *s, int *x, int *y, int *w, int *h)

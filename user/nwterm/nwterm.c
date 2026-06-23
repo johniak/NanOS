@@ -139,23 +139,43 @@ static int spawn_shell(void)
 		 * here. In particular VIMRUNTIME + VIMINIT stop vim sourcing its missing defaults.vim
 		 * ("E1187: Failed to source defaults.vim"). nwm only forwards NW_DISPLAY to its clients,
 		 * so these are set explicitly rather than inherited. */
-		char *envp[] = { (char *) "TERM=xterm-256color",
-		                 (char *) "TERMINFO=/disks/main/nanos/share/terminfo",
-		                 (char *) "PATH=/disks/main/nanos/bin:/disks/main/bin",
-		                 (char *) "HOME=/disks/main",
-		                 (char *) "VIMRUNTIME=/disks/main/apps/vim/runtime",
-		                 (char *) "VIMINIT=set nocompatible backspace=indent,eol,start hlsearch incsearch ruler showcmd wildmenu",
-		                 0 };
-		/* the login shell from the account database (pw_shell, e.g. bash); nsh if absent */
+		/* the login shell + home from the account database (pw_shell/pw_dir, e.g. bash + /users/jan);
+		 * fall back to nsh + /disks/main if the entry is missing. */
 		struct passwd *pw = getpwuid(getuid());
 		const char *shell = (pw && pw->pw_shell && pw->pw_shell[0]) ? pw->pw_shell
 		                  : "/disks/main/nanos/bin/nsh.nxe";
+		const char *home = (pw && pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : "/disks/main";
+
+		/* chdir to the user's home BEFORE exec: the shell inherits this as its cwd. Without it the
+		 * shell starts in the compositor's directory, which may be the synthetic root or otherwise
+		 * un-stat'able, so bash's getcwd() fails ("cannot access parent directories"). */
+		if (chdir(home) != 0)
+			chdir("/disks/main");
+
+		static char homevar[160];
+		{ int i = 5; const char *p = "HOME="; for (int j = 0; j < 5; j++) homevar[j] = p[j];
+		  for (const char *h = home; *h && i < (int) sizeof homevar - 1; h++) homevar[i++] = *h;
+		  homevar[i] = 0; }
+
+		/* Keep this in step with PID 1's baseline env (kernel/Exec.cpp). HOME comes from the passwd
+		 * entry so the shell finds ~/.bashrc; nwm only forwards NW_DISPLAY, so the rest are explicit. */
+		char *envp[] = { (char *) "TERM=xterm-256color",
+		                 (char *) "TERMINFO=/disks/main/nanos/share/terminfo",
+		                 (char *) "PATH=/disks/main/nanos/bin:/disks/main/bin",
+		                 homevar,
+		                 (char *) "VIMRUNTIME=/disks/main/apps/vim/runtime",
+		                 (char *) "VIMINIT=set nocompatible backspace=indent,eol,start hlsearch incsearch ruler showcmd wildmenu",
+		                 0 };
+		/* Start it as a LOGIN shell (argv[0] prefixed with '-'), like a console login: bash then
+		 * sources /etc/profile (PATH + coloured PS1) which sources ~/.bashrc, so the windowed shell
+		 * matches the console one. The ".nxe" suffix is stripped from the name. */
 		const char *base = strrchr(shell, '/'); base = base ? base + 1 : shell;
 		static char name0[64];
-		{ int i = 0; while (base[i] && i < (int) sizeof name0 - 1) { name0[i] = base[i]; i++; }
+		{ name0[0] = '-'; int i = 1;
+		  while (base[i - 1] && i < (int) sizeof name0 - 1) { name0[i] = base[i - 1]; i++; }
 		  name0[i] = 0; if (i >= 4 && strcmp(name0 + i - 4, ".nxe") == 0) name0[i - 4] = 0; }
 		execve(shell, (char *[]){ name0, 0 }, envp);
-		execve("/disks/main/nanos/bin/nsh.nxe", (char *[]){ (char *) "nsh", 0 }, envp);
+		execve("/disks/main/nanos/bin/nsh.nxe", (char *[]){ (char *) "-nsh", 0 }, envp);
 		_exit(127);
 	}
 	return master;
