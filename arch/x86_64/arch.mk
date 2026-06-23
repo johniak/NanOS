@@ -52,5 +52,6 @@ ARCH_SOURCES += xhci_x86_64.o
 # NIC port: minimal Local APIC + MSI vector allocation (delivers MSI/MSI-X for the e1000e/I219 NIC).
 ARCH_SOURCES += lapic_x86_64.o
 
-# SMP: ACPI MADT-based CPU enumeration glue (finds the RSDP, runs the MI kernel::Acpi parser).
-ARCH_SOURCES += acpi_x86_64.o
+# SMP: ACPI MADT-based CPU enumeration glue (finds the RSDP, runs the MI kernel::Acpi parser),
+# plus the AP real-mode->long-mode trampoline + the INIT-SIPI-SIPI bring-up driver.
+ARCH_SOURCES += acpi_x86_64.o ap_trampoline.o smp_x86_64.o

@@ -33,3 +33,4 @@ ARCH_SOURCES+= mmu_x86.o AddressSpace.o
 ARCH_SOURCES+= input_x86.o Hdd.o ATA.o AtaBlockDevice.o block_x86.o
 ARCH_SOURCES+= switch.o sched_x86.o fork_x86.o
 ARCH_SOURCES+= pci_x86.o
+ARCH_SOURCES+= smp_x86.o
