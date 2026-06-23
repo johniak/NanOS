@@ -1,0 +1,8 @@
+# /etc/profile — system-wide login-shell setup (bash login shells source this; nsh ignores it).
+export PATH=/disks/main/nanos/bin:/disks/main/bin
+
+# Ubuntu-style coloured prompt: bold-green user@host, bold-blue working dir.
+PS1='\[\e[01;32m\]\u@\h\[\e[0m\]:\[\e[01;34m\]\w\[\e[0m\]\$ '
+
+# Per-user interactive config.
+if [ -n "$BASH" ] && [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi

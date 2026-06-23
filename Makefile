@@ -1186,9 +1186,11 @@ _image64: _all _userland64 _kext
 	# shells: dropbear's getusershell() rejects an SSH login whose passwd shell isn't there. Mirrors
 	# the i686 _image etc population.
 	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
-	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells; do \
+	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells profile; do \
 	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
+	# Per-user interactive bash config: seed jan's ~/.bashrc from config/skel (Linux /etc/skel).
+	printf "rm /users/jan/.bashrc\nwrite config/skel/.bashrc /users/jan/.bashrc\nset_inode_field /users/jan/.bashrc uid 1000\nset_inode_field /users/jan/.bashrc gid 1000\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# GNU bash (optional): installed as an /apps/bash bundle + a /bin/bash.nxe symlink ONLY if
 	# `make ARCH=x86_64 bash` staged bin/bash.nxe. passwd's login shell is /disks/main/bin/bash.nxe,
 	# so this is what PID 1 execve()s. Mirrors the i686 _image bash population. Skipped silently
