@@ -43,6 +43,30 @@ uint8_t lapicId()  { return (uint8_t) (g_lapic[LAPIC_ID / 4] >> 24); }
 void    lapicEoi() { g_lapic[LAPIC_EOI / 4] = 0; }
 int     lapicAllocVector() { return msiVecAlloc(&g_pool); }
 
+// Interrupt Command Register: a 64-bit command split across ICR_HI (destination, bits 24-27)
+// and ICR_LO (delivery mode/vector). Writing the LOW word triggers the send; bit 12 of ICR_LO
+// is Delivery Status — spin until it clears (= idle) before issuing the next IPI.
+enum { LAPIC_ICR_LO = 0x300, LAPIC_ICR_HI = 0x310,
+       LAPIC_LVT_TIMER = 0x320, LAPIC_TIMER_INIT = 0x380,
+       LAPIC_TIMER_CUR = 0x390, LAPIC_TIMER_DIV = 0x3E0 };
+
+static void icrWrite(uint8_t dest, uint32_t lo) {
+	g_lapic[LAPIC_ICR_HI / 4] = (uint32_t) dest << 24;
+	g_lapic[LAPIC_ICR_LO / 4] = lo;
+	while (g_lapic[LAPIC_ICR_LO / 4] & (1u << 12)) { }   // wait for Delivery Status = idle
+}
+// Delivery encodings (Intel SDM Vol.3 §10.6): 0x4500 = INIT/assert/edge, 0x4600|vec = STARTUP
+// (SIPI), 0x4000|vec = fixed delivery.
+void lapicSendInit(uint8_t dest)               { icrWrite(dest, 0x4500); }
+void lapicSendStartup(uint8_t dest, uint8_t v) { icrWrite(dest, 0x4600 | v); }
+void lapicSendFixed(uint8_t dest, uint8_t v)   { icrWrite(dest, 0x4000 | v); }
+
+void lapicTimerInit(uint8_t vec, uint32_t init) {
+	g_lapic[LAPIC_TIMER_DIV / 4]  = 0x3;                       // divide configuration: by 16
+	g_lapic[LAPIC_LVT_TIMER / 4]  = (uint32_t) vec | (1u << 17);   // periodic mode (bit 17)
+	g_lapic[LAPIC_TIMER_INIT / 4] = init;                     // initial count -> counts down
+}
+
 #endif  // NANOS_HOST_TEST
 
 }  // namespace kernel

@@ -28,4 +28,12 @@ uint8_t lapicId();                       // local APIC id (for the MSI message a
 void    lapicEoi();                      // signal end-of-interrupt
 int     lapicAllocVector();              // global pool alloc (wraps msiVecAlloc); -1 if full
 
+// Inter-processor interrupts (kernel-only). `dest` = target local-APIC id.
+void lapicSendInit(uint8_t dest);                 // INIT (assert, edge) — first AP wake step
+void lapicSendStartup(uint8_t dest, uint8_t vec); // SIPI; vec*0x1000 = the trampoline phys addr
+void lapicSendFixed(uint8_t dest, uint8_t vec);   // a normal fixed IPI to one CPU (e.g. shootdown)
+
+// Per-CPU LAPIC timer in periodic mode: fires `vec` every `initialCount` bus ticks (div 16).
+void lapicTimerInit(uint8_t vec, uint32_t initialCount);
+
 }  // namespace kernel
