@@ -1,115 +1,132 @@
 /*
- * pfract — a parallel Mandelbrot renderer, the "cool real -lpthread workload" (Task 6.2).
+ * pfract — a parallel Mandelbrot renderer + the SMP parallel-speedup gate (Task 6.2 / SMP Task 10).
  *
- * This is the canonical thread-pool program: a work queue of row-bands protected by a mutex +
- * condition variable, drained by NWORKERS worker threads that each compute the escape-iteration
- * count for every cell in the bands they pull. The main thread fills the queue, closes it, and
- * pthread_join()s the workers. It genuinely exercises create + mutex + cond + join under real
- * CPU load (the Mandelbrot inner loop), not just a smoke handshake.
+ * A work queue of row-bands protected by a mutex + condition variable, drained by N worker threads
+ * that each compute the escape-iteration count for the bands they pull. The main thread fills the
+ * queue, closes it, joins the workers, then prints ASCII art + a deterministic checksum. It
+ * genuinely exercises pthread create + mutex + cond + join under real CPU load.
  *
- * NanOS is a uniprocessor, so this is concurrency, not parallelism: the workers interleave on the
- * one core rather than running on several. The result is identical either way — the work queue
- * just decides who computes which row — which is exactly why the CHECKSUM below is a deterministic
- * correctness proof: it is the sum of all escape-iteration counts and does not depend on which
- * worker computed which row, so a correct render always produces the same value.
+ * INTEGER fixed-point (scale 2^16): NanOS does NOT save FPU/XMM across a context switch (the kernel
+ * is -mno-sse and the IRQ stub saves only GPRs), so a double-precision worker preempted mid-cell
+ * could see corrupted XMM. Integer state lives in GPRs, which the trap frame preserves — so this
+ * stays correct whether the workers interleave on one core or run truly in parallel on several.
+ * That is what makes the checksum a valid multicore correctness proof.
  *
- * Primary output is ASCII art to stdout (guaranteed visible in the 80x25 text-mode VGA console
- * screendump): a WIDTHxHEIGHT grid mapping escape-count to the ramp " .:-=+*#%@". The classic
- * Mandelbrot cardioid + bulb is recognisable. Then a verification line:
- *     pfract: 8 workers, 1540 cells, checksum=0x........ ok
+ * Usage: pfract [workers] [repeat]
+ *   workers — worker thread count (default 8, clamped 1..16).
+ *   repeat  — recompute the whole grid this many times (default 1) for a heavier, timeable load.
+ * Prints, after the art:  pfract: N workers, R repeat, T ms, checksum=0x........ ok
+ * The SMP gate runs `pfract 1 R` vs `pfract 4 R` on a 4-vCPU boot and checks T(1)/T(4) is a real
+ * speedup — work in the compute loop is pure ring-3 (no syscalls), so it runs off the Big Kernel
+ * Lock and scales with cores.
  */
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
-#define NWORKERS 8
+#define MAXW     16
 #define WIDTH    70          /* fits inside the 80-column console */
 #define HEIGHT   22          /* fits inside the 25-row console (leaves room for the status line) */
 #define MAXITER  100         /* escape-iteration ceiling; also the in-set marker */
 
-/* Complex-plane window: the classic full Mandelbrot view. */
-#define RE_MIN (-2.5)
-#define RE_MAX ( 1.0)
-#define IM_MIN (-1.15)
-#define IM_MAX ( 1.15)
+/* Fixed-point complex-plane window (scale S = 1<<16). The classic full Mandelbrot view. */
+#define FP 16
+#define S  (1 << FP)
+#define RE_MIN  (-164659L)   /* -2.513 * S */
+#define RE_SPAN ( 229376L)   /*  3.5   * S */
+#define IM_MIN  ( -75366L)   /* -1.15  * S */
+#define IM_SPAN ( 150733L)   /*  2.3   * S */
+#define ESCAPE  (4L * S)     /* |z|^2 > 4 */
 
 /* Per-cell escape-iteration counts, filled by the workers, read by main for art + checksum. */
 static int iters[HEIGHT][WIDTH];
 
-/* The work queue: row indices 0..HEIGHT-1, handed out one band (= one row) at a time. */
+/* The work queue: units 0..total-1; unit u computes row (u % HEIGHT). total = HEIGHT * repeat. */
 static pthread_mutex_t q_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  q_cond = PTHREAD_COND_INITIALIZER;
-static int q_next;           /* next row to hand out */
-static int q_closed;         /* set once all rows are enqueued (main has finished filling) */
+static long q_next;          /* next unit to hand out */
+static long q_total;         /* HEIGHT * repeat */
+static int  q_closed;        /* set once all units are enqueued */
 
-/* Compute the escape-iteration count of one cell using fixed double arithmetic. */
+/* Escape-iteration count of one cell, fixed-point int64 (no floating point). */
 static int mandel_cell(int row, int col)
 {
-	double cr = RE_MIN + (RE_MAX - RE_MIN) * col / (WIDTH - 1);
-	double ci = IM_MIN + (IM_MAX - IM_MIN) * row / (HEIGHT - 1);
-	double zr = 0.0, zi = 0.0;
+	long cr = RE_MIN + RE_SPAN * col / (WIDTH - 1);
+	long ci = IM_MIN + IM_SPAN * row / (HEIGHT - 1);
+	long zr = 0, zi = 0;
 	int n = 0;
-	while (n < MAXITER && zr * zr + zi * zi <= 4.0) {
-		double t = zr * zr - zi * zi + cr;
-		zi = 2.0 * zr * zi + ci;
+	for (;;) {
+		long zr2 = (zr * zr) >> FP;
+		long zi2 = (zi * zi) >> FP;
+		if (zr2 + zi2 > ESCAPE || n >= MAXITER)
+			break;
+		long t = zr2 - zi2 + cr;
+		zi = ((2 * zr * zi) >> FP) + ci;
 		zr = t;
 		n++;
 	}
 	return n;
 }
 
-/* Worker: pull rows off the queue until it is drained and closed; compute each row's cells. */
 static void *worker(void *a)
 {
 	(void)a;
 	for (;;) {
-		int row;
+		long u;
 		pthread_mutex_lock(&q_lock);
-		while (q_next >= HEIGHT && !q_closed)
-			pthread_cond_wait(&q_cond, &q_lock);     /* wait for work (or for close) */
-		if (q_next >= HEIGHT) {                       /* nothing left and queue closed -> done */
+		while (q_next >= q_total && !q_closed)
+			pthread_cond_wait(&q_cond, &q_lock);
+		if (q_next >= q_total) {
 			pthread_mutex_unlock(&q_lock);
 			return 0;
 		}
-		row = q_next++;
+		u = q_next++;
 		pthread_mutex_unlock(&q_lock);
 
+		int row = (int)(u % HEIGHT);
 		for (int col = 0; col < WIDTH; col++)
 			iters[row][col] = mandel_cell(row, col);
 	}
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	static const char ramp[] = " .:-=+*#%@";   /* 10 levels: space (far) .. '@' (in set) */
-	const int levels = sizeof(ramp) - 2;        /* highest ramp index (9) */
+	const int levels = sizeof(ramp) - 2;
 
-	/* Start the queue EMPTY (q_next == HEIGHT) so a worker that runs the instant it is created
-	 * finds nothing available and blocks on the condvar predicate instead of grabbing row 0. */
-	q_next = HEIGHT;
+	int nworkers = argc > 1 ? atoi(argv[1]) : 8;
+	long repeat  = argc > 2 ? atol(argv[2]) : 1;
+	if (nworkers < 1) nworkers = 1;
+	if (nworkers > MAXW) nworkers = MAXW;
+	if (repeat < 1) repeat = 1;
 
-	pthread_t w[NWORKERS];
-	for (int i = 0; i < NWORKERS; i++)
+	q_total = (long)HEIGHT * repeat;
+	q_next  = q_total;   /* start EMPTY so a worker that runs immediately blocks on the predicate */
+
+	struct timespec t0, t1;
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+
+	pthread_t w[MAXW];
+	for (int i = 0; i < nworkers; i++)
 		if (pthread_create(&w[i], 0, worker, 0) != 0) {
 			printf("pfract: pthread_create FAILED for worker %d\n", i);
 			fflush(stdout);
 			return 1;
 		}
 
-	/* Now that the workers exist (and are blocked), enqueue the whole job under the lock: open
-	 * rows 0..HEIGHT-1, mark the queue closed (these HEIGHT rows are the entire job, no more will
-	 * be added), and broadcast to wake the blocked workers. The broadcast happens after the state
-	 * change and under the lock, so there is no lost wakeup. */
 	pthread_mutex_lock(&q_lock);
-	q_next = 0;                                  /* rows 0..HEIGHT-1 are now available */
+	q_next = 0;                                  /* units 0..q_total-1 now available */
 	q_closed = 1;
 	pthread_cond_broadcast(&q_cond);
 	pthread_mutex_unlock(&q_lock);
 
-	for (int i = 0; i < NWORKERS; i++)
+	for (int i = 0; i < nworkers; i++)
 		pthread_join(w[i], 0);
 
-	/* ASCII art + checksum. The checksum is a deterministic fold of every iteration count, so a
-	 * correct render always yields the same value regardless of worker scheduling. */
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+	long ms = (t1.tv_sec - t0.tv_sec) * 1000L + (t1.tv_nsec - t0.tv_nsec) / 1000000L;
+
 	unsigned int checksum = 0;
 	for (int row = 0; row < HEIGHT; row++) {
 		char line[WIDTH + 1];
@@ -123,8 +140,8 @@ int main(void)
 		printf("%s\n", line);
 	}
 
-	printf("pfract: %d workers, %d cells, checksum=0x%08x ok\n",
-	       NWORKERS, WIDTH * HEIGHT, checksum);
+	printf("pfract: %d workers, %ld repeat, %ld ms, checksum=0x%08x ok\n",
+	       nworkers, repeat, ms, checksum);
 	fflush(stdout);
 	return 0;
 }
