@@ -72,6 +72,7 @@ void cpuSetTssKernelStack(uint64_t rsp0) { g_gdt.setKernelStack(rsp0); }
 void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts()  { __asm__ __volatile__("sti"); }
 void cpuHalt()              { __asm__ __volatile__("hlt"); }
+void cpuRelax()             { __asm__ __volatile__("pause" ::: "memory"); }
 
 // Save RFLAGS then disable interrupts; restore (re-enabling IF only if it had been set), so a
 // critical section nests correctly regardless of the caller's interrupt state.

@@ -25,6 +25,10 @@ void archLoadThreadTls(unsigned base);
 unsigned long cpuIrqSave();
 void cpuIrqRestore(unsigned long flags);
 
+// Spin-loop relax hint (x86: the PAUSE instruction). Called inside a spinlock's busy-wait to
+// cut power + free the pipeline for the lock holder. MD because it is a single CPU instruction.
+void cpuRelax();
+
 // Power the machine off (x86: the ACPI/QEMU shutdown ports). Does not return; if the
 // platform can't power off it halts forever.
 void powerOff();

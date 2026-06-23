@@ -42,6 +42,7 @@ void cpuInit() {
 void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts() { __asm__ __volatile__("sti"); }
 void cpuHalt() { __asm__ __volatile__("hlt"); }
+void cpuRelax() { __asm__ __volatile__("pause" ::: "memory"); }
 
 // Save EFLAGS then disable interrupts; restore EFLAGS (re-enabling IF only if it was set).
 // Lets a critical section nest and run correctly whether the caller had interrupts on or off.

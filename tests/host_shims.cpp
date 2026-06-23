@@ -44,6 +44,7 @@ void archLoadThreadTls(unsigned) {}   // TLS descriptor reload is hardware (GDT 
 void halt_or_hlt() {}
 unsigned long cpuIrqSave() { return 0; }   // no interrupts on the host harness
 void cpuIrqRestore(unsigned long) {}
+void cpuRelax() {}                          // spin-relax hint is a no-op on the host harness
 }   // namespace arch
 
 // The Scheduler's sleep primitives consult this (don't block through a pending signal); the
