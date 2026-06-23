@@ -24,10 +24,11 @@ QPID=$!
 cleanup() { kill -9 "$QPID" 2>/dev/null; }
 trap cleanup EXIT
 
-# 1) wait for the shell prompt (means: long-mode + paging + ext mount + scheduler + init->shell all ran)
-for i in $(seq 1 40); do grep -q "bash-5\|starting shell" "$SER" 2>/dev/null && break; sleep 1; done
+# 1) wait for the login prompt (means: long-mode + paging + ext mount + scheduler + init->login all ran)
+for i in $(seq 1 40); do grep -q "nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
 
-# 2) drive a ring-3 fork/exec from the console: bash runs `echo`, proving keyboard->tty->fork->exec
+# 2) log in as jan (login shell = bash) then drive a ring-3 fork/exec: bash runs `echo`, proving
+#    keyboard -> tty -> login -> fork/exec. jan/jan come from the seeded /etc account database.
 python3 - "$MON" <<'PY'
 import socket,time,sys
 KM={' ':'spc','_':'shift-minus','\n':'ret'}
@@ -36,18 +37,22 @@ def kn(c):
     if c.isdigit(): return c
     if c.isalpha(): return ('shift-'+c.lower()) if c.isupper() else c
     return None
-s=socket.socket(socket.AF_UNIX);
+s=socket.socket(socket.AF_UNIX)
 try: s.connect(sys.argv[1])
 except Exception as e: print("monitor connect failed:",e); sys.exit(0)
 time.sleep(0.3)
 try: s.settimeout(0.3); s.recv(65536)
 except: pass
-for c in "echo X64_SMOKE_FORK_OK":
-    k=kn(c)
-    if k: s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.04)
-    try: s.settimeout(0.1); s.recv(4096)
-    except: pass
-s.sendall(b"sendkey ret\n"); time.sleep(0.05)
+def typ(text, settle):
+    for c in text:
+        k=kn(c)
+        if k: s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.04)
+        try: s.settimeout(0.1); s.recv(4096)
+        except: pass
+    s.sendall(b"sendkey ret\n"); time.sleep(settle)
+typ("jan", 1.0)                    # username
+typ("jan", 2.5)                    # password -> login completes, bash sources /etc/profile
+typ("echo X64_SMOKE_FORK_OK", 0.1) # a command at the shell -> fork/exec
 s.close()
 PY
 sleep 3
@@ -58,7 +63,7 @@ chk() { if grep -q "$1" "$SER" 2>/dev/null; then echo "  OK  : $2"; else echo " 
 no()  { if grep -qE "$1" "$SER" 2>/dev/null; then echo "  FAIL: $2"; grep -E "$1" "$SER" | head -3 | sed 's/^/        /'; PASS=0; else echo "  OK  : $2"; fi; }
 
 echo "=== x86_64 MD boot smoke ==="
-chk "bash-5"                                  "reached the login shell (boot+paging+ext+sched+init->bash)"
+chk "jan@nanos"                               "logged in -> bash login shell (boot+paging+ext+sched+init->login->bash)"
 chk "EXT-RW selftest: write+read OK"          "ext4 JBD2 write path (selftest)"
 chk "eth0 .* up\|Networking: lo + eth0"        "networking (e1000 + net threads) up"
 chk "X64_SMOKE_FORK_OK"                        "ring-3 fork/exec from console (echo ran, output returned)"
