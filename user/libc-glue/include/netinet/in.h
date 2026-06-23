@@ -34,6 +34,21 @@ struct sockaddr_in6 {
 };
 extern const struct in6_addr in6addr_any;
 
+/* IPv6 address-test macros (sudo's address matching uses them). */
+#ifndef IN6_IS_ADDR_UNSPECIFIED
+#define IN6_IS_ADDR_UNSPECIFIED(a) \
+	(((const uint32_t*)(a))[0]==0 && ((const uint32_t*)(a))[1]==0 && \
+	 ((const uint32_t*)(a))[2]==0 && ((const uint32_t*)(a))[3]==0)
+#define IN6_IS_ADDR_LOOPBACK(a) \
+	(((const uint32_t*)(a))[0]==0 && ((const uint32_t*)(a))[1]==0 && \
+	 ((const uint32_t*)(a))[2]==0 && ((const uint32_t*)(a))[3]==htonl(1))
+#define IN6_ARE_ADDR_EQUAL(a,b) \
+	(((const uint32_t*)(a))[0]==((const uint32_t*)(b))[0] && \
+	 ((const uint32_t*)(a))[1]==((const uint32_t*)(b))[1] && \
+	 ((const uint32_t*)(a))[2]==((const uint32_t*)(b))[2] && \
+	 ((const uint32_t*)(a))[3]==((const uint32_t*)(b))[3])
+#endif
+
 #define INADDR_ANY        ((in_addr_t) 0x00000000)
 #define INADDR_BROADCAST  ((in_addr_t) 0xffffffff)
 #define INADDR_NONE       ((in_addr_t) 0xffffffff)

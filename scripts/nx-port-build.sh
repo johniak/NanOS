@@ -169,6 +169,32 @@ toybox)
 	make CROSS_COMPILE= CC="$CC" HOSTCC=cc CFLAGS=-D__nanos__ 2>&1 | tail -20
 	BIN="$STAGE/toybox"
 	;;
+sudo)
+	# Real sudo (Todd Miller, ISC license) with the sudoers policy linked STATICALLY into the
+	# front-end (--disable-shared --enable-static-sudoers: NanOS has no dlopen for .so plugins).
+	# Auth is passwd/shadow via crypt (no PAM). Seed the cross answers configure cannot probe by
+	# running a target binary, plus the NanOS libc facts (killpg exists; use the SYSTEM getopt so
+	# sudo does not compile its bundled getopt_long.c, whose <compat/getopt.h> would clash with
+	# the getopt-import shim). CPPFLAGS: -D__nanos__ (Linux code paths) + the getopt DATA-import
+	# shim (optarg/optind/... arrive via libc.ndl __imp_ slots).
+	cat > "$STAGE/nx.cache" <<-'EOF'
+	ac_cv_sizeof_long=8
+	ac_cv_sizeof_void_p=8
+	ac_cv_sizeof_size_t=8
+	ac_cv_sizeof_off_t=8
+	ac_cv_sizeof_time_t=8
+	ac_cv_c_bigendian=no
+	ac_cv_func_killpg=yes
+	ac_cv_func_getopt_long=yes
+	EOF
+	./configure --host="$HOST_TRIPLE" --build=x86_64-pc-linux-gnu \
+		--disable-shared --enable-static-sudoers --disable-nls --without-pam --without-ldap \
+		--without-sssd --disable-pie --disable-hardening --disable-openssl \
+		CC="$CC" AWK=awk "CPPFLAGS=-D__nanos__ -include nx-getopt-import.h" \
+		--cache-file="$STAGE/nx.cache" 2>&1 | tail -15
+	make 2>&1 | tail -20
+	BIN="$STAGE/src/sudo"
+	;;
 *)
 	echo "nx-port-build.sh: unknown app '$APP'" >&2
 	exit 2

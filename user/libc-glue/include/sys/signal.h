@@ -108,6 +108,15 @@ typedef struct {
   int          si_signo;    /* Signal number */
   int          si_code;     /* Cause of the signal */
   union sigval si_value;    /* Signal value */
+  /* NanOS extension: the common POSIX siginfo fields ports (sudo) read in SA_SIGINFO handlers.
+   * The kernel's signal trampoline does not populate these (it carries only the signal number),
+   * so they read as 0 at runtime — a handler that only branches on si_signo works; one that
+   * inspects the sender (si_pid) treats every signal as kernel-originated. */
+  int          si_errno;    /* errno association */
+  int          si_pid;      /* sending process id */
+  int          si_uid;      /* sending user id */
+  int          si_status;   /* exit value / signal for SIGCHLD */
+  void*        si_addr;     /* faulting address for SIGSEGV/SIGBUS */
 } siginfo_t;
 #endif /* defined(_POSIX_REALTIME_SIGNALS) || __POSIX_VISIBLE >= 199309 */
 
@@ -167,12 +176,31 @@ struct sigaction {
 
 typedef void (*_sig_func_ptr)(int);
 
-struct sigaction 
+#ifdef __nanos__
+/* SA_SIGINFO support for ports that install three-argument handlers (sudo). The kernel's signal
+ * trampoline passes the signal number; the siginfo_t/context arguments are best-effort (NanOS
+ * carries no per-signal siginfo), so a handler that only branches on the signal number works.
+ * The struct keeps sa_handler at offset 0 (a union with sa_sigaction), so the on-wire layout the
+ * rt_sigaction syscall reads is UNCHANGED. */
+#define SA_SIGINFO 0x40
+/* siginfo_t is already defined above under __POSIX_VISIBLE >= 199309 (nx-gcc sets _XOPEN_SOURCE
+ * =700), so we only add SA_SIGINFO + the three-argument handler member here. */
+struct sigaction {
+	union {
+		_sig_func_ptr sa_handler;
+		void (*sa_sigaction)(int, siginfo_t*, void*);
+	};
+	sigset_t sa_mask;
+	int sa_flags;
+};
+#else
+struct sigaction
 {
 	_sig_func_ptr sa_handler;
 	sigset_t sa_mask;
 	int sa_flags;
 };
+#endif /* __nanos__ */
 #endif /* defined(__rtems__) */
 #endif /* defined(__CYGWIN__) */
 

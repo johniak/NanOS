@@ -121,6 +121,20 @@ else
 endif
 	@echo "staged $(BINFOLDER)toybox.nxe — run 'make image64' to install it + the login/su/passwd/id symlinks"
 
+# sudo (Todd Miller, ISC license): real sudo with the sudoers policy linked statically. x86_64
+# only. Installed setuid-root in /nanos/bin; /etc/sudoers (%wheel) is seeded already. Source:
+# $(SDK_WORK)/sudo-1.9.15p5.
+.PHONY: sudo
+sudo:
+ifeq ($(ARCH),x86_64)
+	$(NXPORT_PREREQ)
+	$(NXPORT_RUN) -v "$(SDK_WORK)/sudo-1.9.15p5":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh sudo
+	cp "$(SDK_WORK)/sudo-1.9.15p5/sudo.nxe" $(BINFOLDER)sudo.nxe
+else
+	@echo "sudo is x86_64-only (i686 is frozen)"; exit 1
+endif
+	@echo "staged $(BINFOLDER)sudo.nxe — run 'make image64' to install it setuid-root into /nanos/bin"
+
 # Vim (the editor). ARCH-AWARE:
 #   * i686 (default): copy the hand-built 32-bit .nxe the nanos-sdk produced (original flow, intact).
 #   * x86_64: build from source via the REPRODUCIBLE nanos-port driver (mirrors `make ping`/`make
@@ -1204,6 +1218,11 @@ _image64: _all _userland64 _kext
 	  for c in login su passwd id groups whoami; do \
 	    printf "rm /nanos/bin/$$c.nxe\nln /nanos/bin/toybox.nxe /nanos/bin/$$c.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	  done; \
+	fi
+	# sudo (optional, external): real sudo built by `make ARCH=x86_64 sudo`. Installed setuid-root
+	# (mode 04755) so an unprivileged user can escalate; it reads /etc/sudoers (%wheel, seeded).
+	if [ -f $(BINFOLDER)sudo.nxe ]; then \
+	  printf "rm /nanos/bin/sudo.nxe\nwrite $(BINFOLDER)sudo.nxe /nanos/bin/sudo.nxe\nset_inode_field /nanos/bin/sudo.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# ping (optional, external): GNU inetutils ping built by `make ARCH=x86_64 ping` (the nanos-sdk
 	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.

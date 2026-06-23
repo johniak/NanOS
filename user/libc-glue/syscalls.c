@@ -248,6 +248,21 @@ int isatty(int fd) {
 int getpid(void)                        { return reterr(sys3(SYS_getpid, 0, 0, 0)); }
 int getppid(void)                       { return reterr(sys3(SYS_getppid, 0, 0, 0)); }
 int kill(int p, int s)                  { return reterr(sys3(SYS_kill, p, s, 0)); }
+int killpg(int pgrp, int s)             { return kill(-pgrp, s); }   /* sudo needs killpg */
+
+/* writev: picolibc has no scatter-gather write; emulate over write(). sudo uses it for log output. */
+#include <sys/uio.h>
+ssize_t writev(int fd, const struct iovec* iov, int n) {
+	ssize_t total = 0;
+	for (int i = 0; i < n; i++) {
+		if (iov[i].iov_len == 0) continue;
+		int r = write(fd, iov[i].iov_base, (int) iov[i].iov_len);
+		if (r < 0) return total ? total : r;
+		total += r;
+		if (r < (int) iov[i].iov_len) break;   // short write
+	}
+	return total;
+}
 /* raise(3): defined here (not pulled from picolibc) because picolibc's signal.c bundles
  * raise WITH signal, which we override — so importing raise would drag a conflicting signal.
  * As a glue symbol it is auto-excluded from the picolibc auto-export. */

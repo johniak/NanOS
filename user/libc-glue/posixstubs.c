@@ -379,3 +379,9 @@ ssize_t flistxattr(int fd, char* l, size_t s) { (void)fd;(void)l;(void)s; return
 int setxattr(const char* p, const char* n, const void* v, size_t s, int f) { (void)p;(void)n;(void)v;(void)s;(void)f; errno = ENOTSUP; return -1; }
 int lsetxattr(const char* p, const char* n, const void* v, size_t s, int f) { (void)p;(void)n;(void)v;(void)s;(void)f; errno = ENOTSUP; return -1; }
 int fsetxattr(int fd, const char* n, const void* v, size_t s, int f) { (void)fd;(void)n;(void)v;(void)s;(void)f; errno = ENOTSUP; return -1; }
+
+/* mprotect: NanOS userland cannot change page protections (the kernel maps user pages fixed).
+ * sudo calls it only as a hardening measure (making its policy memory read-only); report success
+ * so sudo proceeds — the memory simply stays as mapped. */
+#include <sys/mman.h>
+int mprotect(void* addr, size_t len, int prot) { (void) addr; (void) len; (void) prot; return 0; }

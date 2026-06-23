@@ -22,6 +22,9 @@ struct spwd {
 };
 
 struct spwd* getspnam(const char* name);
+void setspent(void);
+void endspent(void);
+struct spwd* getspent(void);
 
 #ifdef __cplusplus
 }

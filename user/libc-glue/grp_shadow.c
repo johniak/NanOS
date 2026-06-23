@@ -127,6 +127,17 @@ struct spwd* getspnam(const char* name) {
 	return 0;
 }
 
+/* shadow enumeration (sudo opens it around getspnam). */
+static FILE* g_spfp;
+void setspent(void) { if (g_spfp) fclose(g_spfp); g_spfp = fopen(SHADOW_PATH, "r"); }
+void endspent(void) { if (g_spfp) { fclose(g_spfp); g_spfp = 0; } }
+struct spwd* getspent(void) {
+	if (!g_spfp) { g_spfp = fopen(SHADOW_PATH, "r"); if (!g_spfp) return 0; }
+	while (fgets(g_spline, sizeof g_spline, g_spfp))
+		if (parse_shadow()) return &g_sp;
+	return 0;
+}
+
 /* ---- supplementary groups ----------------------------------------------------------------- */
 
 /* A user's groups: their primary `group` gid plus every /etc/group that lists `user` as a member.

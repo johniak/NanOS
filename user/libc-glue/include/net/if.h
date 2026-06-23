@@ -64,6 +64,7 @@ struct ifconf {
 		struct ifreq*  ifcu_req;
 	} ifc_ifcu;
 };
+#define ifc_len len
 #define ifc_buf ifc_ifcu.ifcu_buf
 #define ifc_req ifc_ifcu.ifcu_req
 

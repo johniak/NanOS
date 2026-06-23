@@ -30,6 +30,11 @@ typedef unsigned short sa_family_t;
 #define PF_INET6    AF_INET6
 #define PF_PACKET   AF_PACKET
 
+/* Maximum listen() backlog (sudo's log-server client references it). */
+#ifndef SOMAXCONN
+#define SOMAXCONN      128
+#endif
+
 /* Socket types. The high bits (Linux) OR in behaviour flags. */
 #define SOCK_STREAM    1
 #define SOCK_DGRAM     2
