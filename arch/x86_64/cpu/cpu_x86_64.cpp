@@ -7,17 +7,19 @@
  * is a no-op until %fs.base / TLS arrives in Plan 6.
  */
 #include <arch/cpu.h>
+#include <arch/smp.h>     // SMP_MAX_CPUS / smpThisCpu — per-CPU GDT+TSS
 #include "Gdt64.h"
 #include "Idt64.h"
 
 namespace {
-// GDT/IDT live for the kernel's lifetime (the CPU registers point into them). File scope
-// (.bss, trivial ctor) so no global constructor is required (the loader calls kmain directly).
-kernel::Gdt64 g_gdt;
+// One GDT (with its own TSS) PER CPU: each CPU `ltr`s its own TSS (a shared one can't be loaded
+// twice — busy bit), and rsp0/IST must be per-CPU. The IDT is shared (read-only gate table; the
+// PIC remap is global), so APs only `lidt` it. File scope (.bss) so no global ctor is needed.
+kernel::Gdt64 g_cpuGdt[arch::SMP_MAX_CPUS];
 kernel::Idt64 g_idt;
 
-// Boot kernel stack for the first ring3->ring0 trap (before any scheduler). Once tasks exist
-// they supply their own kernel stack via TSS.rsp0 on every switch.
+// Boot kernel stack for the first ring3->ring0 trap on the BSP (before any scheduler). Once
+// tasks exist they supply their own kernel stack via TSS.rsp0 on every switch.
 unsigned char g_bootKstack[8192] __attribute__((aligned(16)));
 }
 
@@ -46,17 +48,18 @@ static void enableSse() {
 
 void cpuInit() {
     enableSse();
-    // GDT first: the IDT gates reference code selector 0x08, valid only once we own the GDT.
-    g_gdt.initialize();
+    // BSP is dense CPU 0. GDT first: the IDT gates reference code selector 0x08, valid only once
+    // we own the GDT.
+    g_cpuGdt[0].initialize();
     // Point TSS.rsp0 at the boot kernel stack and load the task register, so future
     // ring3->ring0 traps have a kernel stack to land on.
     uint64_t bootTop = (uint64_t) (g_bootKstack + sizeof(g_bootKstack));
-    g_gdt.setKernelStack(bootTop);
+    g_cpuGdt[0].setKernelStack(bootTop);
     // Seed the SYSCALL fast-path per-CPU kernel stack too (decision #B): the boot syscallSelfTest
     // and any early trap issue SYSCALL before the scheduler runs its first setKernelStack, and the
     // entry stub loads RSP from this slot after swapgs — a zero here would fault on the first push.
     syscallSetKernelStack(bootTop);
-    g_gdt.loadTss();
+    g_cpuGdt[0].loadTss();
     // IDT: remap the PIC and install all 256 gates (CPU exceptions + IRQs + the MSI vector gates).
     // No sti yet. The Local APIC itself is enabled later, from mmuInitKernel — cpuInit runs before
     // paging, so the LAPIC MMIO page isn't mapped yet here.
@@ -64,10 +67,23 @@ void cpuInit() {
     faultInit();
 }
 
-// Repoint TSS.rsp0 (the kernel stack the CPU loads on a ring3->ring0 interrupt/exception gate).
-// The scheduler calls this via setKernelStack (sched_x86_64.cpp) on every task switch; g_gdt is
-// file-scoped here, so this thin setter is the way other arch TUs reach it.
-void cpuSetTssKernelStack(uint64_t rsp0) { g_gdt.setKernelStack(rsp0); }
+// SMP: bring an application processor's descriptor tables up. Called from apEntry64 (smp_x86_64)
+// once the AP is in long mode. Builds + loads THIS CPU's own GDT (with its own TSS, ltr'd) and
+// loads the shared IDT. `kstackTop` seeds TSS.rsp0 (the AP boot stack; the scheduler repoints it
+// per task). enableSse so future ring-3 code on this CPU does not #UD on XMM.
+void archApCpuInit(uint64_t kstackTop) {
+    int cpu = smpThisCpu();
+    enableSse();
+    g_cpuGdt[cpu].initialize();
+    g_cpuGdt[cpu].setKernelStack(kstackTop);
+    g_cpuGdt[cpu].loadTss();
+    g_idt.load();                 // shared gate table; never re-remap the PIC from an AP
+}
+
+// Repoint TSS.rsp0 (the kernel stack the CPU loads on a ring3->ring0 interrupt/exception gate)
+// for the CALLING CPU. The scheduler calls this via setKernelStack on every task switch; each
+// CPU has its own GDT/TSS, so index by the running CPU.
+void cpuSetTssKernelStack(uint64_t rsp0) { g_cpuGdt[smpThisCpu()].setKernelStack(rsp0); }
 
 void cpuDisableInterrupts() { __asm__ __volatile__("cli"); }
 void cpuEnableInterrupts()  { __asm__ __volatile__("sti"); }

@@ -29,7 +29,8 @@ class Idt64 {
     IdtEntry64 entries[256];
     Idt64Ptr   ptr;
 public:
-    void initialize();    // remap PIC, install all gates, lidt
+    void initialize();    // remap PIC, install all gates, lidt (BSP only — the PIC remap is global)
+    void load();          // SMP: lidt the already-built table on an AP (no PIC remap / re-init)
 private:
     void setGate(unsigned char num, uint64_t handler, uint16_t sel, uint8_t ist, uint8_t flags);
 };

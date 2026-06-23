@@ -63,6 +63,11 @@ class Gdt64 {
         TssDescriptor64 tss;       // 0x30 (16 bytes, occupies indices 6..7)
     } table;
     Gdt64Ptr ptr;
+    // Per-instance TSS + #DF (IST1) stack. SMP: each CPU gets its OWN Gdt64 (and thus its own
+    // TSS), so `ltr 0x30` on every CPU loads a distinct TSS — a shared TSS can't be `ltr`'d twice
+    // (the busy bit faults the second CPU), and rsp0/IST must be per-CPU anyway.
+    Tss64        tss64 __attribute__((aligned(16)));
+    unsigned char dfStack[4096] __attribute__((aligned(16)));
 public:
     void initialize();                  // build table, lgdt, reload CS/segs, point TSS at IST1
     void setKernelStack(uint64_t rsp0); // TSS.rsp0 — kernel stack for ring3->ring0 (Plan 6)

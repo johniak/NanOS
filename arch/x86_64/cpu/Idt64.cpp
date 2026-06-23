@@ -96,4 +96,11 @@ void Idt64::initialize() {
     __asm__ __volatile__("lidt %0" : : "m"(ptr));
 }
 
+// SMP: an application processor loads the SAME (BSP-built) IDT. The gate table + the PIC remap
+// are global, so the AP only needs the lidt — never re-run initialize() (that would re-program
+// the shared 8259s). ptr was filled by the BSP's initialize().
+void Idt64::load() {
+    __asm__ __volatile__("lidt %0" : : "m"(ptr));
+}
+
 }  // namespace kernel
