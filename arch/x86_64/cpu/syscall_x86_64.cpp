@@ -17,12 +17,14 @@
 #include "Exec.h"
 #include <stdint.h>
 
+#include "percpu_x86_64.h"
+
 namespace arch {
-// Defined here, updated by the scheduler / archEnterUser: the kernel stack top the syscall
-// stub loads (per-CPU). For a single CPU one block suffices.
-struct PerCpu { uint64_t kernelStackTop; uint64_t userRspScratch; };
-PerCpu g_percpu;
-void syscallSetKernelStack(uint64_t top) { g_percpu.kernelStackTop = top; }
+// One per-CPU block per logical CPU (the array declared in percpu_x86_64.h). The scheduler /
+// archEnterUser update the running CPU's kernelStackTop; the SYSCALL stub reads it via %gs
+// after swapgs. syscallSetKernelStack + perCpuInitThis are implemented at the bottom of the
+// file, where the wrmsr/rdmsr helpers are in scope.
+PerCpu g_percpu[MAX_CPUS];
 }
 
 namespace {
@@ -76,9 +78,27 @@ void syscallInit() {
 	// 4) FMASK: bits cleared in RFLAGS on entry. Clear IF (no nested IRQ until we re-enable)
 	//    and DF (SysV requires DF=0 in the kernel).
 	wrmsr(IA32_FMASK, (1 << 9) | (1 << 10));   // IF | DF
-	// 5) KERNEL_GS_BASE -> the per-CPU block the stub reads after swapgs.
-	wrmsr(IA32_KERNEL_GS_BASE, (uint64_t) &g_percpu);
+	// 5) KERNEL_GS_BASE -> the per-CPU block the stub reads after swapgs. The BSP is CPU 0;
+	//    APs call perCpuInitThis with their own index in the bring-up path.
+	perCpuInitThis(0, 0, 0);
 }
+
+// Initialise the calling CPU's per-CPU block and point its GS base at it. Idempotent.
+void perCpuInitThis(uint32_t idx, uint32_t lapicId, uint64_t kernelStackTop) {
+	PerCpu* pc = &g_percpu[idx];
+	pc->cpuIndex = idx;
+	pc->lapicId = lapicId;
+	pc->kernelStackTop = kernelStackTop;
+	pc->userRspScratch = 0;
+	pc->currentTask = 0;
+	pc->currentThread = 0;
+	pc->inIrq = 0;
+	wrmsr(IA32_KERNEL_GS_BASE, (uint64_t) pc);   // swapgs on the next kernel entry installs it
+}
+
+// Set the kernel stack top the SYSCALL stub loads. Single-CPU today (BSP = block 0); Phase 3
+// routes this to the running CPU's block once the scheduler is per-CPU aware.
+void syscallSetKernelStack(uint64_t top) { g_percpu[0].kernelStackTop = top; }
 
 void syscallSelfTest() {
 	// No-op on x86_64. The i686 self-test issues `int 0x80` from ring 0, whose handler `iret`s
