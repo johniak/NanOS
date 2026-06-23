@@ -40,6 +40,7 @@
 #include <arch/syscall.h>
 #include <arch/block.h>
 #include <arch/usbhc.h>       // in-kernel USB host controller (root-storage path for live-USB)
+#include <arch/smp.h>         // SMP: ACPI CPU enumeration + application-processor bring-up
 #include "FrameAllocator.h"
 #include "memory_manager.h"   // heapTotalBytes/heapFreeBytes for /proc/meminfo
 char buf[1024];
@@ -459,6 +460,17 @@ void Kernel::start() {
 	okBegin("Timer 1000 Hz + starting shell/services");
 	arch::archTimerInit(1000);
 	okEnd();
+
+	// SMP: enumerate CPUs (ACPI MADT) and INIT-SIPI-SIPI the application processors. For now the
+	// APs idle (no ApEntry registered); Phase 3 points them at the scheduler. Uniprocessor / no
+	// ACPI returns 1. Done after the timer + LAPIC are up, before the scheduler starts.
+	okBegin("SMP: application-processor bring-up");
+	int smpCpus = arch::smpInit();
+	okEnd();
+	Console::write("       SMP: ");
+	Console::write(smpCpus);
+	Console::writeLine(" CPUs online");
+
 	Scheduler::start();
 
 	for (;;) arch::halt_or_hlt();   // unreachable

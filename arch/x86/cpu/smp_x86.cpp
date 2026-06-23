@@ -9,6 +9,7 @@
 
 namespace arch {
 
+int  smpInit()     { return 1; }
 int  smpCpuCount() { return 1; }
 int  smpThisCpu()  { return 0; }
 void smpBringUpAPs(const uint8_t*, int) {}

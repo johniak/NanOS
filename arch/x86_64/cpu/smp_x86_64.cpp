@@ -11,6 +11,7 @@
 #include <arch/sched.h>          // archKernelCr3
 #include "lapic_x86_64.h"
 #include "percpu_x86_64.h"
+#include "acpi_x86_64.h"         // acpiEnumCpus (MD glue)
 #include <stdint.h>
 
 namespace arch {
@@ -35,6 +36,14 @@ static uint8_t g_apStack[MAX_CPUS][16384] __attribute__((aligned(4096)));
 
 int  smpCpuCount() { return g_cpuCount; }
 void smpSetApEntry(ApEntry fn) { g_apEntry = fn; }
+
+int smpInit() {
+    uint8_t ids[MAX_CPUS];
+    int n = acpiEnumCpus(ids, MAX_CPUS, 0);   // LAPIC base already known from the NIC bring-up
+    if (n <= 1) return 1;                     // uniprocessor or no ACPI/MADT
+    smpBringUpAPs(ids, n);
+    return __atomic_load_n(&g_online, __ATOMIC_ACQUIRE);   // CPUs that actually came online
+}
 
 // Dense CPU index from THIS cpu's per-CPU block. GS base = &g_percpu[idx] in post-swapgs kernel
 // context (syscall/IRQ body); the BSP boot path is index 0. cpuIndex sits at %gs:16 (PerCpu).

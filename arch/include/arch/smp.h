@@ -15,6 +15,12 @@ namespace arch {
 // A function each application processor runs once it is in long mode on the kernel CR3.
 typedef void (*ApEntry)();
 
+// Enumerate CPUs (ACPI MADT) and bring up every application processor. Returns the number of
+// CPUs now online (1 on a uniprocessor or when no ACPI/MADT is present). Call after the LAPIC,
+// the CPU-0 per-CPU block, and the timer are up, but before the scheduler starts. This is the
+// single MI entry point; it hides the MD ACPI glue from kernel/.
+int  smpInit();
+
 int  smpCpuCount();   // 1 until smpBringUpAPs() has run; then the number of online CPUs.
 int  smpThisCpu();    // dense 0..N-1 index of the calling CPU.
 

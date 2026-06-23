@@ -806,7 +806,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-smp verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -837,9 +837,14 @@ smoke-bigmem: image64
 smoke-e1000e: image64
 	bash scripts/smoke-e1000e.sh
 
-# `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB boot smokes all passed."
+# `smoke-smp` is the multicore gate: boot with 4 vCPUs and assert ACPI enumerated them + the AP
+# trampoline brought every application processor online with no triple fault.
+smoke-smp: image64
+	bash scripts/smoke-smp.sh
+
+# `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-smp
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + SMP boot smokes all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
