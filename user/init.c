@@ -219,6 +219,13 @@ int main(void) {
 		tcsetpgrp(0, getpgrp());          // hand the console's foreground group back to init
 		int spid = fork();
 		if (spid == 0) {
+			/* Mandatory console login: exec toybox `login`, which prompts login:/Password:,
+			 * verifies against /etc/shadow, drops to the authenticated user's uid/gid + groups,
+			 * and execs their login shell. If login is absent (an image without the toybox port)
+			 * fall back to the configured shell directly, then nsh, so the system is never left
+			 * without a shell. */
+			char* largv[] = { (char*) "login", 0 };
+			execve("/disks/main/nanos/bin/login.nxe", largv, newenv);
 			char* argv[] = { name0, 0 };
 			execve(shell, argv, newenv);
 			/* The configured shell failed to load (e.g. an image without the optional bash) —
