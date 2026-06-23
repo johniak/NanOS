@@ -35,6 +35,7 @@ const uint32_t IA32_EFER          = 0xC0000080;
 const uint32_t IA32_STAR          = 0xC0000081;
 const uint32_t IA32_LSTAR         = 0xC0000082;
 const uint32_t IA32_FMASK         = 0xC0000084;
+const uint32_t IA32_GS_BASE       = 0xC0000101;
 const uint32_t IA32_KERNEL_GS_BASE= 0xC0000102;
 
 static inline void wrmsr(uint32_t msr, uint64_t v) {
@@ -100,6 +101,17 @@ void perCpuInitThis(uint32_t idx, uint32_t lapicId, uint64_t kernelStackTop) {
 	pc->currentTask = 0;
 	pc->currentThread = 0;
 	pc->inIrq = 0;
+	// Point BOTH GS bases at this CPU's block. The kernel reaches the per-CPU block via %gs:0 only
+	// after a swapgs, so KERNEL_GS_BASE must hold it. But the ACTIVE GS base matters too: an AP
+	// leaves the real-mode trampoline with GS.base = 0, i.e. running in ring 0 in *user* swapgs-
+	// parity (active=0, kernel-gs=percpu). The first exit-to-ring3 swapgs then inverts the parity
+	// (active=percpu, kernel-gs=0), so the NEXT syscall-entry swapgs loads active GS.base = 0 and
+	// the stub's `mov %gs:0,%rsp` reads physical 0 (the IVT) as the kernel stack -> instant wedge,
+	// a BKL deadlock, and a frozen box (SMP-only; the BSP's parity is established during boot).
+	// NanOS never uses GS for user TLS (that is FS — archSetUserFsBase), so setting active GS.base
+	// to the per-CPU block is harmless in ring 3 and makes swapgs IDEMPOTENT: %gs:0 resolves to
+	// this CPU's block in every context, regardless of how many swapgs have run. Immune to parity.
+	wrmsr(IA32_GS_BASE,        (uint64_t) pc);   // active GS.base (kernel %gs + idempotent swapgs)
 	wrmsr(IA32_KERNEL_GS_BASE, (uint64_t) pc);   // swapgs on the next kernel entry installs it
 }
 

@@ -103,10 +103,15 @@ extern "C" void apEntry64() {
     int idx = 0;
     for (int i = 0; i < g_cpuCount; i++) if (g_lapicIds[i] == id) { idx = i; break; }
     uint64_t stackTop = (uint64_t)(uintptr_t) &g_apStack[idx][sizeof(g_apStack[idx])];
-    // Full per-CPU CPU bring-up: per-CPU block + GS base, own GDT/TSS + the shared IDT, the
-    // SYSCALL MSRs (ring-3 threads trap here), the LAPIC + its periodic timer for preemption.
-    perCpuInitThis((uint32_t) idx, id, stackTop);
+    // Full per-CPU CPU bring-up. ORDER MATTERS: archApCpuInit loads this CPU's GDT, which reloads
+    // the data segment registers — and writing a selector into %gs ZEROES the hidden GS.base. So
+    // it must run BEFORE perCpuInitThis, which programs both GS bases; otherwise the GDT load wipes
+    // the active GS base right after we set it, leaving the AP in user swapgs-parity while in ring 0
+    // (the first swapgs-exit then inverts it and the next syscall loads GS.base=0 -> %gs:0 reads the
+    // IVT as the kernel stack -> wedge + BKL deadlock). The BSP is immune: cpuInit's GDT load
+    // precedes syscallInit->perCpuInitThis, and its first ring-3 entry (archEnterUser) doesn't swapgs.
     archApCpuInit(stackTop);
+    perCpuInitThis((uint32_t) idx, id, stackTop);
     syscallInitCpuMsrs();
     kernel::lapicInit();
     if (g_apTimerVec) kernel::lapicTimerInit(g_apTimerVec, g_apTimerCount);
