@@ -109,6 +109,22 @@ int setfsuid(uid_t u) { return sys3(SYS_setfsuid, (int) u, 0, 0); }   /* returns
 int setfsgid(gid_t g) { return sys3(SYS_setfsgid, (int) g, 0, 0); }
 int getgroups(int n, gid_t* list) { return reterr(sys3(SYS_getgroups, n, (int) list, 0)); }
 int setgroups(int n, const gid_t* list) { return reterr(sys3(SYS_setgroups, n, (int) list, 0)); }
+
+/* dprintf/vdprintf: format to a buffer then write() to the fd. picolibc omits these from the
+ * freestanding build; toybox's xprintf layer uses dprintf. */
+int vdprintf(int fd, const char* fmt, va_list ap) {
+	char buf[2048];
+	int n = vsnprintf(buf, sizeof buf, fmt, ap);
+	if (n < 0) return n;
+	if (n > (int) sizeof buf) n = (int) sizeof buf;   // truncated (best effort)
+	return write(fd, buf, n);
+}
+int dprintf(int fd, const char* fmt, ...) {
+	va_list ap; va_start(ap, fmt);
+	int n = vdprintf(fd, fmt, ap);
+	va_end(ap);
+	return n;
+}
 /* pipe/dup/dup2: descriptor plumbing for shells (pipelines, redirection) and the terminal
  * (the child puts the pty slave on fd 0/1/2 via dup2). */
 int pipe(int fd[2])                     { return reterr(sys3(SYS_pipe, (int) fd, 0, 0)); }

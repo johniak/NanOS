@@ -10,6 +10,7 @@
  */
 #include <pwd.h>
 #include <grp.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +83,38 @@ static struct passwd* lookup(int by_uid, uid_t uid, const char* name) {
 
 struct passwd* getpwuid(uid_t uid) { return lookup(1, uid, 0); }
 struct passwd* getpwnam(const char* name) { return lookup(0, 0, name); }
+
+/* Reentrant variants (toybox/login use them): look up via the non-_r form, then deep-copy the
+ * strings into the caller's buffer so the result outlives the next lookup. Returns 0 on success
+ * (*result -> pwd), ENOENT-as-0-with-NULL-result if absent, ERANGE if buf is too small. */
+static int pw_copy(struct passwd* src, struct passwd* pwd, char* buf, size_t buflen,
+                   struct passwd** result) {
+	if (!src) { *result = 0; return 0; }
+	const char* fields[5] = { src->pw_name, src->pw_passwd, src->pw_gecos, src->pw_dir, src->pw_shell };
+	size_t need = 0;
+	for (int i = 0; i < 5; i++) need += strlen(fields[i] ? fields[i] : "") + 1;
+	if (need > buflen) { *result = 0; return ERANGE; }
+	char* p = buf;
+	char** dst[5] = { &pwd->pw_name, &pwd->pw_passwd, &pwd->pw_gecos, &pwd->pw_dir, &pwd->pw_shell };
+	for (int i = 0; i < 5; i++) {
+		const char* s = fields[i] ? fields[i] : "";
+		size_t l = strlen(s) + 1;
+		memcpy(p, s, l);
+		*dst[i] = p;
+		p += l;
+	}
+	pwd->pw_uid = src->pw_uid;
+	pwd->pw_gid = src->pw_gid;
+	pwd->pw_comment = (char*) "";
+	*result = pwd;
+	return 0;
+}
+int getpwnam_r(const char* name, struct passwd* pwd, char* buf, size_t buflen, struct passwd** result) {
+	return pw_copy(getpwnam(name), pwd, buf, buflen, result);
+}
+int getpwuid_r(uid_t uid, struct passwd* pwd, char* buf, size_t buflen, struct passwd** result) {
+	return pw_copy(getpwuid(uid), pwd, buf, buflen, result);
+}
 
 /* getgrnam/getgrgid/getgrent + getspnam + getgrouplist/initgroups live in grp_shadow.c
  * (they parse /etc/group and /etc/shadow with member lists). */

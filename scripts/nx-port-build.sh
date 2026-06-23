@@ -141,6 +141,34 @@ vim)
 	make 2>&1 | tail -30
 	BIN="$STAGE/src/vim"
 	;;
+toybox)
+	# toybox is a 0BSD multicall binary (login/su/passwd/id/groups/...). Not autotools — its own
+	# kconfig + scripts/make.sh. We build a MINIMAL set (the user-identity tools) against the NanOS
+	# libc via nx-gcc; HOSTCC=cc builds toybox's own generator helpers natively.
+	#
+	# Three source adaptations (toybox is Linux-centric; NanOS is Linux-syscall-ish but bare-elf):
+	#  1. include <sys/statfs.h> — toybox only does so under __linux__; struct statfs is otherwise
+	#     incomplete where lib/portability.h's statfs_bsize() inlines dereference it.
+	#  2. enable the Linux code paths for __nanos__ in lib/portability.c (dev_major/minor/makedev
+	#     use the Linux dev_t encoding, which NanOS shares; otherwise they #error). Built with
+	#     -D__nanos__.
+	#  3. strip a trailing ".nxe" from argv[0] before applet dispatch — NanOS runs programs as
+	#     "<name>.nxe", so basename(argv[0]) is e.g. "login.nxe"; toy_find needs "login".
+	sed -i "/#include <sys\/mount.h>/a #include <sys/statfs.h>" lib/portability.h
+	sed -i "s/#if defined(__linux__)/#if defined(__linux__) || defined(__nanos__)/g" lib/portability.c
+	sed -i "s@char \*ss = basename(s);@char *ss = basename(s); {char*_d=strstr(ss,\".nxe\"); if(_d\&\&!_d[4])*_d=0;}@" main.c
+	# Minimal config: everything off (allnoconfig), then enable the multiplexer + SUID handling +
+	# the identity commands. CONFIG_TOYBOX_SUID lets one setuid-root toybox.nxe drop privilege for
+	# the non-suid applets (id/groups) while su/passwd keep it.
+	make allnoconfig >/dev/null 2>&1
+	for s in TOYBOX TOYBOX_SUID TOYBOX_HELP LOGIN SU PASSWD ID GROUPS WHOAMI TRUE FALSE; do
+		sed -i "s/^# CONFIG_${s} is not set/CONFIG_${s}=y/" .config
+		grep -q "^CONFIG_${s}=y" .config || echo "CONFIG_${s}=y" >> .config
+	done
+	yes "" | make oldconfig >/dev/null 2>&1 || true
+	make CROSS_COMPILE= CC="$CC" HOSTCC=cc CFLAGS=-D__nanos__ 2>&1 | tail -20
+	BIN="$STAGE/toybox"
+	;;
 *)
 	echo "nx-port-build.sh: unknown app '$APP'" >&2
 	exit 2

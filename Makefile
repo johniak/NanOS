@@ -107,6 +107,20 @@ else
 endif
 	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
 
+# toybox (0BSD multicall): the user-identity tools (login/su/passwd/id/groups/whoami). x86_64 only
+# (i686 is frozen). Built via the nanos-sdk port flow; installed as a single setuid-root toybox.nxe
+# with a per-command symlink farm (image64 install). Source: $(SDK_WORK)/toybox-0.8.11.
+.PHONY: toybox
+toybox:
+ifeq ($(ARCH),x86_64)
+	$(NXPORT_PREREQ)
+	$(NXPORT_RUN) -v "$(SDK_WORK)/toybox-0.8.11":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh toybox
+	cp "$(SDK_WORK)/toybox-0.8.11/toybox.nxe" $(BINFOLDER)toybox.nxe
+else
+	@echo "toybox is x86_64-only (i686 is frozen)"; exit 1
+endif
+	@echo "staged $(BINFOLDER)toybox.nxe — run 'make image64' to install it + the login/su/passwd/id symlinks"
+
 # Vim (the editor). ARCH-AWARE:
 #   * i686 (default): copy the hand-built 32-bit .nxe the nanos-sdk produced (original flow, intact).
 #   * x86_64: build from source via the REPRODUCIBLE nanos-port driver (mirrors `make ping`/`make
@@ -1180,6 +1194,16 @@ _image64: _all _userland64 _kext
 	# nanos-sdk port), staged into bin/htop.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)htop.nxe ]; then \
 	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# toybox (optional, external): the user-identity multicall built by `make ARCH=x86_64 toybox`.
+	# Installed as ONE setuid-root binary (mode 04755) with a per-command symlink farm — toybox's
+	# CONFIG_TOYBOX_SUID drops privilege for the non-suid applets (id/groups/whoami) while
+	# login/su/passwd keep root to read /etc/shadow + switch identity. Skipped if absent.
+	if [ -f $(BINFOLDER)toybox.nxe ]; then \
+	  printf "rm /nanos/bin/toybox.nxe\nwrite $(BINFOLDER)toybox.nxe /nanos/bin/toybox.nxe\nset_inode_field /nanos/bin/toybox.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  for c in login su passwd id groups whoami; do \
+	    printf "rm /nanos/bin/$$c.nxe\nln /nanos/bin/toybox.nxe /nanos/bin/$$c.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  done; \
 	fi
 	# ping (optional, external): GNU inetutils ping built by `make ARCH=x86_64 ping` (the nanos-sdk
 	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.

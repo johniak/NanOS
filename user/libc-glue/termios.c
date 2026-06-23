@@ -44,6 +44,7 @@ speed_t cfgetispeed(const struct termios* t) { return t->c_ispeed; }
 speed_t cfgetospeed(const struct termios* t) { return t->c_ospeed; }
 int cfsetispeed(struct termios* t, speed_t s) { t->c_ispeed = s; return 0; }
 int cfsetospeed(struct termios* t, speed_t s) { t->c_ospeed = s; return 0; }
+int cfsetspeed(struct termios* t, speed_t s) { t->c_ispeed = t->c_ospeed = s; return 0; }   /* toybox lib/tty.c */
 
 /* Controlling-terminal foreground process group (job control), via the pty's TIOCSPGRP/
  * TIOCGPGRP ioctls. The shell calls tcsetpgrp() to hand the terminal to the job it runs in

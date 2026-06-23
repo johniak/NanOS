@@ -69,5 +69,8 @@ done
 
 # Otherwise this is a link (possibly compile+link of a conftest): splice in the NanOS
 # startup objects, linker script and the libc import library so _start/main resolve.
+# -xnone before the import library: a caller (e.g. toybox's library probe) may leave an active
+# `-xc -` language mode in "$@", which would otherwise make gcc try to COMPILE the libc.ndl.a
+# archive as C source. -xnone reverts to extension-based detection; harmless for other ports.
 exec $GCC $CFLAGS_NX -nostdlib -Wl,--emit-relocs -T "$NX_LDSCRIPT" \
-	"$NANOS/bin/crt0.o" "$NANOS/bin/nxhdr.o" "$@" "$NANOS/bin/libc.ndl.a" -lgcc
+	"$NANOS/bin/crt0.o" "$NANOS/bin/nxhdr.o" "$@" -xnone "$NANOS/bin/libc.ndl.a" -lgcc

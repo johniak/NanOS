@@ -55,4 +55,48 @@ const char* getprogname(void);
 void setprogname(const char* p);
 void __nx_set_progname(const char* argv0);
 
+/* --- toybox port compat (picolibc gaps) --------------------------------------------------- */
+/* sigjmp_buf/sigsetjmp/siglongjmp: picolibc has setjmp but not the signal-mask variants. NanOS
+ * has no saved signal mask across longjmp, so map them onto plain setjmp/longjmp (the `savemask`
+ * argument is ignored). toybox's toy_context embeds a sigjmp_buf. */
+#include <setjmp.h>
+#ifndef sigjmp_buf
+typedef jmp_buf sigjmp_buf;
+#define sigsetjmp(env, savemask) setjmp(env)
+#define siglongjmp(env, val)     longjmp(env, val)
+#endif
+
+/* dprintf/vdprintf: picolibc's <stdio.h> doesn't declare them for the freestanding build (the
+ * symbols are in libc.a). toybox's xprintf layer uses dprintf. */
+#include <stdarg.h>
+int dprintf(int fd, const char* fmt, ...);
+int vdprintf(int fd, const char* fmt, va_list ap);
+
+/* _PATH_DEFPATH: picolibc's <paths.h> omits it; login/su seed the session PATH from it. */
+#include <paths.h>
+#ifndef _PATH_DEFPATH
+#define _PATH_DEFPATH "/disks/main/nanos/bin:/disks/main/bin"
+#endif
+
+/* cfsetspeed: picolibc termios declares cfsetispeed/cfsetospeed but not the combined setter;
+ * toybox lib/tty.c uses it. Implemented in libc-glue/termios.c. */
+#include <termios.h>
+int cfsetspeed(struct termios* t, speed_t s);
+
+/* getgrouplist: picolibc's <grp.h> omits it; toybox id/groups use it. Defined in grp_shadow.c. */
+#include <sys/types.h>
+int getgrouplist(const char* user, gid_t group, gid_t* groups, int* ngroups);
+
+/* xattr family: NanOS has no extended attributes; toybox lib/portability.c calls the Linux
+ * 4-arg getxattr/setxattr/listxattr. Declared here, stubbed (-1/ENOTSUP) in posixstubs.c. */
+ssize_t getxattr(const char* path, const char* name, void* value, size_t size);
+ssize_t lgetxattr(const char* path, const char* name, void* value, size_t size);
+ssize_t fgetxattr(int fd, const char* name, void* value, size_t size);
+ssize_t listxattr(const char* path, char* list, size_t size);
+ssize_t llistxattr(const char* path, char* list, size_t size);
+ssize_t flistxattr(int fd, char* list, size_t size);
+int setxattr(const char* path, const char* name, const void* value, size_t size, int flags);
+int lsetxattr(const char* path, const char* name, const void* value, size_t size, int flags);
+int fsetxattr(int fd, const char* name, const void* value, size_t size, int flags);
+
 #endif /* NX_COMPAT_DECLS_H */

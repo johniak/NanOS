@@ -366,3 +366,16 @@ void syslog(int priority, const char* fmt, ...) {
 
 /* clearenv — empty the environment (busybox setup_environment). */
 int clearenv(void) { if (environ) environ[0] = 0; return 0; }
+
+/* Extended attributes: NanOS has no xattr support. Stub the Linux 4-arg family toybox calls
+ * (lib/portability.c) as ENOTSUP — programs degrade to "no attributes". */
+#include <sys/types.h>
+ssize_t getxattr(const char* p, const char* n, void* v, size_t s) { (void)p;(void)n;(void)v;(void)s; errno = ENOTSUP; return -1; }
+ssize_t lgetxattr(const char* p, const char* n, void* v, size_t s) { (void)p;(void)n;(void)v;(void)s; errno = ENOTSUP; return -1; }
+ssize_t fgetxattr(int fd, const char* n, void* v, size_t s) { (void)fd;(void)n;(void)v;(void)s; errno = ENOTSUP; return -1; }
+ssize_t listxattr(const char* p, char* l, size_t s) { (void)p;(void)l;(void)s; return 0; }
+ssize_t llistxattr(const char* p, char* l, size_t s) { (void)p;(void)l;(void)s; return 0; }
+ssize_t flistxattr(int fd, char* l, size_t s) { (void)fd;(void)l;(void)s; return 0; }
+int setxattr(const char* p, const char* n, const void* v, size_t s, int f) { (void)p;(void)n;(void)v;(void)s;(void)f; errno = ENOTSUP; return -1; }
+int lsetxattr(const char* p, const char* n, const void* v, size_t s, int f) { (void)p;(void)n;(void)v;(void)s;(void)f; errno = ENOTSUP; return -1; }
+int fsetxattr(int fd, const char* n, const void* v, size_t s, int f) { (void)fd;(void)n;(void)v;(void)s;(void)f; errno = ENOTSUP; return -1; }
