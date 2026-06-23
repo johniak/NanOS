@@ -1,5 +1,6 @@
 #include "Process.h"
 #include "Scheduler.h"   // Task / TaskState for the /proc state char
+#include <arch/smp.h>    // SMP: "current process/thread" is per-CPU
 
 namespace kernel {
 
@@ -79,8 +80,15 @@ static const int MAXTHREADS = ProcTable::MAX + 8;
 static Process g_procs[MAXPROC];
 static Thread g_threads[MAXTHREADS];
 static int g_nextPid = 1;
-static Process* g_current = 0;
-static Thread* g_currentThread = 0;
+// SMP: the running process/thread is per-CPU (each CPU executes a different one). Indexed by
+// arch::smpThisCpu(); the scheduler updates this CPU's slot on every context switch. The
+// reference helpers keep the many call sites below unchanged in spirit (read/write "current").
+static Process* g_curProc[arch::SMP_MAX_CPUS] = { 0 };
+static Thread*  g_curThr[arch::SMP_MAX_CPUS]  = { 0 };
+static inline Process*& g_current_ref()       { return g_curProc[arch::smpThisCpu()]; }
+static inline Thread*&  g_currentThread_ref() { return g_curThr[arch::smpThisCpu()]; }
+#define g_current        (g_current_ref())
+#define g_currentThread  (g_currentThread_ref())
 static unsigned g_cpuUser, g_cpuSystem, g_cpuIdle;   // global CPU ticks (jiffies) by class
 static unsigned g_forksTotal;                         // processes ever created (since boot)
 static int g_lastPid;                                 // most recently allocated pid

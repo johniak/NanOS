@@ -6,6 +6,7 @@
 #include "WaitQueue.h"        // sleepOn/wakeAll operate on these event lists
 #include "SignalDispatch.h"   // hasPendingSignalCurrent: don't sleep through a pending signal
 #include "Bkl.h"              // Big Kernel Lock: released across the context switch (SMP)
+#include <arch/smp.h>         // smpThisCpu / SMP_MAX_CPUS: per-CPU current + the switch handoff
 
 namespace kernel {
 
@@ -24,7 +25,19 @@ static const int KSTACK_SIZE = 32768;
 
 static Task g_tasks[MAXTASKS];
 static int g_ntasks = 0;
-static int g_cur = 0;
+
+// SMP: "current" is per-CPU. g_curTask[cpu] is the task CPU `cpu` is running; g_cpuIdle[cpu] is
+// that CPU's own idle task (each CPU idles independently); g_switchFrom[cpu] is the task that
+// CPU last switched AWAY from, read on the far side of the context switch to finish releasing it
+// (the finish_task_switch handoff — see schedule()/finishSwitch). The shared g_tasks[] runqueue
+// is protected by the BKL: every scheduler entry already holds it.
+static Task* g_curTask[arch::SMP_MAX_CPUS]   = { 0 };
+static Task* g_cpuIdle[arch::SMP_MAX_CPUS]   = { 0 };
+static Task* g_switchFrom[arch::SMP_MAX_CPUS] = { 0 };
+
+static inline Task* curTask()         { return g_curTask[arch::smpThisCpu()]; }
+static inline void  setCurTask(Task* t) { g_curTask[arch::smpThisCpu()] = t; }
+
 static volatile unsigned g_ticks = 0;
 static unsigned g_ctxt = 0;   // total context switches performed (for /proc/stat ctxt)
 static unsigned g_load[3] = { 0, 0, 0 };   // 1/5/15-min load, fixed-point FSHIFT=11
@@ -82,11 +95,40 @@ int Scheduler::nextRunnable(const TaskState* st, int n, int cur) {
 	return 0;   // idle fallback
 }
 
+// SMP claim: a task is claimable only if it is TASK_READY and not an idle task. A task already
+// RUNNING (on any CPU) is NOT claimable, so with the claim performed under the BKL two CPUs can
+// never pick the same task. Returns -1 if nothing is claimable (caller keeps its running task or
+// drops to its per-CPU idle). Round-robin from curIdx for fairness.
+int Scheduler::pickReady(const TaskState* st, const bool* isIdle, int n, int curIdx) {
+	for (int k = 1; k <= n; k++) {
+		int idx = (curIdx + k) % n;
+		if (!isIdle[idx] && st[idx] == TASK_READY)
+			return idx;
+	}
+	return -1;
+}
+
 void Scheduler::init() {
 	g_ntasks = 0;
-	g_cur = 0;
 	g_ticks = 0;
-	create(idleBody, 0);
+	for (int i = 0; i < arch::SMP_MAX_CPUS; i++) {
+		g_curTask[i] = 0;
+		g_cpuIdle[i] = 0;
+		g_switchFrom[i] = 0;
+	}
+	// The BSP's idle task (slot 0). Each AP gets its own idle via createIdle() at bring-up.
+	Task* idle0 = create(idleBody, 0);
+	idle0->isIdle = true;
+	g_cpuIdle[0] = idle0;
+}
+
+// Create an additional per-CPU idle task (called for each AP as it enters the scheduler). The
+// task body is the shared idleBody; it is flagged isIdle so pickReady never hands it to another
+// CPU, and recorded as that CPU's idle fallback.
+Task* Scheduler::createIdle(int cpu) {
+	Task* t = create(idleBody, -1 - cpu);   // negative ids keep idle tasks out of the pid space
+	if (t) { t->isIdle = true; g_cpuIdle[cpu] = t; }
+	return t;
 }
 
 // Find a reusable (FREE) slot below the high-water mark, or extend by one if there
@@ -113,6 +155,8 @@ static Task* allocSlot(int id) {
 	t->waitNext = 0;
 	t->kstack = stk;
 	t->proc = 0;               // set when a Process binds this task (Kernel/forkProcess)
+	t->runningCpu = -1;        // SMP: not running on any CPU until pickReady claims it
+	t->isIdle = false;
 	t->esp0 = ((uintptr_t) (stk + KSTACK_SIZE)) & ~(uintptr_t) 15;   // 16-aligned TSS.esp0
 	return t;
 }
@@ -133,57 +177,100 @@ Task* Scheduler::createBlank(int id) {
 	return allocSlot(id);
 }
 
-Task* Scheduler::current() { return &g_tasks[g_cur]; }
-Task* Scheduler::idle() { return &g_tasks[0]; }   // idle is always the first task
+Task* Scheduler::current() {
+	Task* t = curTask();
+	return t ? t : idle();                        // before this CPU's first schedule -> its idle
+}
+Task* Scheduler::idle() {
+	Task* t = g_cpuIdle[arch::smpThisCpu()];
+	return t ? t : &g_tasks[0];                   // BSP idle (slot 0) is the universal fallback
+}
 unsigned Scheduler::ticks() { return g_ticks; }
 
 // Same round-robin policy as nextRunnable (which stays the host-tested reference), but
 // scanning the live task table in place: at this task ceiling a TaskState[MAXTASKS] copy
 // would overflow the fixed 8 KB kernel stack, so never materialise one.
-static int pickNext(int cur) {
-	if (g_ntasks <= 0)
-		return 0;
-	for (int k = 1; k <= g_ntasks; k++) {
-		int idx = (cur + k) % g_ntasks;
-		if (idx != 0 && runnable(g_tasks[idx].state))
-			return idx;
+// SMP pick over the live runqueue: a claimable (READY, non-idle) task round-robin from `cur`,
+// else keep `cur` if it can keep running (preempted with nothing else ready), else this CPU's
+// idle. The claim itself (READY->RUNNING) is done by the caller under the BKL.
+static Task* pickNextTask(Task* cur) {
+	int n = g_ntasks;
+	if (n > 0) {
+		int curIdx = cur ? (int) (cur - g_tasks) : 0;
+		for (int k = 1; k <= n; k++) {
+			Task* t = &g_tasks[(curIdx + k) % n];
+			if (!t->isIdle && t->state == TASK_READY)
+				return t;
+		}
 	}
-	return 0;                                     // idle (slot 0) only when nothing else runs
+	// Nothing else claimable: keep running `cur` if it still can; otherwise idle.
+	if (cur && !cur->isIdle && (cur->state == TASK_RUNNING || cur->state == TASK_READY))
+		return cur;
+	return g_cpuIdle[arch::smpThisCpu()] ? g_cpuIdle[arch::smpThisCpu()] : &g_tasks[0];
+}
+
+// The finish_task_switch handoff: on the FAR side of a context switch (under the BKL), release
+// the task this CPU just switched away from. It was deliberately left non-claimable (still
+// TASK_RUNNING with runningCpu set) across the switch so no other CPU could grab it before its
+// kernel rsp was saved by archContextSwitch. Now that the save is complete, demote it to READY
+// (if it was preempted) and clear runningCpu so others may claim it.
+static void finishSwitch() {
+	int cpu = arch::smpThisCpu();
+	Task* from = g_switchFrom[cpu];
+	if (from && from != curTask()) {
+		if (from->state == TASK_RUNNING)
+			from->state = TASK_READY;
+		from->runningCpu = -1;
+	}
+	g_switchFrom[cpu] = 0;
+}
+
+// C entry for the fork-child first-run path (switch64.S ret_from_fork): the child resumes
+// straight into an iretq to ring 3 without re-entering the kernel via schedule(), so it must
+// run the handoff itself, bracketed by the BKL (it then runs in ring 3 lock-free).
+extern "C" void schedForkFinish() {
+	g_bkl.enter();
+	finishSwitch();
+	g_bkl.exit();
 }
 
 void Scheduler::schedule() {
-	// Pick the next task and flip the run-state fields under a brief interrupts-off section, so
-	// a timer IRQ (onTick scans/mutates the same g_tasks states) can't interleave here. The flags
-	// are restored BEFORE the context switch — the switch itself touches no shared state and runs
-	// with the caller's original IF (kthreads with IF=1, syscalls with IF=0), exactly as before.
+	// Pick + claim under a brief interrupts-off section (so the local timer IRQ's onTick can't
+	// interleave on the shared g_tasks states) AND under the BKL the caller already holds (so a
+	// remote CPU's schedule() can't claim the same task). The claim (READY->RUNNING) is therefore
+	// atomic across CPUs.
 	unsigned long flags = arch::cpuIrqSave();
-	int next = pickNext(g_cur);
-	if (next == g_cur) {
+	int cpu = arch::smpThisCpu();
+	Task* prev = curTask();
+	Task* next = pickNextTask(prev);
+	if (next == prev) {
 		arch::cpuIrqRestore(flags);
-		return;                                   // nothing else to run
+		return;                                   // nothing else to run on this CPU
 	}
 	g_ctxt++;                                     // an actual context switch (for /proc/stat)
 	g_slice = 0;                                  // the newly-scheduled task gets a fresh quantum
-	int prev = g_cur;
-	g_cur = next;
-	if (g_tasks[prev].state == TASK_RUNNING)
-		g_tasks[prev].state = TASK_READY;
-	g_tasks[next].state = TASK_RUNNING;
-	arch::setKernelStack(g_tasks[next].esp0);   // ring3 traps land on next's kstack
-	ProcTable::setCurrent(g_tasks[next].proc);  // route syscalls to it (O(1) back-pointer)
-	ProcTable::setCurrentThread(g_tasks[next].thread);  // and the specific thread within it
+	next->state = TASK_RUNNING;                   // claim it for THIS cpu
+	next->runningCpu = cpu;
+	// `prev` is intentionally LEFT in TASK_RUNNING (still non-claimable) across the switch: its
+	// kernel rsp is not saved until archContextSwitch below, so a remote CPU must not pick it up
+	// yet. finishSwitch() on the far side demotes it once the save is done. (A `prev` that
+	// voluntarily blocked is already BLOCKED here — non-claimable — and finishSwitch leaves it so.)
+	setCurTask(next);
+	arch::setKernelStack(next->esp0);             // ring3 traps on THIS cpu land on next's kstack
+	ProcTable::setCurrent(next->proc);            // route this CPU's syscalls to it (O(1))
+	ProcTable::setCurrentThread(next->thread);
 	// Re-point the TLS descriptor at the now-current thread's TLS block, so __thread accesses
-	// (%gs:-relative) resolve to the right per-thread storage. 0 = the thread has no TLS yet.
-	arch::archLoadThreadTls(g_tasks[next].thread ? g_tasks[next].thread->tlsBase : 0);
+	// (%fs-relative) resolve to the right per-thread storage. 0 = the thread has no TLS yet.
+	arch::archLoadThreadTls(next->thread ? next->thread->tlsBase : 0);
+	g_switchFrom[cpu] = prev;                     // hand `prev` to the far side for release
 	arch::cpuIrqRestore(flags);
 	// BKL handoff: drop the lock so another CPU can enter the kernel while we switch, then
-	// re-acquire on the far side. schedule() is always reached at BKL depth 1 (syscalls and
-	// kernel threads enter at depth 1; schedPreempt only runs for ring-3 interruptees, also
-	// depth 1), so a single exit() fully releases it and the resumed task's enter() restores
-	// it. The switch itself touches only the two tasks' saved stacks — no shared state.
+	// re-acquire on the far side and finish releasing `prev`. schedule() is always reached at
+	// BKL depth 1, so one exit() fully releases it and the resumed task's enter() restores it.
 	g_bkl.exit();
-	arch::archContextSwitch(&g_tasks[prev].kesp, g_tasks[next].kesp);
+	arch::archContextSwitch(&prev->kesp, next->kesp);
 	g_bkl.enter();
+	finishSwitch();                               // release whatever WE just switched away from
 }
 
 // Timer tick. Does NOT switch tasks itself: it only advances the clock, re-wakes the I/O
@@ -196,8 +283,9 @@ void Scheduler::schedule() {
 void Scheduler::onTick(bool fromUser) {
 	g_ticks++;
 	// Attribute this tick to the running process (user vs system by the ring it interrupted),
-	// or to idle when the idle task (slot 0) was running.
-	ProcTable::accountTick(fromUser, g_cur == 0);
+	// or to idle when an idle task was running on this CPU.
+	Task* cur = curTask();
+	ProcTable::accountTick(fromUser, !cur || cur->isIdle);
 	// Advance the per-process ITIMER_REAL timers by one tick of real time (the timer is
 	// 1000 Hz => 1000 us/tick); expiring ones get SIGALRM posted + their threads woken.
 	ProcTable::tickRealTimers(1000);
@@ -218,8 +306,8 @@ void Scheduler::onTick(bool fromUser) {
 			woke = true;
 		}
 		// A kernel thread whose body() returned is left TASK_DONE and never waited on; reclaim
-		// its slot + 8 KB stack lazily here (only when it is not the running task).
-		else if (g_tasks[i].state == TASK_DONE && i != g_cur)
+		// its slot + 8 KB stack lazily here (only when it is running on no CPU).
+		else if (g_tasks[i].state == TASK_DONE && &g_tasks[i] != cur && g_tasks[i].runningCpu == -1)
 			reap(&g_tasks[i]);
 	}
 	// Only force a reschedule on a quantum boundary or when a sleeper woke — NOT every tick, so
@@ -258,8 +346,9 @@ void Scheduler::ioWait() {
 void Scheduler::sleepUntil(unsigned tick) {
 	unsigned long f = arch::cpuIrqSave();
 	if (hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }   // don't sleep past a signal
-	g_tasks[g_cur].wakeAt = tick ? tick : 1;   // 0 is the "no timer armed" sentinel
-	g_tasks[g_cur].state = TASK_BLOCKED;
+	Task* me = curTask();
+	me->wakeAt = tick ? tick : 1;   // 0 is the "no timer armed" sentinel
+	me->state = TASK_BLOCKED;
 	arch::cpuIrqRestore(f);
 	schedule();
 }
@@ -267,7 +356,7 @@ void Scheduler::sleepUntil(unsigned tick) {
 void Scheduler::block() {
 	unsigned long f = arch::cpuIrqSave();
 	if (hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }   // signal pending: don't block
-	g_tasks[g_cur].state = TASK_BLOCKED;
+	curTask()->state = TASK_BLOCKED;
 	arch::cpuIrqRestore(f);
 	schedule();
 }
@@ -304,12 +393,13 @@ void Scheduler::sleepOn(WaitQueue* q) {
 	// caller's condition test and here. If one is pending, don't sleep — the caller re-checks
 	// and returns -ERESTARTSYS, so a Ctrl+C can't be lost into an indefinite block.
 	if (hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }
-	q->add(&g_tasks[g_cur]);
-	g_tasks[g_cur].state = TASK_BLOCKED;
+	Task* me = curTask();
+	q->add(me);
+	me->state = TASK_BLOCKED;
 	arch::cpuIrqRestore(f);
 	schedule();
 	f = arch::cpuIrqSave();
-	q->remove(&g_tasks[g_cur]);              // resumed: we no longer wait on q (woken or signalled)
+	q->remove(curTask());                    // resumed: we no longer wait on q (woken or signalled)
 	arch::cpuIrqRestore(f);
 }
 
@@ -322,12 +412,13 @@ void Scheduler::sleepOnUntil(WaitQueue* q, bool (*ready)(void*), void* ctx) {
 	for (;;) {
 		unsigned long f = arch::cpuIrqSave();
 		if (ready(ctx) || hasPendingSignalCurrent()) { arch::cpuIrqRestore(f); return; }
-		q->add(&g_tasks[g_cur]);
-		g_tasks[g_cur].state = TASK_BLOCKED;
+		Task* me = curTask();
+		q->add(me);
+		me->state = TASK_BLOCKED;
 		arch::cpuIrqRestore(f);
 		schedule();
 		f = arch::cpuIrqSave();
-		q->remove(&g_tasks[g_cur]);
+		q->remove(curTask());
 		arch::cpuIrqRestore(f);
 	}
 }
@@ -367,16 +458,19 @@ void Scheduler::reap(Task* t) {
 }
 
 void Scheduler::start() {
-	int first = pickNext(0);
-	g_cur = first;
-	g_tasks[first].state = TASK_RUNNING;
-	arch::setKernelStack(g_tasks[first].esp0);
-	ProcTable::setCurrent(g_tasks[first].proc);
-	ProcTable::setCurrentThread(g_tasks[first].thread);
-	arch::archLoadThreadTls(g_tasks[first].thread ? g_tasks[first].thread->tlsBase : 0);
+	// The BSP enters its first task from the throwaway boot context (which is not a Task and
+	// holds no BKL). g_switchFrom[bsp] stays 0, so the first task's finishSwitch is a no-op.
+	Task* first = pickNextTask(0);
+	first->state = TASK_RUNNING;
+	first->runningCpu = arch::smpThisCpu();
+	setCurTask(first);
+	arch::setKernelStack(first->esp0);
+	ProcTable::setCurrent(first->proc);
+	ProcTable::setCurrentThread(first->thread);
+	arch::archLoadThreadTls(first->thread ? first->thread->tlsBase : 0);
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static uintptr_t throwaway;
-	arch::archContextSwitch(&throwaway, g_tasks[first].kesp);
+	arch::archContextSwitch(&throwaway, first->kesp);
 }
 
 void Scheduler::runCurrentBody() {
@@ -386,8 +480,10 @@ void Scheduler::runCurrentBody() {
 	// handoff exit), exit-to-ring-3 (archEnterUser's bklExit), or its final schedule() when body()
 	// returns (TASK_DONE).
 	g_bkl.enter();
-	g_tasks[g_cur].body();
-	g_tasks[g_cur].state = TASK_DONE;
+	finishSwitch();                               // release the task we were switched in from
+	Task* me = curTask();
+	me->body();
+	me->state = TASK_DONE;
 	schedule();
 	for (;;) {}   // unreachable: a DONE task is never rescheduled
 }

@@ -8,6 +8,7 @@
 [GLOBAL taskTrampoline]
 [GLOBAL ret_from_fork]
 [EXTERN schedulerRunCurrentBody]
+[EXTERN schedForkFinish]         ; kernel/Scheduler.cpp — finish_task_switch for the fork child
 
 ; void archContextSwitch(uintptr_t* saveOldKesp /*rdi*/, uintptr_t newKesp /*rsi*/)
 ;   Save the callee-saved GPRs + CR3 + rsp of the current task into *saveOldKesp, then load
@@ -63,6 +64,11 @@ taskTrampoline:
 ; of isr64.S's isr_common_stub (manual GPR restore + ring-3 swapgs + drop int_no/err + iretq).
 ; On entry rsp points at the lowest Registers field (r15).
 ret_from_fork:
+    ; finish_task_switch: release the task this CPU switched away from (the child resumes
+    ; straight into ring 3 below, never re-entering schedule(), so it runs the handoff here).
+    ; rsp is 16-aligned at this point (the fabricated Registers frame is, so the call is ABI-ok);
+    ; the GPRs restored below come off the stack, so schedForkFinish's clobbers don't matter.
+    call schedForkFinish
     pop r15
     pop r14
     pop r13

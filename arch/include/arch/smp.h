@@ -12,6 +12,10 @@
 
 namespace arch {
 
+// Upper bound on logical CPUs, visible to MI code (the scheduler keeps per-CPU arrays sized by
+// this). Must match the MD per-CPU table (arch::MAX_CPUS in percpu_x86_64.h).
+static const int SMP_MAX_CPUS = 32;
+
 // A function each application processor runs once it is in long mode on the kernel CR3.
 typedef void (*ApEntry)();
 

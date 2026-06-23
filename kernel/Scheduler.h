@@ -38,6 +38,8 @@ struct Task {
 	Process* proc;          // owning process (0 for none) — set when the process binds the task
 	Thread*  thread;        // the thread this task runs (0 for none) — set by ProcTable::bindTask
 	Task*    waitNext;      // intrusive link while parked on a WaitQueue (see WaitQueue.h)
+	int      runningCpu;    // SMP: dense index of the CPU running this task, or -1 if not running
+	bool     isIdle;        // SMP: a per-CPU idle task (never entered into the general rotation)
 };
 
 class Scheduler {
@@ -46,6 +48,7 @@ public:
 	static Task* create(void (*body)(), int id);   // bootstrap a task, mark READY
 	static Task* createBlank(int id);              // alloc a task slot + kstack only
 	                                               // (kesp fabricated by the caller, e.g. fork)
+	static Task* createIdle(int cpu);              // SMP: per-CPU idle task (one per AP)
 	static void start();                           // switch into the first runnable task
 	static void schedule();                        // pick next runnable + context switch
 	static void onTick(bool fromUser);             // timer: ticks++, CPU-account, wake, flag resched
@@ -78,6 +81,12 @@ public:
 	// Index of the next task to run, given the current states. The idle task
 	// (index 0) is chosen ONLY when no non-idle task is runnable. Pure; host-tested.
 	static int nextRunnable(const TaskState* st, int n, int cur);
+
+	// SMP claim policy (pure; host-tested). Index of a CLAIMABLE task — TASK_READY and not an
+	// idle task — scanning round-robin from curIdx, or -1 if none (the caller then keeps the
+	// running task or falls back to its per-CPU idle). Because only TASK_READY is claimable and
+	// the claim (READY->RUNNING) happens under the BKL, two CPUs can never select the same task.
+	static int pickReady(const TaskState* st, const bool* isIdle, int n, int curIdx);
 };
 
 }
