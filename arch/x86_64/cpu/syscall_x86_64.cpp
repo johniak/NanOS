@@ -10,6 +10,7 @@
 #include <arch/syscall.h>
 #include <arch/usermode.h>
 #include <arch/cpu.h>
+#include <arch/smp.h>   // smpThisCpu — per-CPU kernel-stack slot
 #include "Interrupt64.h"        // kernel::Registers (x86_64 TrapFrame, from Plan 4)
 #include "Syscall.h"
 #include "SyscallDispatch.h"
@@ -67,7 +68,9 @@ extern "C" void syscall_dispatch64(kernel::Registers* r) {
 
 namespace arch {
 
-void syscallInit() {
+// Program the SYSCALL/SYSRET MSRs on the CALLING CPU. These are per-CPU MSRs, so every CPU that
+// will run ring-3 code must do this (the BSP from syscallInit, each AP from the bring-up path).
+void syscallInitCpuMsrs() {
 	// 1) Enable SYSCALL/SYSRET (EFER.SCE = bit 0).
 	wrmsr(IA32_EFER, rdmsr(IA32_EFER) | 1);
 	// 2) STAR: SYSCALL loads CS=STAR[47:32], SS=+8 (kernel 0x08/0x10); SYSRET computes user
@@ -78,8 +81,12 @@ void syscallInit() {
 	// 4) FMASK: bits cleared in RFLAGS on entry. Clear IF (no nested IRQ until we re-enable)
 	//    and DF (SysV requires DF=0 in the kernel).
 	wrmsr(IA32_FMASK, (1 << 9) | (1 << 10));   // IF | DF
-	// 5) KERNEL_GS_BASE -> the per-CPU block the stub reads after swapgs. The BSP is CPU 0;
-	//    APs call perCpuInitThis with their own index in the bring-up path.
+}
+
+void syscallInit() {
+	syscallInitCpuMsrs();
+	// KERNEL_GS_BASE -> the per-CPU block the stub reads after swapgs. The BSP is CPU 0; APs call
+	// perCpuInitThis with their own index in the bring-up path.
 	perCpuInitThis(0, 0, 0);
 }
 
@@ -96,9 +103,9 @@ void perCpuInitThis(uint32_t idx, uint32_t lapicId, uint64_t kernelStackTop) {
 	wrmsr(IA32_KERNEL_GS_BASE, (uint64_t) pc);   // swapgs on the next kernel entry installs it
 }
 
-// Set the kernel stack top the SYSCALL stub loads. Single-CPU today (BSP = block 0); Phase 3
-// routes this to the running CPU's block once the scheduler is per-CPU aware.
-void syscallSetKernelStack(uint64_t top) { g_percpu[0].kernelStackTop = top; }
+// Set the kernel stack top the SYSCALL stub loads after swapgs — for the CALLING CPU's per-CPU
+// block (the scheduler calls this on every switch; %gs after swapgs points at g_percpu[cpu]).
+void syscallSetKernelStack(uint64_t top) { g_percpu[smpThisCpu()].kernelStackTop = top; }
 
 void syscallSelfTest() {
 	// No-op on x86_64. The i686 self-test issues `int 0x80` from ring 0, whose handler `iret`s

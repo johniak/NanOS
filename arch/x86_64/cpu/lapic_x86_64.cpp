@@ -67,6 +67,36 @@ void lapicTimerInit(uint8_t vec, uint32_t init) {
 	g_lapic[LAPIC_TIMER_INIT / 4] = init;                     // initial count -> counts down
 }
 
+static inline unsigned char calInb(unsigned short p) {
+	unsigned char v; __asm__ __volatile__("inb %1,%0" : "=a"(v) : "Nd"(p)); return v;
+}
+static inline void calOutb(unsigned short p, unsigned char v) {
+	__asm__ __volatile__("outb %0,%1" : : "a"(v), "Nd"(p));
+}
+
+// Measure the LAPIC timer rate (divide-by-16) against PIT channel 2 over ~10 ms, returning the
+// LAPIC tick count for ONE millisecond. lapicTimerInit(vec, that) then fires at ~1000 Hz. The
+// LAPIC bus clock is the same on every CPU, so the BSP calibrates once and all CPUs reuse it.
+uint32_t lapicTimerCalibrate() {
+	const unsigned PIT_HZ = 1193182u, MS = 10u;
+	unsigned count = PIT_HZ * MS / 1000u;
+	g_lapic[LAPIC_TIMER_DIV / 4] = 0x3;                       // divide by 16
+	// Arm PIT channel 2 (speaker timer — NOT the system tick on ch0) for a one-shot ~10 ms.
+	calOutb(0x61, (unsigned char) ((calInb(0x61) & ~0x02) | 0x01));
+	calOutb(0x43, 0xB0);                                      // ch2, lo/hi byte, mode 0 (one-shot)
+	calOutb(0x42, (unsigned char) (count & 0xFF));
+	calOutb(0x42, (unsigned char) ((count >> 8) & 0xFF));
+	unsigned char g = (unsigned char) (calInb(0x61) & ~0x01);
+	calOutb(0x61, g);
+	calOutb(0x61, (unsigned char) (g | 0x01));                // restart the gate -> begins counting
+	g_lapic[LAPIC_TIMER_INIT / 4] = 0xFFFFFFFFu;              // start the LAPIC countdown
+	while (!(calInb(0x61) & 0x20)) { }                        // wait for ch2 terminal count
+	uint32_t elapsed = 0xFFFFFFFFu - g_lapic[LAPIC_TIMER_CUR / 4];
+	g_lapic[LAPIC_TIMER_INIT / 4] = 0;                        // stop
+	uint32_t perMs = elapsed / MS;
+	return perMs ? perMs : 1;
+}
+
 #endif  // NANOS_HOST_TEST
 
 }  // namespace kernel

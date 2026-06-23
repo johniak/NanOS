@@ -12,9 +12,14 @@
 #include "lapic_x86_64.h"
 #include "percpu_x86_64.h"
 #include "acpi_x86_64.h"         // acpiEnumCpus (MD glue)
+#include "Interrupt64.h"         // kernel::Registers + Interrupt::registerInterruptHandler
+#include "Scheduler.h"           // Scheduler::apEnter / onTickLocal / createIdle (MI)
 #include <stdint.h>
 
 namespace arch {
+
+void archApCpuInit(uint64_t kstackTop);   // cpu_x86_64.cpp — per-CPU GDT/TSS + shared IDT
+void syscallInitCpuMsrs();                // syscall_x86_64.cpp — per-CPU SYSCALL MSRs
 
 // Trampoline blob bounds + patch slots (ap_trampoline.S).
 extern "C" unsigned char ap_trampoline_start[];
@@ -29,6 +34,28 @@ static int          g_cpuCount = 1;        // BSP only until bring-up runs
 static volatile int g_online   = 1;        // CPUs that have reached apEntry64 (BSP counts as 1)
 static ApEntry      g_apEntry  = 0;
 static uint8_t      g_lapicIds[MAX_CPUS];
+static uint8_t      g_apTimerVec   = 0;     // LAPIC-timer IDT vector (0 = not set up)
+static uint32_t     g_apTimerCount = 0;     // calibrated LAPIC ticks for ~1000 Hz
+
+// The AP scheduler entry (registered as the ApEntry): drop into this CPU's idle task + loop.
+static void apSchedEntry() { kernel::Scheduler::apEnter(); }
+
+// Per-CPU LAPIC-timer tick handler (shared gate; runs on whichever CPU fired). irq_handler has
+// already EOI'd the LAPIC; the irq stub runs schedPreempt on a ring-3 return. We only do this
+// CPU's quantum bookkeeping (the BSP's PIT owns global timekeeping).
+static void apTimerHandler(kernel::Registers* r) {
+    kernel::Scheduler::onTickLocal((r->cs & 3) == 3);
+}
+
+// BSP-side, once before bring-up: calibrate the LAPIC timer, allocate its vector, register the
+// per-CPU tick handler. Each AP then arms its own LAPIC timer with these in apEntry64.
+static void smpStartApTimers() {
+    int v = kernel::lapicAllocVector();
+    if (v < 0) return;
+    g_apTimerVec   = (uint8_t) v;
+    g_apTimerCount = kernel::lapicTimerCalibrate();
+    kernel::Interrupt::registerInterruptHandler(g_apTimerVec, apTimerHandler);
+}
 
 // Idle/boot kernel stack per AP. The BSP runs on the loader stack (slot 0 unused). 16 KiB is
 // ample for the AP idle path; Phase 3's scheduler switches each AP onto per-task kernel stacks.
@@ -41,6 +68,13 @@ int smpInit() {
     uint8_t ids[MAX_CPUS];
     int n = acpiEnumCpus(ids, MAX_CPUS, 0);   // LAPIC base already known from the NIC bring-up
     if (n <= 1) return 1;                     // uniprocessor or no ACPI/MADT
+    if (n > MAX_CPUS) n = MAX_CPUS;
+    // Pre-create each AP's idle task NOW, on the BSP, while still single-threaded (the heap has no
+    // lock until Phase 4 — creating them after the APs run would race). Arm the per-CPU timer
+    // plumbing and register the AP scheduler entry, all before any AP executes kernel code.
+    for (int i = 1; i < n; i++) kernel::Scheduler::createIdle(i);
+    smpStartApTimers();
+    smpSetApEntry(apSchedEntry);
     smpBringUpAPs(ids, n);
     return __atomic_load_n(&g_online, __ATOMIC_ACQUIRE);   // CPUs that actually came online
 }
@@ -69,10 +103,15 @@ extern "C" void apEntry64() {
     int idx = 0;
     for (int i = 0; i < g_cpuCount; i++) if (g_lapicIds[i] == id) { idx = i; break; }
     uint64_t stackTop = (uint64_t)(uintptr_t) &g_apStack[idx][sizeof(g_apStack[idx])];
+    // Full per-CPU CPU bring-up: per-CPU block + GS base, own GDT/TSS + the shared IDT, the
+    // SYSCALL MSRs (ring-3 threads trap here), the LAPIC + its periodic timer for preemption.
     perCpuInitThis((uint32_t) idx, id, stackTop);
+    archApCpuInit(stackTop);
+    syscallInitCpuMsrs();
     kernel::lapicInit();
+    if (g_apTimerVec) kernel::lapicTimerInit(g_apTimerVec, g_apTimerCount);
     __atomic_add_fetch(&g_online, 1, __ATOMIC_RELEASE);   // signal "online" to the BSP
-    if (g_apEntry) g_apEntry();                            // Phase 3: enter scheduler; else idle
+    if (g_apEntry) g_apEntry();                            // enter the scheduler (idle); never returns
     for (;;) __asm__ __volatile__("hlt");
 }
 

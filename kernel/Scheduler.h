@@ -51,7 +51,9 @@ public:
 	static Task* createIdle(int cpu);              // SMP: per-CPU idle task (one per AP)
 	static void start();                           // switch into the first runnable task
 	static void schedule();                        // pick next runnable + context switch
-	static void onTick(bool fromUser);             // timer: ticks++, CPU-account, wake, flag resched
+	static void onTick(bool fromUser);             // BSP PIT: ticks++, CPU-account, wake, flag resched
+	static void onTickLocal(bool fromUser);        // SMP: an AP's LAPIC tick — local quantum only
+	static void apEnter();                         // SMP: an AP enters the scheduler as its idle task
 	static unsigned contextSwitches();             // total context switches (for /proc/stat ctxt)
 	static void loadAvg(unsigned out[3]);          // 1/5/15-min load in hundredths (/proc/loadavg)
 	static void preempt();                         // resched if flagged (called on ret-to-ring3)

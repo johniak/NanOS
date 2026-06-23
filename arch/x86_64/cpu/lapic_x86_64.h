@@ -35,5 +35,8 @@ void lapicSendFixed(uint8_t dest, uint8_t vec);   // a normal fixed IPI to one C
 
 // Per-CPU LAPIC timer in periodic mode: fires `vec` every `initialCount` bus ticks (div 16).
 void lapicTimerInit(uint8_t vec, uint32_t initialCount);
+// Calibrate the LAPIC timer against the PIT; returns the LAPIC tick count for 1 ms (div 16).
+// Call once on the BSP; all CPUs share the value (same bus clock). Pass it to lapicTimerInit.
+uint32_t lapicTimerCalibrate();
 
 }  // namespace kernel

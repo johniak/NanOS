@@ -33,9 +33,16 @@ struct Bkl {
             depth++;
             return;
         }
-        lock.lock();              // blocks until the holding CPU releases
+        // The ticket-lock spin MUST be uninterruptible: with IF set, a same-CPU IRQ would re-enter
+        // enter(), grab a second (later) ticket, and the FIFO lock would self-deadlock — the inner
+        // wait can't be served before the outer, which can't run while the inner spins. So disable
+        // interrupts across the acquisition, then restore: once ownerCpu==cpu, a nested IRQ takes
+        // the recursive depth++ path above and never touches the lock.
+        unsigned long flags = arch::cpuIrqSave();
+        lock.lock();              // blocks (IRQ-free) until the holding CPU releases
         ownerCpu = cpu;
         depth = 1;
+        arch::cpuIrqRestore(flags);
     }
 
     void exit() {

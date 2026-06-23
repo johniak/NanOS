@@ -49,12 +49,15 @@ void loadDecay(unsigned load[3], int runnable) {
 	for (int i = 0; i < 3; i++)
 		load[i] = (load[i] * EXP[i] + n * (2048u - EXP[i])) >> 11;
 }
-static volatile bool g_needResched = false;   // a tick asked for a reschedule (deferred)
+// SMP: preemption is per-CPU. Each CPU's timer (the BSP's PIT, an AP's LAPIC timer) flags only
+// its OWN needResched; preempt() (on that CPU's ret-to-ring3) acts on its own flag. A waker sets
+// the local flag — a freshly-READY task is then picked up by whichever CPU next reschedules.
+static volatile bool g_needResched[arch::SMP_MAX_CPUS] = { false };
 
 // Time-slice: a RUNNING task keeps the CPU for this many timer ticks (ms) before the tick
 // forces a reschedule, instead of round-robining every single millisecond.
 static const unsigned QUANTUM = 10;
-static unsigned g_slice = 0;                   // ticks the current task has run on its slice
+static unsigned g_slice[arch::SMP_MAX_CPUS] = { 0 };   // per-CPU ticks the running task has used
 
 static bool runnable(TaskState s) { return s == TASK_READY || s == TASK_RUNNING; }
 
@@ -248,7 +251,7 @@ void Scheduler::schedule() {
 		return;                                   // nothing else to run on this CPU
 	}
 	g_ctxt++;                                     // an actual context switch (for /proc/stat)
-	g_slice = 0;                                  // the newly-scheduled task gets a fresh quantum
+	g_slice[cpu] = 0;                             // the newly-scheduled task gets a fresh quantum
 	next->state = TASK_RUNNING;                   // claim it for THIS cpu
 	next->runningCpu = cpu;
 	// `prev` is intentionally LEFT in TASK_RUNNING (still non-claimable) across the switch: its
@@ -312,9 +315,23 @@ void Scheduler::onTick(bool fromUser) {
 	}
 	// Only force a reschedule on a quantum boundary or when a sleeper woke — NOT every tick, so
 	// two CPU-bound tasks no longer trade the CPU (and flush the TLB) 1000 times a second.
-	if (shouldResched(++g_slice, QUANTUM, woke)) {
-		g_slice = 0;
-		g_needResched = true;
+	int cpu = arch::smpThisCpu();
+	if (shouldResched(++g_slice[cpu], QUANTUM, woke)) {
+		g_slice[cpu] = 0;
+		g_needResched[cpu] = true;
+	}
+}
+
+// SMP: the local timer tick for an application processor (its LAPIC timer). The BSP's PIT owns
+// global timekeeping (g_ticks, timed wakeups, load average) — onTickLocal does ONLY this CPU's
+// quantum bookkeeping so a CPU-bound user thread on an AP is preempted on its own ret-to-ring3.
+void Scheduler::onTickLocal(bool fromUser) {
+	int cpu = arch::smpThisCpu();
+	Task* cur = curTask();
+	ProcTable::accountTick(fromUser, !cur || cur->isIdle);
+	if (shouldResched(++g_slice[cpu], QUANTUM, false)) {
+		g_slice[cpu] = 0;
+		g_needResched[cpu] = true;
 	}
 }
 
@@ -328,8 +345,9 @@ void Scheduler::loadAvg(unsigned out[3]) {
 // Called on the return path from an interrupt to ring 3 (see irq.S): the only place a
 // user task is involuntarily preempted, with a full, clean trap frame on its kernel stack.
 void Scheduler::preempt() {
-	if (g_needResched) {
-		g_needResched = false;
+	int cpu = arch::smpThisCpu();
+	if (g_needResched[cpu]) {
+		g_needResched[cpu] = false;
 		schedule();
 	}
 }
@@ -368,7 +386,7 @@ void Scheduler::wake(Task* t) {
 	// harmless no-op; ZOMBIE/DONE/STOPPED/FREE must stay untouched.
 	if (t && t->state == TASK_BLOCKED) {
 		t->state = TASK_READY;
-		g_needResched = true;   // consider the freshly-ready task at the next safe point
+		g_needResched[arch::smpThisCpu()] = true;   // consider the freshly-ready task at the next safe point
 	}
 }
 
@@ -378,7 +396,7 @@ void Scheduler::wake(Task* t) {
 void Scheduler::resume(Task* t) {
 	if (t && t->state == TASK_STOPPED) {
 		t->state = TASK_READY;
-		g_needResched = true;
+		g_needResched[arch::smpThisCpu()] = true;
 	}
 }
 
@@ -446,7 +464,7 @@ void Scheduler::wakeAll(WaitQueue* q) {
 		if (t->state == TASK_BLOCKED)
 			t->state = TASK_READY;
 	}
-	g_needResched = true;
+	g_needResched[arch::smpThisCpu()] = true;
 	arch::cpuIrqRestore(f);
 }
 
@@ -458,8 +476,12 @@ void Scheduler::reap(Task* t) {
 }
 
 void Scheduler::start() {
-	// The BSP enters its first task from the throwaway boot context (which is not a Task and
-	// holds no BKL). g_switchFrom[bsp] stays 0, so the first task's finishSwitch is a no-op.
+	// The BSP enters its first task from the throwaway boot context (not a Task; holds no BKL).
+	// Take the BKL for the pick+claim so it is atomic w.r.t. the APs, which by now are already
+	// running their idle loops and calling schedule() under the BKL — otherwise the BSP and an AP
+	// could claim the same task and run it on two CPUs. Release before the switch; the first
+	// task's trampoline (runCurrentBody) re-acquires, exactly like the schedule() handoff.
+	g_bkl.enter();
 	Task* first = pickNextTask(0);
 	first->state = TASK_RUNNING;
 	first->runningCpu = arch::smpThisCpu();
@@ -468,9 +490,28 @@ void Scheduler::start() {
 	ProcTable::setCurrent(first->proc);
 	ProcTable::setCurrentThread(first->thread);
 	arch::archLoadThreadTls(first->thread ? first->thread->tlsBase : 0);
+	g_bkl.exit();
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static uintptr_t throwaway;
 	arch::archContextSwitch(&throwaway, first->kesp);
+}
+
+// SMP: an application processor enters the scheduler. Like start(), but it switches into THIS
+// CPU's pre-created idle task (g_cpuIdle[cpu], made by the BSP before bring-up to avoid a heap
+// race). The AP's boot context (apEntry64 on g_apStack) is abandoned, exactly as the BSP's boot
+// context is by start(). idleBody (reached via the trampoline -> runCurrentBody) takes the BKL,
+// then drives this CPU's idle loop: it picks up any READY task its LAPIC tick flags for reschedule.
+void Scheduler::apEnter() {
+	int cpu = arch::smpThisCpu();
+	Task* idle = g_cpuIdle[cpu];
+	idle->state = TASK_RUNNING;
+	idle->runningCpu = cpu;
+	setCurTask(idle);
+	arch::setKernelStack(idle->esp0);
+	ProcTable::setCurrent(idle->proc);
+	ProcTable::setCurrentThread(idle->thread);
+	static uintptr_t apThrowaway[arch::SMP_MAX_CPUS];
+	arch::archContextSwitch(&apThrowaway[cpu], idle->kesp);   // -> idleBody on idle's own kstack
 }
 
 void Scheduler::runCurrentBody() {
