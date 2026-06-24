@@ -6,6 +6,7 @@
 #include "Pci.h"              // /proc/bus/pci/devices enumeration
 #include "Csprng.h"           // /dev/{u}random draw from the shared kernel CSPRNG
 #include "memory_manager.h"   // malloc/free: /proc snapshots go on the heap, not the kernel stack
+#include <arch/smp.h>         // smpCpuCount(): how many cores /proc/{stat,cpuinfo} report
 #include <string.h>
 
 namespace kernel {
@@ -20,17 +21,23 @@ static int utoa(unsigned v, char* out) {
 	return t;
 }
 
-int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz) {
-	unsigned secs = hz ? ticks / hz : 0;
+// /proc/uptime — the Linux format: two space-separated floats, "<uptime_secs>.<cc> <idle_secs>.<cc>\n"
+// (hundredths of a second). `ticks`/`idleTicks` are in HZ units. top/htop/`uptime` parse the first
+// float; the second is the summed idle time across all CPUs. NOT a human string — tools parse it.
+int uptimeString(char* buf, int cap, unsigned ticks, unsigned idleTicks, unsigned hz) {
+	if (!hz) hz = 1;
 	int p = 0;
-	const char* a = "uptime: ";
-	for (int i = 0; a[i] && p < cap - 1; i++) buf[p++] = a[i];
-	p += utoa(secs, buf + p);
-	const char* b = " s (";
-	for (int i = 0; b[i] && p < cap - 1; i++) buf[p++] = b[i];
-	p += utoa(ticks, buf + p);
-	const char* c = " ticks)\n";
-	for (int i = 0; c[i] && p < cap - 1; i++) buf[p++] = c[i];
+	// One "<secs>.<hundredths>" field.
+	for (int field = 0; field < 2; field++) {
+		unsigned t = field == 0 ? ticks : idleTicks;
+		unsigned secs = t / hz;
+		unsigned cc = (unsigned) (((unsigned long long) (t % hz) * 100ull) / hz);   // hundredths
+		p += utoa(secs, buf + p);
+		if (p < cap - 1) buf[p++] = '.';
+		if (cc < 10 && p < cap - 1) buf[p++] = '0';
+		p += utoa(cc, buf + p);
+		if (p < cap - 1) buf[p++] = field == 0 ? ' ' : '\n';
+	}
 	buf[p] = 0;
 	return p;
 }
@@ -77,16 +84,27 @@ static int putUint(char* b, int p, int cap, unsigned v) {
 	return p;
 }
 
-// /proc/stat: the kernel activity summary. The `cpu`/`cpu0` line carries real user/system/idle
-// time, converted from the kernel's tick rate to USER_HZ=100 jiffies; ctxt is the real context-
-// switch count and `processes` the total forks since boot. Format matches Linux for top/htop.
-int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsigned idleTicks,
-		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked,
-		unsigned btime) {
+// /proc/stat: the kernel activity summary. An aggregate `cpu` line (summed over all cores) is
+// followed by one `cpuN` line per online CPU, each carrying that core's real user/system/idle
+// time converted from the kernel's tick rate to USER_HZ=100 jiffies; ctxt is the real context-
+// switch count and `processes` the total forks since boot. The per-core lines are what top/htop
+// count to size their CPU meters. `ncpu` >= 1; userTicks/sysTicks/idleTicks are per-core arrays.
+int statString(char* buf, int cap, unsigned ncpu, const unsigned* userTicks, const unsigned* sysTicks,
+		const unsigned* idleTicks, unsigned hz, unsigned ctxt, unsigned forks, unsigned running,
+		unsigned blocked, unsigned btime) {
 	unsigned div = (hz >= 100u) ? hz / 100u : 1u;   // ticks -> jiffies (USER_HZ 100)
-	unsigned u = userTicks / div, s = sysTicks / div, idle = idleTicks / div;
+	if (ncpu < 1) ncpu = 1;
 	int p = 0;
-	for (int cpu = -1; cpu < 1; cpu++) {            // "cpu" aggregate, then "cpu0"
+	// cpu = -1 is the aggregate "cpu " line (sum of every core); cpu >= 0 is per-core "cpuN".
+	for (int cpu = -1; cpu < (int) ncpu; cpu++) {
+		unsigned u, s, idle;
+		if (cpu < 0) {                               // aggregate: sum across cores
+			unsigned su = 0, ss = 0, si = 0;
+			for (unsigned c = 0; c < ncpu; c++) { su += userTicks[c]; ss += sysTicks[c]; si += idleTicks[c]; }
+			u = su / div; s = ss / div; idle = si / div;
+		} else {
+			u = userTicks[cpu] / div; s = sysTicks[cpu] / div; idle = idleTicks[cpu] / div;
+		}
 		p = putStr(buf, p, cap, "cpu");
 		if (cpu >= 0) p = putUint(buf, p, cap, (unsigned) cpu);
 		else          p = putStr(buf, p, cap, " ");  // aggregate line has a double space
@@ -130,29 +148,33 @@ int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned l
 	return p;
 }
 
-// /proc/cpuinfo: one processor entry, filled from real CPUID data (vendor/family/model/
-// brand/flags). cpu MHz is reported 0.000 — we do not calibrate the TSC; the brand string
-// usually carries the nominal speed anyway.
-int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci) {
+// /proc/cpuinfo: one processor entry per online core, filled from real CPUID data (vendor/family/
+// model/brand/flags). The cores are identical (SMP, one CPUID), so the entries differ only in the
+// `processor` index; that index count is how `nproc`/lscpu/htop learn the core count. cpu MHz comes
+// from the measured TSC (0.000 only if no TSC).
+int cpuinfoString(char* buf, int cap, unsigned ncpu, const arch::CpuInfo& ci) {
+	if (ncpu < 1) ncpu = 1;
 	int p = 0;
-	p = putStr(buf, p, cap, "processor\t: 0\n");
-	p = putStr(buf, p, cap, "vendor_id\t: ");
-	p = putStr(buf, p, cap, ci.vendor[0] ? ci.vendor : "unknown");
-	p = putStr(buf, p, cap, "\ncpu family\t: ");  p = putUint(buf, p, cap, ci.family);
-	p = putStr(buf, p, cap, "\nmodel\t\t: ");      p = putUint(buf, p, cap, ci.model);
-	p = putStr(buf, p, cap, "\nmodel name\t: ");
-	p = putStr(buf, p, cap, ci.brand[0] ? ci.brand : "unknown");
-	p = putStr(buf, p, cap, "\nstepping\t: ");     p = putUint(buf, p, cap, ci.stepping);
-	// Real measured clock (kHz -> MHz with a 3-digit fraction), 0.000 only if no TSC.
-	p = putStr(buf, p, cap, "\ncpu MHz\t\t: ");    p = putUint(buf, p, cap, ci.khz / 1000);
-	unsigned frac = ci.khz % 1000;
-	p = putStr(buf, p, cap, ".");
-	p = putStr(buf, p, cap, frac < 10 ? "00" : frac < 100 ? "0" : "");
-	p = putUint(buf, p, cap, frac);
-	p = putStr(buf, p, cap, "\n");
-	p = putStr(buf, p, cap, "flags\t\t: ");
-	p = putStr(buf, p, cap, ci.flags[0] ? ci.flags : "fpu");
-	p = putStr(buf, p, cap, "\n\n");
+	for (unsigned cpu = 0; cpu < ncpu; cpu++) {
+		p = putStr(buf, p, cap, "processor\t: ");     p = putUint(buf, p, cap, cpu);
+		p = putStr(buf, p, cap, "\nvendor_id\t: ");
+		p = putStr(buf, p, cap, ci.vendor[0] ? ci.vendor : "unknown");
+		p = putStr(buf, p, cap, "\ncpu family\t: ");  p = putUint(buf, p, cap, ci.family);
+		p = putStr(buf, p, cap, "\nmodel\t\t: ");      p = putUint(buf, p, cap, ci.model);
+		p = putStr(buf, p, cap, "\nmodel name\t: ");
+		p = putStr(buf, p, cap, ci.brand[0] ? ci.brand : "unknown");
+		p = putStr(buf, p, cap, "\nstepping\t: ");     p = putUint(buf, p, cap, ci.stepping);
+		// Real measured clock (kHz -> MHz with a 3-digit fraction), 0.000 only if no TSC.
+		p = putStr(buf, p, cap, "\ncpu MHz\t\t: ");    p = putUint(buf, p, cap, ci.khz / 1000);
+		unsigned frac = ci.khz % 1000;
+		p = putStr(buf, p, cap, ".");
+		p = putStr(buf, p, cap, frac < 10 ? "00" : frac < 100 ? "0" : "");
+		p = putUint(buf, p, cap, frac);
+		p = putStr(buf, p, cap, "\n");
+		p = putStr(buf, p, cap, "flags\t\t: ");
+		p = putStr(buf, p, cap, ci.flags[0] ? ci.flags : "fpu");
+		p = putStr(buf, p, cap, "\n\n");
+	}
 	buf[p] = 0;
 	return p;
 }
@@ -337,7 +359,9 @@ static int gen_random_write(unsigned, const void* buf, unsigned n) {
 // cat reads it in a single call (n >= len), so regenerating per call is consistent.
 static int gen_uptime(unsigned off, void* buf, unsigned n) {
 	static char s[64];
-	int len = uptimeString(s, sizeof s, kernel::Scheduler::ticks(), 1000);
+	unsigned idle = 0;
+	ProcTable::cpuTimes(0, 0, &idle);                       // summed idle jiffies across all CPUs
+	int len = uptimeString(s, sizeof s, kernel::Scheduler::ticks(), idle, 1000);
 	if (off >= (unsigned) len)
 		return 0;
 	unsigned cnt = n < (unsigned) (len - off) ? n : (unsigned) (len - off);
@@ -435,16 +459,21 @@ static void procCounts(unsigned* total, unsigned* running, unsigned* blocked) {
 }
 
 static int gen_stat(unsigned off, void* buf, unsigned n) {
-	static char s[512];
+	static char s[2048];                              // aggregate + one line per core (up to SMP_MAX) + trailer
 	unsigned total, running, blocked;
 	procCounts(&total, &running, &blocked);
-	unsigned u, sy, id;
-	ProcTable::cpuTimes(&u, &sy, &id);
+	// Per-core jiffies for the cpu0..cpuN-1 lines (the aggregate "cpu" line is their sum).
+	unsigned ncpu = (unsigned) arch::smpCpuCount();
+	if (ncpu < 1) ncpu = 1;
+	if (ncpu > (unsigned) arch::SMP_MAX_CPUS) ncpu = arch::SMP_MAX_CPUS;
+	unsigned u[arch::SMP_MAX_CPUS], sy[arch::SMP_MAX_CPUS], id[arch::SMP_MAX_CPUS];
+	for (unsigned c = 0; c < ncpu; c++)
+		ProcTable::cpuTimesFor((int) c, &u[c], &sy[c], &id[c]);
 	// btime = the wall-clock second the system booted = now (RTC) minus uptime.
 	unsigned now = arch::rtcEpoch();
 	unsigned uptimeSec = kernel::Scheduler::ticks() / 1000;
 	unsigned btime = now > uptimeSec ? now - uptimeSec : 0;
-	int len = statString(s, sizeof s, u, sy, id, 1000, kernel::Scheduler::contextSwitches(),
+	int len = statString(s, sizeof s, ncpu, u, sy, id, 1000, kernel::Scheduler::contextSwitches(),
 			ProcTable::forksTotal(), running, blocked, btime);
 	return serveSnap(off, buf, n, s, len);
 }
@@ -460,10 +489,13 @@ static int gen_loadavg(unsigned off, void* buf, unsigned n) {
 }
 
 static int gen_cpuinfo(unsigned off, void* buf, unsigned n) {
-	static char s[384];
+	static char s[8192];                              // one ~200-byte entry per core (up to SMP_MAX)
 	arch::CpuInfo ci;
 	arch::cpuIdentify(&ci);
-	int len = cpuinfoString(s, sizeof s, ci);
+	unsigned ncpu = (unsigned) arch::smpCpuCount();
+	if (ncpu < 1) ncpu = 1;
+	if (ncpu > (unsigned) arch::SMP_MAX_CPUS) ncpu = arch::SMP_MAX_CPUS;
+	int len = cpuinfoString(s, sizeof s, ncpu, ci);
 	return serveSnap(off, buf, n, s, len);
 }
 
@@ -507,6 +539,41 @@ SynthFs::SynthFs() {
 	SynthNode* m_bus = addDir(m_proc, "bus");
 	SynthNode* m_pci = addDir(m_bus, "pci");
 	addGen(m_pci, "devices", gen_pci_devices, 0444);
+
+	// /sys/devices/system/cpu — minimal sysfs CPU topology. The cpuN dirs are added later by
+	// populateSysCpu() (post-SMP), since smpCpuCount() is not valid yet at construction time.
+	SynthNode* m_sys = addDir(root, "sys");
+	SynthNode* m_sdev = addDir(m_sys, "devices");
+	SynthNode* m_ssys = addDir(m_sdev, "system");
+	m_sysCpu = addDir(m_ssys, "cpu");
+	m_cpuRange[0] = 0;
+}
+
+// Build /sys/devices/system/cpu/{cpu0..cpu(ncpu-1)} + online/present/possible. Each cpuN dir
+// holds an "online" file = "1\n"; htop/nproc/lscpu count the cpuN entries to learn the core count.
+void SynthFs::populateSysCpu(int ncpu) {
+	if (ncpu < 1) ncpu = 1;
+	if (!m_sysCpu) return;
+	// Range string "0" (1 CPU) or "0-<n-1>" (many), used for online/present/possible.
+	int p = 0;
+	m_cpuRange[p++] = '0';
+	if (ncpu > 1) {
+		m_cpuRange[p++] = '-';
+		p += utoa((unsigned) (ncpu - 1), m_cpuRange + p);
+	}
+	m_cpuRange[p++] = '\n';
+	m_cpuRange[p] = 0;
+	addStatic(m_sysCpu, "online",   m_cpuRange, (unsigned) p);
+	addStatic(m_sysCpu, "present",  m_cpuRange, (unsigned) p);
+	addStatic(m_sysCpu, "possible", m_cpuRange, (unsigned) p);
+	for (int c = 0; c < ncpu; c++) {
+		char name[16];
+		int k = 0; name[k++] = 'c'; name[k++] = 'p'; name[k++] = 'u';
+		k += utoa((unsigned) c, name + k);
+		name[k] = 0;
+		SynthNode* d = addDir(m_sysCpu, name);
+		addStatic(d, "online", "1\n", 2);   // present+online; absent would also count as online in htop
+	}
 }
 
 int SynthFs::mount() { return 0; }

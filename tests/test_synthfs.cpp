@@ -112,25 +112,30 @@ TEST_CASE("SynthFs /dev generators: null/zero/random") {
 	CHECK(memcmp(r1, r2, 8) != 0);                 // stream advances
 }
 
-TEST_CASE("SynthFs /proc/uptime is nonempty text and terminates (offset EOF)") {
+TEST_CASE("SynthFs /proc/uptime is the Linux numeric format and terminates (offset EOF)") {
 	SynthFs fs;
 	char buf[64] = {0};
 	int n = fs.read("/proc/uptime", sizeof buf, 0, buf);
 	CHECK(n > 0);
-	CHECK(strstr(buf, "uptime") != 0);
+	// "<uptime>.<cc> <idle>.<cc>\n" — a digit, a dot, a space separating the two floats.
+	CHECK((buf[0] >= '0' && buf[0] <= '9'));
+	CHECK(strchr(buf, '.') != 0);
+	CHECK(strchr(buf, ' ') != 0);
+	CHECK(strstr(buf, "uptime") == 0);   // NOT the old human string
 	CHECK(fs.read("/proc/uptime", sizeof buf, (unsigned) n, buf) == 0);  // EOF past end
 }
 
-TEST_CASE("uptimeString renders seconds and the raw tick count") {
+TEST_CASE("uptimeString renders the Linux /proc/uptime format (uptime idle, hundredths)") {
 	char b[64];
-	int n = uptimeString(b, sizeof b, 2500, 1000);   // 2500 ticks @ 1000 Hz = 2 s
+	// 2530 ticks @1000Hz = 2.53 s uptime; 1200 idle ticks = 1.20 s idle.
+	int n = uptimeString(b, sizeof b, 2530, 1200, 1000);
 	CHECK(n > 0);
-	CHECK(strstr(b, "2500 ticks") != 0);
-	CHECK(strstr(b, "2 s") != 0);
+	CHECK(strcmp(b, "2.53 1.20\n") == 0);    // two floats, space-separated, hundredths, newline
 
-	int z = uptimeString(b, sizeof b, 0, 1000);
+	// Sub-10 hundredths must be zero-padded ("0.05", not "0.5").
+	int z = uptimeString(b, sizeof b, 50, 0, 1000);
 	CHECK(z > 0);
-	CHECK(strstr(b, "0 ticks") != 0);
+	CHECK(strcmp(b, "0.05 0.00\n") == 0);
 }
 
 TEST_CASE("SynthFs /proc/meminfo is readable Linux-style text and terminates") {
@@ -455,7 +460,8 @@ TEST_CASE("SynthFs /proc: absent pid and bad per-pid file error out") {
 TEST_CASE("statString renders real user/system/idle jiffies + ctxt/processes") {
 	char b[512];
 	// user=1000 sys=500 idle=2500 ticks @1000Hz -> /10 = 100/50/250 jiffies.
-	int n = statString(b, sizeof b, 1000, 500, 2500, 1000, 9999, 42, 1, 3, 1781000000u);
+	unsigned u[1] = { 1000 }, s[1] = { 500 }, id[1] = { 2500 };
+	int n = statString(b, sizeof b, 1, u, s, id, 1000, 9999, 42, 1, 3, 1781000000u);
 	CHECK(n > 0);
 	CHECK(strstr(b, "cpu  100 0 50 250 ") != 0);         // aggregate: user nice system idle
 	CHECK(strstr(b, "cpu0 100 0 50 250 ") != 0);
@@ -464,6 +470,23 @@ TEST_CASE("statString renders real user/system/idle jiffies + ctxt/processes") {
 	CHECK(strstr(b, "\nprocesses 42\n") != 0);           // total forks since boot
 	CHECK(strstr(b, "\nprocs_running 1\n") != 0);
 	CHECK(strstr(b, "\nprocs_blocked 3\n") != 0);
+}
+
+TEST_CASE("statString renders one cpuN line per core; the aggregate is their sum") {
+	char b[1024];
+	// 4 cores with distinct busy levels; @1000Hz -> /10 jiffies.
+	unsigned u[4] = { 1000, 2000, 0, 500 };
+	unsigned s[4] = { 500, 0, 1000, 500 };
+	unsigned id[4] = { 2500, 8000, 4000, 9000 };
+	int n = statString(b, sizeof b, 4, u, s, id, 1000, 7, 0, 0, 0, 0);
+	CHECK(n > 0);
+	// aggregate cpu = sum: user (1000+2000+0+500)/10=350, sys (500+0+1000+500)/10=200, idle (23500)/10=2350
+	CHECK(strstr(b, "cpu  350 0 200 2350 ") != 0);
+	CHECK(strstr(b, "\ncpu0 100 0 50 250 ") != 0);
+	CHECK(strstr(b, "\ncpu1 200 0 0 800 ") != 0);
+	CHECK(strstr(b, "\ncpu2 0 0 100 400 ") != 0);
+	CHECK(strstr(b, "\ncpu3 50 0 50 900 ") != 0);
+	CHECK(strstr(b, "\ncpu4 ") == 0);                    // exactly 4 cores, no cpu4
 }
 
 TEST_CASE("loadavgString renders fixed-point loads + runnable/total + last pid") {
@@ -480,14 +503,20 @@ TEST_CASE("cpuinfoString renders real CPUID fields; versionString the kernel str
 	ci.family = 6; ci.model = 42; ci.stepping = 7;
 	ci.khz = 2500500;                                  // 2500.500 MHz
 	strcpy(ci.flags, "fpu tsc sse sse2");
-	char b[384];
-	CHECK(cpuinfoString(b, sizeof b, ci) > 0);
+	char b[1024];
+	CHECK(cpuinfoString(b, sizeof b, 1, ci) > 0);
 	CHECK(strstr(b, "vendor_id\t: GenuineIntel") != 0);
 	CHECK(strstr(b, "model name\t: Test CPU @ 2.50GHz") != 0);
 	CHECK(strstr(b, "cpu family\t: 6") != 0);
 	CHECK(strstr(b, "model\t\t: 42") != 0);
 	CHECK(strstr(b, "cpu MHz\t\t: 2500.500") != 0);    // measured clock, 3-digit fraction
 	CHECK(strstr(b, "flags\t\t: fpu tsc sse sse2") != 0);
+	CHECK(strstr(b, "processor\t: 0") != 0);
+	// 4 cores -> processor entries 0..3 (this is how nproc/htop count cores).
+	CHECK(cpuinfoString(b, sizeof b, 4, ci) > 0);
+	CHECK(strstr(b, "processor\t: 0") != 0);
+	CHECK(strstr(b, "processor\t: 3") != 0);
+	CHECK(strstr(b, "processor\t: 4") == 0);
 	char v[64];
 	CHECK(versionString(v, sizeof v) > 0);
 	CHECK(strstr(v, "NanOS version") != 0);
@@ -504,6 +533,50 @@ TEST_CASE("SynthFs /proc/{stat,loadavg,cpuinfo,version} are readable and termina
 		CHECK(n > 0);
 		CHECK(fs.read(files[i], sizeof buf, (unsigned) n, buf) == 0);   // EOF past end
 	}
+}
+
+TEST_CASE("SynthFs /sys/devices/system/cpu lists cpu0..cpuN-1 after populateSysCpu") {
+	ProcTable::init();
+	SynthFs fs;
+	// Before population, the cpu dir is empty (only . and ..).
+	List<DirEntry> before;
+	CHECK(fs.readdir("/sys/devices/system/cpu", before) == 0);
+
+	fs.populateSysCpu(4);
+	List<DirEntry> after;
+	CHECK(fs.readdir("/sys/devices/system/cpu", after) == 0);
+	bool cpu0 = false, cpu3 = false, cpu4 = false, online = false;
+	for (int i = 0; i < after.getCount(); i++) {
+		if (strcmp(after[i].name, "cpu0") == 0) cpu0 = true;
+		if (strcmp(after[i].name, "cpu3") == 0) cpu3 = true;
+		if (strcmp(after[i].name, "cpu4") == 0) cpu4 = true;
+		if (strcmp(after[i].name, "online") == 0) online = true;
+	}
+	CHECK(cpu0);
+	CHECK(cpu3);
+	CHECK(!cpu4);          // exactly 4 cores -> cpu0..cpu3
+	CHECK(online);         // the cpu-level online/present/possible range files
+
+	// Each cpuN/online reads "1\n"; the cpu-level online range reads "0-3\n".
+	char b[16];
+	int n = fs.read("/sys/devices/system/cpu/cpu2/online", sizeof b, 0, b);
+	CHECK(n == 2);
+	CHECK(b[0] == '1');
+	n = fs.read("/sys/devices/system/cpu/online", sizeof b, 0, b);
+	b[n] = 0;
+	CHECK(strcmp(b, "0-3\n") == 0);
+}
+
+TEST_CASE("SynthFs populateSysCpu with a single CPU yields cpu0 and range \"0\"") {
+	ProcTable::init();
+	SynthFs fs;
+	fs.populateSysCpu(1);
+	char b[16];
+	int n = fs.read("/sys/devices/system/cpu/online", sizeof b, 0, b);
+	b[n] = 0;
+	CHECK(strcmp(b, "0\n") == 0);
+	List<DirEntry> d;
+	CHECK(fs.readdir("/sys/devices/system/cpu/cpu0", d) == 0);   // cpu0 exists and is a dir
 }
 
 TEST_CASE("SynthFs /proc/<pid>/stat carries pgrp + session; status has Pgid/Sid") {

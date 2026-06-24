@@ -27,7 +27,7 @@ typedef int (*SynthWrite)(unsigned off, const void* buf, unsigned n);
 
 // Render an uptime string ("uptime: <s> s (<ticks> ticks)\n") into buf; returns its
 // length. Free function so it is host-testable; used by the /proc/uptime generator.
-int uptimeString(char* buf, int cap, unsigned ticks, unsigned hz);
+int uptimeString(char* buf, int cap, unsigned ticks, unsigned idleTicks, unsigned hz);
 
 // Render Linux-style /proc/meminfo (MemTotal/MemFree + our kernel-heap figures, all in
 // kB) into buf; returns its length. Pure -> host-testable; the /proc/meminfo generator
@@ -37,16 +37,16 @@ int meminfoString(char* buf, int cap, unsigned memTotalKb, unsigned memFreeKb,
 
 // More Linux-format /proc renderers (pure -> host-testable). The /proc generators feed them
 // live data (ticks, process counts) via the sys*/Scheduler accessors.
-//   /proc/stat    — the `cpu` jiffies line + ctxt/btime/processes/procs_running.
+//   /proc/stat    — aggregate `cpu` line + one `cpuN` line per online core + ctxt/btime/processes.
 //   /proc/loadavg — 1/5/15-min load (we report runnable as a coarse 0.NN), runnable/total, last pid.
-//   /proc/cpuinfo — one processor entry (model + flags).
+//   /proc/cpuinfo — one processor entry per online core (model + flags).
 //   /proc/version — kernel identification string.
-int statString(char* buf, int cap, unsigned userTicks, unsigned sysTicks, unsigned idleTicks,
-		unsigned hz, unsigned ctxt, unsigned forks, unsigned running, unsigned blocked,
-		unsigned btime);
+int statString(char* buf, int cap, unsigned ncpu, const unsigned* userTicks, const unsigned* sysTicks,
+		const unsigned* idleTicks, unsigned hz, unsigned ctxt, unsigned forks, unsigned running,
+		unsigned blocked, unsigned btime);
 int loadavgString(char* buf, int cap, unsigned load1, unsigned load5, unsigned load15,
 		unsigned runnable, unsigned total, int lastPid);
-int cpuinfoString(char* buf, int cap, const arch::CpuInfo& ci);
+int cpuinfoString(char* buf, int cap, unsigned ncpu, const arch::CpuInfo& ci);
 int versionString(char* buf, int cap);
 
 // Render Linux-style /proc/<pid>/statm ("size resident shared text lib data dt", in 4 KiB
@@ -88,6 +88,8 @@ class SynthFs: public FileSystem {
 	SynthNode* m_disks;
 	SynthNode* m_dev;
 	SynthNode* m_proc;
+	SynthNode* m_sysCpu;        // /sys/devices/system/cpu (populated with cpuN dirs post-SMP)
+	char m_cpuRange[16];        // backing store for cpu {online,present,possible} ("0-3\n")
 
 	SynthNode* mk(SynthKind kind, const char* name, unsigned perms);
 	void addChild(SynthNode* parent, SynthNode* n);   // append, growing child[] as needed
@@ -105,6 +107,11 @@ public:
 
 	SynthNode* dev() { return m_dev; }
 	SynthNode* proc() { return m_proc; }
+
+	// Populate /sys/devices/system/cpu with cpu0..cpu(ncpu-1) dirs + the online/present/possible
+	// ranges. Called from Kernel::start AFTER SMP bring-up (smpCpuCount() is only valid then), so
+	// tools that count cores from sysfs (htop, nproc, lscpu) see every online CPU.
+	void populateSysCpu(int ncpu);
 
 	// FileSystem interface
 	int mount();

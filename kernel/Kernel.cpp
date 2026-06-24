@@ -470,6 +470,9 @@ void Kernel::start() {
 	Console::write("       SMP: ");
 	Console::write(smpCpus);
 	Console::writeLine(" CPUs online");
+	// Now that the online-CPU count is known, expose it via /sys/devices/system/cpu/cpuN so
+	// sysfs-based tools (htop, nproc, lscpu) report every core.
+	root->populateSysCpu(smpCpus);
 
 	Scheduler::start();
 

@@ -89,7 +89,10 @@ static inline Process*& g_current_ref()       { return g_curProc[arch::smpThisCp
 static inline Thread*&  g_currentThread_ref() { return g_curThr[arch::smpThisCpu()]; }
 #define g_current        (g_current_ref())
 #define g_currentThread  (g_currentThread_ref())
-static unsigned g_cpuUser, g_cpuSystem, g_cpuIdle;   // global CPU ticks (jiffies) by class
+// Per-CPU tick (jiffie) counters by class, indexed by the dense CPU index. Each CPU's timer
+// (the BSP's PIT via onTick, an AP's LAPIC via onTickLocal) charges its own slot, so /proc/stat
+// can render real per-core utilisation. cpuTimes() sums them for the aggregate "cpu" line.
+static unsigned g_cpuUser[arch::SMP_MAX_CPUS], g_cpuSystem[arch::SMP_MAX_CPUS], g_cpuIdle[arch::SMP_MAX_CPUS];
 static unsigned g_forksTotal;                         // processes ever created (since boot)
 static int g_lastPid;                                 // most recently allocated pid
 
@@ -131,7 +134,8 @@ void ProcTable::init() {
 	g_nextPid = 1;
 	g_current = 0;
 	g_currentThread = 0;
-	g_cpuUser = g_cpuSystem = g_cpuIdle = 0;
+	for (int i = 0; i < arch::SMP_MAX_CPUS; i++)
+		g_cpuUser[i] = g_cpuSystem[i] = g_cpuIdle[i] = 0;
 	g_forksTotal = 0;
 	g_lastPid = 0;
 }
@@ -457,16 +461,18 @@ int ProcTable::groupMembers(int pgid, int* out, int max) {
 // ---- CPU accounting ------------------------------------------------------------------
 
 void ProcTable::accountTick(bool fromUser, bool idle) {
+	int cpu = arch::smpThisCpu();
+	if (cpu < 0 || cpu >= arch::SMP_MAX_CPUS) cpu = 0;
 	if (idle) {
-		g_cpuIdle++;
+		g_cpuIdle[cpu]++;
 		return;
 	}
 	if (fromUser) {
 		if (g_current) g_current->utime++;
-		g_cpuUser++;
+		g_cpuUser[cpu]++;
 	} else {
 		if (g_current) g_current->stime++;
-		g_cpuSystem++;
+		g_cpuSystem[cpu]++;
 	}
 }
 
@@ -490,9 +496,18 @@ void ProcTable::tickRealTimers(uint64_t elapsedUs) {
 }
 
 void ProcTable::cpuTimes(unsigned* user, unsigned* system, unsigned* idle) {
-	if (user) *user = g_cpuUser;
-	if (system) *system = g_cpuSystem;
-	if (idle) *idle = g_cpuIdle;
+	unsigned u = 0, s = 0, i = 0;
+	for (int c = 0; c < arch::SMP_MAX_CPUS; c++) { u += g_cpuUser[c]; s += g_cpuSystem[c]; i += g_cpuIdle[c]; }
+	if (user) *user = u;
+	if (system) *system = s;
+	if (idle) *idle = i;
+}
+
+void ProcTable::cpuTimesFor(int cpu, unsigned* user, unsigned* system, unsigned* idle) {
+	if (cpu < 0 || cpu >= arch::SMP_MAX_CPUS) { if (user) *user = 0; if (system) *system = 0; if (idle) *idle = 0; return; }
+	if (user) *user = g_cpuUser[cpu];
+	if (system) *system = g_cpuSystem[cpu];
+	if (idle) *idle = g_cpuIdle[cpu];
 }
 
 unsigned ProcTable::forksTotal() { return g_forksTotal; }

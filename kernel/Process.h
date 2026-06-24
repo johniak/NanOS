@@ -245,7 +245,8 @@ public:
 	// to (and waking) each process whose timer expires. Called once per scheduler tick from
 	// Scheduler::onTick (so the timer counts wall-clock time, not just the running process's).
 	static void tickRealTimers(uint64_t elapsedUs);
-	static void cpuTimes(unsigned* user, unsigned* system, unsigned* idle);
+	static void cpuTimes(unsigned* user, unsigned* system, unsigned* idle);          // summed across all CPUs
+	static void cpuTimesFor(int cpu, unsigned* user, unsigned* system, unsigned* idle); // one CPU's jiffies (per-core /proc/stat)
 	static unsigned forksTotal();        // processes created since boot (Linux /proc/stat)
 	static int lastPid();                // pid of the most recently created process
 	// Job-control orphan handling: a group is orphaned when no member has a live parent in a
