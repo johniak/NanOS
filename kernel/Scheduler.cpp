@@ -5,8 +5,7 @@
 #include <arch/cpu.h>         // cpuIrqSave/Restore: protect the schedule() state mutation
 #include "WaitQueue.h"        // sleepOn/wakeAll operate on these event lists
 #include "SignalDispatch.h"   // hasPendingSignalCurrent: don't sleep through a pending signal
-#include "Bkl.h"              // Big Kernel Lock: released across the context switch (SMP)
-#include "Spinlock.h"         // g_rqLock: the dedicated runqueue lock that replaces the BKL here
+#include "Spinlock.h"         // g_rqLock: the dedicated runqueue lock (the BKL was retired in 15f)
 #include <arch/smp.h>         // smpThisCpu / SMP_MAX_CPUS: per-CPU current + the switch handoff
 
 namespace kernel {
@@ -96,13 +95,11 @@ bool Scheduler::shouldResched(unsigned sliceTicks, unsigned quantum, bool wokeSl
 // idle must voluntarily yield to anything that became runnable.
 static void idleBody() {
 	for (;;) {
-		// Drop the BKL so other CPUs (and an IRQ waker landing on this idle CPU) can run while
-		// we halt; re-take it before touching scheduler state. The idle task runs in ring 0, so
-		// the timer IRQ that wakes us does NOT preempt here (irq64.S skips schedPreempt for ring-0
-		// interruptees) — it only flags g_needResched, which the schedule() below acts on.
-		g_bkl.exit();
+		// Halt until an interrupt, then reschedule. The idle task runs in ring 0, so the timer IRQ
+		// that wakes us does NOT preempt here (irq64.S skips schedPreempt for ring-0 interruptees) —
+		// it only flags g_needResched, which the schedule() below acts on. (BKL retired in 15f; the
+		// runqueue is now protected by g_rqLock inside schedule().)
 		arch::halt_or_hlt();
-		g_bkl.enter();
 		Scheduler::schedule();
 	}
 }
@@ -117,7 +114,7 @@ int Scheduler::nextRunnable(const TaskState* st, int n, int cur) {
 }
 
 // SMP claim: a task is claimable only if it is TASK_READY, not an idle task, AND runningCpu == -1.
-// The runningCpu gate is essential: between schedule()'s g_bkl.exit() and archContextSwitch saving
+// The runningCpu gate is essential: between schedule()'s g_rqLock release and archContextSwitch saving
 // the outgoing task's kesp, the task is left with runningCpu set to its old CPU. A voluntarily
 // BLOCKED task can be woken to READY by another CPU in exactly that window — but its kesp is not yet
 // saved, so claiming it would dispatch it on a second CPU with a stale/racing kesp (observed:
@@ -269,13 +266,11 @@ static void finishSwitch() {
 // straight into an iretq to ring 3 without re-entering the kernel via schedule(), so it must
 // run the handoff itself, bracketed by the BKL (it then runs in ring 3 lock-free).
 extern "C" void schedForkFinish() {
-	g_bkl.enter();
 	unsigned long f = arch::cpuIrqSave();
 	g_rqLock.lock();
 	finishSwitch();
 	g_rqLock.unlock();
 	arch::cpuIrqRestore(f);
-	g_bkl.exit();
 }
 
 void Scheduler::schedule() {
@@ -311,14 +306,11 @@ void Scheduler::schedule() {
 	g_switchFrom[cpu] = prev;                     // hand `prev` to the far side for release
 	g_rqLock.unlock();                            // release the runqueue BEFORE the switch (handoff)
 	arch::cpuIrqRestore(flags);
-	// BKL handoff: drop the lock so another CPU can enter the kernel while we switch, then
-	// re-acquire on the far side and finish releasing `prev`. schedule() is always reached at
-	// BKL depth 1, so one exit() fully releases it and the resumed task's enter() restores it.
-	// The runqueue lock follows the same handoff shape: released above (before the kesp save so a
-	// remote pickReady sees prev still RUNNING/runningCpu!=-1, the gate), re-taken for finishSwitch.
-	g_bkl.exit();
+	// Context-switch handoff (BKL retired in 15f — g_rqLock alone guards the runqueue): the runqueue
+	// lock was released above BEFORE the kesp save, so a remote pickReady sees `prev` still
+	// RUNNING/runningCpu!=-1 (the gate) and won't claim it until finishSwitch clears runningCpu on
+	// the far side. The switch itself runs lock-free; finishSwitch re-takes g_rqLock.
 	arch::archContextSwitch(&prev->kesp, next->kesp);
-	g_bkl.enter();
 	{
 		unsigned long f2 = arch::cpuIrqSave();
 		g_rqLock.lock();
@@ -564,12 +556,11 @@ void Scheduler::reap(Task* t) {
 }
 
 void Scheduler::start() {
-	// The BSP enters its first task from the throwaway boot context (not a Task; holds no BKL).
-	// Take the BKL for the pick+claim so it is atomic w.r.t. the APs, which by now are already
-	// running their idle loops and calling schedule() under the BKL — otherwise the BSP and an AP
-	// could claim the same task and run it on two CPUs. Release before the switch; the first
-	// task's trampoline (runCurrentBody) re-acquires, exactly like the schedule() handoff.
-	g_bkl.enter();
+	// The BSP enters its first task from the throwaway boot context (not a Task). Take g_rqLock for
+	// the pick+claim so it is atomic w.r.t. the APs, which by now are already running their idle
+	// loops and calling schedule() — otherwise the BSP and an AP could claim the same task and run
+	// it on two CPUs. Released before the switch; the first task runs its handoff in runCurrentBody.
+	// (BKL retired in 15f.)
 	unsigned long f = arch::cpuIrqSave();
 	g_rqLock.lock();
 	Task* first = pickNextTask(0);
@@ -582,7 +573,6 @@ void Scheduler::start() {
 	arch::archLoadThreadTls(first->thread ? first->thread->tlsBase : 0);
 	g_rqLock.unlock();
 	arch::cpuIrqRestore(f);
-	g_bkl.exit();
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static uintptr_t throwaway;
 	arch::archContextSwitch(&throwaway, first->kesp);
@@ -611,12 +601,9 @@ void Scheduler::apEnter() {
 }
 
 void Scheduler::runCurrentBody() {
-	// A freshly-bootstrapped task starts executing kernel code here, reached directly via the
-	// arch task trampoline (NOT through schedule()'s re-acquire), so it must take the BKL itself.
-	// The matching release is whichever way the task leaves the kernel: schedule()/block() (the
-	// handoff exit), exit-to-ring-3 (archEnterUser's bklExit), or its final schedule() when body()
-	// returns (TASK_DONE).
-	g_bkl.enter();
+	// A freshly-bootstrapped task starts executing kernel code here, reached directly via the arch
+	// task trampoline (NOT through schedule()'s far side). It runs the finish_task_switch handoff
+	// itself under g_rqLock. (BKL retired in 15f — no global lock to take.)
 	{
 		unsigned long f = arch::cpuIrqSave();
 		g_rqLock.lock();
