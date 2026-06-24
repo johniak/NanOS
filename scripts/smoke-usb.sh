@@ -31,10 +31,10 @@ QPID=$!
 cleanup() { kill -9 "$QPID" 2>/dev/null; rm -f "$USBIMG"; }
 trap cleanup EXIT
 
-# 1) wait for the shell prompt (means USB root mounted + scheduler + init->shell all ran)
-for i in $(seq 1 45); do grep -q "bash-5\|starting shell" "$SER" 2>/dev/null && break; sleep 1; done
+# 1) wait for the login prompt (means USB root mounted + scheduler + init->login all ran)
+for i in $(seq 1 45); do grep -q "nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
 
-# 2) drive a ring-3 fork/exec from the console (keyboard->tty->fork->exec).
+# 2) log in (mandatory toybox login) then drive a ring-3 fork/exec (keyboard->tty->login->fork->exec).
 python3 - "$MON" <<'PY'
 import socket,time,sys
 KM={' ':'spc','_':'shift-minus','\n':'ret'}
@@ -49,12 +49,16 @@ except Exception as e: print("monitor connect failed:",e); sys.exit(0)
 time.sleep(0.3)
 try: s.settimeout(0.3); s.recv(65536)
 except: pass
-for c in "echo USB_SMOKE_FORK_OK":
-    k=kn(c)
-    if k: s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.04)
-    try: s.settimeout(0.1); s.recv(4096)
-    except: pass
-s.sendall(b"sendkey ret\n"); time.sleep(0.05)
+def typ(text, settle):
+    for c in text:
+        k=kn(c)
+        if k: s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.04)
+        try: s.settimeout(0.1); s.recv(4096)
+        except: pass
+    s.sendall(b"sendkey ret\n"); time.sleep(settle)
+typ("jan", 1.5)                       # username
+typ("jan", 2.5)                       # password -> bash login shell
+typ("echo USB_SMOKE_FORK_OK", 0.1)    # ring-3 fork/exec from the console
 s.close()
 PY
 sleep 3
@@ -68,7 +72,7 @@ echo "=== live-USB boot smoke (root on USB mass-storage) ==="
 chk "xHCI: "                                  "xHCI controller discovered"
 chk "Root: USB mass-storage device"           "root discovery picked the USB volume"
 chk "Mounting ext filesystem at /disks/main"  "/disks/main mounted over USB-MSC"
-chk "bash-5"                                  "reached the login shell on a USB-only system"
+chk "jan@nanos"                               "reached the login shell on a USB-only system"
 chk "USB-HID:"                                 "USB-HID keyboard/mouse module came up"
 chk "USB_SMOKE_FORK_OK"                        "ring-3 fork/exec typed THROUGH the USB keyboard (USB-HID input works)"
 no  "CPU EXCEPTION|KERNEL EXCEPTION|killed faulting process|Triple fault"  "no faults on the console"

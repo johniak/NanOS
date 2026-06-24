@@ -15,20 +15,25 @@ qemu-system-x86_64 -cpu qemu64 -m 6144 -drive file="$IMG",format=raw \
     -display none -serial file:"$SER" -monitor unix:"$MON",server,nowait -no-reboot -d int,cpu_reset -D "$INT" &
 QPID=$!
 trap 'kill -9 "$QPID" 2>/dev/null' EXIT
-for i in $(seq 1 45); do grep -q "bash-5" "$SER" 2>/dev/null && break; sleep 1; done
-# read /proc/meminfo through the shell via the monitor
+for i in $(seq 1 45); do grep -q "nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
+# Log in (mandatory toybox login), then read /proc/meminfo through the shell via the monitor.
 python3 - "$MON" <<'PY'
 import socket,time,sys
 s=socket.socket(socket.AF_UNIX)
 try: s.connect(sys.argv[1])
 except: sys.exit(0)
 time.sleep(0.3)
+try: s.settimeout(0.3); s.recv(65536)
+except: pass
 # QEMU sendkey wants keysym names, not literal chars: space->spc, '/'->slash.
 SYM = {' ': 'spc', '/': 'slash'}
-for c in "cat /proc/meminfo":
-    k = SYM.get(c, c)
-    s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.05)
-s.sendall(b"sendkey ret\n"); time.sleep(1)
+def typ(text, settle):
+    for c in text:
+        s.sendall(("sendkey "+SYM.get(c,c)+"\n").encode()); time.sleep(0.05)
+    s.sendall(b"sendkey ret\n"); time.sleep(settle)
+typ("jan", 1.5)                 # username
+typ("jan", 2.5)                 # password -> bash login shell
+typ("cat /proc/meminfo", 1.5)   # the memory-map readout
 s.close()
 PY
 sleep 2
@@ -36,7 +41,7 @@ PASS=1
 chk(){ if grep -q "$1" "$SER" 2>/dev/null; then echo "  OK  : $2"; else echo "  FAIL: $2 (missing: $1)"; PASS=0; fi; }
 no(){ if grep -qE "$1" "$SER" 2>/dev/null; then echo "  FAIL: $2"; PASS=0; else echo "  OK  : $2"; fi; }
 echo "=== big-RAM (6 GiB) boot smoke ==="
-chk "bash-5"                                          "reached the shell with 6 GiB RAM"
+chk "jan@nanos"                                       "reached the shell with 6 GiB RAM"
 # MemTotal in kB > 4 GiB (4194304 kB). awk picks the MemTotal line's number.
 if awk '/MemTotal/{ if ($2+0 > 4194304) ok=1 } END{ exit ok?0:1 }' "$SER" 2>/dev/null; then
     echo "  OK  : /proc/meminfo MemTotal > 4 GiB (high RAM mapped + pooled)"; else

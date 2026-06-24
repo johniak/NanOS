@@ -1245,7 +1245,7 @@ _image64: _all _userland64 _kext
 	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	# Mirrors the i686 _image population.
 	if [ -f $(BINFOLDER)ping.nxe ]; then \
-	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# openssl (optional, external): OpenSSL CLI built by `make ARCH=x86_64 openssl` (the nanos-sdk
 	# port), staged into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
@@ -1425,7 +1425,7 @@ _image: _all _userland _kext _grub2-image
 	# ping (optional, external): GNU inetutils ping built by `make ping` (the nanos-sdk port) and
 	# staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)ping.nxe ]; then \
-	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
 	# wget (optional, external): GNU wget built by `make wget` (the nanos-sdk port), staged into
 	# bin/wget.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
