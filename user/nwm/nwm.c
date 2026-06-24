@@ -72,6 +72,7 @@ static int g_prev_cx = -1, g_prev_cy = -1;/* last drawn cursor position         
 static volatile int g_own = 0;            /* do we own the framebuffer? (VT_SETMODE, 0 until acquire) */
 static int g_ttyfd = -1;                  /* our graphics VT (tty7) for KD/VT ioctls + VT_RELDISP    */
 static int g_wakefd[2] = { -1, -1 };      /* self-pipe so VT signals wake the poll() loop            */
+static int g_started = 0;                 /* have we spawned the desktop yet? (once, on first own)  */
 static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
 static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
 static struct nw_surface g_bd_surf;
@@ -578,6 +579,20 @@ static void vt_on_acquire(int s) {  /* SIGUSR2: kernel handed the console back t
 	if (g_wakefd[1] >= 0) { char c = 'a'; write(g_wakefd[1], &c, 1); }
 }
 
+/* Spawn the demo desktop (Terminal + Settings + Files) and draw the first frame. Runs ONCE, the
+ * first time we own the console — at boot for a standalone nwm, or on the first switch to F7 for a
+ * VT-managed one. Deferring it keeps boot light (no GUI apps until someone looks at the desktop). */
+static void start_desktop(void)
+{
+	if (g_started) return;
+	g_started = 1;
+	spawn_client(0, NWTERM_PATH);             /* the NanoOS demo desktop: Terminal + Settings */
+	spawn_client(1, NWSET_PATH);
+	spawn_client(2, NWEXP_PATH);              /* Files spawned last -> on top + focused */
+	S.dirty = 1;
+	present();                                /* first frame: desktop + cursor */
+}
+
 int main(void)
 {
 	int fbfd = open("/dev/fb0", O_RDWR);
@@ -649,14 +664,14 @@ int main(void)
 	for (int i = 0; i < NW_MAX_CLIENTS; i++) { cl_req[i] = cl_evt[i] = -1; }
 	nw_server_init(&S, (int) g_xres, (int) g_yres);
 
-	termmode(1);                              /* silence the kernel console echo-draw */
-
-	spawn_client(0, NWTERM_PATH);             /* the NanoOS demo desktop: Terminal + Settings */
-	spawn_client(1, NWSET_PATH);
-	spawn_client(2, NWEXP_PATH);              /* Files spawned last -> on top + focused */
-
-	S.dirty = 1;
-	present();                                /* first frame: desktop + cursor */
+	/* When we own a graphics VT (tty7) the kernel does not text-draw it, so termmode is unneeded;
+	 * and we must do NOTHING (no console mode change, no GUI clients, no fb writes) until the first
+	 * acquire — otherwise we'd spawn three GUI apps at boot and flip the ACTIVE text VT's line
+	 * discipline, racing every other console's login. start_desktop() runs once, when first owned. */
+	if (g_own) {                              /* standalone (startx-style): own the console now */
+		termmode(1);                          /* silence the kernel console echo-draw */
+		start_desktop();
+	}
 
 	for (;;) {
 		struct pollfd pfd[3 + NW_MAX_CLIENTS * 2];
@@ -677,6 +692,8 @@ int main(void)
 
 		/* COALESCE: drain every input + request before drawing */
 		if (g_wakefd[0] >= 0) { char wb[16]; while (read(g_wakefd[0], wb, sizeof wb) > 0) {} }  /* drain VT-signal pokes */
+		if (g_own && !g_started)              /* first switch to F7: bring up the desktop now */
+			start_desktop();
 		drain_keyboard(in0);
 		drain_mouse(in1);
 		for (int i = 0; i < NW_MAX_CLIENTS; i++)
@@ -684,9 +701,10 @@ int main(void)
 				disconnect(i);
 
 		reconcile_buffers();
-		termmode(1);   /* keep the kernel console in raw/no-echo: a windowed shell's job control
-		                * can flip the shared console back to cooked, which would echo typed keys
-		                * straight onto the framebuffer behind our windows. Re-assert every frame. */
+		if (g_ttyfd < 0)
+			termmode(1);   /* standalone only: keep the (text) console raw/no-echo. On a graphics VT
+			                * the kernel never text-draws, so termmode is unneeded — and flipping the
+			                * ACTIVE VT's line discipline from here would corrupt a text console. */
 
 		if (S.want_shutdown) {                 /* Shutdown button: power the machine off */
 			termmode(0);
