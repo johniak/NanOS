@@ -53,6 +53,10 @@ void smpPollShootdown() {}                  // no cross-CPU TLB shootdowns on th
 // The Scheduler's sleep primitives consult this (don't block through a pending signal); the
 // host harness never has one, so the sleep paths behave exactly as before under test.
 namespace kernel { bool hasPendingSignalCurrent() { return false; } }
+// consoleSignalGroup lives in Exec.cpp (not linked into the host suite); the VT console's
+// cooked control-key path references it. The harness never exercises a real signal, so a no-op
+// stub satisfies the link.
+namespace kernel { void consoleSignalGroup(int, int) {} }
 namespace arch {
 
 // CPUID is x86-only; under the host harness fill a representative CpuInfo so the

@@ -2215,6 +2215,7 @@ TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Consol
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp $(ARCH_ADDRSPACE)
 TEST_MODULES+= arch/x86_64/cpu/lapic_x86_64.cpp   # pure-logic half: MSI vector pool (arch half #ifdef'd out under NANOS_HOST_TEST)
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
+TEST_MODULES+= kernel/vt/VtConsole.cpp kernel/vt/VtManager.cpp   # virtual terminals: per-VT console + switching manager
 TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
 # NanWM (window server) pure cores — userland C, host-tested as C++ (g++ treats .c as C++).
 # vtfont.c supplies the shared nx_font8x16 the gfx rasterizer draws with.
