@@ -1,5 +1,6 @@
 #include "Process.h"
 #include "Scheduler.h"   // Task / TaskState for the /proc state char
+#include "Spinlock.h"    // SMP: RecursiveIrqGuard over the shared g_procs[] table
 #include <arch/smp.h>    // SMP: "current process/thread" is per-CPU
 
 namespace kernel {
@@ -96,6 +97,14 @@ static unsigned g_cpuUser[arch::SMP_MAX_CPUS], g_cpuSystem[arch::SMP_MAX_CPUS], 
 static unsigned g_forksTotal;                         // processes ever created (since boot)
 static int g_lastPid;                                 // most recently allocated pid
 
+// SMP: serializes every mutation/scan of the shared g_procs[]/g_threads[] tables + the id
+// counters. Recursive (per-CPU) because the public ops compose — infoByPid->byPid, freeSlot->
+// freeThread, the setpgid/isOrphanedGroup family->byPid — so a plain lock would self-deadlock.
+// IRQ-saving (the scheduler tick scans the table via tickRealTimers), so an IRQ on this CPU
+// never lands mid-update. The PER-CPU "current" pointers (g_curProc/g_curThr, indexed by CPU)
+// are deliberately NOT under this lock — each CPU owns its own slot, touched on the switch path.
+static RecursiveSpinlock g_procLock;
+
 // Grab a free Thread slot, initialise it, and link it into p->threads with the given tid.
 // The leader (first thread of a process) stays at the head of the list so leaderThread() is
 // O(1); later threads are spliced in just after the head. Returns 0 if the pool is exhausted.
@@ -127,6 +136,7 @@ static Thread* linkThread(Process* p, int tid) {
 }
 
 void ProcTable::init() {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++)
 		g_procs[i].used = false;
 	for (int i = 0; i < MAXTHREADS; i++)
@@ -141,6 +151,7 @@ void ProcTable::init() {
 }
 
 Process* ProcTable::alloc(int parent) {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++) {
 		if (!g_procs[i].used) {
 			Process* p = &g_procs[i];
@@ -197,6 +208,7 @@ Thread* ProcTable::currentThread() { return g_currentThread; }
 void ProcTable::setCurrentThread(Thread* t) { g_currentThread = t; }
 
 Process* ProcTable::byPid(int pid) {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++)
 		if (g_procs[i].used && g_procs[i].pid == pid)
 			return &g_procs[i];
@@ -204,6 +216,7 @@ Process* ProcTable::byPid(int pid) {
 }
 
 Process* ProcTable::byTask(Task* t) {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++)
 		if (g_procs[i].used && g_procs[i].task == t)
 			return &g_procs[i];
@@ -213,12 +226,14 @@ Process* ProcTable::byTask(Task* t) {
 // A non-leader thread for clone(): a free slot with a FRESH tid from the shared pid id space
 // (so a tid never collides with a pid or another tid). 0 if the pool is full -> clone -EAGAIN.
 Thread* ProcTable::allocThread(Process* p) {
+	RecursiveIrqGuard g(g_procLock);
 	return linkThread(p, g_nextPid++);
 }
 
 // Release a thread slot (thread exit/reap): unlink it from its process's list, decrement the
 // live count, and mark the slot free for reuse.
 void ProcTable::freeThread(Thread* t) {
+	RecursiveIrqGuard g(g_procLock);
 	if (!t || !t->used)
 		return;
 	Process* p = t->proc;
@@ -238,6 +253,7 @@ void ProcTable::freeThread(Thread* t) {
 }
 
 Thread* ProcTable::threadByTid(int tid) {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXTHREADS; i++)
 		if (g_threads[i].used && g_threads[i].tid == tid)
 			return &g_threads[i];
@@ -248,6 +264,7 @@ Thread* ProcTable::threadByTid(int tid) {
 // Task::thread nor Thread::task is ever left dangling (see the three call sites converted to
 // this helper: registerKthread, the init process, and forkProcess).
 void ProcTable::bindTask(Process* p, Task* t, Thread* th) {
+	RecursiveIrqGuard g(g_procLock);
 	p->task = t;
 	t->proc = p;
 	t->thread = th;
@@ -255,6 +272,7 @@ void ProcTable::bindTask(Process* p, Task* t, Thread* th) {
 }
 
 int ProcTable::reapChild(int parentPid, int wantPid, Process** childOut) {
+	RecursiveIrqGuard g(g_procLock);
 	bool any = false;
 	for (int i = 0; i < MAXPROC; i++) {
 		Process* c = &g_procs[i];
@@ -273,6 +291,7 @@ int ProcTable::reapChild(int parentPid, int wantPid, Process** childOut) {
 }
 
 int ProcTable::reapStopped(int parentPid, int wantPid, Process** childOut) {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++) {
 		Process* c = &g_procs[i];
 		if (!c->used || c->parent != parentPid)
@@ -290,6 +309,7 @@ int ProcTable::reapStopped(int parentPid, int wantPid, Process** childOut) {
 }
 
 void ProcTable::freeSlot(Process* p) {
+	RecursiveIrqGuard g(g_procLock);   // freeThread() below re-enters (recursive lock)
 	if (!p)
 		return;
 	// Release every thread slot the process still owns. alloc() takes the leader slot for every
@@ -302,6 +322,7 @@ void ProcTable::freeSlot(Process* p) {
 }
 
 int ProcTable::reparentChildren(int oldParent, int newParent) {
+	RecursiveIrqGuard g(g_procLock);
 	int n = 0;
 	for (int i = 0; i < MAXPROC; i++)
 		if (g_procs[i].used && g_procs[i].parent == oldParent) {
@@ -312,6 +333,9 @@ int ProcTable::reparentChildren(int oldParent, int newParent) {
 }
 
 void ProcTable::forEachLive(void (*fn)(int, bool, void*), void* ctx) {
+	// The lock is recursive, so a callback that re-enters ProcTable (e.g. kill(-1)'s broadcast
+	// looks processes up) nests safely; the callback runs with IRQs off, so it must stay bounded.
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++)
 		if (g_procs[i].used)
 			fn(g_procs[i].pid, g_procs[i].kthread, ctx);
@@ -361,6 +385,7 @@ static void fillInfo(const Process* p, ProcInfo* out) {
 }
 
 int ProcTable::snapshot(ProcInfo* out, int max) {
+	RecursiveIrqGuard g(g_procLock);
 	int n = 0;
 	for (int i = 0; i < MAXPROC && n < max; i++)
 		if (g_procs[i].used)
@@ -369,6 +394,7 @@ int ProcTable::snapshot(ProcInfo* out, int max) {
 }
 
 bool ProcTable::infoByPid(int pid, ProcInfo* out) {
+	RecursiveIrqGuard g(g_procLock);   // byPid() below re-enters (recursive lock)
 	Process* p = byPid(pid);
 	if (!p)
 		return false;
@@ -377,6 +403,7 @@ bool ProcTable::infoByPid(int pid, ProcInfo* out) {
 }
 
 void ProcTable::setCommand(Process* p, const char* const* argv, int argc) {
+	RecursiveIrqGuard g(g_procLock);
 	const char* a0 = (argc > 0 && argv && argv[0]) ? argv[0] : "";
 	const char* base = a0;                       // comm = basename(argv[0])
 	for (const char* s = a0; *s; s++)
@@ -399,11 +426,13 @@ void ProcTable::setCommand(Process* p, const char* const* argv, int argc) {
 // Pure process-table bookkeeping. `pid == 0` selects the current process.
 
 int ProcTable::getpgid(int pid) {
+	RecursiveIrqGuard g(g_procLock);
 	Process* p = pid ? byPid(pid) : g_current;
 	return p ? p->pgid : -3;            // -ESRCH
 }
 
 int ProcTable::getsid(int pid) {
+	RecursiveIrqGuard g(g_procLock);
 	Process* p = pid ? byPid(pid) : g_current;
 	return p ? p->sid : -3;
 }
@@ -413,6 +442,7 @@ int ProcTable::getsid(int pid) {
 // session; the target group must be the process's own pid (new group) or an existing group
 // in the same session.
 int ProcTable::setpgid(int pid, int pgid) {
+	RecursiveIrqGuard g(g_procLock);
 	Process* p = pid ? byPid(pid) : g_current;
 	if (!p)
 		return -3;                      // -ESRCH
@@ -440,6 +470,7 @@ int ProcTable::setpgid(int pid, int pgid) {
 // (sid == pgid == pid). Fails if it is already a process-group leader (POSIX), which a
 // freshly forked child never is (it inherited the parent's pgid).
 int ProcTable::setsid() {
+	RecursiveIrqGuard g(g_procLock);
 	Process* p = g_current;
 	if (!p)
 		return -3;
@@ -451,6 +482,7 @@ int ProcTable::setsid() {
 }
 
 int ProcTable::groupMembers(int pgid, int* out, int max) {
+	RecursiveIrqGuard g(g_procLock);
 	int n = 0;
 	for (int i = 0; i < MAXPROC && n < max; i++)
 		if (g_procs[i].used && g_procs[i].pgid == pgid)
@@ -483,6 +515,7 @@ void ProcTable::accountTick(bool fromUser, bool idle) {
 // only flips a BLOCKED task to READY, both IRQ-safe. wake(0) is a harmless no-op, so an
 // unbound thread (host test) is skipped.
 void ProcTable::tickRealTimers(uint64_t elapsedUs) {
+	RecursiveIrqGuard g(g_procLock);   // IRQ context: scans the shared table; lock is IRQ-saving
 	for (int i = 0; i < MAXPROC; i++) {
 		Process* p = &g_procs[i];
 		if (!p->used || p->exited || p->itReal.valueUs == 0)
@@ -517,6 +550,7 @@ int ProcTable::lastPid() { return g_lastPid; }
 // group, but the same session (POSIX). When a process exit orphans a group with stopped
 // members, the kernel must send it SIGHUP + SIGCONT. Pure -> host-tested.
 bool ProcTable::isOrphanedGroup(int pgid) {
+	RecursiveIrqGuard g(g_procLock);   // byPid() below re-enters (recursive lock)
 	bool any = false;
 	for (int i = 0; i < MAXPROC; i++) {
 		Process* m = &g_procs[i];
@@ -531,6 +565,7 @@ bool ProcTable::isOrphanedGroup(int pgid) {
 }
 
 bool ProcTable::groupHasStopped(int pgid) {
+	RecursiveIrqGuard g(g_procLock);
 	for (int i = 0; i < MAXPROC; i++)
 		if (g_procs[i].used && g_procs[i].pgid == pgid && g_procs[i].stopped)
 			return true;

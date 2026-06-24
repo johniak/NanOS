@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <arch/cpu.h>   // cpuIrqSave/cpuIrqRestore for the IRQ-save guard
+#include <arch/smp.h>   // smpThisCpu() for the recursive (per-CPU keyed) lock
 
 namespace kernel {
 
@@ -38,6 +39,43 @@ public:
 	~SpinIrqGuard() { l.unlock(); arch::cpuIrqRestore(flags); }
 	SpinIrqGuard(const SpinIrqGuard&) = delete;
 	SpinIrqGuard& operator=(const SpinIrqGuard&) = delete;
+};
+
+// A RECURSIVE spinlock keyed on the owning CPU (same shape as the Big Kernel Lock, Bkl.h, but
+// reusable for a subsystem that composes its own locked methods). The win over a plain Spinlock:
+// a public op that calls another public op of the same subsystem (e.g. ProcTable::infoByPid ->
+// byPid) re-enters on the SAME CPU via depth++ instead of self-deadlocking; a DIFFERENT CPU still
+// blocks. ownerCpu/depth are only touched by the holder, so they need no separate atomic.
+class RecursiveSpinlock {
+	Spinlock     lock;
+	volatile int ownerCpu = -1;   // dense CPU index holding it, or -1
+	volatile int depth    = 0;    // recursion depth on the owning CPU
+public:
+	void enter() {
+		int cpu = arch::smpThisCpu();
+		if (ownerCpu == cpu) { depth++; return; }   // already ours -> nest
+		lock.lock();                                // blocks until the holding CPU releases
+		ownerCpu = cpu;
+		depth = 1;
+	}
+	void exit() {
+		if (--depth == 0) { ownerCpu = -1; lock.unlock(); }
+	}
+};
+
+// RAII guard for RecursiveSpinlock that ALSO disables local interrupts for the whole (possibly
+// nested) critical section — so an IRQ handler that takes the same lock cannot fire mid-update on
+// this CPU. Each guard saves/restores the flags: the innermost restores first (back to "disabled"),
+// the outermost restores last (to the caller's original state), while enter/exit ref-count the
+// actual unlock. Safe to nest; safe to take from both thread and IRQ context.
+class RecursiveIrqGuard {
+	RecursiveSpinlock& l;
+	unsigned long flags;
+public:
+	explicit RecursiveIrqGuard(RecursiveSpinlock& s) : l(s) { flags = arch::cpuIrqSave(); l.enter(); }
+	~RecursiveIrqGuard() { l.exit(); arch::cpuIrqRestore(flags); }
+	RecursiveIrqGuard(const RecursiveIrqGuard&) = delete;
+	RecursiveIrqGuard& operator=(const RecursiveIrqGuard&) = delete;
 };
 
 }  // namespace kernel
