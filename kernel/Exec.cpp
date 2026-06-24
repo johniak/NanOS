@@ -7,6 +7,7 @@
 #include "SyscallNr.h"   // struct k_sigaction: the rt_sigaction kernel-ABI layout
 #include "Process.h"
 #include "Scheduler.h"
+#include "Spinlock.h"    // g_execLock: serialize the single staging window across concurrent execs
 #include "CloneFlags.h"
 #include "ThreadArea.h"   // UserDesc: CLONE_SETTLS reads the child's TLS base from it
 #include "String.h"
@@ -47,6 +48,13 @@ static void initBrk(Process* p) {
 // and callers reject an oversize file BEFORE the read, so a large .nxe can never corrupt RAM.
 // Base raised 0x400000 -> 0x800000 to give the kernel image headroom (must match user/nx.ld).
 static const unsigned STAGE_BASE = 0x800000;
+// SMP: the staging window at STAGE_BASE is a SINGLE global buffer, and dynLoadProgram uses global
+// loader state — so two concurrent execs on two CPUs would clobber each other's image. g_execLock
+// serializes the load window (read .nxe into STAGE_BASE -> relocate/link -> copy into the new
+// address space); it is released before archLoadUser/archEnterUser, since by then the image lives
+// in the process's own space. Plain (non-IRQ): exec is thread context and the load does slow I/O.
+// Lock order: g_execLock -> {VFS, frame allocator} (it reaches into them); nothing takes it inversely.
+static kernel::Spinlock g_execLock;
 #if defined(__x86_64__)
 // x86_64: 32 MiB. A 64-bit .nxe is ~2x its i686 size, so big apps (NetSurf ~16 MiB image+bss,
 // file ~8.3 MiB) overflowed 8 MiB. The mmu reserves a matching 32 MiB staging band at VA_USER_BASE
@@ -74,9 +82,12 @@ int execProgram(Vfs* vfs, const char* path) {
 		return -1;
 	if (st.size > STAGE_CAP)             // too big to stage -> reject before overrunning the window
 		return -1;
+	g_execLock.lock();   // SMP: own the shared staging window + loader globals for this load
 	char* image = (char*) STAGE_BASE;
-	if (vfs->read(p, st.size, 0, image) < 0)
+	if (vfs->read(p, st.size, 0, image) < 0) {
+		g_execLock.unlock();
 		return -1;
+	}
 	NxHeader* h = (NxHeader*) image;
 	nxaddr_t entry = 0;
 	// A program that imports symbols / needs shared libraries goes through the dynamic
@@ -85,6 +96,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	int rc = (h->neededCount || h->importCount)
 			? dynLoadProgram(vfs, image, STAGE_CAP, space, &entry)
 			: loadStaged(&entry);
+	g_execLock.unlock();   // image is now copied into `space`; the staging window is free again
 	if (rc < 0) {
 		arch::mmuFreeAddressSpace(space);
 		return rc;
@@ -147,8 +159,10 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 		arch::mmuLoadDirPhys(userDir);
 		return xc;
 	}
+	g_execLock.lock();   // SMP: own the shared staging window + loader globals for this load
 	char* image = (char*) STAGE_BASE;
 	if (vfs->read(pp, st.size, 0, image) < 0) {
+		g_execLock.unlock();
 		arch::mmuLoadDirPhys(userDir);
 		return -1;
 	}
@@ -161,6 +175,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	int rc = (h->neededCount || h->importCount)
 			? dynLoadProgram(vfs, image, STAGE_CAP, newSpace, &entry)
 			: loadStaged(&entry);
+	g_execLock.unlock();   // image is now copied into newSpace; the staging window is free again
 	if (rc < 0) {
 		arch::mmuFreeAddressSpace(newSpace);
 		arch::mmuLoadDirPhys(userDir);
