@@ -114,6 +114,7 @@ struct Process {
 	// group (TIOCSPGRP) is the one that receives terminal-generated signals (Ctrl+C).
 	int pgid;            // process group id (group leader has pgid == pid)
 	int sid;             // session id (session leader has sid == pid)
+	int cttyVt;          // controlling terminal: a 1-based VT index (0 = none), set by TIOCSCTTY
 
 	// CPU accounting (in timer ticks; the timer attributes each tick to the running process,
 	// split user vs system by the ring it interrupted). Surfaced in /proc/<pid>/stat.

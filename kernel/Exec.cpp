@@ -8,6 +8,7 @@
 #include "Process.h"
 #include "Scheduler.h"
 #include "Spinlock.h"    // g_execLock: serialize the single staging window across concurrent execs
+#include "vt/VtManager.h" // per-VT foreground process group (console job control)
 #include "CloneFlags.h"
 #include "ThreadArea.h"   // UserDesc: CLONE_SETTLS reads the child's TLS base from it
 #include "String.h"
@@ -30,8 +31,17 @@ static int g_foregroundPid = 0;
 // the terminal (a shell without job control, e.g. nsh) -> consoleSignal falls back to the
 // single waited-on pid above.
 static int g_consolePgrp = 0;
-void consoleSetPgrp(int pgrp) { g_consolePgrp = pgrp; }
-int  consoleGetPgrp()         { return g_consolePgrp; }
+// With virtual terminals the foreground process group is per-VT (each VtConsole carries its own,
+// and Ctrl+C in the input layer signals that VT's group directly). consoleSetPgrp/GetPgrp act on
+// the ACTIVE VT so the legacy console-fd TIOCSPGRP/TIOCGPGRP path stays correct; g_consolePgrp is
+// only the pre-VT (no-framebuffer) fallback.
+void consoleSetPgrp(int pgrp) {
+	if (g_vtmgr) g_vtmgr->activeVt()->setFgPgrp(pgrp);
+	else g_consolePgrp = pgrp;
+}
+int  consoleGetPgrp() {
+	return g_vtmgr ? g_vtmgr->activeVt()->fgPgrp() : g_consolePgrp;
+}
 
 // Reset a process's brk/sbrk heap to empty (no pages mapped yet) at the fixed high-VA
 // base. Called whenever a fresh address space is installed (program launch / execve).
@@ -275,6 +285,7 @@ int forkProcess(arch::TrapFrame* tf) {
 		child->cmdline[i] = parent->cmdline[i];
 	child->pgid = parent->pgid;                // inherit the process group + session
 	child->sid = parent->sid;
+	child->cttyVt = parent->cttyVt;            // inherit the controlling terminal (VT)
 	// POSIX: fork in a multithreaded process duplicates ONLY the calling thread — the child
 	// gets a single leader thread that is a copy of whichever parent thread issued fork(), NOT
 	// necessarily the parent's leader. So the per-thread state (block mask, TLS base) is inherited
@@ -964,8 +975,9 @@ void consoleSignal(int sig) {
 	// Job control active (a shell ran tcsetpgrp on the console): deliver to the whole
 	// foreground process group, like a real tty. Otherwise fall back to the single pid the
 	// shell is waiting on (nsh, which never claims the terminal).
-	if (g_consolePgrp > 0) {
-		signalSendGroup(g_consolePgrp, sig);
+	int fgPgrp = consoleGetPgrp();     // per-VT with virtual terminals; g_consolePgrp otherwise
+	if (fgPgrp > 0) {
+		signalSendGroup(fgPgrp, sig);
 		return;
 	}
 	if (g_foregroundPid <= 0)

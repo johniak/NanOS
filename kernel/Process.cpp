@@ -160,6 +160,7 @@ Process* ProcTable::alloc(int parent) {
 			p->parent = parent;
 			p->pgid = p->pid;        // own group + session by default; fork inherits these,
 			p->sid = p->pid;         // setpgid/setsid change them
+			p->cttyVt = 0;           // no controlling terminal yet (TIOCSCTTY sets it; fork inherits)
 			p->utime = 0;
 			p->stime = 0;
 			p->starttime = (unsigned) Scheduler::ticks();

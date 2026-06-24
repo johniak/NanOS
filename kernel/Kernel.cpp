@@ -25,6 +25,7 @@
 #include <arch/pci.h>
 #include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
 #include "vt/VtManager.h"     // virtual terminals: build the manager + register /dev/ttyN
+#include "VtTty.h"            // /dev/tty1..7 + /dev/tty0 + /dev/tty + /dev/console
 #include "Csprng.h"           // csprngKernelSeed: seed the kernel CSPRNG at boot
 #include "Scheduler.h"
 #include <arch/sched.h>
@@ -394,6 +395,18 @@ void Kernel::start() {
 			vtmgr->init(s, [](int pid, int sig) { kernel::signalSend(pid, sig); });
 			kernel::g_vtmgr = vtmgr;
 			okEnd();
+
+			// /dev nodes for the consoles: tty1..tty7 (per-VT), tty0 (the active VT), tty (the
+			// caller's controlling VT), console (the kernel console = VT1). login/getty opens
+			// /dev/ttyN, dups it to 0/1/2, and TIOCSCTTYs it (init, Phase 4).
+			okBegin("Console devices /dev/tty0..7,tty,console");
+			for (int i = 1; i <= kernel::kVtCount; i++) {
+				char nm[6] = { 't', 't', 'y', (char) ('0' + i), 0, 0 };
+				root->addChar(root->dev(), nm, new kernel::VtTty(i), 0620);
+			}
+			root->addChar(root->dev(), "tty0", new kernel::VtTty(0), 0620);
+			root->addChar(root->dev(), "console", new kernel::VtTty(1), 0600);
+			okEnd();
 		}
 	}
 
@@ -425,9 +438,15 @@ void Kernel::start() {
 	pty->setSignalFn(ptySignal, 0);
 	root->addChar(root->dev(), "ptmx", new PtyMaster(pty), 0666);
 	root->addChar(root->dev(), "pts0", new PtySlave(pty), 0666);
-	// /dev/tty = the controlling terminal. With one pty it is the same slave as pts0, so a
-	// program (bash) can open("/dev/tty") to reach its terminal without knowing the pts name.
-	root->addChar(root->dev(), "tty", new PtySlave(pty), 0666);
+	// /dev/tty = the controlling terminal. With virtual terminals it resolves per-caller to that
+	// process's controlling VT (set via TIOCSCTTY); a VtTty(-1) does that resolution. Without a
+	// framebuffer (no VTs) it falls back to the single pty slave, the legacy behaviour.
+	// NOTE: a shell whose controlling terminal is the pty (nterm, Phase 5) still reaches its tty
+	// via /dev/pts0; unified VT-or-pts /dev/tty resolution is a follow-up.
+	if (kernel::g_vtmgr)
+		root->addChar(root->dev(), "tty", new kernel::VtTty(-1), 0666);
+	else
+		root->addChar(root->dev(), "tty", new PtySlave(pty), 0666);
 	okEnd();
 
 	// PCI bus: install the arch config-space backend (0xCF8/0xCFC) and scan. Must run BEFORE
