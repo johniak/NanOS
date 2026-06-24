@@ -28,9 +28,13 @@ Assembled in `kernel/Kernel.cpp` (`Kernel::start`). All access goes through the 
 │   │                 read/write). Present only if the bootloader provided a framebuffer.
 │   ├── input0        CharDevice — the keyboard as a Linux-style evdev: the PS/2 IRQ feeds
 │   │                 scancodes, programs read() 2-byte key down/up events.
+│   ├── tty1..tty7   CharDevice — the virtual terminals (Ctrl+Alt+Fn). tty1–6 are kernel fbcon
+│   │                 text consoles (a login each); tty7 is the graphics console (nwm). See x86_64.md §5.3.
+│   ├── tty0          CharDevice — the active VT; tty (no number) = the caller's controlling VT.
+│   ├── console       CharDevice — the kernel console (= tty1; boot messages + panics).
 │   ├── ptmx         CharDevice — PTY master, held by the userspace terminal emulator.
 │   ├── pts0         CharDevice — PTY slave, the shell's controlling tty.
-│   └── tty          CharDevice — the controlling terminal (same slave as pts0 with one PTY).
+│   └── tty          CharDevice — the controlling terminal (a VT via Process::cttyVt, else the pty).
 ├── proc/             SynthFs — synthetic, Linux-style. Generated per read:
 │   ├── meminfo       MemTotal/MemFree (physical RAM) + KHeapTotal/KHeapFree (kernel heap).
 │   ├── uptime        seconds since boot (advances via the scheduler clock).
