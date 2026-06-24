@@ -49,14 +49,14 @@ def keys(ks):
     for k in ks: cmd("sendkey "+k)
 # Log in on tty1 as jan/jan (the seeded account); generous settles so the shell is fully up.
 for c in "jan": keys([c])
-keys(["ret"]); time.sleep(2.0)
+keys(["ret"]); time.sleep(3.0)
 for c in "jan": keys([c])
-keys(["ret"]); time.sleep(4.0)
-cmd("screendump "+A); time.sleep(0.6)          # tty1 (bash)
-keys(["ctrl-alt-f2"]); time.sleep(2.5)
-cmd("screendump "+B); time.sleep(0.6)          # tty2 (fresh login)
-keys(["ctrl-alt-f1"]); time.sleep(2.5)
-cmd("screendump "+C); time.sleep(0.6)          # back to tty1
+keys(["ret"]); time.sleep(7.0)                 # let tty1's bash prompt fully render + go idle (no blink)
+cmd("screendump "+A); time.sleep(0.8)          # tty1 (bash) — must be a STABLE frame for the A==C oracle
+keys(["ctrl-alt-f2"]); time.sleep(3.5)
+cmd("screendump "+B); time.sleep(0.8)          # tty2 (fresh login)
+keys(["ctrl-alt-f1"]); time.sleep(3.5)         # switch back; the kernel repaints tty1's saved grid
+cmd("screendump "+C); time.sleep(0.8)          # back to tty1 — must equal A (state restored)
 PY
 sleep 1
 
