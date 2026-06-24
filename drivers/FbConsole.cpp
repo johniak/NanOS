@@ -67,7 +67,7 @@ void FbConsole::init(const FbSurface& s) {
 }
 
 void FbConsole::clear() {
-	fbFillRect(m_surf, 0, 0, m_surf.width, m_surf.height, m_bg);
+	if (m_live) fbFillRect(m_surf, 0, 0, m_surf.width, m_surf.height, m_bg);
 	// Home + clear the VT grid so its model matches the wiped surface.
 	const unsigned char seq[] = { 0x1b, '[', '2', 'J', 0x1b, '[', 'H' };
 	vt_feed(&m_vt, seq, sizeof seq);
@@ -79,21 +79,39 @@ void FbConsole::clear() {
 		m_vt.dirty[y] = 0;
 	}
 	m_curShown = false;
-	drawCursor();
+	if (m_live) drawCursor();
 }
 
 void FbConsole::putChar(char c) {
-	eraseCursor();
+	if (m_live) eraseCursor();
 	// vt handles \r \n (as CRLF) \b \t BEL + the escape grammar itself.
 	vt_feed(&m_vt, (const unsigned char*) &c, 1);
-	renderDirty();
-	drawCursor();
+	if (m_live) { renderDirty(); drawCursor(); }
 }
 
 void FbConsole::setCursor(unsigned x, unsigned y) {
-	eraseCursor();
+	if (m_live) eraseCursor();
 	m_vt.cx = (m_vt.cols && (int) x >= m_vt.cols) ? m_vt.cols - 1 : (int) x;
 	m_vt.cy = (m_vt.rows && (int) y >= m_vt.rows) ? m_vt.rows - 1 : (int) y;
+	if (m_live) drawCursor();
+}
+
+// Becoming the visible console: the LFB shows some other VT's pixels, so the shadow is stale.
+// Wipe the surface and blit every grid cell unconditionally (no shadow diff — the cell bytes are
+// only 3 wide, so there is no safe "impossible" sentinel), then re-sync the shadow and the cursor.
+void FbConsole::repaintAll() {
+	m_live = true;
+	fbFillRect(m_surf, 0, 0, m_surf.width, m_surf.height, m_bg);
+	for (int y = 0; y < m_vt.rows; y++) {
+		for (int x = 0; x < m_vt.cols; x++) {
+			const vt_cell& cell = m_vt.grid[y][x];
+			fbBlitGlyph(m_surf, fontGlyph(cell.ch ? cell.ch : ' '),
+					x * FONT_W, y * FONT_H, vt_pal(cell.fg), vt_pal(cell.bg));
+			m_shadow[y][x] = cell;
+		}
+		m_vt.dirty[y] = 0;
+	}
+	m_curShown = false;
 	drawCursor();
 }
 

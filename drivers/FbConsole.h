@@ -21,6 +21,7 @@ class FbConsole {
 	uint32_t m_fg, m_bg;        // default colours (for the cleared background)
 	uint32_t m_curx, m_cury;    // cell where the underline cursor is currently drawn
 	bool m_curShown;
+	bool m_live = true;         // when false, putChar updates the grid but does not blit
 
 	void renderRow(int row);    // blit one grid row's cells
 	void renderDirty();         // blit every row vt marked dirty, clearing the flags
@@ -33,6 +34,13 @@ public:
 	void clear();
 	void putChar(char c);                   // feeds the VT engine (\n -> \r\n), then repaints
 	void setCursor(unsigned x, unsigned y); // clamped to the grid
+
+	// Off-screen support for virtual terminals: an inactive console keeps its grid but does not
+	// blit. setLive(false) suppresses pixel writes; repaintAll() makes it visible again, blitting
+	// the entire grid (the LFB was showing some other VT, so the shadow is stale).
+	void setLive(bool on) { m_live = on; }
+	bool live() const { return m_live; }
+	void repaintAll();
 
 	uint32_t cols() const { return (uint32_t) m_vt.cols; }
 	uint32_t rows() const { return (uint32_t) m_vt.rows; }
