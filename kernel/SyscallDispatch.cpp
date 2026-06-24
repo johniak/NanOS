@@ -5,6 +5,7 @@
 #include "SignalDispatch.h"
 #include "Scheduler.h"
 #include "Futex.h"
+#include "Spinlock.h"   // g_futexLock (SMP)
 #include "ThreadArea.h"
 #include "Clock.h"
 #include "Csprng.h"
@@ -268,10 +269,16 @@ enum { ENOSYS = 38, ETIMEDOUT = 110 };
 // The single kernel-global futex table. Its only state is a zeroed bucket array, identical to
 // .bss zero-init — so it is correct even though the kernel never runs global constructors.
 static FutexTable g_futex;
+// SMP: serialize all g_futex table ops (a FUTEX_WAKE on one CPU vs an enqueue on another). Plain
+// (non-IRQ): futex is only reached from thread/syscall context, never a hardware IRQ. Held briefly
+// and ALWAYS released before Scheduler::block()/sleepUntil() (a spinlock must never span a sleep).
+// Lock order: g_futexLock -> g_rqLock (futexWakeNLocked calls Scheduler::wake under it); nothing
+// takes g_futexLock while holding g_rqLock.
+static Spinlock g_futexLock;
 
-// Pop up to `n` waiters matching the key (optionally a bitset) and Scheduler::wake each. The
-// pop accessor hands us the node so we can reach its Task*; the count is the return value.
-static int futexWakeN(const void* space, void* uaddr, unsigned n, unsigned bitset, bool useBitset) {
+// Pop up to `n` waiters matching the key and Scheduler::wake each. Caller holds g_futexLock (so the
+// REQUEUE path can wake+requeue atomically). The pop hands us the node to reach its Task*.
+static int futexWakeNLocked(const void* space, void* uaddr, unsigned n, unsigned bitset, bool useBitset) {
 	int woke = 0;
 	for (unsigned i = 0; i < n; i++) {
 		FutexWaiter* w = useBitset ? g_futex.popOneBitset(space, uaddr, bitset)
@@ -284,6 +291,11 @@ static int futexWakeN(const void* space, void* uaddr, unsigned n, unsigned bitse
 	return woke;
 }
 
+static int futexWakeN(const void* space, void* uaddr, unsigned n, unsigned bitset, bool useBitset) {
+	SpinGuard g(g_futexLock);
+	return futexWakeNLocked(space, uaddr, n, bitset, useBitset);
+}
+
 // Kernel-callable FUTEX_WAKE: wake up to `n` waiters on (space, uaddr). Used by the
 // CLONE_CHILD_CLEARTID handshake in procThreadExit (a joiner is parked here via pthread_join).
 void futexWakeAddr(const void* space, void* uaddr, int n) {
@@ -294,6 +306,7 @@ void futexWakeAddr(const void* space, void* uaddr, int n) {
 // Called before reaping a thread's kernel stack (execve sibling-teardown / exit_group) so a bucket
 // never keeps a pointer into the freed kstack the FutexWaiter node lived on.
 void futexRemoveTask(const void* space, Task* t) {
+	SpinGuard g(g_futexLock);
 	g_futex.removeTask(space, t);
 }
 
@@ -314,7 +327,9 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 		// Atomic compare-and-enqueue: re-test *uaddr and park, interrupts off, so a concurrent
 		// wake cannot land between the test and the enqueue (uniprocessor: cli is sufficient).
 		unsigned long f = arch::cpuIrqSave();
+		g_futexLock.lock();
 		if (futexWaitPrecheck((volatile const unsigned*) uaddr, val) != 0) {
+			g_futexLock.unlock();
 			arch::cpuIrqRestore(f);
 			return -EAGAIN;    // the word already changed -> don't block
 		}
@@ -322,6 +337,7 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 		w.task = Scheduler::current();
 		w.bitset = bitset;
 		g_futex.enqueue(space, ua, &w);
+		g_futexLock.unlock();      // release before the block below (never sleep holding a spinlock)
 		arch::cpuIrqRestore(f);
 
 		// Block until woken. NULL timeout (timeout==0) blocks forever; otherwise treat the user
@@ -341,7 +357,9 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 		// Cancel our waiter (idempotent: a wake already unlinked it; on timeout/signal it is
 		// still queued and this removes it) before deciding the outcome.
 		unsigned long f2 = arch::cpuIrqSave();
+		g_futexLock.lock();
 		g_futex.remove(&w);
+		g_futexLock.unlock();
 		arch::cpuIrqRestore(f2);
 
 		if (w.woken) return 0;                                     // an explicit FUTEX_WAKE always wins,
@@ -366,7 +384,8 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 		}
 		// Wake up to `val`, then requeue up to val2 (which Linux passes in the `timeout` slot
 		// for REQUEUE) of the remaining waiters from uaddr onto uaddr2. Return woken + moved.
-		int woke = futexWakeN(space, ua, val, 0, false);
+		SpinGuard g(g_futexLock);   // wake + requeue atomically against other futex ops
+		int woke = futexWakeNLocked(space, ua, val, 0, false);
 		int moved = g_futex.requeue(space, ua, space, (void*) uaddr2, 0, (int) timeout);
 		return woke + moved;
 	}

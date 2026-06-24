@@ -10,6 +10,7 @@
 #pragma once
 
 #include "WaitQueue.h"
+#include "Spinlock.h"   // SMP: a reader thread and a writer thread can hit one pipe on two CPUs
 
 namespace kernel {
 
@@ -21,11 +22,14 @@ public:
 	// them after any read/write/close changes readiness, instead of re-polling every tick.
 	WaitQueue* waitQueue() { return &m_wq; }
 
-	// Open-end refcounts: pipe() opens one of each; dup() bumps; close() drops.
-	void addReader() { m_readers++; }
-	void addWriter() { m_writers++; }
-	void dropReader() { if (m_readers > 0) m_readers--; }
-	void dropWriter() { if (m_writers > 0) m_writers--; }
+	// Open-end refcounts: pipe() opens one of each; dup() bumps; close() drops. SMP: refcount RMWs
+	// and the ring are guarded by m_lock. The simple state queries (readable/writable/atEof) stay
+	// lock-free single-int reads — the dispatch re-checks them under the sleepOn IRQ-off recheck, so
+	// a torn/stale answer only costs a recheck, never a lost wakeup.
+	void addReader() { SpinGuard g(m_lock); m_readers++; }
+	void addWriter() { SpinGuard g(m_lock); m_writers++; }
+	void dropReader() { SpinGuard g(m_lock); if (m_readers > 0) m_readers--; }
+	void dropWriter() { SpinGuard g(m_lock); if (m_writers > 0) m_writers--; }
 	int readers() const { return m_readers; }
 	int writers() const { return m_writers; }
 
@@ -35,6 +39,7 @@ public:
 
 	// Move up to n bytes into the ring. Returns bytes written (0 if full -> caller blocks).
 	int write(const void* src, unsigned n) {
+		SpinGuard g(m_lock);
 		const unsigned char* s = (const unsigned char*) src;
 		int w = 0;
 		while ((unsigned) w < n && m_count < CAP) {
@@ -47,6 +52,7 @@ public:
 
 	// Move up to n bytes out of the ring. Returns bytes read (0 if empty -> EOF or block).
 	int read(void* dst, unsigned n) {
+		SpinGuard g(m_lock);
 		unsigned char* d = (unsigned char*) dst;
 		int r = 0;
 		while ((unsigned) r < n && m_count > 0) {
@@ -67,6 +73,7 @@ private:
 	int m_head, m_tail, m_count;
 	int m_readers, m_writers;
 	WaitQueue m_wq;
+	mutable Spinlock m_lock;   // guards the ring + refcounts (reader/writer on different CPUs)
 };
 
 }  // namespace kernel
