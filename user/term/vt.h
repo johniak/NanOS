@@ -30,6 +30,7 @@ typedef struct {
 	int top, bot;               /* scroll region [top,bot] */
 	int savecx, savecy;
 	int state, par[VT_NPAR], npar, priv;   /* parser */
+	unsigned char last;                    /* last graphic char written (for REP, CSI n b) */
 	unsigned char dirty[VT_MAXR];          /* row changed since last render */
 	/* Alternate screen (xterm DECSET 47/1047/1049): a full-screen app (vim, less, top) switches
 	 * to a blank scratch screen on entry and the main screen is restored on exit — so the shell's

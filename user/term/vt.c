@@ -53,6 +53,7 @@ static void put_glyph(vt *t, unsigned char ch)
 	c->bg = t->rev ? t->fg : t->bg;
 	mark(t, t->cy);
 	t->cx++;
+	t->last = ch;
 }
 
 static void line_feed(vt *t) { if (++t->cy > t->bot) { t->cy = t->bot; scroll_up(t); } }
@@ -105,6 +106,66 @@ static void sgr(vt *t)
 	}
 }
 
+static void blank_cell(vt *t, int y, int x) { t->grid[y][x].ch = ' '; t->grid[y][x].fg = t->fg; t->grid[y][x].bg = t->bg; }
+
+/* ICH (CSI n @): insert n blank cells at the cursor, shifting the rest of the line right; cells
+ * pushed past the right margin are lost. */
+static void insert_chars(vt *t, int n)
+{
+	int y = t->cy;
+	if (y < 0 || y >= t->rows) return;
+	if (n < 1) n = 1;
+	if (n > t->cols - t->cx) n = t->cols - t->cx;
+	for (int x = t->cols - 1; x >= t->cx + n; x--) t->grid[y][x] = t->grid[y][x - n];
+	for (int x = t->cx; x < t->cx + n && x < t->cols; x++) blank_cell(t, y, x);
+	mark(t, y);
+}
+
+/* DCH (CSI n P): delete n cells at the cursor, shifting the rest of the line left; blanks fill in
+ * at the right margin. */
+static void delete_chars(vt *t, int n)
+{
+	int y = t->cy;
+	if (y < 0 || y >= t->rows) return;
+	if (n < 1) n = 1;
+	if (n > t->cols - t->cx) n = t->cols - t->cx;
+	for (int x = t->cx; x < t->cols - n; x++) t->grid[y][x] = t->grid[y][x + n];
+	for (int x = t->cols - n; x < t->cols; x++) if (x >= 0) blank_cell(t, y, x);
+	mark(t, y);
+}
+
+/* ECH (CSI n X): erase n cells from the cursor (set to blank); the cursor does not move. */
+static void erase_chars(vt *t, int n)
+{
+	int y = t->cy;
+	if (y < 0 || y >= t->rows) return;
+	if (n < 1) n = 1;
+	for (int x = t->cx; x < t->cx + n && x < t->cols; x++) blank_cell(t, y, x);
+	mark(t, y);
+}
+
+/* IL (CSI n L): insert n blank lines at the cursor row, scrolling the rows below it down within
+ * the scroll region. No-op if the cursor is outside the region. */
+static void insert_lines(vt *t, int n)
+{
+	if (t->cy < t->top || t->cy > t->bot) return;
+	if (n < 1) n = 1;
+	if (n > t->bot - t->cy + 1) n = t->bot - t->cy + 1;
+	for (int y = t->bot; y >= t->cy + n; y--) { for (int x = 0; x < t->cols; x++) t->grid[y][x] = t->grid[y - n][x]; mark(t, y); }
+	for (int y = t->cy; y < t->cy + n; y++) { for (int x = 0; x < t->cols; x++) blank_cell(t, y, x); mark(t, y); }
+}
+
+/* DL (CSI n M): delete n lines at the cursor row, scrolling the rows below it up within the scroll
+ * region; blank lines fill in at the bottom. No-op if the cursor is outside the region. */
+static void delete_lines(vt *t, int n)
+{
+	if (t->cy < t->top || t->cy > t->bot) return;
+	if (n < 1) n = 1;
+	if (n > t->bot - t->cy + 1) n = t->bot - t->cy + 1;
+	for (int y = t->cy; y <= t->bot - n; y++) { for (int x = 0; x < t->cols; x++) t->grid[y][x] = t->grid[y + n][x]; mark(t, y); }
+	for (int y = t->bot - n + 1; y <= t->bot; y++) { for (int x = 0; x < t->cols; x++) blank_cell(t, y, x); mark(t, y); }
+}
+
 static void csi_final(vt *t, unsigned char f)
 {
 	int a = t->npar > 0 ? t->par[0] : 0;
@@ -129,6 +190,14 @@ static void csi_final(vt *t, unsigned char f)
 		else if (a == 1) clear_region(t, 0, t->cy, t->cx, t->cy);
 		else clear_region(t, t->cx, t->cy, t->cols - 1, t->cy);
 		break;
+	case 'b':                                /* REP: repeat the last graphic char n times */
+		for (int i = 0, n = a ? a : 1; i < n; i++) put_glyph(t, t->last);
+		break;
+	case '@': insert_chars(t, a); break;     /* ICH */
+	case 'P': delete_chars(t, a); break;     /* DCH */
+	case 'X': erase_chars(t, a); break;      /* ECH */
+	case 'L': insert_lines(t, a); break;     /* IL  */
+	case 'M': delete_lines(t, a); break;     /* DL  */
 	case 'm': sgr(t); break;
 	case 'r': t->top = a ? clampr(t, a - 1) : 0; t->bot = b ? clampr(t, b - 1) : t->rows - 1;
 		t->cx = 0; t->cy = t->top; break;

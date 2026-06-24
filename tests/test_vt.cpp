@@ -164,3 +164,77 @@ TEST_CASE("vt: legacy alt-screen codes 47 and 1047 also save/restore") {
 	feed(t, "\x1b[1;1HX");     CHECK(t.grid[0][0].ch == 'X');   // app homes the cursor itself
 	feed(t, "\x1b[?47l");      CHECK(t.alt == 0); CHECK(t.grid[0][0].ch == 'm');
 }
+
+// The editing escapes ncurses uses for optimized screen updates. Without them, a custom terminal
+// that advertises ich/dch/ech/il/dl (xterm-256color) desyncs from ncurses' screen model — the htop
+// header bug (a stale meter % left behind by an unperformed delete/erase).
+static void rowstr(const vt& t, int y, char* out, int n) {
+	int i = 0; for (; i < n && i < t.cols; i++) out[i] = (char) t.grid[y][i].ch; out[i] = 0;
+}
+
+TEST_CASE("vt: REP (CSI n b) repeats the last glyph n times (meter-bar fill)") {
+	vt t; vt_init(&t, 80, 25);
+	feed(t, " ");                // a space (an empty meter bar starts with one)
+	feed(t, "\x1b[64b");         // repeat it 64x -> a 65-wide run of spaces
+	CHECK(t.cx == 65);           // cursor advanced past the whole run (was the narrow-meter bug)
+	feed(t, "X");
+	CHECK(t.grid[0][65].ch == 'X');
+	// Repeats a visible glyph too.
+	vt_init(&t, 80, 25);
+	feed(t, "|");
+	feed(t, "\x1b[3b");          // |||| total
+	CHECK(t.grid[0][0].ch == '|');
+	CHECK(t.grid[0][3].ch == '|');
+	CHECK(t.cx == 4);
+}
+
+TEST_CASE("vt: ICH (CSI n @) inserts blanks, shifting the line right") {
+	vt t; vt_init(&t, 80, 25);
+	feed(t, "abcdef");
+	feed(t, "\x1b[3G");          // cursor -> column 3 (index 2, the 'c')
+	feed(t, "\x1b[2@");          // insert 2 blanks
+	char r[81]; rowstr(t, 0, r, 80);
+	CHECK(strncmp(r, "ab  cdef", 8) == 0);
+}
+
+TEST_CASE("vt: DCH (CSI n P) deletes chars, shifting the line left") {
+	vt t; vt_init(&t, 80, 25);
+	feed(t, "abcdef");
+	feed(t, "\x1b[3G");          // cursor -> index 2 ('c')
+	feed(t, "\x1b[2P");          // delete 'c','d'
+	char r[81]; rowstr(t, 0, r, 80);
+	CHECK(strncmp(r, "abef", 4) == 0);
+	CHECK(r[4] == ' ');          // blanks fill at the right
+}
+
+TEST_CASE("vt: ECH (CSI n X) erases chars in place; cursor stays put") {
+	vt t; vt_init(&t, 80, 25);
+	feed(t, "abcdef");
+	feed(t, "\x1b[3G");          // index 2
+	feed(t, "\x1b[2X");          // erase 'c','d' -> blanks
+	char r[81]; rowstr(t, 0, r, 80);
+	CHECK(strncmp(r, "ab  ef", 6) == 0);
+	CHECK(t.cx == 2);            // ECH does not move the cursor
+}
+
+TEST_CASE("vt: IL (CSI n L) inserts a blank line, scrolling the region down") {
+	vt t; vt_init(&t, 20, 5);
+	feed(t, "\x1b[1;1HAAA"); feed(t, "\x1b[2;1HBBB"); feed(t, "\x1b[3;1HCCC");
+	feed(t, "\x1b[2;1H");        // cursor to row 2
+	feed(t, "\x1b[1L");          // insert 1 line here
+	char r[21];
+	rowstr(t, 0, r, 20); CHECK(strncmp(r, "AAA", 3) == 0);
+	rowstr(t, 1, r, 20); CHECK(r[0] == ' ');            // inserted blank line
+	rowstr(t, 2, r, 20); CHECK(strncmp(r, "BBB", 3) == 0);
+	rowstr(t, 3, r, 20); CHECK(strncmp(r, "CCC", 3) == 0);
+}
+
+TEST_CASE("vt: DL (CSI n M) deletes a line, scrolling the region up") {
+	vt t; vt_init(&t, 20, 5);
+	feed(t, "\x1b[1;1HAAA"); feed(t, "\x1b[2;1HBBB"); feed(t, "\x1b[3;1HCCC");
+	feed(t, "\x1b[2;1H");        // cursor to row 2 (BBB)
+	feed(t, "\x1b[1M");          // delete this line
+	char r[21];
+	rowstr(t, 0, r, 20); CHECK(strncmp(r, "AAA", 3) == 0);
+	rowstr(t, 1, r, 20); CHECK(strncmp(r, "CCC", 3) == 0);   // CCC scrolled up
+}
