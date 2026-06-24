@@ -13,6 +13,7 @@
  * conversion to the AddressSpace's uint64_t never loses bits.
  */
 #include <arch/mmu.h>
+#include <arch/smp.h>         // smpTlbShootdown: drop stale TLB entries on other CPUs before reuse
 #include "AddressSpace.h"
 #include "Paging.h"
 #include "PagingControl.h"
@@ -213,6 +214,26 @@ uint32_t mmuModuleBase()   { return (uint32_t) VA_MODULE_BASE; }
 uint32_t mmuModuleMax()    { return (uint32_t) VA_MODULE_MAX; }
 uint32_t mmuModuleStride() { return (uint32_t) VA_MODULE_STRIDE; }
 
+// Unmap [from,to) from address space `s`, drop the stale TLB entry on EVERY CPU, then release the
+// frames — strictly in that order. A sibling thread of `s` running on another core could otherwise
+// still reach a freed (and possibly reused) frame through a cached translation. Batched so the PA
+// buffer stays small. The caller must already be on g_kernelDirPhys (page-table edits touch RAM by
+// identity). On a uniprocessor smpTlbShootdown is just a local CR3 reload.
+static void unmapRangeAndFree(AddressSpace* s, uint64_t from, uint64_t to) {
+	const int BATCH = 64;
+	uint32_t pas[BATCH];
+	for (uint64_t va = from; va < to; ) {
+		int k = 0;
+		for (; k < BATCH && va < to; va += 0x1000) {
+			uint64_t pa = s->impl.translate(va);
+			s->impl.unmap(va);
+			if (pa != 0xFFFFFFFFFFFFFFFFULL) pas[k++] = (uint32_t) pa;
+		}
+		arch::smpTlbShootdown(s->impl.directoryPhys());   // PTEs cleared -> flush every CPU's TLB...
+		for (int i = 0; i < k; i++) g_fa->free(pas[i]);   // ...THEN it is safe to reuse the frames
+	}
+}
+
 int mmuSetUserBrk(AddressSpace* s, uint32_t oldBrk, uint32_t newBrk) {
 	uint64_t oldTop = (oldBrk + 0xFFFu) & ~0xFFFull;
 	uint64_t newTop = (newBrk + 0xFFFu) & ~0xFFFull;
@@ -229,12 +250,7 @@ int mmuSetUserBrk(AddressSpace* s, uint32_t oldBrk, uint32_t newBrk) {
 			}
 		}
 	} else if (newTop < oldTop) {
-		for (uint64_t va = newTop; va < oldTop; va += 0x1000) {
-			uint64_t pa = s->impl.translate(va);
-			s->impl.unmap(va);
-			if (pa != 0xFFFFFFFFFFFFFFFFULL)
-				g_fa->free((uint32_t) pa);
-		}
+		unmapRangeAndFree(s, newTop, oldTop);   // shrink: unmap -> shootdown -> free (see helper)
 	}
 	kernel::loadCr3(saved);   // CR3 reload flushes the TLB so the new PTEs are live
 	return rc;
@@ -263,12 +279,7 @@ void mmuUnmapAnon(AddressSpace* s, uint32_t base, uint32_t bytes) {
 	uint64_t end_ = ((uint64_t) base + bytes + 0xFFFu) & ~0xFFFull;
 	uint64_t saved = kernel::readCr3();
 	kernel::loadCr3(g_kernelDirPhys);
-	for (uint64_t va = base; va < end_; va += 0x1000) {
-		uint64_t pa = s->impl.translate(va);
-		s->impl.unmap(va);
-		if (pa != 0xFFFFFFFFFFFFFFFFULL)
-			g_fa->free((uint32_t) pa);
-	}
+	unmapRangeAndFree(s, base, end_);   // unmap -> cross-CPU TLB shootdown -> free (see helper)
 	kernel::loadCr3(saved);
 }
 

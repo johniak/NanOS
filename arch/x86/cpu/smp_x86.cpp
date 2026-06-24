@@ -16,5 +16,6 @@ void smpBringUpAPs(const uint8_t*, int) {}
 void smpSetApEntry(ApEntry) {}
 void smpSendIpi(int, uint8_t) {}
 void smpTlbShootdown(uint64_t) {}
+void smpPollShootdown() {}
 
 }  // namespace arch

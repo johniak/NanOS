@@ -14,8 +14,14 @@ class Spinlock {
 public:
 	void lock() {
 		uint32_t t = __atomic_fetch_add(&next, 1, __ATOMIC_RELAXED);
-		while (__atomic_load_n(&now, __ATOMIC_ACQUIRE) != t)
+		while (__atomic_load_n(&now, __ATOMIC_ACQUIRE) != t) {
+			// A CPU spinning here has interrupts disabled (every lock is taken IRQ-safe or under the
+			// BKL). Servicing a pending TLB shootdown from inside the spin is what lets a synchronous
+			// cross-CPU shootdown complete even when the target is blocked on a lock — see
+			// arch::smpTlbShootdown. No-op on a uniprocessor / when nothing is pending.
+			arch::smpPollShootdown();
 			arch::cpuRelax();   // PAUSE hint via the arch contract (keeps this header MI)
+		}
 	}
 	void unlock() {
 		__atomic_store_n(&now, now + 1, __ATOMIC_RELEASE);

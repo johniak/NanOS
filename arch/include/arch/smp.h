@@ -37,6 +37,12 @@ void smpBringUpAPs(const uint8_t* lapicIds, int n);
 void smpSetApEntry(ApEntry fn);
 
 void smpSendIpi(int cpu, uint8_t vector);   // a fixed IPI to one CPU (dense index).
-void smpTlbShootdown(uint64_t cr3);          // Phase 4: cross-CPU TLB invalidation.
+void smpTlbShootdown(uint64_t cr3);          // Phase 4: cross-CPU TLB invalidation (synchronous).
+
+// Service a TLB-shootdown request pending for THIS CPU (flush + ack), else a no-op. Called from
+// every spinlock acquire-spin (Spinlock.h) so a CPU spinning with interrupts disabled still honors
+// a shootdown — without this, a shootdown issued while holding a lock the target waits on deadlocks.
+// Must take no lock and be safe in any context (IPI handler, mid-spin). No-op on a uniprocessor.
+void smpPollShootdown();
 
 }  // namespace arch

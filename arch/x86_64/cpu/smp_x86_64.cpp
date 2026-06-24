@@ -14,12 +14,16 @@
 #include "acpi_x86_64.h"         // acpiEnumCpus (MD glue)
 #include "Interrupt64.h"         // kernel::Registers + Interrupt::registerInterruptHandler
 #include "Scheduler.h"           // Scheduler::apEnter / onTickLocal / createIdle (MI)
+#include "PagingControl.h"       // kernel::readCr3/loadCr3 (CR3 reload = local TLB flush)
+#include "Spinlock.h"            // serialize one shootdown at a time
 #include <stdint.h>
 
 namespace arch {
 
 void archApCpuInit(uint64_t kstackTop);   // cpu_x86_64.cpp — per-CPU GDT/TSS + shared IDT
 void syscallInitCpuMsrs();                // syscall_x86_64.cpp — per-CPU SYSCALL MSRs
+static void shootdownHandler(kernel::Registers* r);   // TLB-shootdown IPI handler (defined below)
+static void smpSetupShootdown();                       // alloc the IPI vector + register the handler
 
 // Trampoline blob bounds + patch slots (ap_trampoline.S).
 extern "C" unsigned char ap_trampoline_start[];
@@ -74,6 +78,7 @@ int smpInit() {
     // plumbing and register the AP scheduler entry, all before any AP executes kernel code.
     for (int i = 1; i < n; i++) kernel::Scheduler::createIdle(i);
     smpStartApTimers();
+    smpSetupShootdown();
     smpSetApEntry(apSchedEntry);
     smpBringUpAPs(ids, n);
     return __atomic_load_n(&g_online, __ATOMIC_ACQUIRE);   // CPUs that actually came online
@@ -95,7 +100,67 @@ void smpSendIpi(int cpu, uint8_t vector) {
     kernel::lapicSendFixed(g_lapicIds[cpu], vector);
 }
 
-void smpTlbShootdown(uint64_t /*cr3*/) { /* Phase 4 */ }
+// ---- TLB shootdown (Task 14) ------------------------------------------------------------------
+// When one CPU changes a page mapping that another CPU may have cached (a multithreaded process'
+// address space active on >1 core, or a kernel-shared mapping), the other CPUs' TLBs must drop the
+// stale entry before the initiator reuses/frees the frame. We do it the classic way: a per-CPU
+// "please flush" mailbox + an IPI nudge + a synchronous wait for every target to acknowledge.
+//
+// The subtle part is coexisting with the still-present Big Kernel Lock (Task 15 retires it later):
+// a target CPU that is SPINNING to enter a kernel spinlock does so with interrupts DISABLED, so it
+// cannot take the IPI. If the initiator held that spinlock and waited for the target's ack, they
+// would deadlock. The fix: every spinlock acquire-spin calls smpPollShootdown() (see Spinlock.h),
+// so a target flushes-and-acks even while spinning with IRQs off. Targets in user mode (IRQs on)
+// service the same routine from the IPI handler. One shootdown at a time (g_shootLock), so the
+// single ack counter is unambiguous.
+static kernel::Spinlock g_shootLock;
+static volatile int     g_shootPending[MAX_CPUS];   // 1 => this CPU still owes a flush
+static volatile int     g_shootAcks;                // targets that have flushed this round
+static uint8_t          g_shootVec = 0;             // IPI vector (0 = not set up yet)
+
+// Flush this CPU's TLB if a shootdown is pending for it, then acknowledge. Reentrant and lock-free:
+// called both from the IPI handler and from inside every contended spinlock spin, so it must take
+// NO lock. Reloads the CPU's OWN CR3 (same PML4) — a full non-global flush, always correct.
+void smpPollShootdown() {
+    int me = smpThisCpu();
+    if (me < 0 || me >= MAX_CPUS) return;
+    if (__atomic_load_n(&g_shootPending[me], __ATOMIC_ACQUIRE)) {
+        kernel::loadCr3(kernel::readCr3());
+        __atomic_store_n(&g_shootPending[me], 0, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&g_shootAcks, 1, __ATOMIC_ACQ_REL);
+    }
+}
+
+// IPI handler (shared gate). irq_handler has already EOI'd the LAPIC; we only flush + ack.
+static void shootdownHandler(kernel::Registers*) { smpPollShootdown(); }
+
+void smpTlbShootdown(uint64_t /*cr3*/) {
+    kernel::loadCr3(kernel::readCr3());          // always flush the initiator's own TLB
+    int n = g_cpuCount;
+    if (n <= 1 || g_shootVec == 0) return;       // uniprocessor / IPI not wired: local flush is enough
+    kernel::SpinIrqGuard g(g_shootLock);         // serialize; IRQs off on us is fine (we never self-IPI)
+    int me = smpThisCpu();
+    __atomic_store_n(&g_shootAcks, 0, __ATOMIC_RELEASE);
+    int targets = 0;
+    for (int i = 0; i < n; i++)
+        if (i != me) { __atomic_store_n(&g_shootPending[i], 1, __ATOMIC_RELEASE); targets++; }
+    for (int i = 0; i < n; i++)
+        if (i != me) kernel::lapicSendFixed(g_lapicIds[i], g_shootVec);
+    // Wait for every target to flush. User-mode targets ack via the IPI; targets spinning for a
+    // kernel lock (IRQs off) ack via smpPollShootdown() in their spin — so this never deadlocks.
+    while (__atomic_load_n(&g_shootAcks, __ATOMIC_ACQUIRE) < targets)
+        __asm__ __volatile__("pause");
+}
+
+// BSP-side, once before bring-up: allocate the shootdown IPI vector + register its handler on the
+// shared IDT (APs inherit it). If the vector pool is exhausted, g_shootVec stays 0 and shootdowns
+// fall back to a local-only flush (smpTlbShootdown returns after flushing the initiator).
+static void smpSetupShootdown() {
+    int v = kernel::lapicAllocVector();
+    if (v < 0) return;
+    g_shootVec = (uint8_t) v;
+    kernel::Interrupt::registerInterruptHandler(g_shootVec, shootdownHandler);
+}
 
 // Entry for every AP: long mode, BSP's kernel CR3, on the stack patched into ap_stack.
 extern "C" void apEntry64() {
