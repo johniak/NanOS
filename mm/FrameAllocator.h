@@ -14,6 +14,7 @@
  */
 #pragma once
 #include <stdint.h>
+#include "Spinlock.h"   // SMP: serialize concurrent alloc/free across CPUs
 
 namespace kernel {
 
@@ -50,6 +51,7 @@ private:
 	static const uint64_t BITMAP_WORDS = MAX_FRAMES / 32;          // 131072 words = 512 KiB
 	uint32_t m_bitmap[BITMAP_WORDS];                               // 32 frames per word
 	uint64_t m_frameCount;
+	mutable Spinlock m_lock;   // guards the bitmap + frame count under SMP
 
 	void set(uint64_t i);
 	void clear(uint64_t i);

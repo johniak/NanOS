@@ -19,6 +19,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "Spinlock.h"   // SMP: one lock serializes the free list + coalescing
 
 namespace kernel {
 
@@ -33,6 +34,8 @@ public:
 	void* realloc(void* ptr, size_t size);
 
 	size_t freeBytes() const;              // total free payload bytes (for tests/stats)
+	// SMP: malloc/free/realloc lock m_lock (a non-recursive spinlock) at the public entry and
+	// run the *Locked() bodies; realloc reuses the unlocked bodies so it never re-takes the lock.
 	size_t totalBytes() const { return m_end; }   // arena size (for /proc/meminfo)
 
 	// Heap integrity: each block carries a footer mirroring its header (size|used), so a write
@@ -47,6 +50,11 @@ private:
 	char*    m_base;       // 8-aligned arena start (block offset 0 lives here)
 	unsigned m_end;        // offset one past the last usable byte (blocks tile [0,m_end))
 	unsigned m_freeHead;   // offset of the first free block, or NIL
+	mutable Spinlock m_lock;   // SMP: serializes all free-list mutation + reads
+
+	// Unlocked bodies — the caller already holds m_lock (so realloc can compose alloc+free).
+	void* allocLocked(size_t size);
+	void  freeLocked(void* ptr);
 
 	static CorruptFn s_corrupt;
 	// Validate a block's boundary tags + range; reports via s_corrupt and returns false if bad.

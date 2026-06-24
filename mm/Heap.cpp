@@ -120,6 +120,11 @@ bool Heap::checkCanary(unsigned off) const {
 }
 
 void* Heap::alloc(size_t size) {
+	SpinIrqGuard g(m_lock);
+	return allocLocked(size);
+}
+
+void* Heap::allocLocked(size_t size) {
 	unsigned size32 = (unsigned) size;            // arena offsets are 32-bit by design (see Heap.h)
 	if ((size_t) size32 != size)
 		return 0;                                 // request too large for a 32-bit-offset arena -> OOM
@@ -158,6 +163,11 @@ void* Heap::alloc(size_t size) {
 }
 
 void Heap::free(void* ptr) {
+	SpinIrqGuard g(m_lock);
+	freeLocked(ptr);
+}
+
+void Heap::freeLocked(void* ptr) {
 	if (!ptr)
 		return;
 	unsigned o = (unsigned) ((char*) ptr - m_base - HDR);
@@ -190,10 +200,11 @@ void Heap::free(void* ptr) {
 }
 
 void* Heap::realloc(void* ptr, size_t size) {
+	SpinIrqGuard g(m_lock);   // held across the alloc+copy+free below (all use the *Locked bodies)
 	if (!ptr)
-		return alloc(size);
+		return allocLocked(size);
 	if (size == 0) {
-		free(ptr);
+		freeLocked(ptr);
 		return 0;
 	}
 	unsigned size32 = (unsigned) size;                 // arena offsets are 32-bit by design (see Heap.h)
@@ -209,15 +220,16 @@ void* Heap::realloc(void* ptr, size_t size) {
 		layCanary(o, size32);
 		return ptr;
 	}
-	void* np = alloc(size);
+	void* np = allocLocked(size);
 	if (!np)
 		return 0;
 	memcpy(np, ptr, oldSize < size32 ? oldSize : size32);  // preserve min(old,new) user bytes
-	free(ptr);
+	freeLocked(ptr);
 	return np;
 }
 
 size_t Heap::freeBytes() const {
+	SpinIrqGuard g(m_lock);
 	size_t total = 0;
 	for (unsigned o = m_freeHead; o != NIL; o = flNext(o))
 		total += blkSize(o) - OVERHEAD;
