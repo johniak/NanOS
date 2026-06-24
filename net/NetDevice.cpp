@@ -1,4 +1,5 @@
 #include "NetDevice.h"
+#include "NetLock.h"   // g_netLock: hold it across the protocol-stack RX processing (SMP)
 
 namespace kernel {
 
@@ -101,9 +102,12 @@ int netRxProcess() {
 		unlock(f);
 
 		if (skb->dev) { skb->dev->rxPackets++; skb->dev->rxBytes += (uint64_t) skb->len; }
-		if (g_input)
+		if (g_input) {
+			// The protocol stack (ip/tcp/udp -> socketDeliver) runs under the coarse net lock so it
+			// is serialized against socket syscalls + the net-timer thread once the BKL is gone.
+			kernel::RecursiveGuard g(kernel::g_netLock);
 			g_input(skb);       // handler owns the skb (frees or forwards)
-		else
+		} else
 			netbufFree(skb);    // no stack wired yet (early boot / unit test) — drop
 		processed++;
 	}

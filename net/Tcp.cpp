@@ -8,6 +8,7 @@
 #include "Net.h"
 #include "WaitQueue.h"
 #include "NetStats.h"   // /proc/net/snmp counters
+#include "NetLock.h"    // g_netLock: tcpTick (net-timer thread) + tcpSnapshot (/proc) are net boundaries
 #include <string.h>
 
 namespace kernel {
@@ -590,6 +591,7 @@ void tcpRx(NetBuf* skb) {
 }
 
 void tcpTick(unsigned t_now) {
+	RecursiveGuard g(g_netLock);   // net-timer thread boundary
 	for (int i = 0; i < TCB_N; i++) {
 		Tcb* t = &g_tcbs[i];
 		if (!t->used) continue;
@@ -843,6 +845,7 @@ void tcpKeepParam(Socket* s, int name, int seconds) {
 }
 
 int tcpSnapshot(TcpConnInfo* out, int max) {
+	RecursiveGuard g(g_netLock);   // /proc/net/tcp reader: scans g_tcbs vs concurrent tcpRx/tcpTick
 	int n = 0;
 	for (int i = 0; i < TCB_N && n < max; i++) {
 		Tcb* t = &g_tcbs[i];

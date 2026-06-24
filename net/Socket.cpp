@@ -3,9 +3,14 @@
 #include "Ip.h"       // IPPROTO_* for RAW protocol validation
 #include "Tcp.h"      // SOCK_STREAM dispatch
 #include "Unix.h"     // AF_UNIX dispatch
+#include "NetLock.h"  // g_netLock: the coarse SMP net-stack lock
 #include <string.h>
 
 namespace kernel {
+
+// The one coarse net-stack lock (see NetLock.h). Constant-initialized into .data (ownerCpu = -1 via
+// RecursiveSpinlock's default member initializer), so it is correct without a runtime constructor.
+RecursiveSpinlock g_netLock;
 
 const int Socket::RXQ;   // out-of-class definition (ODR-used, e.g. by doctest's CHECK by-ref)
 
@@ -26,9 +31,10 @@ const int DEFAULT_BUF = 64 * 1024;
 }  // namespace
 
 void socketSetWakeFn(SocketWakeFn fn) { g_wake = fn; }
-void socketWakeReaders(Socket* s) { if (s && g_wake) g_wake(&s->rxWait); }
+void socketWakeReaders(Socket* s) { RecursiveGuard g(g_netLock); if (s && g_wake) g_wake(&s->rxWait); }
 
 Socket* socketCreate(int domain, int type, int protocol, int* err) {
+	RecursiveGuard g(g_netLock);
 	if (domain == AF_INET) {
 		if (type != SOCK_DGRAM && type != SOCK_RAW && type != SOCK_STREAM) {
 			if (err) *err = -SOCK_EPROTONOSUPPORT;
@@ -77,9 +83,10 @@ Socket* socketCreate(int domain, int type, int protocol, int* err) {
 
 Socket* socketCreateRaw(int domain, int type, int protocol) { return socketCreate(domain, type, protocol, 0); }
 
-void socketRef(Socket* s) { if (s) s->refs++; }
+void socketRef(Socket* s) { RecursiveGuard g(g_netLock); if (s) s->refs++; }
 
 void socketClose(Socket* s) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return;
 	if (--s->refs > 0) return;
 	if (s->type == SOCK_STREAM && s->tcp)    // begin the TCP close handshake (orphans the TCB)
@@ -104,6 +111,7 @@ static bool portInUseUdp(uint16_t port, Socket* except) {
 }
 
 uint16_t socketEphemeralPort() {
+	RecursiveGuard g(g_netLock);   // reached from bind/connect (already locked) -> nests
 	for (int tries = 0; tries < (60999 - 32768 + 1); tries++) {
 		uint16_t p = g_nextEphemeral;
 		g_nextEphemeral = (g_nextEphemeral >= 60999) ? 32768 : (uint16_t) (g_nextEphemeral + 1);
@@ -114,6 +122,7 @@ uint16_t socketEphemeralPort() {
 }
 
 int socketBind(Socket* s, uint32_t ip, uint16_t port) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (s->bound) return -SOCK_EINVAL;
 	if (s->type == SOCK_DGRAM) {
@@ -126,6 +135,7 @@ int socketBind(Socket* s, uint32_t ip, uint16_t port) {
 }
 
 int socketConnect(Socket* s, uint32_t ip, uint16_t port) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (s->type == SOCK_STREAM) {            // TCP active open (3-way handshake)
 		int rc = tcpConnect(s, ip, port);
@@ -141,12 +151,14 @@ int socketConnect(Socket* s, uint32_t ip, uint16_t port) {
 }
 
 int socketGetSockName(Socket* s, uint32_t* ip, uint16_t* port) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (ip) *ip = s->localIp;
 	if (port) *port = s->localPort;
 	return 0;
 }
 int socketGetPeerName(Socket* s, uint32_t* ip, uint16_t* port) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (!s->connected) return -SOCK_ENOTCONN;
 	if (ip) *ip = s->remoteIp;
@@ -155,6 +167,7 @@ int socketGetPeerName(Socket* s, uint32_t* ip, uint16_t* port) {
 }
 
 int socketSetOpt(Socket* s, int level, int name, const void* val, unsigned len) {
+	RecursiveGuard g(g_netLock);
 	if (!s || !val || len < sizeof(int)) return -SOCK_EINVAL;
 	int v = *(const int*) val;
 	if (level == SOL_TCP) {               // keepalive tuning (TCP_KEEPIDLE/INTVL/CNT) + TCP_NODELAY
@@ -183,6 +196,7 @@ int socketSetOpt(Socket* s, int level, int name, const void* val, unsigned len) 
 	}
 }
 int socketGetOpt(Socket* s, int level, int name, void* val, unsigned* len) {
+	RecursiveGuard g(g_netLock);
 	if (!s || level != SOL_SOCKET || !val || !len || *len < sizeof(int)) return -SOCK_EINVAL;
 	int v = 0;
 	switch (name) {
@@ -198,6 +212,7 @@ int socketGetOpt(Socket* s, int level, int name, void* val, unsigned* len) {
 }
 
 int socketSendTo(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint16_t dstPort) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (s->domain == AF_UNIX) return unixSend(s, buf, len, 0, 0);   // write()/connected send (no addr)
 	if (s->type == SOCK_STREAM) return tcpSend(s, buf, len);    // stream: ignore dst, use the connection
@@ -209,6 +224,7 @@ int socketSendTo(Socket* s, const void* buf, unsigned len, uint32_t dstIp, uint1
 }
 
 int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t* srcPort, int flags) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (s->domain == AF_UNIX) {              // read()/recv (no from-addr): stream channel or dgram ring
 		if (srcIp) *srcIp = 0;
@@ -242,17 +258,20 @@ int socketRecvFrom(Socket* s, void* buf, unsigned len, uint32_t* srcIp, uint16_t
 }
 
 bool socketReadable(const Socket* s) {
+	RecursiveGuard g(g_netLock);
 	if (!s) return false;
 	if (s->domain == AF_UNIX) return unixReadable(s);
 	if (s->type == SOCK_STREAM) return tcpReadable((Socket*) s);
 	return s->rxCount > 0 || s->soError != 0;
 }
 bool socketWritable(const Socket* s) {
+	RecursiveGuard g(g_netLock);
 	if (s && s->domain == AF_UNIX) return unixWritable(s);
 	if (s && s->type == SOCK_STREAM) return tcpWritable((Socket*) s);
 	return s != 0;   // datagram sockets are always writable
 }
 int socketPoll(Socket* s) {
+	RecursiveGuard g(g_netLock);   // socketReadable/Writable below re-enter (recursive)
 	int e = 0;
 	if (socketReadable(s)) e |= POLLIN;
 	if (socketWritable(s)) e |= POLLOUT;
@@ -261,6 +280,7 @@ int socketPoll(Socket* s) {
 }
 
 bool socketDeliver(Socket* s, NetBuf* skb, uint32_t srcIp, uint16_t srcPort) {
+	RecursiveGuard g(g_netLock);   // reached under netRxProcess's lock -> nests
 	if (!s || !skb) return false;
 	if (s->rxCount >= Socket::RXQ || s->rxBytes + skb->len > s->rcvbuf)
 		return false;                                 // ring/buffer full: caller drops (UDP has no flow ctl)
@@ -274,6 +294,7 @@ bool socketDeliver(Socket* s, NetBuf* skb, uint32_t srcIp, uint16_t srcPort) {
 }
 
 Socket* socketLookupUdp(uint32_t dstIp, uint16_t dstPort, uint32_t srcIp, uint16_t srcPort) {
+	RecursiveGuard g(g_netLock);   // reached under netRxProcess's lock -> nests
 	Socket* best = 0;
 	for (int i = 0; i < SOCK_N; i++) {
 		Socket* s = &g_socks[i];
@@ -291,6 +312,7 @@ Socket* socketLookupUdp(uint32_t dstIp, uint16_t dstPort, uint32_t srcIp, uint16
 }
 
 void socketForEachRaw(int protocol, void (*fn)(Socket*, void*), void* ctx) {
+	RecursiveGuard g(g_netLock);
 	for (int i = 0; i < SOCK_N; i++) {
 		Socket* s = &g_socks[i];
 		if (s->used && s->type == SOCK_RAW && (s->protocol == 0 || s->protocol == protocol))
@@ -300,11 +322,13 @@ void socketForEachRaw(int protocol, void (*fn)(Socket*, void*), void* ctx) {
 
 int socketSlots() { return SOCK_N; }
 Socket* socketAt(int i) {
+	RecursiveGuard g(g_netLock);
 	if (i < 0 || i >= SOCK_N) return 0;
 	return g_socks[i].used ? &g_socks[i] : 0;
 }
 
 void socketReset() {
+	RecursiveGuard g(g_netLock);
 	for (int i = 0; i < SOCK_N; i++) {
 		Socket* s = &g_socks[i];
 		while (s->used && s->rxCount > 0) { netbufFree(s->rxq[s->rxTail].skb); s->rxTail = (s->rxTail+1)%Socket::RXQ; s->rxCount--; }

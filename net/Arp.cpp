@@ -3,6 +3,7 @@
 #include "NetDevice.h"
 #include "NetBuf.h"
 #include "Net.h"
+#include "NetLock.h"   // g_netLock: arpTick (net-timer thread) is a net boundary
 #include <string.h>
 
 namespace kernel {
@@ -154,6 +155,7 @@ void arpHold(NetDevice* dev, uint32_t ip, NetBuf* skb) {
 }
 
 void arpTick(unsigned t) {
+	kernel::RecursiveGuard g(kernel::g_netLock);   // net-timer thread boundary (ages g_cache/g_pend)
 	for (int i = 0; i < CACHE_N; i++) {
 		ArpEntry* e = &g_cache[i];
 		if (e->state == ARP_REACHABLE && (t - e->lastTick) > REACHABLE_MS) {

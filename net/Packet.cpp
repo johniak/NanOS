@@ -9,6 +9,7 @@
 #include "NetDevice.h"
 #include "Ether.h"
 #include "Net.h"
+#include "NetLock.h"   // g_netLock: AF_PACKET recv touches the socket rxq vs the RX softirq thread
 #include <string.h>
 
 namespace kernel {
@@ -94,6 +95,7 @@ bool packetReadable(Socket* s) { return s && s->rxCount > 0; }
 
 int packetRecv(Socket* s, void* buf, unsigned len, int flags,
                int* ifindexOut, uint16_t* protoOut, int* pkttypeOut, unsigned char macOut[8]) {
+	kernel::RecursiveGuard g(kernel::g_netLock);
 	if (!s) return -SOCK_EINVAL;
 	if (s->rxCount == 0) return -SOCK_EAGAIN;
 	NetBuf* skb = s->rxq[s->rxTail].skb;
