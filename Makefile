@@ -759,6 +759,11 @@ QEMU_MEM=-m 512
 # the 64-bit emulator here so these targets always boot the x86_64 image with the right machine.
 QEMU64     ?= qemu-system-x86_64
 QEMU_CPU64 ?= -cpu qemu64
+# SMP for the interactive run64: 4 vCPUs + MTTCG (each vCPU on its own host thread) so the cores
+# run truly in parallel. Override the count with `make run64 NCPU64=N`. (The smoke gates set their
+# own flags; this only affects `run64`.)
+NCPU64     ?= 4
+QEMU_SMP64 ?= -accel tcg,thread=multi -smp $(NCPU64)
 
 run: image
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
@@ -891,7 +896,7 @@ image64:
 	$(DOCKER_RUN) make ARCH=x86_64 _image64
 
 run64: image64
-	$(QEMU64) $(QEMU_CPU64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
+	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
 
 # Doom (in-tree doomgeneric), ARCH-AWARE host wrapper. Stages bin/doom.nxe in the container for
 # the selected arch — i686 (default) or x86_64 — using the arch-selected userland toolchain,
@@ -1224,7 +1229,7 @@ _image64: _all _userland64 _kext
 	# htop (optional, external): interactive process monitor built by `make ARCH=x86_64 htop` (the
 	# nanos-sdk port), staged into bin/htop.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)htop.nxe ]; then \
-	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\nset_inode_field /nanos/bin/htop.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# toybox (optional, external): the user-identity multicall built by `make ARCH=x86_64 toybox`.
 	# Installed as ONE setuid-root binary (mode 04755) with a per-command symlink farm — toybox's
