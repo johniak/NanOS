@@ -50,10 +50,13 @@ void inputFeedScancode(unsigned char sc) {
 		return;
 	}
 	if (!kernel::g_vtmgr) return;              // pre-VT window (keyboard IRQ before VtManager): drop
-	// /dev/input0 (evdev) is fed for the active VT only, so a backgrounded graphics app (nwm on a
-	// non-active VT) stops receiving keys until its console is switched back in.
-	kernel::kbdFeed(sc);
-	kernel::g_vtmgr->feedActive(sc);           // locked funnel: echo to the active VT's fbcon
+	// Route by the ACTIVE console's mode: a graphics VT (nwm on F7) consumes raw key events via
+	// /dev/input0 (evdev); a text VT runs the per-VT line discipline. So a backgrounded graphics
+	// app gets no keys until its console is switched in, and text VTs never leak to evdev.
+	if (kernel::g_vtmgr->activeVt()->mode() == KD_GRAPHICS)
+		kernel::kbdFeed(sc);                   // evdev for the graphics owner
+	else
+		kernel::g_vtmgr->feedActive(sc);       // text VT: line discipline (+ echo, under the VT lock)
 }
 
 int inputRead(char* buf, unsigned n, int nonblock) {

@@ -212,6 +212,28 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
 	return pid;
 }
 
+#define NWM_PATH "/disks/main/nanos/bin/nwm.nxe"
+
+/* Launch the window manager on the graphics VT (tty7). nwm opens /dev/tty7 itself (KD_GRAPHICS +
+ * VT_SETMODE) and /dev/fb0; we just give it its own session + ttyN as stdin/out/err. Skipped if
+ * nwm or the framebuffer is absent (a text-only image still boots). Returns the pid (0 if skipped). */
+static int spawn_nwm(char* const* env)
+{
+	if (access(NWM_PATH, X_OK) != 0 || access("/dev/fb0", F_OK) != 0)
+		return 0;
+	int pid = fork();
+	if (pid == 0) {
+		setsid();
+		int fd = open("/dev/tty7", O_RDWR);
+		if (fd >= 0) { ioctl(fd, TIOCSCTTY, 0); dup2(fd, 0); dup2(fd, 1); dup2(fd, 2); if (fd > 2) close(fd); }
+		signal(SIGTTOU, SIG_DFL); signal(SIGTTIN, SIG_DFL); signal(SIGTSTP, SIG_DFL);
+		char* a[] = { (char*) "nwm", 0 };
+		execve(NWM_PATH, a, env);
+		_exit(127);
+	}
+	return pid;
+}
+
 int main(void) {
 	/* Open the boot/service log on the writable tmpfs and send init's notes + every daemon's
 	 * stdout/stderr there instead of the console, so the shell the user lands in is clean
@@ -267,9 +289,10 @@ int main(void) {
 	 * independent login sessions. The active VT at boot is tty1, where the user lands. */
 	for (int i = 1; i <= NVT; i++)
 		g_vtpid[i] = spawn_getty(i, newenv, shell, name0);
+	int nwm_pid = spawn_nwm(newenv);          /* the graphics VT (tty7), if nwm + /dev/fb0 exist */
 
-	/* Reaper: collect any child. If it was a console's login, respawn that console (getty-style,
-	 * with a short backoff so a crash-looping login can't spin). Other reaped pids (dropbear, an
+	/* Reaper: collect any child. If it was a console's login (or nwm), respawn it (getty-style,
+	 * with a short backoff so a crash-looping child can't spin). Other reaped pids (dropbear, an
 	 * orphaned grandchild) are just collected. */
 	for (;;) {
 		int w = waitpid(-1, 0, 0);
@@ -278,10 +301,15 @@ int main(void) {
 			nanosleep(&ts, 0);
 			continue;
 		}
+		struct timespec bo = { 0, 200 * 1000 * 1000 };   // backoff vs a crash-looping child
+		if (nwm_pid > 0 && w == nwm_pid) {
+			nanosleep(&bo, 0);
+			nwm_pid = spawn_nwm(newenv);
+			continue;
+		}
 		for (int i = 1; i <= NVT; i++) {
 			if (w == g_vtpid[i]) {
-				struct timespec ts = { 0, 200 * 1000 * 1000 };   // backoff vs a crash-looping login
-				nanosleep(&ts, 0);
+				nanosleep(&bo, 0);
 				g_vtpid[i] = spawn_getty(i, newenv, shell, name0);
 				break;
 			}

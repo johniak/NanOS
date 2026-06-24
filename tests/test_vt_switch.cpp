@@ -63,6 +63,28 @@ TEST_CASE("switch away from a VT_PROCESS graphics VT requests release (relsig) a
 	CHECK_FALSE(m->vt(7)->relWait());
 }
 
+TEST_CASE("a graphics owner that never acks VT_RELDISP is forced off after the deadline") {
+	static unsigned char buf[80*64*4];
+	VtManager* m = makeMgr(buf);
+	m->vt(7)->setMode(KD_GRAPHICS);
+	m->vt(7)->setVtMode(VT_PROCESS, 10, 12, 99);
+	m->switchTo(7);                          // on graphics
+	CHECK_FALSE(m->switchTo(2));             // pending release, owner never acks
+	CHECK(m->active() == 7);
+	for (int i = 0; i < kVtReleaseTimeoutTicks; i++) m->releaseTimeoutTick();
+	CHECK(m->active() == 2);                 // forced over after the deadline elapsed
+	CHECK(m->vt(2)->fbcon().live());
+	CHECK_FALSE(m->vt(7)->relWait());
+}
+
+TEST_CASE("releaseTimeoutTick is a no-op when no switch is pending") {
+	static unsigned char buf[80*64*4];
+	VtManager* m = makeMgr(buf);
+	m->switchTo(3);
+	for (int i = 0; i < 2 * kVtReleaseTimeoutTicks; i++) m->releaseTimeoutTick();
+	CHECK(m->active() == 3);                 // nothing pending -> stays put
+}
+
 TEST_CASE("switching to the already-active VT is a no-op") {
 	static unsigned char buf[80*64*4];
 	VtManager* m = makeMgr(buf);

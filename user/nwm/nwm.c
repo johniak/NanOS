@@ -69,6 +69,9 @@ static struct nw_surface g_scratch_surf;
 static struct nw_surface g_wall_surf;
 static struct nw_surface g_fb_surf;       /* wraps the LFB (stride = pitch/4)             */
 static int g_prev_cx = -1, g_prev_cy = -1;/* last drawn cursor position                   */
+static volatile int g_own = 0;            /* do we own the framebuffer? (VT_SETMODE, 0 until acquire) */
+static int g_ttyfd = -1;                  /* our graphics VT (tty7) for KD/VT ioctls + VT_RELDISP    */
+static int g_wakefd[2] = { -1, -1 };      /* self-pipe so VT signals wake the poll() loop            */
 static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
 static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
 static struct nw_surface g_bd_surf;
@@ -404,6 +407,8 @@ static void cursor_restore_scene(void)  /* g_cur_save -> g_scene[cursor box] */
 
 static void present(void)
 {
+	if (!g_own)
+		return;                                  /* another VT owns the framebuffer — never touch it */
 	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
 		return;                                  /* nothing changed */
 	/* Erase the old cursor (cursor-free scene at the OLD position) only when the cursor moved; the
@@ -541,6 +546,38 @@ static void refresh_wallpaper(void)
 	}
 }
 
+/* ---- virtual-terminal ownership (Linux VT_SETMODE process mode) ----------------------------
+ * nwm runs on the graphics VT (tty7). The kernel only lets the OWNER of the active VT draw the
+ * framebuffer, so nwm registers as the process-mode owner and gates every fb write on g_own:
+ *   - on switch-AWAY the kernel sends relsig (SIGUSR1): stop drawing + ack with VT_RELDISP so the
+ *     incoming text VT can repaint;
+ *   - on switch-TO the kernel sends acqsig (SIGUSR2): resume drawing + force a full redraw.
+ * A self-pipe wakes the poll() loop on either signal so the screen updates promptly. */
+#define KDSETMODE   0x4B3A
+#define KD_GRAPHICS 0x01
+#define VT_SETMODE  0x5602
+#define VT_RELDISP  0x5605
+#define VT_PROCESS  0x01
+#ifndef SIGUSR1
+#define SIGUSR1 10
+#define SIGUSR2 12
+#endif
+struct nw_vt_mode { unsigned char mode, waitv; short relsig, acqsig, frsig; };
+
+static void vt_on_release(int s) {  /* SIGUSR1: kernel asks us to yield the console */
+	(void) s;
+	g_own = 0;
+	if (g_ttyfd >= 0) ioctl(g_ttyfd, VT_RELDISP, 1);   /* ack: release granted -> kernel repaints the text VT */
+	if (g_wakefd[1] >= 0) { char c = 'r'; write(g_wakefd[1], &c, 1); }
+}
+static void vt_on_acquire(int s) {  /* SIGUSR2: kernel handed the console back to us */
+	(void) s;
+	g_own = 1;
+	g_prev_cx = -1;                 /* force the cursor + a full scene repaint on the next present() */
+	S.dirty = 1;
+	if (g_wakefd[1] >= 0) { char c = 'a'; write(g_wakefd[1], &c, 1); }
+}
+
 int main(void)
 {
 	int fbfd = open("/dev/fb0", O_RDWR);
@@ -591,6 +628,24 @@ int main(void)
 #endif
 	signal(SIGTTOU, SIG_IGN); signal(SIGTTIN, SIG_IGN); signal(SIGTSTP, SIG_IGN);
 
+	/* Become the graphics VT (tty7) owner: KD_GRAPHICS (the kernel stops drawing its text console
+	 * here) + VT_SETMODE process mode, so Ctrl+Alt+Fn switching hands the framebuffer between us and
+	 * the text consoles cooperatively. g_own starts 0 — we do not touch the fb until the kernel
+	 * switches to F7 and sends the acquire signal. A self-pipe lets the signal wake the poll loop. */
+	g_ttyfd = open("/dev/tty7", O_RDWR);
+	if (g_ttyfd >= 0) {
+		set_cloexec(g_ttyfd);
+		if (pipe(g_wakefd) == 0) { set_cloexec(g_wakefd[0]); set_cloexec(g_wakefd[1]); }
+		signal(SIGUSR1, vt_on_release);
+		signal(SIGUSR2, vt_on_acquire);
+		ioctl(g_ttyfd, KDSETMODE, KD_GRAPHICS);
+		struct nw_vt_mode vm; vm.mode = VT_PROCESS; vm.waitv = 0;
+		vm.relsig = SIGUSR1; vm.acqsig = SIGUSR2; vm.frsig = 0;
+		ioctl(g_ttyfd, VT_SETMODE, &vm);
+	} else {
+		g_own = 1;   /* no VT (e.g. launched standalone): own the fb outright, legacy behaviour */
+	}
+
 	for (int i = 0; i < NW_MAX_CLIENTS; i++) { cl_req[i] = cl_evt[i] = -1; }
 	nw_server_init(&S, (int) g_xres, (int) g_yres);
 
@@ -604,10 +659,11 @@ int main(void)
 	present();                                /* first frame: desktop + cursor */
 
 	for (;;) {
-		struct pollfd pfd[2 + NW_MAX_CLIENTS * 2];
+		struct pollfd pfd[3 + NW_MAX_CLIENTS * 2];
 		int n = 0;
 		pfd[n].fd = in0; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
 		pfd[n].fd = in1; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
+		if (g_wakefd[0] >= 0) { pfd[n].fd = g_wakefd[0]; pfd[n].events = POLLIN; pfd[n].revents = 0; n++; }
 		for (int i = 0; i < NW_MAX_CLIENTS; i++) {
 			if (cl_req[i] < 0)
 				continue;
@@ -620,6 +676,7 @@ int main(void)
 		poll(pfd, n, -1);
 
 		/* COALESCE: drain every input + request before drawing */
+		if (g_wakefd[0] >= 0) { char wb[16]; while (read(g_wakefd[0], wb, sizeof wb) > 0) {} }  /* drain VT-signal pokes */
 		drain_keyboard(in0);
 		drain_mouse(in1);
 		for (int i = 0; i < NW_MAX_CLIENTS; i++)
@@ -633,7 +690,7 @@ int main(void)
 
 		if (S.want_shutdown) {                 /* Shutdown button: power the machine off */
 			termmode(0);
-			memset(g_fb, 0, (size_t) g_pitch * g_yres);
+			if (g_own) memset(g_fb, 0, (size_t) g_pitch * g_yres);
 			sys_poweroff();                    /* does not return */
 		}
 		if (S.want_quit)                       /* Quit button: leave the desktop */
@@ -672,7 +729,7 @@ int main(void)
 	}
 
 	termmode(0);
-	memset(g_fb, 0, (size_t) g_pitch * g_yres);   /* clear the desktop on the way out */
+	if (g_own) memset(g_fb, 0, (size_t) g_pitch * g_yres);   /* clear the desktop on the way out */
 	printf("nwm: exit\n");
 	return 0;
 }
