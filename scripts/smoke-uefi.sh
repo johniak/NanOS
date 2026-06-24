@@ -59,8 +59,8 @@ def typ(text, settle):
         try: s.settimeout(0.1); s.recv(4096)
         except: pass
     s.sendall(b"sendkey ret\n"); time.sleep(settle)
-typ("jan", 1.5)                       # username
-typ("jan", 2.5)                       # password -> login completes into bash
+typ("jan", 3.0)                       # username (generous settles: the VT boot brings up 6 getty
+typ("jan", 5.0)                       # logins + nwm, slower under OVMF, before login can read)
 s.close()
 PY
 sleep 3
