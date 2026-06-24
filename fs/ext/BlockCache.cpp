@@ -52,11 +52,13 @@ BlockCache::Slot* BlockCache::obtain(unsigned blockNo) {
 }
 
 void BlockCache::read(unsigned blockNo, void* out) {
+	SpinGuard g(m_lock);
 	Slot* s = obtain(blockNo);
 	memcpy(out, s->data, m_blockSize);
 }
 
 void BlockCache::write(unsigned blockNo, const void* in) {
+	SpinGuard g(m_lock);
 	// A full-block overwrite: we don't need the old contents, but reuse obtain() for slot mgmt
 	// (it may load then we overwrite — correct, just one extra read on a cold miss).
 	Slot* s = obtain(blockNo);
@@ -65,6 +67,7 @@ void BlockCache::write(unsigned blockNo, const void* in) {
 }
 
 void BlockCache::writePartial(unsigned blockNo, unsigned offset, const void* in, unsigned len) {
+	SpinGuard g(m_lock);
 	if (offset >= m_blockSize)
 		return;
 	if (offset + len > m_blockSize)
@@ -74,7 +77,7 @@ void BlockCache::writePartial(unsigned blockNo, unsigned offset, const void* in,
 	s->dirty = true;
 }
 
-void BlockCache::flush() {
+void BlockCache::flushLocked() {
 	for (int i = 0; i < SLOTS; i++)
 		if (m_slot[i].valid && m_slot[i].dirty) {
 			m_dev->writeSectors(lbaOf(m_slot[i].blockNo), sectorsPerBlock(), m_slot[i].data);
@@ -82,13 +85,20 @@ void BlockCache::flush() {
 		}
 }
 
+void BlockCache::flush() {
+	SpinGuard g(m_lock);
+	flushLocked();
+}
+
 void BlockCache::invalidate() {
-	flush();
+	SpinGuard g(m_lock);
+	flushLocked();   // public flush() would re-take m_lock (non-recursive) -> use the unlocked body
 	for (int i = 0; i < SLOTS; i++)
 		m_slot[i].valid = false;
 }
 
 int BlockCache::dirtyList(unsigned* out, int max) {
+	SpinGuard g(m_lock);
 	int n = 0;
 	for (int i = 0; i < SLOTS && n < max; i++)
 		if (m_slot[i].valid && m_slot[i].dirty)
@@ -97,6 +107,7 @@ int BlockCache::dirtyList(unsigned* out, int max) {
 }
 
 void BlockCache::flushExcept(const unsigned* keep, int n) {
+	SpinGuard g(m_lock);
 	for (int i = 0; i < SLOTS; i++) {
 		if (!m_slot[i].valid || !m_slot[i].dirty)
 			continue;

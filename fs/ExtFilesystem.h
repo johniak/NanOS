@@ -12,6 +12,7 @@
 #include "string.h"
 #include "List.h"
 #include "String.h"
+#include "Spinlock.h"
 #include "ext/BlockCache.h"
 #include "ext/ExtAllocator.h"
 #include "ext/ExtCsum.h"
@@ -118,6 +119,10 @@ protected:
 	ExtAllocator* alloc;      // block/inode allocation + inode read/write (created in mount())
 	unsigned* journalBlocks;  // log block list (journal inode's data blocks); 0 if not journaled
 	unsigned journalCount;    // journal length in blocks
+	// SMP: serializes a whole JBD2 transaction (writeTxn -> checkpoint -> resetLog) and replay, so
+	// a commit is atomic w.r.t. concurrent writers. Plain (non-IRQ): reached only from thread
+	// context, and the sequence does slow device I/O. Nests under the coarse VFS lock today.
+	Spinlock txLock;
 	char superblockBuff[1024];
 	char commonBuff[4096];
 	char dataBuff[4096];      // data-block read-modify-write scratch (kept off commonBuff)
@@ -194,6 +199,7 @@ public:
 	// transactions before anything reads or writes, then clear the needs-recovery flag. A clean
 	// journal (the usual case) makes this a no-op.
 	void recoverJournal() {
+		SpinGuard tx(txLock);
 		unsigned compat = *(unsigned*) (superblockBuff + 0x5C);   // s_feature_compat
 		unsigned journalInum = *(unsigned*) (superblockBuff + 0xE0);
 		if (!(compat & 0x4) || journalInum == 0)                  // COMPAT_HAS_JOURNAL
@@ -227,6 +233,7 @@ public:
 	// final homes and the log reset — so a crash mid-checkpoint replays a consistent set. On a
 	// non-journaled filesystem (ext2) it is a plain flush. Called at the end of every mutation.
 	void txFlush() {
+		SpinGuard tx(txLock);
 		if (journalBlocks && journalCount) {
 			unsigned targets[BlockCache::SLOTS];
 			int n = cache->dirtyList(targets, BlockCache::SLOTS);

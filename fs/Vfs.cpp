@@ -1,14 +1,32 @@
 #include "Vfs.h"
+#include "Spinlock.h"
 #include <string.h>
 
 namespace kernel {
 
+// SMP: one coarse lock serializes the whole VFS — the mount table + path routing AND the call
+// into the underlying filesystem (per-inode locking is a later optimization). Recursive because
+// the public ops compose through the private DAC helpers (create->mayCreate->permission->
+// maySearch->statNoCheck->resolve, all touching `mounts`), which would self-deadlock a plain lock.
+// It does NOT disable interrupts: the VFS is only entered from thread (syscall) context — never an
+// IRQ handler — and an op can be long (ext does polling disk I/O), so keeping IRQs on lets the BSP
+// timer keep ticking. Blocking reads sleep at the syscall-dispatch layer with NO VFS op on the
+// stack (pollReady/waitQueueAt each lock-and-release), so the lock is never held across a sleep.
+static RecursiveSpinlock g_vfsLock;
+
+int Vfs::checkExec(String path) {   // X on the file (for execve); defined here so it locks like the rest
+	RecursiveGuard g(g_vfsLock);
+	return permission(path, 1);
+}
+
 void Vfs::registerType(FileSystemType* type) {
+	RecursiveGuard g(g_vfsLock);
 	types.add(type);
 }
 
 int Vfs::mount(String mountpoint, String fstype, BlockDevice* dev,
 		unsigned partitionLba) {
+	RecursiveGuard g(g_vfsLock);
 	const char* wanted = (char*) fstype;
 	bool autodetect = (strcmp(wanted, "auto") == 0);
 	FileSystemType* type = 0;
@@ -37,6 +55,7 @@ int Vfs::mount(String mountpoint, String fstype, BlockDevice* dev,
 }
 
 int Vfs::mount(String mountpoint, FileSystem* fs) {
+	RecursiveGuard g(g_vfsLock);
 	if (fs == 0)
 		return -1;
 	int rc = fs->mount();
@@ -196,6 +215,7 @@ int Vfs::chownNoCheck(String path, unsigned uid, unsigned gid) {
 // ---- public operations (gated) ----------------------------------------------------------
 
 int Vfs::read(String path, unsigned size, unsigned off, void* buf) {
+	RecursiveGuard g(g_vfsLock);
 	int pc = permission(path, 4);
 	if (pc < 0) return pc;
 	String rel;
@@ -206,12 +226,14 @@ int Vfs::read(String path, unsigned size, unsigned off, void* buf) {
 }
 
 int Vfs::stat(String path, FileStat& out) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	return statNoCheck(path, out);
 }
 
 int Vfs::lstat(String path, FileStat& out) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	String rel;
@@ -222,6 +244,7 @@ int Vfs::lstat(String path, FileStat& out) {
 }
 
 int Vfs::readlink(String path, char* buf, unsigned size) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	String rel;
@@ -233,6 +256,7 @@ int Vfs::readlink(String path, char* buf, unsigned size) {
 
 int Vfs::readdir(String path, List<DirEntry>& out) {
 	// readdir reads the directory's contents: search on ancestors + R on the directory itself.
+	RecursiveGuard g(g_vfsLock);
 	int pc = permission(path, 4);
 	if (pc < 0) return pc;
 	String rel;
@@ -243,6 +267,7 @@ int Vfs::readdir(String path, List<DirEntry>& out) {
 }
 
 int Vfs::write(String path, unsigned size, unsigned off, const void* buf) {
+	RecursiveGuard g(g_vfsLock);
 	int pc = permission(path, 2);
 	if (pc < 0) return pc;
 	String rel;
@@ -253,6 +278,7 @@ int Vfs::write(String path, unsigned size, unsigned off, const void* buf) {
 }
 
 int Vfs::ioctl(String path, unsigned cmd, void* arg) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -261,6 +287,7 @@ int Vfs::ioctl(String path, unsigned cmd, void* arg) {
 }
 
 short Vfs::pollReady(String path, short events) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -269,6 +296,7 @@ short Vfs::pollReady(String path, short events) {
 }
 
 WaitQueue* Vfs::waitQueueAt(String path) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -277,12 +305,14 @@ WaitQueue* Vfs::waitQueueAt(String path) {
 }
 
 bool Vfs::deviceOpen(String path) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	return fs ? fs->deviceOpen(rel) : false;
 }
 
 void Vfs::deviceClose(String path) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs)
@@ -290,6 +320,7 @@ void Vfs::deviceClose(String path) {
 }
 
 int Vfs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -318,6 +349,7 @@ void Vfs::ownNewObject(String path, bool isDir) {
 }
 
 int Vfs::create(String path, unsigned mode) {
+	RecursiveGuard g(g_vfsLock);
 	FileStat ex;
 	bool exists = statNoCheck(path, ex) >= 0;
 	if (exists) { int pc = permission(path, 2); if (pc < 0) return pc; }   // truncate needs W on file
@@ -332,6 +364,7 @@ int Vfs::create(String path, unsigned mode) {
 }
 
 int Vfs::unlink(String path) {
+	RecursiveGuard g(g_vfsLock);
 	int dc = mayDelete(path);
 	if (dc < 0) return dc;
 	String rel;
@@ -342,6 +375,7 @@ int Vfs::unlink(String path) {
 }
 
 int Vfs::mkdir(String path, unsigned mode) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)
@@ -360,6 +394,7 @@ int Vfs::mkdir(String path, unsigned mode) {
 }
 
 int Vfs::mknod(String path, unsigned mode) {
+	RecursiveGuard g(g_vfsLock);
 	int mc = mayCreate(path);
 	if (mc < 0) return mc;
 	String rel;
@@ -372,6 +407,7 @@ int Vfs::mknod(String path, unsigned mode) {
 }
 
 int Vfs::rmdir(String path) {
+	RecursiveGuard g(g_vfsLock);
 	int dc = mayDelete(path);
 	if (dc < 0) return dc;
 	String rel;
@@ -382,6 +418,7 @@ int Vfs::rmdir(String path) {
 }
 
 int Vfs::truncate(String path, unsigned length) {
+	RecursiveGuard g(g_vfsLock);
 	int pc = permission(path, 2);
 	if (pc < 0) return pc;
 	String rel;
@@ -392,6 +429,7 @@ int Vfs::truncate(String path, unsigned length) {
 }
 
 int Vfs::rename(String oldpath, String newpath) {
+	RecursiveGuard g(g_vfsLock);
 	int dc = mayDelete(oldpath);          // remove from old parent (+ sticky)
 	if (dc < 0) return dc;
 	int cc = mayCreate(newpath);          // create in new parent
@@ -407,6 +445,7 @@ int Vfs::rename(String oldpath, String newpath) {
 }
 
 int Vfs::link(String oldpath, String newpath) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(oldpath);          // must be able to reach the source
 	if (sc < 0) return sc;
 	int cc = mayCreate(newpath);          // and create the new name
@@ -422,6 +461,7 @@ int Vfs::link(String oldpath, String newpath) {
 }
 
 int Vfs::symlink(String target, String path) {
+	RecursiveGuard g(g_vfsLock);
 	int cc = mayCreate(path);
 	if (cc < 0) return cc;
 	String rel;
@@ -436,6 +476,7 @@ int Vfs::symlink(String target, String path) {
 // chmod: must own the file (or be root). Drop S_ISGID if a non-root setter is not in the
 // file's group (Linux clears setgid to prevent privilege via a group it can't claim).
 int Vfs::chmod(String path, unsigned mode) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	FileStat st;
@@ -456,6 +497,7 @@ int Vfs::chmod(String path, unsigned mode) {
 // chown: changing owner is root-only; an owner may change group to one it belongs to. On a
 // successful non-root chown, the setuid/setgid bits are cleared.
 int Vfs::chown(String path, unsigned uid, unsigned gid) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	FileStat st;
@@ -476,6 +518,7 @@ int Vfs::chown(String path, unsigned uid, unsigned gid) {
 }
 
 int Vfs::lchown(String path, unsigned uid, unsigned gid) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	FileStat st;
@@ -493,6 +536,7 @@ int Vfs::lchown(String path, unsigned uid, unsigned gid) {
 }
 
 int Vfs::utimes(String path, unsigned atime, unsigned mtime) {
+	RecursiveGuard g(g_vfsLock);
 	int sc = maySearch(path);
 	if (sc < 0) return sc;
 	FileStat st;
@@ -515,6 +559,7 @@ int Vfs::utimes(String path, unsigned atime, unsigned mtime) {
 }
 
 int Vfs::statfs(String path, StatFs& out) {
+	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
 	if (fs == 0)

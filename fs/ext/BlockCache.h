@@ -14,6 +14,7 @@
 #define EXT_BLOCKCACHE_H_
 
 #include "BlockDevice.h"
+#include "Spinlock.h"   // SMP: serialize the cache slots + device I/O
 
 namespace kernel {
 
@@ -57,11 +58,16 @@ private:
 	unsigned     m_blockSize;
 	unsigned     m_clock;             // monotonically increasing LRU stamp
 	Slot         m_slot[SLOTS];
+	// SMP: guards the slot array + device I/O. Plain (non-IRQ) because the cache is only reached
+	// from thread context, under the coarse VFS lock, and an op does slow device I/O. Reached only
+	// under the VFS lock today (so uncontended); load-bearing once VFS locking is made finer.
+	Spinlock     m_lock;
 
 	unsigned sectorsPerBlock() const { return m_blockSize / 512; }
 	unsigned lbaOf(unsigned blockNo) const { return m_partitionLba + blockNo * sectorsPerBlock(); }
 	Slot*    find(unsigned blockNo);
 	Slot*    obtain(unsigned blockNo);   // find-or-load a slot for blockNo (may evict + flush)
+	void     flushLocked();              // flush body; caller already holds m_lock (invalidate reuses it)
 };
 
 }  // namespace kernel

@@ -136,7 +136,7 @@ class Vfs {
 public:
 	Vfs() : credProvider(0) {}
 	void setCredProvider(CredProviderFn p) { credProvider = p; }
-	int checkExec(String path) { return permission(path, 1); }   // X on the file (for execve)
+	int checkExec(String path);   // X on the file (for execve); defined in Vfs.cpp (takes the VFS lock)
 	void registerType(FileSystemType* type);
 	int mount(String mountpoint, String fstype, BlockDevice* dev, unsigned partitionLba);
 	// Mount an already-built filesystem (e.g. the synthetic root, which has no

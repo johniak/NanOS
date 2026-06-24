@@ -28,6 +28,18 @@ public:
 	}
 };
 
+// Plain RAII guard (no interrupt toggling) — for a lock taken only from thread context, never an
+// IRQ handler, where the critical section may be long (e.g. block-cache device I/O) and disabling
+// IRQs would starve the BSP timer. Mutual exclusion across CPUs holds; IRQ-context use is unsafe.
+class SpinGuard {
+	Spinlock& l;
+public:
+	explicit SpinGuard(Spinlock& s) : l(s) { l.lock(); }
+	~SpinGuard() { l.unlock(); }
+	SpinGuard(const SpinGuard&) = delete;
+	SpinGuard& operator=(const SpinGuard&) = delete;
+};
+
 // RAII guard that also disables interrupts on the local CPU — the correct pattern for any
 // lock taken from both a thread context and an IRQ handler (otherwise a same-CPU IRQ that
 // grabs the held lock self-deadlocks). Order: save+cli, then lock; unlock, then restore.
@@ -76,6 +88,19 @@ public:
 	~RecursiveIrqGuard() { l.exit(); arch::cpuIrqRestore(flags); }
 	RecursiveIrqGuard(const RecursiveIrqGuard&) = delete;
 	RecursiveIrqGuard& operator=(const RecursiveIrqGuard&) = delete;
+};
+
+// RAII guard for RecursiveSpinlock that does NOT touch the interrupt flag — for a subsystem taken
+// only from thread (syscall) context, never an IRQ handler, where the critical section can be long
+// (e.g. the VFS holds it across polling disk I/O) and disabling IRQs would starve the BSP timer.
+// Mutual exclusion across CPUs + same-CPU recursion still hold; only IRQ-context use is unsafe.
+class RecursiveGuard {
+	RecursiveSpinlock& l;
+public:
+	explicit RecursiveGuard(RecursiveSpinlock& s) : l(s) { l.enter(); }
+	~RecursiveGuard() { l.exit(); }
+	RecursiveGuard(const RecursiveGuard&) = delete;
+	RecursiveGuard& operator=(const RecursiveGuard&) = delete;
 };
 
 }  // namespace kernel
