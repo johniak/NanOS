@@ -868,7 +868,7 @@ smoke-smp-netstress: image64
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
 verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + SMP boot + SMP speedup gates all passed."
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
