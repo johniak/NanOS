@@ -18,9 +18,14 @@
 #include <arch/console.h>
 #include <arch/bootinfo.h>
 #include "FbConsole.h"
+#include "Spinlock.h"   // SMP: serialize the shared VGA/framebuffer cell + cursor writes
 #include <string.h>
 
 namespace {
+// SMP: 4 CPUs printing at once would interleave the VGA cells + cursor. A RECURSIVE IRQ-saving lock
+// serializes the sink without deadlocking when a fault/panic-print on the SAME CPU re-enters while
+// the lock is held (a lost panic message would be worse than the lock). Cross-CPU it serializes.
+kernel::RecursiveSpinlock g_consoleLock;
 
 unsigned short cursorX = 0;
 unsigned short cursorY = 0;
@@ -86,6 +91,7 @@ void scroll() {
 namespace arch {
 
 void consolePutChar(char c) {
+	kernel::RecursiveIrqGuard g(g_consoleLock);
 	if (c == '\n') serialPut('\r');
 	serialPut(c);
 	if (g_useFb) {
@@ -114,6 +120,7 @@ void consolePutChar(char c) {
 }
 
 void consoleClear() {
+	kernel::RecursiveIrqGuard g(g_consoleLock);
 	if (g_useFb) {
 		g_fb.clear();
 		return;
@@ -127,6 +134,7 @@ void consoleClear() {
 }
 
 void consoleSetCursor(unsigned x, unsigned y) {
+	kernel::RecursiveIrqGuard g(g_consoleLock);
 	if (g_useFb) {
 		g_fb.setCursor(x, y);
 		return;
