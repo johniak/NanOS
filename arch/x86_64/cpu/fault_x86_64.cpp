@@ -13,6 +13,7 @@
 #include "Console.h"
 #include "Exec.h"            // kernel::killCurrentProcess
 #include "Signal.h"          // SIGSEGV
+#include "vt/VtManager.h"    // force the text console visible so a kernel panic is on screen
 
 namespace {
 
@@ -27,6 +28,7 @@ void faultHandler(kernel::Registers* r) {
         kernel::killCurrentProcess(SIGSEGV);   // terminates current + reschedules; does NOT return
         return;                                // (unreachable)
     }
+    if (kernel::g_vtmgr) kernel::g_vtmgr->panicSwitchToText();   // make the panic visible over any graphics VT
     kernel::Console::write("\n*** KERNEL EXCEPTION vec=");
     kernel::Console::writeHex((int) r->int_no);
     kernel::Console::write(" err=");

@@ -26,6 +26,7 @@ const int kVtGraphics = 7;     // F7 is the graphics console
 const int kVtReleaseTimeoutTicks = 250;   // ~250ms at 1000Hz: force the switch if the owner never acks
 
 typedef void (*VtSignalFn)(int pid, int sig);
+typedef void (*VtSerialFn)(const char* buf, unsigned n);   // mirror active-VT output to a serial log
 
 class VtManager {
 	VtConsole  m_vt[kVtCount + 1];   // 1-based; index 0 unused
@@ -34,13 +35,14 @@ class VtManager {
 	int        m_relDeadline = 0;    // ticks left before a non-acking owner is forced off
 	FbSurface  m_surf{};
 	VtSignalFn m_signal = 0;
+	VtSerialFn m_serial = 0;         // serial mirror for the active VT + kernel console (headless log)
 	RecursiveSpinlock m_lock;        // serializes all fb output + switching (old g_consoleLock role)
 
 	void acquire(int n);             // make VT n the owning/visible console (caller holds m_lock)
 	void forceCompletePending();     // owner acked (or timed out): finish the pending switch
 	bool switchToLocked(int n);
 public:
-	void init(const FbSurface& s, VtSignalFn sig);
+	void init(const FbSurface& s, VtSignalFn sig, VtSerialFn serial = 0);
 	int  active() const { return m_active; }
 	VtConsole* vt(int n) { return (n >= 1 && n <= kVtCount) ? &m_vt[n] : 0; }
 	VtConsole* activeVt() { return &m_vt[m_active]; }
@@ -56,6 +58,8 @@ public:
 	// -> its tty); feedActive() runs the active VT's input (echo writes its fbcon).
 	void write(int vtIndex, const char* buf, unsigned n);
 	void feedActive(unsigned char sc);
+	void panicSwitchToText();                    // fault/panic: force VT1 visible (no graphics handshake)
+	void kernelPutc(char c);                     // kernel console output (VT1) + serial mirror
 	void kernelClear();                          // clear the kernel console (VT1)
 	void kernelSetCursor(unsigned x, unsigned y);// position the kernel console (VT1) cursor
 };

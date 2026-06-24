@@ -23,6 +23,11 @@ void consoleActivateFramebuffer();
 // like vim size themselves off this). Reflects the framebuffer grid when active, else VGA text.
 void consoleSize(unsigned* cols, unsigned* rows);
 
+// Mirror raw bytes to the serial port (COM1) only, no framebuffer — the headless log. The VT
+// layer injects this so active-VT + kernel-console output reaches the serial log even though the
+// per-VT fbcons do not touch serial themselves. '\n' is emitted as CRLF.
+void consoleSerialOut(const char* buf, unsigned n);
+
 // Early-boot "POST code": paint a full-width horizontal band on the bootloader framebuffer,
 // stacking each call below the previous one. The only output device on UEFI hardware with no
 // serial port — the last band visible at a reset localizes a pre-console triple fault. No-op

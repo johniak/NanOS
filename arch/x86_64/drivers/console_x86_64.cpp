@@ -92,13 +92,13 @@ void scroll() {
 namespace arch {
 
 void consolePutChar(char c) {
+	if (kernel::g_vtmgr) {              // VTs up: VT1 is the kernel console; kernelPutc serial-mirrors
+		kernel::g_vtmgr->kernelPutc(c);   // (m_lock inside; do NOT also hold g_consoleLock -> no inversion)
+		return;
+	}
 	kernel::RecursiveIrqGuard g(g_consoleLock);
 	if (c == '\n') serialPut('\r');
 	serialPut(c);
-	if (kernel::g_vtmgr) {              // VTs up: the kernel console is VT1 (drawn only while VT1 is active)
-		kernel::g_vtmgr->write(1, &c, 1);
-		return;
-	}
 	if (g_useFb) {
 		g_fb.putChar(c);
 		return;
@@ -174,6 +174,16 @@ void consoleActivateFramebuffer() {
 			fb->width, fb->height, fb->bpp };
 	g_fb.init(s);
 	g_useFb = true;
+}
+
+// Serial-only mirror (COM1), no framebuffer. Always invoked from the VT layer UNDER VtManager's
+// lock (the single output funnel), so it needs no lock of its own — taking g_consoleLock here would
+// invert against the consolePutChar/VtTty paths (m_lock -> g_consoleLock) and could deadlock.
+void consoleSerialOut(const char* buf, unsigned n) {
+	for (unsigned i = 0; i < n; i++) {
+		if (buf[i] == '\n') serialPut('\r');
+		serialPut(buf[i]);
+	}
 }
 
 void consoleSize(unsigned* cols, unsigned* rows) {

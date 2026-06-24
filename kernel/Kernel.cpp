@@ -392,7 +392,8 @@ void Kernel::start() {
 			// the Vfs/filesystem pattern. A file-scope global would leave member ctors unrun —
 			// notably the RecursiveSpinlock's ownerCpu=-1 sentinel — and self-deadlock on first lock.
 			kernel::VtManager* vtmgr = new kernel::VtManager();
-			vtmgr->init(s, [](int pid, int sig) { kernel::signalSend(pid, sig); });
+			vtmgr->init(s, [](int pid, int sig) { kernel::signalSend(pid, sig); },
+					arch::consoleSerialOut);     // mirror the visible VT + kernel console to the serial log
 			kernel::g_vtmgr = vtmgr;
 			okEnd();
 
@@ -402,9 +403,13 @@ void Kernel::start() {
 			okBegin("Console devices /dev/tty0..7,tty,console");
 			for (int i = 1; i <= kernel::kVtCount; i++) {
 				char nm[6] = { 't', 't', 'y', (char) ('0' + i), 0, 0 };
-				root->addChar(root->dev(), nm, new kernel::VtTty(i), 0620);
+				// 0666: any logged-in user can open their VT by name (Linux chowns ttyN to the user
+				// at login; NanOS's /dev SynthFs has no per-node chown, so a permissive mode is the
+				// equivalent — matches /dev/tty, /dev/ptmx, /dev/pts0). Without it a non-root login
+				// shell (bash as jan) cannot reopen its tty (ttyname) for readline and exits on EOF.
+				root->addChar(root->dev(), nm, new kernel::VtTty(i), 0666);
 			}
-			root->addChar(root->dev(), "tty0", new kernel::VtTty(0), 0620);
+			root->addChar(root->dev(), "tty0", new kernel::VtTty(0), 0666);
 			root->addChar(root->dev(), "console", new kernel::VtTty(1), 0600);
 			okEnd();
 		}

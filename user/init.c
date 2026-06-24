@@ -16,6 +16,15 @@
 #include <signal.h>
 #include <time.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
+#ifndef TIOCSCTTY
+#define TIOCSCTTY 0x540E
+#endif
+
+/* Text virtual consoles getty'd at boot: /dev/tty1../dev/tty6 (Ctrl+Alt+F1..F6). tty7 is the
+ * graphics VT (nwm) launched separately. */
+#define NVT 6
+static int g_vtpid[NVT + 1];   /* the login pid running on each text VT (for getty-style respawn) */
 
 int execve(const char* path, char* const argv[], char* const envp[]);
 /* `environ` (the kernel-provided environment, TERM=…) comes from nx-dllimport.h, which is
@@ -166,6 +175,43 @@ static const char* shell_argv0(const char* path, char* out, int cap) {
 	return out;
 }
 
+/* Spawn a getty/login on /dev/ttyN: new session, open the VT, make it the controlling terminal,
+ * wire it to stdin/out/err + the foreground group, then exec `login` (which prompts and execs the
+ * user's shell). Falls back to the configured shell, then nsh, if login is absent. Returns the
+ * child pid so the parent can respawn this console when its login exits. */
+static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
+{
+	int pid = fork();
+	if (pid == 0) {
+		setsid();
+		char dev[10] = "/dev/tty0";
+		dev[8] = (char) ('0' + n);             /* -> /dev/ttyN */
+		int fd = open(dev, O_RDWR);
+		if (fd < 0)
+			_exit(127);
+		ioctl(fd, TIOCSCTTY, 0);
+		dup2(fd, 0);
+		dup2(fd, 1);
+		dup2(fd, 2);
+		if (fd > 2)
+			close(fd);
+		tcsetpgrp(0, getpid());                /* this getty's group is the VT's foreground group */
+		/* Reset the job-control signals to their defaults (init ignores SIGTTIN/SIGTTOU for itself;
+		 * a login session must have default dispositions so the shell's job control works). */
+		signal(SIGTTOU, SIG_DFL);
+		signal(SIGTTIN, SIG_DFL);
+		signal(SIGTSTP, SIG_DFL);
+		char* largv[] = { (char*) "login", 0 };
+		execve("/disks/main/nanos/bin/login.nxe", largv, env);
+		char* sargv[] = { name0, 0 };          /* login absent -> the configured shell directly */
+		execve(shell, sargv, env);
+		char* fbargv[] = { (char*) "nsh", 0 };  /* ... then nsh, so a VT is never left shell-less */
+		execve(FALLBACK_SHELL, fbargv, env);
+		_exit(127);
+	}
+	return pid;
+}
+
 int main(void) {
 	/* Open the boot/service log on the writable tmpfs and send init's notes + every daemon's
 	 * stdout/stderr there instead of the console, so the shell the user lands in is clean
@@ -215,45 +261,30 @@ int main(void) {
 	 * on its first console read. (SIGTTOU/SIGTTIN are ignored here so init never stops on tty I/O.) */
 	signal(SIGTTOU, SIG_IGN);
 	signal(SIGTTIN, SIG_IGN);
+
+	/* Bring up a login on every text VT (Linux getty-on-tty1..6). Each getty runs in its own
+	 * session with /dev/ttyN as its controlling terminal, so Ctrl+Alt+Fn switches between fully
+	 * independent login sessions. The active VT at boot is tty1, where the user lands. */
+	for (int i = 1; i <= NVT; i++)
+		g_vtpid[i] = spawn_getty(i, newenv, shell, name0);
+
+	/* Reaper: collect any child. If it was a console's login, respawn that console (getty-style,
+	 * with a short backoff so a crash-looping login can't spin). Other reaped pids (dropbear, an
+	 * orphaned grandchild) are just collected. */
 	for (;;) {
-		tcsetpgrp(0, getpgrp());          // hand the console's foreground group back to init
-		int spid = fork();
-		if (spid == 0) {
-			/* Mandatory console login: exec toybox `login`, which prompts login:/Password:,
-			 * verifies against /etc/shadow, drops to the authenticated user's uid/gid + groups,
-			 * and execs their login shell. If login is absent (an image without the toybox port)
-			 * fall back to the configured shell directly, then nsh, so the system is never left
-			 * without a shell. */
-			char* largv[] = { (char*) "login", 0 };
-			execve("/disks/main/nanos/bin/login.nxe", largv, newenv);
-			char* argv[] = { name0, 0 };
-			execve(shell, argv, newenv);
-			/* The configured shell failed to load (e.g. an image without the optional bash) —
-			 * fall back to nsh so the system is never left without a shell. */
-			char* fbargv[] = { (char*) "nsh", 0 };
-			execve(FALLBACK_SHELL, fbargv, newenv);
-			_exit(127);                   /* only reached if even nsh failed */
+		int w = waitpid(-1, 0, 0);
+		if (w < 0) {                          // nothing to reap right now — back off briefly
+			struct timespec ts = { 0, 200 * 1000 * 1000 };
+			nanosleep(&ts, 0);
+			continue;
 		}
-		if (spid < 0) {                   // can't fork a shell: degrade to a pure reaper
-			for (;;) {
-				if (waitpid(-1, 0, 0) < 0) {
-					struct timespec ts = { 1, 0 };
-					nanosleep(&ts, 0);
-				}
-			}
-		}
-		/* Reap children until the console shell itself exits, then respawn it (getty-style).
-		 * Any other reaped pid (dropbear, an orphaned grandchild) is just collected and ignored. */
-		for (;;) {
-			int w = waitpid(-1, 0, 0);
-			if (w == spid)
-				break;
-			if (w < 0) {                  // no children to reap right now — back off briefly
-				struct timespec ts = { 0, 200 * 1000 * 1000 };
+		for (int i = 1; i <= NVT; i++) {
+			if (w == g_vtpid[i]) {
+				struct timespec ts = { 0, 200 * 1000 * 1000 };   // backoff vs a crash-looping login
 				nanosleep(&ts, 0);
+				g_vtpid[i] = spawn_getty(i, newenv, shell, name0);
+				break;
 			}
 		}
-		struct timespec ts = { 0, 200 * 1000 * 1000 };   // backoff so a crash-looping shell can't spin
-		nanosleep(&ts, 0);
 	}
 }

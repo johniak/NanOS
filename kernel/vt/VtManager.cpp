@@ -4,9 +4,10 @@ namespace kernel {
 
 VtManager* g_vtmgr = 0;
 
-void VtManager::init(const FbSurface& s, VtSignalFn sig) {
+void VtManager::init(const FbSurface& s, VtSignalFn sig, VtSerialFn serial) {
 	m_surf = s;
 	m_signal = sig;
+	m_serial = serial;
 	for (int i = 1; i <= kVtCount; i++) m_vt[i].init(s, i);
 	m_vt[kVtGraphics].setMode(KD_GRAPHICS);  // F7 is graphics by default
 	m_active = 1;
@@ -79,6 +80,25 @@ void VtManager::write(int vtIndex, const char* buf, unsigned n) {
 	if (vtIndex < 1 || vtIndex > kVtCount) return;
 	RecursiveIrqGuard g(m_lock);
 	m_vt[vtIndex].write(buf, n);
+	if (vtIndex == m_active && m_serial) m_serial(buf, n);   // headless serial log of the visible VT
+}
+
+// Kernel console output (printk/boot/panic) goes to VT1 and is always mirrored to the serial log,
+// regardless of which VT is visible (the serial log is the kernel's record). No double-serial: the
+// arch consolePutChar routes here instead of doing its own serialPut once VTs are up.
+// A kernel fault/panic must be visible even if a graphics VT (F7) was active. Force VT1 to the
+// foreground unconditionally — no VT_SETMODE release handshake (we cannot wait for an ack in fault
+// context, and the owner is about to be irrelevant). Best-effort: no lock (the system is dying).
+void VtManager::panicSwitchToText() {
+	m_pending = 0;
+	m_active = 1;
+	m_vt[1].fbcon().repaintAll();
+}
+
+void VtManager::kernelPutc(char c) {
+	RecursiveIrqGuard g(m_lock);
+	m_vt[1].fbcon().putChar(c);
+	if (m_serial) m_serial(&c, 1);
 }
 
 void VtManager::feedActive(unsigned char sc) {
