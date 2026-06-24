@@ -50,9 +50,9 @@ def typ(text, settle):
         try: s.settimeout(0.1); s.recv(4096)
         except: pass
     s.sendall(b"sendkey ret\n"); time.sleep(settle)
-typ("jan", 1.0)                    # username
-typ("jan", 2.5)                    # password -> login completes, bash sources /etc/profile
-typ("echo X64_SMOKE_FORK_OK", 0.1) # a command at the shell -> fork/exec
+typ("jan", 2.5)                    # username (generous settles: boot now brings up 6 getty logins
+typ("jan", 4.0)                    # + nwm, so login/bash can lag under verify64's concurrent load)
+typ("echo X64_SMOKE_FORK_OK", 1.0) # a command at the shell -> fork/exec
 s.close()
 PY
 sleep 3
