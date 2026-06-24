@@ -346,6 +346,7 @@ static void set_focus(nwui *u, nwui_node *n)
 	u->focus = n;
 	if (n) { n->focused = 1; n->dirty = 1; }
 }
+void nwui_focus(nwui *u, nwui_node *n) { set_focus(u, n); }
 
 static nwui_node *first_focusable(nwui_node *n)
 {

@@ -23,6 +23,9 @@ extern "C" {
 typedef struct nwui      nwui;        /* a toolkit instance bound to one window */
 typedef struct nwui_node nwui_node;   /* a widget / container in the tree       */
 
+/* Function-key codes for nwui_accel's `fkey` argument (normalized scancodes). */
+enum { NWUI_KEY_F3 = 0x3D, NWUI_KEY_F5 = 0x3F };
+
 /* A widget callback: the firing node + the user pointer it was created with. */
 typedef void (*nwui_cb)(nwui_node *self, void *user);
 
@@ -32,6 +35,8 @@ typedef void (*nwui_cb)(nwui_node *self, void *user);
 nwui *nwui_open(const char *title, int w, int h);
 /* Install the root of the widget tree (built with the component functions below). */
 void  nwui_set_root(nwui *u, nwui_node *root);
+/* Give keyboard focus to a widget (e.g. focus the editor at startup). */
+void  nwui_focus(nwui *u, nwui_node *n);
 /* Run the event loop: pump input, dispatch to widgets, repaint damaged nodes — until the
  * window is closed. */
 void  nwui_run(nwui *u);

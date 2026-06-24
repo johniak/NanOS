@@ -127,7 +127,7 @@ static void repl_one(nwui_node *s, void *u)  { (void) s; (void) u;
 		nwui_textarea_insert_text(g_ta, g_repl); }
 static void repl_all(nwui_node *s, void *u)  { (void) s; (void) u;
 	if (!g_find[0]) return;
-	g_ta->caret = 0; g_ta->anchor = 0;
+	nwui_textarea_goto_line(g_ta, 1);          /* start from the top (caret/anchor -> 0) */
 	while (nwui_textarea_find(g_ta, g_find, g_matchcase, 0))
 		nwui_textarea_insert_text(g_ta, g_repl); }
 static void repl_close(nwui_node *s, void *u){ (void) s; (void) u; nwui_close_modal(g_u); }
@@ -204,8 +204,8 @@ int main(void)
 	nwui_accel(u, 1, 'a', 0, m_selall, 0);  nwui_accel(u, 1, 'z', 0, m_undo, 0);
 	nwui_accel(u, 1, 'x', 0, m_cut, 0);     nwui_accel(u, 1, 'c', 0, m_copy, 0);
 	nwui_accel(u, 1, 'v', 0, m_paste, 0);
-	nwui_accel(u, 0, 0, NWUI_SC_F3, m_findnext, 0);
-	nwui_accel(u, 0, 0, NWUI_SC_F5, m_timedate, 0);
+	nwui_accel(u, 0, 0, NWUI_KEY_F3, m_findnext, 0);
+	nwui_accel(u, 0, 0, NWUI_KEY_F5, m_timedate, 0);
 
 	nwui_node *col = nwui_vbox(u);
 	nwui_add(col, nwui_flex(g_ta, 1));
@@ -214,8 +214,7 @@ int main(void)
 	nwui_colors(bar, 0, 0x00eef3f9);
 	nwui_add(col, bar);
 	nwui_set_root(u, col);
-	u->focus = g_ta;                       /* editor focused at start */
-	g_ta->focused = 1;
+	nwui_focus(u, g_ta);                   /* editor focused at start */
 
 	reset_undo();
 	update_status();
