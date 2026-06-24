@@ -24,6 +24,7 @@
 #include "NetCore.h"         // net stack bring-up: lo + RX softirq thread + driver exports
 #include <arch/pci.h>
 #include "SignalDispatch.h"   // consoleSignal (tty control keys -> foreground process)
+#include "vt/VtManager.h"     // virtual terminals: build the manager + register /dev/ttyN
 #include "Csprng.h"           // csprngKernelSeed: seed the kernel CSPRNG at boot
 #include "Scheduler.h"
 #include <arch/sched.h>
@@ -374,6 +375,27 @@ void Kernel::start() {
 	vfs->mount("/etc", new RamFs());
 	populateEtc(vfs);
 	okEnd();
+
+	// Virtual terminals: build the VT manager over the bootloader framebuffer. From here on the
+	// kernel console is VT1 (consolePutChar -> tty1), Ctrl+Alt+Fn switches consoles, and the
+	// per-VT line discipline/job control replaces the old console singleton. The per-pid signal
+	// sender drives the graphics VT's VT_SETMODE release/acquire handshake. No-op without a
+	// framebuffer (VGA-text-only boot keeps the legacy single console path).
+	{
+		const arch::BootFramebuffer* fbv = arch::bootFramebuffer();
+		if (fbv) {
+			okBegin("Virtual terminals tty1..tty7");
+			kernel::FbSurface s = { (uint8_t*) (uintptr_t) fbv->addr, fbv->pitch,
+					fbv->width, fbv->height, fbv->bpp };
+			// Heap-allocate so the constructor actually RUNS (NanOS runs no global ctors): this is
+			// the Vfs/filesystem pattern. A file-scope global would leave member ctors unrun —
+			// notably the RecursiveSpinlock's ownerCpu=-1 sentinel — and self-deadlock on first lock.
+			kernel::VtManager* vtmgr = new kernel::VtManager();
+			vtmgr->init(s, [](int pid, int sig) { kernel::signalSend(pid, sig); });
+			kernel::g_vtmgr = vtmgr;
+			okEnd();
+		}
+	}
 
 	// Expose the framebuffer as Linux /dev/fb0 (fbdev ioctls + mmap + read/write) so
 	// framebuffer software can drive it. Only when the bootloader gave us a framebuffer.

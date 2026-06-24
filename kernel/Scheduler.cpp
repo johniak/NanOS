@@ -7,6 +7,7 @@
 #include "SignalDispatch.h"   // hasPendingSignalCurrent: don't sleep through a pending signal
 #include "Spinlock.h"         // g_rqLock: the dedicated runqueue lock (the BKL was retired in 15f)
 #include <arch/smp.h>         // smpThisCpu / SMP_MAX_CPUS: per-CPU current + the switch handoff
+#include "vt/VtManager.h"     // VT release-timeout aging (forces a non-acking graphics owner off)
 
 namespace kernel {
 
@@ -374,6 +375,10 @@ void Scheduler::onTick(bool fromUser) {
 		g_slice[cpu] = 0;
 		g_needResched[cpu] = true;
 	}
+	// Age any pending VT release deadline (a graphics owner asked to release but not yet acked via
+	// VT_RELDISP). Cheap unlocked early-out when nothing is pending; g_rqLock is already released
+	// here, so taking the VT lock preserves the m_lock -> g_rqLock order.
+	if (g_vtmgr) g_vtmgr->releaseTimeoutTick();
 }
 
 // SMP: the local timer tick for an application processor (its LAPIC timer). The BSP's PIT owns

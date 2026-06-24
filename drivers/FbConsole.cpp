@@ -5,11 +5,9 @@ namespace kernel {
 
 static const uint32_t kDefaultFg = 0x00C0C0C0;
 
-FbConsole::FbConsole()
-	: m_surf{ 0, 0, 0, 0, 0 }, m_fg(kDefaultFg), m_bg(0x00000000),
-	  m_curx(0), m_cury(0), m_curShown(false) {
-	m_vt.cols = m_vt.rows = 0;
-}
+// No constructor: FbConsole uses default member initializers (see FbConsole.h) so it is
+// constant-initializable and safe as a member of a file-scope global under NanOS's no-global-ctors
+// rule. init() fully establishes the surface + grid before any use.
 
 // The cursor is a 2px underline at the bottom of the current cell (no blink — there is no
 // console timer). vt's logical cursor can sit one past the last column (deferred wrap); clamp

@@ -10,12 +10,13 @@ void VtManager::init(const FbSurface& s, VtSignalFn sig) {
 	for (int i = 1; i <= kVtCount; i++) m_vt[i].init(s, i);
 	m_vt[kVtGraphics].setMode(KD_GRAPHICS);  // F7 is graphics by default
 	m_active = 1;
-	m_pending = m_irqPending = m_relDeadline = 0;
+	m_pending = m_relDeadline = 0;
+	RecursiveIrqGuard g(m_lock);
 	m_vt[1].fbcon().repaintAll();            // VT1 is the live console at boot
 }
 
 // Make VT n the owning/visible console: a text VT blits its whole grid; a process-mode graphics
-// VT is told to redraw (acqsig) and the kernel draws nothing on it.
+// VT is told to redraw (acqsig) and the kernel draws nothing on it. Caller holds m_lock.
 void VtManager::acquire(int n) {
 	VtConsole& v = m_vt[n];
 	if (v.mode() == KD_GRAPHICS) {
@@ -26,7 +27,7 @@ void VtManager::acquire(int n) {
 	}
 }
 
-bool VtManager::switchTo(int n) {
+bool VtManager::switchToLocked(int n) {
 	if (n < 1 || n > kVtCount || n == m_active) return true;
 	VtConsole& cur = m_vt[m_active];
 	// Releasing a process-mode graphics VT: ask the owner, park until VT_RELDISP (or a timeout).
@@ -44,7 +45,12 @@ bool VtManager::switchTo(int n) {
 	return true;
 }
 
-void VtManager::forceCompletePending() {
+bool VtManager::switchTo(int n) {
+	RecursiveIrqGuard g(m_lock);
+	return switchToLocked(n);
+}
+
+void VtManager::forceCompletePending() {   // caller holds m_lock
 	if (!m_pending) return;
 	m_vt[m_active].setRelWait(false);
 	int target = m_pending;
@@ -55,28 +61,39 @@ void VtManager::forceCompletePending() {
 }
 
 void VtManager::relDisp(int n, int arg) {
+	RecursiveIrqGuard g(m_lock);
 	VtConsole& v = m_vt[n];
 	if (!v.relWait() || m_pending == 0) return;
 	if (arg != 1) { v.setRelWait(false); m_pending = 0; m_relDeadline = 0; return; }  // owner refused
 	forceCompletePending();
 }
 
-void VtManager::requestSwitch(int n) {
-	if (n < 1 || n > kVtCount || n == m_active) return;
-	VtConsole& cur = m_vt[m_active];
-	bool needsRelease = cur.mode() == KD_GRAPHICS && cur.vtMode() == VT_PROCESS && cur.ownerPid();
-	if (needsRelease) { m_irqPending = n; return; }   // can't signal+wait in IRQ; defer to thread ctx
-	switchTo(n);                                       // text: safe to run now
-}
-
-void VtManager::servicePending() {
-	if (m_irqPending) { int n = m_irqPending; m_irqPending = 0; switchTo(n); return; }
-	releaseTimeoutTick();
-}
-
 void VtManager::releaseTimeoutTick() {
+	if (!m_pending) return;          // cheap racy read: avoid locking every timer tick when idle
+	RecursiveIrqGuard g(m_lock);
 	if (!m_pending || !m_vt[m_active].relWait()) return;
 	if (m_relDeadline > 0 && --m_relDeadline == 0) forceCompletePending();
+}
+
+void VtManager::write(int vtIndex, const char* buf, unsigned n) {
+	if (vtIndex < 1 || vtIndex > kVtCount) return;
+	RecursiveIrqGuard g(m_lock);
+	m_vt[vtIndex].write(buf, n);
+}
+
+void VtManager::feedActive(unsigned char sc) {
+	RecursiveIrqGuard g(m_lock);
+	m_vt[m_active].feedScancode(sc);
+}
+
+void VtManager::kernelClear() {
+	RecursiveIrqGuard g(m_lock);
+	m_vt[1].fbcon().clear();
+}
+
+void VtManager::kernelSetCursor(unsigned x, unsigned y) {
+	RecursiveIrqGuard g(m_lock);
+	m_vt[1].fbcon().setCursor(x, y);
 }
 
 int VtManager::openqry() const {

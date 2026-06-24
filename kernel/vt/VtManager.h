@@ -3,16 +3,21 @@
  *
  * switchTo() drives the Linux VT discipline: text VTs flip a live bit and repaint; a process-mode
  * graphics VT (VT_SETMODE VT_PROCESS) is asked to release (relsig) and the switch completes only
- * when the owner acks via relDisp() (VT_RELDISP) — or a deadline elapses. Signalling is injected
- * (VtSignalFn) so the core is host-testable; the kernel wires it to kernel::signalSend.
+ * when the owner acks via relDisp() (VT_RELDISP) — or a deadline elapses (releaseTimeoutTick,
+ * driven by the scheduler tick). Signalling is injected (VtSignalFn) so the core is host-testable;
+ * the kernel wires it to kernel::signalSend.
  *
- * requestSwitch() is the IRQ entry point (the Ctrl+Alt+Fn matcher): a text switch runs inline
- * (flag flip + repaint, IRQ-safe), but a graphics release must NOT run in IRQ context (it signals
- * and waits), so it is deferred to servicePending(), called from thread context (the scheduler tick).
+ * Concurrency: ALL framebuffer-console output (kernel printk via write(1,..), shell stdout via
+ * write(n,..), keyboard echo via feedActive(), and the switch repaint) funnels through this object
+ * under one RECURSIVE IRQ-saving lock — the same role the old single g_consoleLock played, now that
+ * output is split across per-VT FbConsoles. requestSwitch()/feedActive() run from the keyboard IRQ;
+ * the lock is recursive so a panic-print on the same CPU never self-deadlocks. The per-VT raw input
+ * ring stays the lock-free single-producer (IRQ) / single-consumer (read) pattern it always was.
  */
 #pragma once
 #include "vt/VtConsole.h"
 #include "Framebuffer.h"
+#include "Spinlock.h"
 
 namespace kernel {
 
@@ -26,13 +31,14 @@ class VtManager {
 	VtConsole  m_vt[kVtCount + 1];   // 1-based; index 0 unused
 	int        m_active = 1;
 	int        m_pending = 0;        // a switch awaiting VT_RELDISP (0 = none)
-	int        m_irqPending = 0;     // a graphics-release switch requested from IRQ, run in thread ctx
 	int        m_relDeadline = 0;    // ticks left before a non-acking owner is forced off
 	FbSurface  m_surf{};
 	VtSignalFn m_signal = 0;
+	RecursiveSpinlock m_lock;        // serializes all fb output + switching (old g_consoleLock role)
 
-	void acquire(int n);             // make VT n the owning/visible console
+	void acquire(int n);             // make VT n the owning/visible console (caller holds m_lock)
 	void forceCompletePending();     // owner acked (or timed out): finish the pending switch
+	bool switchToLocked(int n);
 public:
 	void init(const FbSurface& s, VtSignalFn sig);
 	int  active() const { return m_active; }
@@ -41,11 +47,17 @@ public:
 
 	// Returns true if the switch completed synchronously; false if it is pending a release ack.
 	bool switchTo(int n);
+	void requestSwitch(int n) { switchTo(n); }   // IRQ-context entry (Ctrl+Alt+Fn): safe — no heap/blocking
 	void relDisp(int n, int arg);    // VT_RELDISP: arg 1 = release granted -> complete a pending switch
-	void requestSwitch(int n);       // IRQ-context entry (Ctrl+Alt+Fn)
-	void servicePending();           // thread-context tick: run a deferred switch / age the deadline
-	void releaseTimeoutTick();       // age the release deadline by one tick (forces the switch at 0)
+	void releaseTimeoutTick();       // scheduler tick: age the release deadline (forces the switch at 0)
 	int  openqry() const;            // first free VT (all pre-allocated here) -> -1
+
+	// Output funnels (take m_lock). write() targets a specific VT (kernel printk -> 1, shell stdout
+	// -> its tty); feedActive() runs the active VT's input (echo writes its fbcon).
+	void write(int vtIndex, const char* buf, unsigned n);
+	void feedActive(unsigned char sc);
+	void kernelClear();                          // clear the kernel console (VT1)
+	void kernelSetCursor(unsigned x, unsigned y);// position the kernel console (VT1) cursor
 };
 
 extern VtManager* g_vtmgr;           // the kernel's instance (null until Kernel.cpp builds it)

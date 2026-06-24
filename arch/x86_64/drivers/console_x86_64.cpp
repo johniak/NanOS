@@ -19,6 +19,7 @@
 #include <arch/bootinfo.h>
 #include "FbConsole.h"
 #include "Spinlock.h"   // SMP: serialize the shared VGA/framebuffer cell + cursor writes
+#include "vt/VtManager.h"   // once VTs are up, the kernel console is VT1 (Linux printk -> tty1)
 #include <string.h>
 
 namespace {
@@ -94,6 +95,10 @@ void consolePutChar(char c) {
 	kernel::RecursiveIrqGuard g(g_consoleLock);
 	if (c == '\n') serialPut('\r');
 	serialPut(c);
+	if (kernel::g_vtmgr) {              // VTs up: the kernel console is VT1 (drawn only while VT1 is active)
+		kernel::g_vtmgr->write(1, &c, 1);
+		return;
+	}
 	if (g_useFb) {
 		g_fb.putChar(c);
 		return;
@@ -121,6 +126,10 @@ void consolePutChar(char c) {
 
 void consoleClear() {
 	kernel::RecursiveIrqGuard g(g_consoleLock);
+	if (kernel::g_vtmgr) {
+		kernel::g_vtmgr->kernelClear();
+		return;
+	}
 	if (g_useFb) {
 		g_fb.clear();
 		return;
@@ -135,6 +144,10 @@ void consoleClear() {
 
 void consoleSetCursor(unsigned x, unsigned y) {
 	kernel::RecursiveIrqGuard g(g_consoleLock);
+	if (kernel::g_vtmgr) {
+		kernel::g_vtmgr->kernelSetCursor(x, y);
+		return;
+	}
 	if (g_useFb) {
 		g_fb.setCursor(x, y);
 		return;
@@ -164,7 +177,10 @@ void consoleActivateFramebuffer() {
 }
 
 void consoleSize(unsigned* cols, unsigned* rows) {
-	if (g_useFb) {
+	if (kernel::g_vtmgr) {
+		if (cols) *cols = kernel::g_vtmgr->vt(1)->fbcon().cols();
+		if (rows) *rows = kernel::g_vtmgr->vt(1)->fbcon().rows();
+	} else if (g_useFb) {
 		if (cols) *cols = g_fb.cols();
 		if (rows) *rows = g_fb.rows();
 	} else {

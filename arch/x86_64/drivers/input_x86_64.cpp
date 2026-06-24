@@ -1,144 +1,72 @@
 /*
  * input_x86_64.cpp — x86-64 implementation of <arch/input.h>.
  *
- * Owns the console input policy for both modes:
- *  - cooked: scancodes -> KeyDecoder -> LineDiscipline (line editing + echo); read
- *    returns a whole line.
- *  - raw: scancodes -> KeyDecoder -> a raw byte ring (arrows as ESC '[' A/B/C/D, no
- *    echo); read returns whatever bytes are buffered. A shell drives its own editor.
+ * With virtual terminals (kernel/vt), the console input state (line discipline, raw ring, wait
+ * queue, termios) lives per-VT in VtConsole, NOT in this file. This layer now does two things:
+ *   1. intercept Ctrl+Alt+Fn (a small modifier matcher independent of the per-VT KeyDecoder, which
+ *      does not track Alt) and ask VtManager to switch console — the scancode is consumed;
+ *   2. route every other scancode to the ACTIVE VtConsole (and to /dev/input0 for that VT).
  *
- * The body is identical to the i686 input layer: everything here is MI logic over the
- * MI LineDiscipline / KeyDecoder / Scheduler / WaitQueue. The PS/2 IRQ1 path feeds it
- * the same way on both arches — the loadable keyboard kext (kext/kbd/kbd_ps2.cpp)
- * registers IRQ1 via knx_register_irq and calls knx_feed_scancode, which
- * kernel/KernelExports.cpp forwards to arch::inputFeedScancode(). No arch-specific
- * keyboard glue is needed; the staged irqtest64.cpp echo is only linked into the
- * rescue-ISO smoke (STAGE64), not the real _all kernel.
+ * The PS/2 IRQ1 path feeds inputFeedScancode the same way on both arches (the loadable keyboard
+ * kext calls knx_feed_scancode -> arch::inputFeedScancode). inputRead/inputSetRaw/inputReady are
+ * thin forwarders to the active VT (the console fd's per-VT binding is applied by the syscall
+ * layer; the bare arch contract acts on the active console).
  */
 #include <arch/input.h>
-#include <arch/cpu.h>
-#include "LineDiscipline.h"
-#include "KeyDecoder.h"
-#include "Console.h"
-#include "Scheduler.h"
-#include "WaitQueue.h"          // console readers park here (multi-waiter, event-driven)
-#include "Signal.h"             // SIGINT / SIGQUIT numbers
-#include "SignalDispatch.h"     // kernel::consoleSignal / hasPendingSignalCurrent
-#include "Syscall.h"            // kernel::EAGAIN (O_NONBLOCK no-data return)
+#include "vt/VtManager.h"
 #include "KeyboardDevice.h"     // kernel::kbdFeed (/dev/input0 key events)
 
 namespace {
-kernel::LineDiscipline g_line;
-kernel::KeyDecoder g_decoder;
-int g_raw = 0;
-kernel::WaitQueue g_inputWq;       // tasks blocked in inputRead (>=1; the keyboard IRQ wakes all)
-
-// Raw-mode byte ring (filled in IRQ context, drained by inputRead).
-const int RAWCAP = 256;
-volatile unsigned char g_rawbuf[RAWCAP];
-volatile int g_rawHead = 0;
-volatile int g_rawTail = 0;
-
-void rawPush(unsigned char b) {
-	int next = (g_rawHead + 1) % RAWCAP;
-	if (next != g_rawTail) {        // drop on overflow
-		g_rawbuf[g_rawHead] = b;
-		g_rawHead = next;
+// Minimal Ctrl+Alt+Fn matcher. Independent of the per-VT KeyDecoder (which tracks Ctrl/Shift for
+// control codes but not Alt). Tracks make/break of Ctrl (0x1D) and Alt (0x38), incl. the 0xE0
+// extended (right) variants. Returns 1..7 when this scancode COMPLETES Ctrl+Alt+F1..F7, else 0.
+bool g_ctrl = false, g_alt = false;
+bool g_ext = false;
+int vtSwitchMatch(unsigned char sc) {
+	if (sc == 0xE0) { g_ext = true; return 0; }
+	bool brk = (sc & 0x80) != 0;
+	unsigned char code = sc & 0x7F;
+	if (g_ext) {
+		g_ext = false;
+		if (code == 0x38) g_alt = !brk;       // right Alt (AltGr)
+		if (code == 0x1D) g_ctrl = !brk;       // right Ctrl
+		return 0;
 	}
+	if (code == 0x38) { g_alt = !brk; return 0; }    // left Alt
+	if (code == 0x1D) { g_ctrl = !brk; return 0; }    // left Ctrl
+	if (!brk && g_ctrl && g_alt && code >= 0x3B && code <= 0x41)
+		return (int) (code - 0x3B) + 1;               // F1..F7 -> 1..7
+	return 0;
 }
-bool rawEmpty() { return g_rawHead == g_rawTail; }
-unsigned char rawPop() {
-	unsigned char b = g_rawbuf[g_rawTail];
-	g_rawTail = (g_rawTail + 1) % RAWCAP;
-	return b;
-}
-
-void echoChar(char c) { kernel::Console::write(c); }
 }
 
 namespace arch {
 
 // Called from the keyboard IRQ for every scancode byte.
 void inputFeedScancode(unsigned char sc) {
-	// Always feed the /dev/input0 key-event device (evdev-style: it coexists with the
-	// console). It decodes make/break itself, so a game gets exact key down/up.
-	kernel::kbdFeed(sc);
-	if (g_raw) {
-		g_decoder.feed(sc, [](int ev) {
-			if (ev < 256) {
-				rawPush((unsigned char) ev);
-			} else {                  // arrow -> ANSI escape sequence
-				rawPush(0x1B);
-				rawPush('[');
-				rawPush(ev == kernel::KEY_UP    ? 'A' :
-				        ev == kernel::KEY_DOWN  ? 'B' :
-				        ev == kernel::KEY_RIGHT ? 'C' : 'D');
-			}
-		});
-	} else {
-		g_decoder.feed(sc, [](int ev) {
-			// Cooked-mode control keys generate signals to the foreground process,
-			// like a Unix tty: Ctrl+C -> SIGINT, Ctrl+\ -> SIGQUIT, Ctrl+Z -> SIGTSTP.
-			if (ev == 0x03) { kernel::consoleSignal(SIGINT);  return; }
-			if (ev == 0x1C) { kernel::consoleSignal(SIGQUIT); return; }
-			if (ev == 0x1A) { kernel::consoleSignal(SIGTSTP); return; }
-			if (ev < 256) {
-				g_line.push((char) ev, echoChar);
-			} else {                   // arrow -> ANSI escape bytes into the canonical line,
-				g_line.push(0x1B, echoChar);             // exactly as a Unix tty delivers them
-				g_line.push('[', echoChar);              // to a program reading cooked input
-				g_line.push(ev == kernel::KEY_UP    ? 'A' :
-				            ev == kernel::KEY_DOWN  ? 'B' :
-				            ev == kernel::KEY_RIGHT ? 'C' : 'D', echoChar);
-			}
-		});
+	int target = vtSwitchMatch(sc);
+	if (target) {                              // Ctrl+Alt+Fn: switch console, consume the key
+		if (kernel::g_vtmgr) kernel::g_vtmgr->requestSwitch(target);
+		return;
 	}
-	// Wake blocked console readers once a read is satisfiable (they re-test their condition).
-	if ((g_raw && !rawEmpty()) || (!g_raw && g_line.lineReady()))
-		kernel::Scheduler::wakeAll(&g_inputWq);
-}
-
-namespace {
-bool rawReady(void*)  { return !rawEmpty(); }        // sleepOnUntil predicates (re-tested under
-bool lineReady(void*) { return g_line.lineReady(); } // cli, so a keyboard IRQ can't be lost)
+	if (!kernel::g_vtmgr) return;              // pre-VT window (keyboard IRQ before VtManager): drop
+	// /dev/input0 (evdev) is fed for the active VT only, so a backgrounded graphics app (nwm on a
+	// non-active VT) stops receiving keys until its console is switched back in.
+	kernel::kbdFeed(sc);
+	kernel::g_vtmgr->feedActive(sc);           // locked funnel: echo to the active VT's fbcon
 }
 
 int inputRead(char* buf, unsigned n, int nonblock) {
-	if (g_raw) {
-		if (nonblock && rawEmpty()) {              // O_NONBLOCK: never block, no data now
-			return -EAGAIN;
-		}
-		// Block until a byte arrives. sleepOnUntil re-tests rawEmpty() with interrupts off and
-		// the task enqueued, so the keyboard IRQ that fills the buffer can't wake us before we park.
-		kernel::Scheduler::sleepOnUntil(&g_inputWq, rawReady, 0);
-		if (kernel::hasPendingSignalCurrent())     // woken by a signal, not input
-			return -kernel::ERESTARTSYS;           // restart or -> EINTR, decided at delivery
-		unsigned i = 0;
-		while (i < n && !rawEmpty())
-			buf[i++] = (char) rawPop();
-		return (int) i;
-	}
-	if (nonblock && !g_line.lineReady()) {         // O_NONBLOCK cooked: no full line yet
-		return -EAGAIN;
-	}
-	// Block until a full line is ready (same prepare-to-wait as raw mode).
-	kernel::Scheduler::sleepOnUntil(&g_inputWq, lineReady, 0);
-	if (kernel::hasPendingSignalCurrent())         // woken by a signal, not a full line
-		return -kernel::ERESTARTSYS;               // restart or -> EINTR, decided at delivery
-	return g_line.takeLine(buf, (int) n);
+	if (!kernel::g_vtmgr) return 0;
+	return kernel::g_vtmgr->activeVt()->read(buf, n, nonblock != 0);
 }
 
 void inputSetRaw(int raw) {
-	g_raw = raw;
-	g_rawHead = g_rawTail = 0;       // drop buffered input on a mode switch
-	g_line = kernel::LineDiscipline();
-	g_decoder = kernel::KeyDecoder();
+	if (kernel::g_vtmgr) kernel::g_vtmgr->activeVt()->setRaw(raw != 0);
 }
 
 bool inputReady() {
-	// Same condition inputRead would block on: raw mode needs a buffered byte, cooked mode a
-	// committed line. (Mirrors the wake test in inputFeedScancode.)
-	return g_raw ? !rawEmpty() : g_line.lineReady();
+	return kernel::g_vtmgr ? kernel::g_vtmgr->activeVt()->inputReady() : false;
 }
 
 }  // namespace arch

@@ -15,12 +15,17 @@
 namespace kernel {
 
 class FbConsole {
-	FbSurface m_surf;
-	vt m_vt;                    // terminal grid + escape parser (cols/rows/cursor/dirty live here)
-	vt_cell m_shadow[VT_MAXR][VT_MAXC];   // last-blitted cells: only changed cells are repainted
-	uint32_t m_fg, m_bg;        // default colours (for the cleared background)
-	uint32_t m_curx, m_cury;    // cell where the underline cursor is currently drawn
-	bool m_curShown;
+	// All members carry DEFAULT MEMBER INITIALIZERS (and there is no user-declared constructor), so
+	// the type is constant-initializable. That matters when an FbConsole is embedded in a file-scope
+	// global (e.g. VtManager's per-VT array): NanOS runs no global constructors, so a non-trivial
+	// ctor would leave the object — and any RecursiveSpinlock beside it — zero-initialized instead of
+	// at its intended defaults. init() still fully establishes the surface/grid before use.
+	FbSurface m_surf{};
+	vt m_vt{};                  // terminal grid + escape parser (cols/rows/cursor/dirty live here)
+	vt_cell m_shadow[VT_MAXR][VT_MAXC]{};   // last-blitted cells: only changed cells are repainted
+	uint32_t m_fg = 0x00C0C0C0, m_bg = 0;   // default colours (for the cleared background)
+	uint32_t m_curx = 0, m_cury = 0;        // cell where the underline cursor is currently drawn
+	bool m_curShown = false;
 	bool m_live = true;         // when false, putChar updates the grid but does not blit
 
 	void renderRow(int row);    // blit one grid row's cells
@@ -28,8 +33,6 @@ class FbConsole {
 	void drawCursor();          // paint the underline cursor at the vt cursor cell
 	void eraseCursor();         // clear the previously-drawn underline
 public:
-	FbConsole();
-
 	void init(const FbSurface& s);          // grid = w/FONT_W x h/FONT_H, clear to bg
 	void clear();
 	void putChar(char c);                   // feeds the VT engine (\n -> \r\n), then repaints
