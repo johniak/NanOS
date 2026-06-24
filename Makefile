@@ -842,9 +842,15 @@ smoke-e1000e: image64
 smoke-smp: image64
 	bash scripts/smoke-smp.sh
 
+# `smoke-smp-speedup` is the parallel-SPEEDUP gate: under MTTCG, run the same fixed CPU-bound job as
+# 1 worker then 4 workers and assert T(1)/T(4) is a real speedup with an identical checksum — i.e.
+# user threads actually run in parallel across cores (not just "4 CPUs are online").
+smoke-smp-speedup: image64
+	bash scripts/smoke-smp-speedup.sh
+
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-smp
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + SMP boot smokes all passed."
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-smp smoke-smp-speedup
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + SMP boot + SMP speedup gates all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean

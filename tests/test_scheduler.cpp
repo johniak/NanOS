@@ -29,34 +29,53 @@ TEST_CASE("nextRunnable: DONE tasks are skipped like blocked") {
 }
 
 TEST_CASE("pickReady (SMP claim): only TASK_READY non-idle tasks are claimable") {
-	// slot 0 = idle, slots 1..3 = work. isIdle[] marks the idle task.
+	// slot 0 = idle, slots 1..3 = work. isIdle[] marks the idle task. runningCpu all -1 = none
+	// mid-switch-out, so claimability is governed by state alone here.
 	bool isIdle[4] = { true, false, false, false };
+	int  run[4]    = { -1, -1, -1, -1 };
 	TaskState st[4] = { TASK_RUNNING, TASK_READY, TASK_READY, TASK_READY };
 	// Round-robin from each position, skipping the idle slot.
-	CHECK(Scheduler::pickReady(st, isIdle, 4, 0) == 1);
-	CHECK(Scheduler::pickReady(st, isIdle, 4, 1) == 2);
-	CHECK(Scheduler::pickReady(st, isIdle, 4, 3) == 1);   // wraps past idle(0) to 1
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 0) == 1);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 1) == 2);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 3) == 1);   // wraps past idle(0) to 1
 }
 
 TEST_CASE("pickReady: a task already RUNNING is NOT claimable -> two CPUs never pick the same") {
 	bool isIdle[4] = { true, false, false, false };
+	int  run[4]    = { -1, -1, -1, -1 };
 	// CPU A claimed slot 1 (now RUNNING). CPU B scanning from 0 must skip it and take slot 2.
 	TaskState st[4] = { TASK_RUNNING, TASK_RUNNING, TASK_READY, TASK_READY };
-	CHECK(Scheduler::pickReady(st, isIdle, 4, 0) == 2);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 0) == 2);
 	// Now slots 1 and 2 are both RUNNING (claimed by A and B). A third CPU gets slot 3.
 	st[2] = TASK_RUNNING;
-	CHECK(Scheduler::pickReady(st, isIdle, 4, 0) == 3);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 0) == 3);
 	// All work RUNNING -> nothing claimable (caller falls back to its per-CPU idle).
 	st[3] = TASK_RUNNING;
-	CHECK(Scheduler::pickReady(st, isIdle, 4, 0) == -1);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 0) == -1);
+}
+
+TEST_CASE("pickReady: a READY task still mid-switch-out (runningCpu != -1) is NOT claimable") {
+	// The wake-during-switch-out race: slot 1 was woken to READY on CPU B while CPU A is still
+	// saving its context (runningCpu still 0). It must NOT be claimable until finishSwitch clears
+	// runningCpu to -1 — otherwise two CPUs dispatch it with a half-saved kesp. Slot 2 (READY,
+	// runningCpu -1, fully saved) is the only legitimate claim.
+	bool isIdle[4] = { true, false, false, false };
+	int  run[4]    = { -1, 0, -1, -1 };   // slot 1 still owned by CPU 0 (mid switch-out)
+	TaskState st[4] = { TASK_RUNNING, TASK_READY, TASK_READY, TASK_BLOCKED };
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 0) == 2);   // skips the not-yet-saved slot 1
+	// Once its old CPU finishes the save (finishSwitch sets runningCpu = -1), it becomes claimable.
+	run[1] = -1;
+	st[2]  = TASK_RUNNING;                // slot 2 now taken, so the next claim must be slot 1
+	CHECK(Scheduler::pickReady(st, isIdle, run, 4, 0) == 1);
 }
 
 TEST_CASE("pickReady: blocked/done work is skipped; -1 when nothing is READY") {
 	bool isIdle[3] = { true, false, false };
+	int  run[3]    = { -1, -1, -1 };
 	TaskState st[3] = { TASK_RUNNING, TASK_BLOCKED, TASK_DONE };
-	CHECK(Scheduler::pickReady(st, isIdle, 3, 0) == -1);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 3, 0) == -1);
 	st[1] = TASK_READY;
-	CHECK(Scheduler::pickReady(st, isIdle, 3, 0) == 1);
+	CHECK(Scheduler::pickReady(st, isIdle, run, 3, 0) == 1);
 }
 
 TEST_CASE("wake only revives a BLOCKED task; never resurrects a zombie/done/stopped") {

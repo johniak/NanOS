@@ -10,51 +10,51 @@ IMG=disk/image64-grub2.img
 SER=/tmp/nanos-smpspeed-serial.log
 INT=/tmp/nanos-smpspeed-int.log
 MON=/tmp/nanos-smpspeed-qmon.sock
-REPEAT="${REPEAT:-1200}"          # grid recomputes; tuned so the 1-thread run is ~seconds
+REPEAT="${REPEAT:-8000}"          # grid recomputes; tuned so the 1-thread run is ~seconds
 THRESH="${THRESH:-1.8}"           # required T1/T4 speedup on 4 cores
 rm -f "$SER" "$INT" "$MON"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }
 
 pkill -9 -f "qemu-system-x86_64.*$IMG" 2>/dev/null
-# NOTE: no `-d int` here — with four per-CPU LAPIC timers firing 1000 Hz, interrupt logging makes
-# QEMU crawl (and the int log explode), so the CPU-bound benchmark would never finish. Speedup
-# only needs timing; correctness/fault coverage stays in smoke-smp + smoke-x86_64.
-qemu-system-x86_64 -cpu qemu64 -smp 4 -m 512 -drive file="$IMG",format=raw \
+# `-accel tcg,thread=multi` (MTTCG) is REQUIRED: on a TCG-emulated host the default single-threaded
+# TCG round-robins all vCPUs on ONE host thread, so no guest workload can show wall-clock speedup
+# however parallel it is. MTTCG runs each vCPU on its own host thread, so a genuinely parallel guest
+# gets real speedup (bounded by host cores). No `-d int` here — four 1000 Hz per-CPU LAPIC timers
+# would make interrupt logging crawl; correctness/fault coverage stays in smoke-smp + smoke-x86_64.
+qemu-system-x86_64 -accel tcg,thread=multi -cpu qemu64 -smp 4 -m 512 -drive file="$IMG",format=raw \
     -netdev user,id=n0,hostfwd=tcp::2223-:22 -device e1000,netdev=n0 \
     -display none -serial file:"$SER" -monitor unix:"$MON",server,nowait -no-reboot &
 QPID=$!
 cleanup() { kill -9 "$QPID" 2>/dev/null; }
 trap cleanup EXIT
 
-for i in $(seq 1 40); do grep -q "nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
+for i in $(seq 1 50); do grep -q "nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
 
 python3 - "$MON" "$REPEAT" <<'PY'
 import socket,time,sys
-KM={' ':'spc','.':'dot','\n':'ret'}
+MON, R = sys.argv[1], sys.argv[2]
 def kn(c):
-    if c in KM: return KM[c]
-    if c.isdigit(): return c
-    if c.isalpha(): return ('shift-'+c.lower()) if c.isupper() else c
-    return None
-s=socket.socket(socket.AF_UNIX)
-try: s.connect(sys.argv[1])
-except Exception as e: print("monitor connect failed:",e); sys.exit(0)
-time.sleep(0.3)
-try: s.settimeout(0.3); s.recv(65536)
-except: pass
+    if c.isdigit() or c.isalpha(): return c
+    return {' ':'spc','.':'dot','\n':'ret'}.get(c)
+def fresh():            # a FRESH monitor connection per phase: a single long-lived socket drops
+    s=socket.socket(socket.AF_UNIX)         # mid-drive (observed), losing the rest of the script
+    try: s.connect(MON)
+    except Exception as e: print("monitor connect failed:",e); return None
+    time.sleep(0.2)
+    try: s.settimeout(0.3); s.recv(65536)
+    except: pass
+    return s
 def typ(text, settle):
+    s=fresh()
+    if not s: return
     for c in text:
         k=kn(c)
-        if k: s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.04)
-        try: s.settimeout(0.1); s.recv(4096)
-        except: pass
-    s.sendall(b"sendkey ret\n"); time.sleep(settle)
-R=sys.argv[2]
-typ("jan", 1.0)                       # username
+        if k: s.sendall(("sendkey "+k+"\n").encode()); time.sleep(0.05)
+    s.sendall(b"sendkey ret\n"); time.sleep(settle); s.close()
+typ("jan", 1.5)                       # username
 typ("jan", 2.5)                       # password -> bash login shell
 typ("pfract.nxe 1 "+R, 30.0)          # serial run (1 worker over the whole job)
 typ("pfract.nxe 4 "+R, 20.0)          # parallel run (4 workers across 4 cores)
-s.close()
 PY
 sleep 2
 

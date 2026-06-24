@@ -84,11 +84,13 @@ public:
 	// (index 0) is chosen ONLY when no non-idle task is runnable. Pure; host-tested.
 	static int nextRunnable(const TaskState* st, int n, int cur);
 
-	// SMP claim policy (pure; host-tested). Index of a CLAIMABLE task — TASK_READY and not an
-	// idle task — scanning round-robin from curIdx, or -1 if none (the caller then keeps the
-	// running task or falls back to its per-CPU idle). Because only TASK_READY is claimable and
-	// the claim (READY->RUNNING) happens under the BKL, two CPUs can never select the same task.
-	static int pickReady(const TaskState* st, const bool* isIdle, int n, int curIdx);
+	// SMP claim policy (pure; host-tested). Index of a CLAIMABLE task — TASK_READY, not an idle
+	// task, AND runningCpu == -1 (its context is fully saved, not mid-switch-out on another CPU) —
+	// scanning round-robin from curIdx, or -1 if none (the caller then keeps the running task or
+	// falls back to its per-CPU idle). The runningCpu gate closes the wake-during-switch-out race:
+	// a task woken to READY before its old CPU has saved its kesp is not yet claimable.
+	static int pickReady(const TaskState* st, const bool* isIdle, const int* runningCpu,
+			int n, int curIdx);
 };
 
 }

@@ -98,14 +98,19 @@ int Scheduler::nextRunnable(const TaskState* st, int n, int cur) {
 	return 0;   // idle fallback
 }
 
-// SMP claim: a task is claimable only if it is TASK_READY and not an idle task. A task already
-// RUNNING (on any CPU) is NOT claimable, so with the claim performed under the BKL two CPUs can
-// never pick the same task. Returns -1 if nothing is claimable (caller keeps its running task or
-// drops to its per-CPU idle). Round-robin from curIdx for fairness.
-int Scheduler::pickReady(const TaskState* st, const bool* isIdle, int n, int curIdx) {
+// SMP claim: a task is claimable only if it is TASK_READY, not an idle task, AND runningCpu == -1.
+// The runningCpu gate is essential: between schedule()'s g_bkl.exit() and archContextSwitch saving
+// the outgoing task's kesp, the task is left with runningCpu set to its old CPU. A voluntarily
+// BLOCKED task can be woken to READY by another CPU in exactly that window — but its kesp is not yet
+// saved, so claiming it would dispatch it on a second CPU with a stale/racing kesp (observed:
+// *kesp = a live RBP into the task's own stack). finishSwitch() clears runningCpu to -1 only AFTER
+// the save completes, so requiring runningCpu == -1 makes a task claimable only once its context is
+// safely saved. A task already RUNNING (state) is excluded too. Round-robin from curIdx for fairness.
+int Scheduler::pickReady(const TaskState* st, const bool* isIdle, const int* runningCpu,
+		int n, int curIdx) {
 	for (int k = 1; k <= n; k++) {
 		int idx = (curIdx + k) % n;
-		if (!isIdle[idx] && st[idx] == TASK_READY)
+		if (!isIdle[idx] && st[idx] == TASK_READY && runningCpu[idx] == -1)
 			return idx;
 	}
 	return -1;
@@ -202,7 +207,9 @@ static Task* pickNextTask(Task* cur) {
 		int curIdx = cur ? (int) (cur - g_tasks) : 0;
 		for (int k = 1; k <= n; k++) {
 			Task* t = &g_tasks[(curIdx + k) % n];
-			if (!t->isIdle && t->state == TASK_READY)
+			// runningCpu == -1: not mid-switch-out on another CPU (see pickReady — closes the
+			// wake-during-switch-out double-dispatch race). Mirrors the host-tested pickReady policy.
+			if (!t->isIdle && t->state == TASK_READY && t->runningCpu == -1)
 				return t;
 		}
 	}

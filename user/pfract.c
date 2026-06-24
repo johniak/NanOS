@@ -39,15 +39,21 @@
 #define IM_SPAN ( 150733L)   /*  2.3   * S */
 #define ESCAPE  (4L * S)     /* |z|^2 > 4 */
 
-/* Per-cell escape-iteration counts, filled by the workers, read by main for art + checksum. */
-static int iters[HEIGHT][WIDTH];
-
-/* The work queue: units 0..total-1; unit u computes row (u % HEIGHT). total = HEIGHT * repeat. */
-static pthread_mutex_t q_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  q_cond = PTHREAD_COND_INITIALIZER;
-static long q_next;          /* next unit to hand out */
+/* STATIC work partitioning (no shared queue, no mutex): the whole job is q_total "units", unit u
+ * recomputes row (u % HEIGHT). Worker w owns the units with u % nworkers == w, so the parallel
+ * section is pure ring-3 compute with ZERO syscalls — the only way a Big-Kernel-Lock kernel can
+ * show real speedup (a per-unit mutex would serialize every worker through futex() under the BKL).
+ * Total work is HEIGHT*repeat regardless of nworkers, so `pfract 1 R` and `pfract N R` do the SAME
+ * compute and T(1)/T(N) is a fair speedup. Workers may write the same iters[row] concurrently, but
+ * mandel_cell is deterministic so the values are identical — a benign race, checksum stays stable. */
 static long q_total;         /* HEIGHT * repeat */
-static int  q_closed;        /* set once all units are enqueued */
+
+/* Each worker accumulates a partial sum over its OWN units into s->sum — no shared-memory writes in
+ * the hot loop, so there is no cache-line false sharing between workers (which otherwise caps MTTCG
+ * scaling). The total is an additive (commutative) checksum: identical for any nworkers, so it both
+ * validates the parallel result and stays a fair fixed amount of work. iters[][] is filled by a
+ * cheap serial pass afterwards purely for the ASCII art. */
+struct slice { int id; int nworkers; unsigned long sum; };
 
 /* Escape-iteration count of one cell, fixed-point int64 (no floating point). */
 static int mandel_cell(int row, int col)
@@ -71,23 +77,17 @@ static int mandel_cell(int row, int col)
 
 static void *worker(void *a)
 {
-	(void)a;
-	for (;;) {
-		long u;
-		pthread_mutex_lock(&q_lock);
-		while (q_next >= q_total && !q_closed)
-			pthread_cond_wait(&q_cond, &q_lock);
-		if (q_next >= q_total) {
-			pthread_mutex_unlock(&q_lock);
-			return 0;
-		}
-		u = q_next++;
-		pthread_mutex_unlock(&q_lock);
-
+	struct slice *s = (struct slice *)a;
+	/* Strided over the whole job: every nworkers-th unit. Pure compute into a LOCAL accumulator —
+	 * no locks, no syscalls, no shared writes — so N workers run flat-out on N cores. */
+	unsigned long acc = 0;
+	for (long u = s->id; u < q_total; u += s->nworkers) {
 		int row = (int)(u % HEIGHT);
 		for (int col = 0; col < WIDTH; col++)
-			iters[row][col] = mandel_cell(row, col);
+			acc += (unsigned long) mandel_cell(row, col);
 	}
+	s->sum = acc;
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -102,37 +102,37 @@ int main(int argc, char **argv)
 	if (repeat < 1) repeat = 1;
 
 	q_total = (long)HEIGHT * repeat;
-	q_next  = q_total;   /* start EMPTY so a worker that runs immediately blocks on the predicate */
 
 	struct timespec t0, t1;
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 
 	pthread_t w[MAXW];
-	for (int i = 0; i < nworkers; i++)
-		if (pthread_create(&w[i], 0, worker, 0) != 0) {
+	struct slice arg[MAXW];
+	for (int i = 0; i < nworkers; i++) {
+		arg[i].id = i;
+		arg[i].nworkers = nworkers;
+		arg[i].sum = 0;
+		if (pthread_create(&w[i], 0, worker, &arg[i]) != 0) {
 			printf("pfract: pthread_create FAILED for worker %d\n", i);
 			fflush(stdout);
 			return 1;
 		}
+	}
 
-	pthread_mutex_lock(&q_lock);
-	q_next = 0;                                  /* units 0..q_total-1 now available */
-	q_closed = 1;
-	pthread_cond_broadcast(&q_cond);
-	pthread_mutex_unlock(&q_lock);
-
-	for (int i = 0; i < nworkers; i++)
+	unsigned long total = 0;
+	for (int i = 0; i < nworkers; i++) {
 		pthread_join(w[i], 0);
+		total += arg[i].sum;            /* additive => independent of nworkers */
+	}
 
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	long ms = (t1.tv_sec - t0.tv_sec) * 1000L + (t1.tv_nsec - t0.tv_nsec) / 1000000L;
 
-	unsigned int checksum = 0;
+	/* Serial pass purely for the ASCII art (one grid, cheap next to the timed parallel loop). */
 	for (int row = 0; row < HEIGHT; row++) {
 		char line[WIDTH + 1];
 		for (int col = 0; col < WIDTH; col++) {
-			int n = iters[row][col];
-			checksum = checksum * 31u + (unsigned int)n;
+			int n = mandel_cell(row, col);
 			int idx = n >= MAXITER ? levels : n * levels / MAXITER;
 			line[col] = ramp[idx];
 		}
@@ -140,8 +140,8 @@ int main(int argc, char **argv)
 		printf("%s\n", line);
 	}
 
-	printf("pfract: %d workers, %ld repeat, %ld ms, checksum=0x%08x ok\n",
-	       nworkers, repeat, ms, checksum);
+	printf("pfract: %d workers, %ld repeat, %ld ms, checksum=0x%08lx ok\n",
+	       nworkers, repeat, ms, total & 0xffffffffUL);
 	fflush(stdout);
 	return 0;
 }
