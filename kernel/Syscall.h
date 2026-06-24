@@ -12,6 +12,7 @@
 #include "SyscallNr.h"   // SYS_* numbers (shared with userland, plain C)
 #include "Cred.h"        // process credentials + pure DAC decisions
 #include "Pipe.h"
+#include "Spinlock.h"     // m_fdLock: SMP fd-table structure lock
 #include "CharDevice.h"  // POLLIN/POLLOUT/... (single source) + device interface
 #include "Termios.h"     // console terminal settings carried by TCGETS/TCSETS
 
@@ -131,6 +132,13 @@ class Syscalls {
 	Cred* cred;
 	bool exited;
 	int exitCode;
+	// SMP: serializes fd-TABLE STRUCTURE changes (slot alloc/free: open/close/dup/dup2/pipe + the
+	// fork copy / exit teardown) so two threads of one process can't claim the same slot or tear a
+	// slot down mid-build. Recursive (dup2 calls close) + non-IRQ (syscall thread only). It is NOT
+	// held across read/write — those act on an already-open, stable slot, and console reads block
+	// inside the call; concurrent ops on the SAME fd are POSIX-unspecified (Linux refcounts fds; we
+	// don't). Lock order: m_fdLock is taken before the VFS/pipe/socket locks it then reaches into.
+	mutable RecursiveSpinlock m_fdLock;
 
 	bool valid(int fd) {
 		return fd >= 0 && fd < MAXFD && fds[fd].used;

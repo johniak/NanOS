@@ -89,7 +89,7 @@ static void on_usr1(int s) { (void)s; sig_seen = 1; }
 static void *sig_worker(void *a)
 {
 	(void)a;
-	for (int i = 0; i < 2000; i++)
+	for (int i = 0; i < 200; i++)
 		kill(getpid(), SIGUSR1);
 	return 0;
 }

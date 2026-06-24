@@ -73,6 +73,8 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 // deep-copy via String's assignment) and, for each open pipe end, bump the matching
 // refcount — parent and child share the same Pipe object, so both ends must be counted.
 Syscalls::Syscalls(const Syscalls& o) {
+	RecursiveGuard g(o.m_fdLock);   // SMP: snapshot the parent's fd table without a sibling thread
+	                                // mutating it mid-fork (this child object is not yet shared)
 	vfs = o.vfs;
 	consoleWrite = o.consoleWrite;
 	consoleTermios = o.consoleTermios;   // inherit the parent's terminal settings
@@ -97,6 +99,7 @@ Syscalls::Syscalls(const Syscalls& o) {
 // Process exit: close any open descriptors so pipe-end refcounts drop (and pipes free at
 // zero) — this is what lets a reader see EOF once the last writing process is gone.
 Syscalls::~Syscalls() {
+	RecursiveGuard g(m_fdLock);   // close() re-enters (recursive lock)
 	for (int i = 0; i < MAXFD; i++)
 		if (fds[i].used && (fds[i].pipe || fds[i].sock || fds[i].isChar))
 			close(i);
@@ -106,6 +109,7 @@ Syscalls::~Syscalls() {
 // going away surfaces EOF to the reader immediately — not only when the parent reaps the
 // zombie. Idempotent: close() skips already-closed fds, so the destructor at reap is a no-op.
 void Syscalls::closeAll() {
+	RecursiveGuard g(m_fdLock);   // close() re-enters (recursive lock)
 	for (int i = 0; i < MAXFD; i++)
 		if (fds[i].used)
 			close(i);
@@ -137,6 +141,7 @@ int Syscalls::open(String path, int flags) {
 		if (pc < 0)
 			return pc;
 	}
+	RecursiveGuard g(m_fdLock);   // SMP: claim a slot atomically vs another thread's open/close
 	for (int fd = 3; fd < MAXFD; fd++) {
 		if (!fds[fd].used) {
 			fds[fd].used = true;
@@ -158,6 +163,7 @@ int Syscalls::open(String path, int flags) {
 }
 
 int Syscalls::close(int fd, bool* freedShared) {
+	RecursiveGuard g(m_fdLock);   // SMP: tear the slot down atomically (dup2/closeAll re-enter)
 	if (freedShared) *freedShared = false;
 	if (!valid(fd))
 		return -EBADF;
@@ -197,6 +203,7 @@ int Syscalls::allocFd(int from) {
 // Close every descriptor marked FD_CLOEXEC. Called by execve so the new image does not
 // inherit the shell's private fds (history files, pipe ends, etc.).
 void Syscalls::closeCloexec() {
+	RecursiveGuard g(m_fdLock);   // close() re-enters (recursive lock)
 	for (int fd = 0; fd < MAXFD; fd++)
 		if (fds[fd].used && fds[fd].cloexec)
 			close(fd);
@@ -227,6 +234,7 @@ void Syscalls::shareInto(int dst, int src) {
 }
 
 int Syscalls::pipe(int out[2]) {
+	RecursiveGuard g(m_fdLock);   // allocFd + slot init + error-path close() (re-enters)
 	Pipe* p = new Pipe();
 	p->addReader();
 	p->addWriter();
@@ -246,6 +254,7 @@ int Syscalls::pipe(int out[2]) {
 }
 
 int Syscalls::dup(int fd) {
+	RecursiveGuard g(m_fdLock);
 	if (!valid(fd))
 		return -EBADF;
 	int n = allocFd();
@@ -256,6 +265,7 @@ int Syscalls::dup(int fd) {
 }
 
 int Syscalls::dup2(int oldfd, int newfd) {
+	RecursiveGuard g(m_fdLock);   // close(newfd) below re-enters (recursive lock)
 	if (!valid(oldfd))
 		return -EBADF;
 	if (newfd < 0 || newfd >= MAXFD)
