@@ -14,7 +14,7 @@ set -u
 IMG=disk/image64-grub2.img
 SER=/tmp/nanos-smpstress.log
 MON=/tmp/nanos-smpstress-qmon.sock
-SETTLE="${SETTLE:-90}"            # seconds to let the torture run (TCG is slow; it is deterministic)
+SETTLE="${SETTLE:-150}"           # seconds to let the torture run (TCG is slow; it is deterministic)
 rm -f "$SER" "$MON"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }
 

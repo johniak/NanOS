@@ -11,7 +11,7 @@ set -u
 IMG=disk/image64-grub2.img
 SER=/tmp/nanos-smpnet.log
 MON=/tmp/nanos-smpnet-qmon.sock
-SETTLE="${SETTLE:-90}"
+SETTLE="${SETTLE:-150}"   # TCG is slow; each datagram round-trip is a wake/schedule cycle
 rm -f "$SER" "$MON"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }
 

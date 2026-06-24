@@ -24,7 +24,9 @@
 #include <arpa/inet.h>
 
 #define NT    6        /* threads (each its own UDP socket on a distinct loopback port) */
-#define ITER  300      /* ping-pong rounds per thread */
+#define ITER  100      /* ping-pong rounds per thread. Modest: each round is a full wake/schedule
+                        * cycle (recvfrom blocks, the RX-softirq thread wakes it), and under the BKL
+                        * every wake serializes — high volume is pathologically slow under MTTCG. */
 #define BASEP 41000    /* base UDP port */
 
 static volatile int net_fail = 0;

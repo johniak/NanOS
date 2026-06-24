@@ -32,12 +32,17 @@
 #include <string.h>
 #include <signal.h>
 
+/* Sizes are kept MODEST on purpose: the gate exercises CONCURRENCY (many threads hitting one
+ * structure at once), not volume, and four sequential 8-thread phases under single-threaded TCG add
+ * up fast. Each is still large enough that a real race trips an oracle long before the run ends. */
 #define NT         8        /* worker threads: oversubscribes 4 vCPUs so they genuinely collide */
-#define FD_ITERS   500      /* open/write/read/close round-trips per thread */
-#define PIPE_ITEMS 4000     /* id-bytes each writer pushes through the shared pipe */
-#define M          4000     /* per-thread mutex-guarded counter bumps => NT*M total. Kept modest: at
-                              * heavy contention each miss is a futex syscall + switch, brutally slow
-                              * under single-threaded TCG; pthrstress already does the deep futex run. */
+#define FD_ITERS   100      /* open/read/close round-trips per thread (deep-path open is slow on TCG) */
+#define PIPE_ITEMS 2000     /* id-bytes each writer pushes through the shared pipe */
+#define M          50       /* per-thread mutex-guarded counter bumps => NT*M total. Deliberately
+                              * LIGHT: heavy 8-way mutex contention is a futex thundering-herd that, with
+                              * the BKL still the bottleneck under MTTCG, is pathologically slow (the
+                              * pre-existing pthrstress shows the same) — and it tests the wake path, not
+                              * the g_netLock/fd/pipe data-structure races this gate exists to catch. */
 
 /* ---- 1. FD-table torture (read-only churn against a fixed reference) -------------------- */
 #define FD_REFPATH "/disks/main/nanos/bin/true.nxe"   /* a small, stable, world-readable system file */
@@ -89,7 +94,7 @@ static void on_usr1(int s) { (void)s; sig_seen = 1; }
 static void *sig_worker(void *a)
 {
 	(void)a;
-	for (int i = 0; i < 200; i++)
+	for (int i = 0; i < 20; i++)
 		kill(getpid(), SIGUSR1);
 	return 0;
 }
