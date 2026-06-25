@@ -12,7 +12,9 @@
 #include <unistd.h>
 #include <pwd.h>
 #include <string.h>
+#include <stdio.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <time.h>
 #include <fcntl.h>
@@ -51,6 +53,14 @@ static long long now_ms(void) {
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (long long) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+/* Write a line straight to the kernel console (the visible text VT1), independent of init's log
+ * redirection — so boot diagnostics show ON SCREEN with no shell command needed. */
+static void console_note(const char* s) {
+	int c = open("/dev/console", O_WRONLY);
+	if (c < 0) c = 2;
+	write(c, s, (int) strlen(s));
+	if (c > 2) close(c);
 }
 /* In a freshly forked service child: redirect its stdout+stderr to the log (the daemon's chatter
  * — udhcpc leases, dropbear connection logs — lands in the log, not the console). */
@@ -233,6 +243,20 @@ static int spawn_nwm(char* const* env, int skip_greeter)
 	if (access(NWM_PATH, X_OK) != 0 || access("/dev/fb0", F_OK) != 0)
 		return 0;
 	int have_greeter = !skip_greeter && (access(NWLOGIN_PATH, X_OK) == 0);
+	if (have_greeter) {
+		/* Report on screen EXACTLY what init is about to exec on tty7: the path, the size, and the
+		 * first 4 bytes (NXE magic = 0x0045584e). This is the byte-level truth init sees — if it
+		 * ever shows a size/identity other than the greeter, that is the bug, visible without any
+		 * shell command. (nwlogin greeter ~3518 B; toybox ~29937 B — both are NXE, so size tells.) */
+		struct stat gst;
+		unsigned mg = 0;
+		long sz = (stat(NWLOGIN_PATH, &gst) == 0) ? (long) gst.st_size : -1;
+		int gf = open(NWLOGIN_PATH, O_RDONLY);
+		if (gf >= 0) { read(gf, &mg, 4); close(gf); }
+		char gm[176];
+		snprintf(gm, sizeof gm, "init: tty7 greeter %s size=%ld magic=%08x\n", NWLOGIN_PATH, sz, mg);
+		console_note(gm);
+	}
 	int pid = fork();
 	if (pid == 0) {
 		setsid();
@@ -267,6 +291,11 @@ int main(void) {
 	g_logfd = open("/tmp/boot.log", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
 	if (g_logfd < 0)
 		g_logfd = 1;
+
+	/* On-screen build stamp: proves WHICH init is actually running (vs whatever is on disk). If this
+	 * does not show today's build, the machine is booting a stale init from elsewhere — the single
+	 * fact that explains "reflash changed nothing". No shell command needed; it is on the console. */
+	console_note("NanOS init: build " __DATE__ " " __TIME__ "\n");
 
 	run_dhcp();        /* bring up eth0 via DHCP before the shell (kernel static = fallback) */
 	start_services();  /* start the listening services (inetd + httpd) once the network is up */
