@@ -45,6 +45,13 @@ int execve(const char* path, char* const argv[], char* const envp[]);
  * it. g_logfd is opened in main(); until then (and if the open fails) it falls back to fd 1. */
 static int g_logfd = 1;
 static void note(const char* s) { write(g_logfd, s, (int) strlen(s)); }
+/* Monotonic milliseconds since boot — used by the reaper to tell a healthy long-running graphics
+ * session apart from a binary that exits the instant it starts (a broken greeter, missing tty7). */
+static long long now_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 /* In a freshly forked service child: redirect its stdout+stderr to the log (the daemon's chatter
  * — udhcpc leases, dropbear connection logs — lands in the log, not the console). */
 static void log_redirect_child(void) { if (g_logfd > 2) { dup2(g_logfd, 1); dup2(g_logfd, 2); } }
@@ -221,16 +228,26 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
  * greeter is absent we fall back to running nwm directly (the legacy behaviour) so a graphics
  * image still boots. Skipped entirely if nwm or the framebuffer is missing (text-only image).
  * Returns the pid (0 if skipped) so the reaper can respawn it on exit (greeter/getty style). */
-static int spawn_nwm(char* const* env)
+static int spawn_nwm(char* const* env, int skip_greeter)
 {
 	if (access(NWM_PATH, X_OK) != 0 || access("/dev/fb0", F_OK) != 0)
 		return 0;
-	int have_greeter = (access(NWLOGIN_PATH, X_OK) == 0);
+	int have_greeter = !skip_greeter && (access(NWLOGIN_PATH, X_OK) == 0);
 	int pid = fork();
 	if (pid == 0) {
 		setsid();
 		int fd = open("/dev/tty7", O_RDWR);
-		if (fd >= 0) { ioctl(fd, TIOCSCTTY, 0); dup2(fd, 0); dup2(fd, 1); dup2(fd, 2); if (fd > 2) close(fd); }
+		if (fd < 0) {
+			/* No graphics console (VT7 not ready, or no framebuffer). Do NOT fall through to exec
+			 * with init's inherited fds — those point at the text console (tty1), so a child that
+			 * prints anything (e.g. a wrong nwlogin binary saying "Unknown command") would spam the
+			 * login prompt the user is sitting at. Discard output and exit; the reaper's backoff and
+			 * give-up limit govern any retry. */
+			int dn = open("/dev/null", O_RDWR);
+			if (dn >= 0) { dup2(dn, 0); dup2(dn, 1); dup2(dn, 2); if (dn > 2) close(dn); }
+			_exit(0);
+		}
+		ioctl(fd, TIOCSCTTY, 0); dup2(fd, 0); dup2(fd, 1); dup2(fd, 2); if (fd > 2) close(fd);
 		signal(SIGTTOU, SIG_DFL); signal(SIGTTIN, SIG_DFL); signal(SIGTSTP, SIG_DFL);
 		if (have_greeter) {
 			char* g[] = { (char*) "nwlogin", 0 };
@@ -298,7 +315,9 @@ int main(void) {
 	 * independent login sessions. The active VT at boot is tty1, where the user lands. */
 	for (int i = 1; i <= NVT; i++)
 		g_vtpid[i] = spawn_getty(i, newenv, shell, name0);
-	int nwm_pid = spawn_nwm(newenv);          /* the graphics VT (tty7), if nwm + /dev/fb0 exist */
+	long long nwm_started = now_ms();         /* when the current graphics session was launched */
+	int nwm_fastfails = 0;                    /* consecutive immediate exits (broken greeter/nwm) */
+	int nwm_pid = spawn_nwm(newenv, 0);       /* the graphics VT (tty7), if nwm + /dev/fb0 exist */
 
 	/* Reaper: collect any child. If it was a console's login (or nwm), respawn it (getty-style,
 	 * with a short backoff so a crash-looping child can't spin). Other reaped pids (dropbear, an
@@ -312,8 +331,21 @@ int main(void) {
 		}
 		struct timespec bo = { 0, 200 * 1000 * 1000 };   // backoff vs a crash-looping child
 		if (nwm_pid > 0 && w == nwm_pid) {
+			/* The graphics session (greeter or nwm) exited. A healthy one runs until the user logs
+			 * out; an exit within a few hundred ms means the binary is broken (a wrong nwlogin, a
+			 * missing nwm, tty7 unavailable). Don't respawn a broken binary forever: after a couple
+			 * of immediate exits bypass the greeter and try nwm directly, and after a few give up so
+			 * the text VTs stay clean and usable. */
+			int fast = (now_ms() - nwm_started) < 700;
+			nwm_fastfails = fast ? nwm_fastfails + 1 : 0;
 			nanosleep(&bo, 0);
-			nwm_pid = spawn_nwm(newenv);
+			if (nwm_fastfails >= 4) {
+				note("init: graphics console disabled after repeated immediate exits\n");
+				nwm_pid = 0;                  /* stop respawning; tty1..6 logins keep working */
+			} else {
+				nwm_pid = spawn_nwm(newenv, nwm_fastfails >= 2);  /* >=2 rapid fails: skip greeter */
+				nwm_started = now_ms();
+			}
 			continue;
 		}
 		for (int i = 1; i <= NVT; i++) {

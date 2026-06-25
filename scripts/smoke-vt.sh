@@ -10,14 +10,20 @@
 #   A = tty1 after login (bash prompt)
 #   B = tty2 after Ctrl+Alt+F2 (a distinct, independent login)   -> A != B
 #   C = tty1 after Ctrl+Alt+F1 (back)                            -> A == C  (screen restored)
+#   D = tty7 after Ctrl+Alt+F7 + logging in at the graphical greeter (nwlogin -> nwm desktop)
 #
-# Pass iff A!=B and A==C and no kernel fault/panic is logged.
+# The D step is the graphics-VT gate: the greeter (nwlogin) is itself a TEXT login on tty7, so we
+# actually log in (jan/jan) and require the nwm DESKTOP to render — a wallpaper-rich frame with many
+# distinct colours. This catches a broken greeter binary (e.g. a stale image where nwlogin.nxe is
+# really toybox: "Unknown command nwlogin"), which can't be logged into and never reaches a desktop.
+#
+# Pass iff A!=B and A==C, the tty7 desktop renders (D is graphical), and no kernel fault/panic is logged.
 set -u
 IMG=disk/image64-grub2.img
 SER=/tmp/nanos-vtsmoke.log
 MON=/tmp/nanos-vtsmoke-qmon.sock
-A=/tmp/nanos-vt-A.ppm; B=/tmp/nanos-vt-B.ppm; C=/tmp/nanos-vt-C.ppm
-rm -f "$SER" "$MON" "$A" "$B" "$C"
+A=/tmp/nanos-vt-A.ppm; B=/tmp/nanos-vt-B.ppm; C=/tmp/nanos-vt-C.ppm; D=/tmp/nanos-vt-D.ppm
+rm -f "$SER" "$MON" "$A" "$B" "$C" "$D"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }
 
 pkill -9 -f "qemu-system-x86_64.*$IMG" 2>/dev/null
@@ -34,9 +40,9 @@ if ! grep -q "nanos login:" "$SER" 2>/dev/null; then
 	echo "FAIL: never reached login"; tail -20 "$SER" 2>/dev/null; exit 1
 fi
 
-python3 - "$MON" "$A" "$B" "$C" <<'PY'
+python3 - "$MON" "$A" "$B" "$C" "$D" <<'PY'
 import socket,time,sys
-MON,A,B,C = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+MON,A,B,C,D = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 def cmd(line):
     s=socket.socket(socket.AF_UNIX)
     try: s.connect(MON)
@@ -57,6 +63,14 @@ keys(["ctrl-alt-f2"]); time.sleep(3.5)
 cmd("screendump "+B); time.sleep(0.8)          # tty2 (fresh login)
 keys(["ctrl-alt-f1"]); time.sleep(3.5)         # switch back; the kernel repaints tty1's saved grid
 cmd("screendump "+C); time.sleep(0.8)          # back to tty1 — must equal A (state restored)
+# tty7: the graphical greeter. nwlogin is a text login ON the graphics VT, so log in jan/jan and
+# require the nwm desktop to come up (verified by the colour-richness oracle below).
+keys(["ctrl-alt-f7"]); time.sleep(4.0)         # greeter renders its "NanOS graphical login" prompt
+for c in "jan": keys([c])
+keys(["ret"]); time.sleep(2.0)                 # username -> password prompt
+for c in "jan": keys([c])
+keys(["ret"]); time.sleep(10.0)                # auth + setuid + exec nwm + first full desktop paint
+cmd("screendump "+D); time.sleep(0.8)          # tty7 — must be the nwm desktop (wallpaper, many colours)
 PY
 sleep 1
 
@@ -74,5 +88,31 @@ fi
 if ! cmp -s "$A" "$C"; then
 	echo "x86_64 VT switch: FAIL — Ctrl+Alt+F1 did not restore tty1 (tty1 != tty1-after-roundtrip)"; exit 1
 fi
-echo "x86_64 VT switch: PASS (tty1 != tty2, and tty1 restored after the round-trip)"
+# tty7 graphics gate: D must be the nwm desktop, not a text screen (login prompt OR a broken-greeter
+# error). A text console is ~black background + white glyphs (a handful of distinct colours); the nwm
+# desktop cover-fits a PNG wallpaper (thousands). Count distinct RGB triples in the P6 screendump.
+[ -s "$D" ] || { echo "x86_64 VT switch: FAIL — missing tty7 screendump $D (F7/greeter never completed)"; tail -15 "$SER"; exit 1; }
+NCOL=$(python3 - "$D" <<'PY'
+import sys
+with open(sys.argv[1],"rb") as f: data=f.read()
+# Parse the P6 header: "P6\n<w> <h>\n<maxval>\n" (tokens may be split across whitespace/newlines).
+assert data[:2]==b"P6", "not a P6 PPM"
+i=2; tok=[]
+while len(tok)<3:
+    while i<len(data) and data[i] in b" \t\n\r": i+=1
+    s=i
+    while i<len(data) and data[i] not in b" \t\n\r": i+=1
+    tok.append(int(data[s:i]))
+i+=1  # single whitespace after maxval
+px=data[i:]
+cols=set()
+for p in range(0, len(px)-2, 3):           # every pixel; set dedups
+    cols.add(px[p]<<16 | px[p+1]<<8 | px[p+2])
+print(len(cols))
+PY
+)
+if [ "${NCOL:-0}" -lt 200 ]; then
+	echo "x86_64 VT switch: FAIL — tty7 desktop did not render (only ${NCOL:-0} distinct colours; greeter likely broken, e.g. a stale nwlogin.nxe)"; tail -15 "$SER"; exit 1
+fi
+echo "x86_64 VT switch: PASS (tty1 != tty2, tty1 restored, and tty7 nwm desktop rendered: $NCOL colours)"
 exit 0
