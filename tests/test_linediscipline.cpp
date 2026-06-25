@@ -66,6 +66,31 @@ TEST_CASE("overflow drops chars past capacity but still commits") {
 	CHECK(n == LineDiscipline::CAP);     // capacity incl. the newline slot
 }
 
+TEST_CASE("ECHO off (password entry): chars accumulate + line commits but nothing echoes") {
+	LineDiscipline ld;
+	Echo echo;
+	ld.setEcho(false);
+	CHECK(!ld.echoOn());
+	ld.push('s', echo);
+	ld.push('e', echo);
+	ld.push('c', echo);
+	ld.push('\b', echo);                 // edits invisibly: erases 'c'
+	ld.push('\n', echo);
+	CHECK(ld.lineReady());
+	CHECK(echo.n == 0);                  // password never reached the display
+
+	char out[16];
+	int n = ld.takeLine(out, sizeof out);
+	CHECK(n == 3);                       // "se\n"
+	CHECK(memcmp(out, "se\n", 3) == 0);
+
+	// Re-enabling ECHO restores normal echoing.
+	ld.setEcho(true);
+	ld.push('x', echo);
+	ld.push('\n', echo);
+	CHECK(echo.is("x\n"));
+}
+
 TEST_CASE("ctrl-D on empty line signals EOF (zero-length line ready)") {
 	LineDiscipline ld;
 	Echo echo;

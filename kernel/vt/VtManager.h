@@ -58,6 +58,11 @@ public:
 	// -> its tty); feedActive() runs the active VT's input (echo writes its fbcon).
 	void write(int vtIndex, const char* buf, unsigned n);
 	void feedActive(unsigned char sc);
+	// VT_SETMODE(VT_PROCESS) on the ALREADY-ACTIVE graphics VT: no switch occurs to trigger the
+	// acquire signal, so deliver it now — the owner takes the display immediately. This is the
+	// greeter->compositor handoff: nwm is exec'd onto the active tty7 and must draw without waiting
+	// for a switch-in that will never come.
+	void acquireIfActive(int n);
 	void panicSwitchToText();                    // fault/panic: force VT1 visible (no graphics handshake)
 	void kernelPutc(char c);                     // kernel console output (VT1) + serial mirror
 	void kernelClear();                          // clear the kernel console (VT1)

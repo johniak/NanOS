@@ -15,9 +15,14 @@ class LineDiscipline {
 public:
 	static constexpr int CAP = 256;   // max chars per line incl. the trailing '\n'
 
-	LineDiscipline() : m_len(0), m_ready(false), m_readyLen(0) {}
+	LineDiscipline() : m_len(0), m_ready(false), m_readyLen(0), m_echo(true) {}
 
-	// Feed one input char; `echo` is called for each char to display.
+	// Echo control (termios ECHO). When off, line editing still works (chars accumulate, backspace
+	// erases) but nothing is displayed — the contract a password prompt relies on. Default on.
+	void setEcho(bool on) { m_echo = on; }
+	bool echoOn() const { return m_echo; }
+
+	// Feed one input char; `echo` is called for each char to display (only when ECHO is on).
 	template <class Echo>
 	void push(char c, Echo& echo) {
 		if (m_ready)
@@ -26,7 +31,7 @@ public:
 		if (c == '\b' || c == 127) {         // backspace / DEL
 			if (m_len > 0) {
 				m_len--;
-				echo('\b'); echo(' '); echo('\b');
+				if (m_echo) { echo('\b'); echo(' '); echo('\b'); }
 			}
 			return;
 		}
@@ -37,13 +42,13 @@ public:
 		if (c == '\n' || c == '\r') {
 			if (m_len < CAP)
 				m_buf[m_len++] = '\n';
-			echo('\n');
+			if (m_echo) echo('\n');
 			commit();
 			return;
 		}
 		if (m_len < CAP) {                   // printable; drop silently on overflow
 			m_buf[m_len++] = c;
-			echo(c);
+			if (m_echo) echo(c);
 		}
 	}
 
@@ -67,6 +72,7 @@ private:
 	int  m_len;
 	bool m_ready;
 	int  m_readyLen;
+	bool m_echo;        // termios ECHO: echo typed chars to the display (off for password entry)
 };
 
 }  // namespace kernel

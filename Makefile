@@ -1610,8 +1610,8 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture
-SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
+USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin nwlogin dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture
+SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm nwlogin socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
 APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest pthrtest pthrstress pfract smptorture nettorture
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
@@ -1845,6 +1845,7 @@ $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
 $(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
+$(BINFOLDER)nwlogin.nxe:   $(DYN_DEPS) $(BINFOLDER)nwlogin.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
 $(BINFOLDER)randhex.nxe:   $(DYN_DEPS) $(BINFOLDER)randhex.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
@@ -2047,7 +2048,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 X64_SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
 # NanWM compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
-X64_GUI_PROGS=nwm
+X64_GUI_PROGS=nwm nwlogin
 # NanWM desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
 # (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.

@@ -44,6 +44,7 @@ int VtTty::ioctl(unsigned cmd, void* arg) {
 		if (!arg) return -EINVAL;
 		v->termios() = *(const Termios*) arg;
 		v->setRaw((v->termios().c_lflag & TL_ICANON) == 0);   // ICANON cleared -> raw line discipline
+		v->setEcho((v->termios().c_lflag & TL_ECHO) != 0);    // AFTER setRaw (it resets echo to on)
 		return 0;
 	case IOCTL_TIOCGWINSZ: {
 		if (!arg) return -EINVAL;
@@ -88,6 +89,9 @@ int VtTty::ioctl(unsigned cmd, void* arg) {
 		vt_mode* vm = (vt_mode*) arg;
 		Process* p = ProcTable::current();
 		v->setVtMode(vm->mode, vm->relsig, vm->acqsig, (vm->mode == VT_PROCESS && p) ? p->pid : 0);
+		// If the owner claims an already-active graphics VT, hand it the display now (no switch will
+		// fire the acquire signal) — the greeter->nwm handoff on the live tty7.
+		if (vm->mode == VT_PROCESS) g_vtmgr->acquireIfActive(idx);
 		return 0;
 	}
 	case VT_RELDISP:

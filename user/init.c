@@ -212,22 +212,31 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
 	return pid;
 }
 
-#define NWM_PATH "/disks/main/nanos/bin/nwm.nxe"
+#define NWM_PATH     "/disks/main/nanos/bin/nwm.nxe"
+#define NWLOGIN_PATH "/disks/main/nanos/bin/nwlogin.nxe"
 
-/* Launch the window manager on the graphics VT (tty7). nwm opens /dev/tty7 itself (KD_GRAPHICS +
- * VT_SETMODE) and /dev/fb0; we just give it its own session + ttyN as stdin/out/err. Skipped if
- * nwm or the framebuffer is absent (a text-only image still boots). Returns the pid (0 if skipped). */
+/* Launch the graphics VT (tty7), display-manager style: we give the child its own session with
+ * tty7 as the controlling terminal + stdin/out/err, then exec the GREETER (nwlogin), which
+ * authenticates a user and execs nwm AS THAT USER — so the desktop never runs as root. If the
+ * greeter is absent we fall back to running nwm directly (the legacy behaviour) so a graphics
+ * image still boots. Skipped entirely if nwm or the framebuffer is missing (text-only image).
+ * Returns the pid (0 if skipped) so the reaper can respawn it on exit (greeter/getty style). */
 static int spawn_nwm(char* const* env)
 {
 	if (access(NWM_PATH, X_OK) != 0 || access("/dev/fb0", F_OK) != 0)
 		return 0;
+	int have_greeter = (access(NWLOGIN_PATH, X_OK) == 0);
 	int pid = fork();
 	if (pid == 0) {
 		setsid();
 		int fd = open("/dev/tty7", O_RDWR);
 		if (fd >= 0) { ioctl(fd, TIOCSCTTY, 0); dup2(fd, 0); dup2(fd, 1); dup2(fd, 2); if (fd > 2) close(fd); }
 		signal(SIGTTOU, SIG_DFL); signal(SIGTTIN, SIG_DFL); signal(SIGTSTP, SIG_DFL);
-		char* a[] = { (char*) "nwm", 0 };
+		if (have_greeter) {
+			char* g[] = { (char*) "nwlogin", 0 };
+			execve(NWLOGIN_PATH, g, env);   /* greeter -> auth -> setuid -> exec nwm */
+		}
+		char* a[] = { (char*) "nwm", 0 };   /* no greeter (or it failed to exec): run nwm directly */
 		execve(NWM_PATH, a, env);
 		_exit(127);
 	}

@@ -18,6 +18,12 @@ void VtManager::init(const FbSurface& s, VtSignalFn sig, VtSerialFn serial) {
 
 // Make VT n the owning/visible console: a text VT blits its whole grid; a process-mode graphics
 // VT is told to redraw (acqsig) and the kernel draws nothing on it. Caller holds m_lock.
+void VtManager::acquireIfActive(int n) {
+	RecursiveIrqGuard g(m_lock);
+	if (n >= 1 && n <= kVtCount && n == m_active)
+		acquire(n);                  // already visible -> hand it the display now (sends acqsig)
+}
+
 void VtManager::acquire(int n) {
 	VtConsole& v = m_vt[n];
 	if (v.mode() == KD_GRAPHICS) {

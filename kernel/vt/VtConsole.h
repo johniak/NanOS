@@ -57,6 +57,9 @@ public:
 	Termios& termios() { return m_termios; }
 	bool raw() const { return m_raw; }
 	void setRaw(bool r);
+	// termios ECHO: whether the cooked line discipline echoes typed input (off for password entry).
+	// Apply AFTER setRaw — setRaw rebuilds the line discipline (resetting echo to its default on).
+	void setEcho(bool e) { m_line.setEcho(e); }
 
 	// Input: feed one scancode (decoder -> line discipline / raw ring, signals, wake readers);
 	// blocking read; readiness for poll().
