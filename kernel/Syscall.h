@@ -108,6 +108,7 @@ class Syscalls {
 	struct Fd {
 		bool used;
 		bool isConsole;
+		int  vt;            // for an isConsole fd: which VT (1..7) it reads/writes; 0 = pre-VT fallback
 		String path;
 		off_t offset;       // 64-bit file position
 		off_t size;         // 64-bit cached size
@@ -250,6 +251,9 @@ public:
 	// arch::inputSetRaw, so tcsetattr(raw) actually switches the input mode.
 	bool consoleRaw() { return (consoleTermios.c_lflag & TL_ICANON) == 0; }
 	bool isConsoleFd(int fd) { return valid(fd) && fds[fd].isConsole; }
+	// The VT a console fd is bound to (1..7), or -1 if it is not a console fd. The default
+	// stdin/stdout/stderr (0/1/2) bind to VT 1; fork/dup propagate the binding.
+	int consoleVt(int fd) { return isConsoleFd(fd) ? fds[fd].vt : -1; }
 	// If `fd` refers to a tty (its device answers TIOCGPGRP), return that tty's foreground
 	// process group; otherwise -1. The dispatch uses this to raise SIGTTIN on a background
 	// process reading the controlling terminal.

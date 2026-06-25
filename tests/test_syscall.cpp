@@ -117,6 +117,26 @@ TEST_CASE("console termios round-trips and TCSETS drives canonical/raw") {
 	CHECK(!sc.isConsoleFd(99));
 }
 
+TEST_CASE("console fds bind to a VT (default VT1); the binding propagates on dup/fork") {
+	Syscalls sc(mountFixture(), sink);
+	// The default stdin/stdout/stderr are console fds bound to VT 1.
+	CHECK(sc.consoleVt(0) == 1);
+	CHECK(sc.consoleVt(1) == 1);
+	CHECK(sc.consoleVt(2) == 1);
+	CHECK(sc.consoleVt(99) == -1);     // not a valid fd
+	// dup2 carries the VT binding to the new descriptor.
+	REQUIRE(sc.dup2(1, 7) == 7);
+	CHECK(sc.consoleVt(7) == 1);
+	// fork (copy ctor) inherits the bindings.
+	Syscalls child(sc);
+	CHECK(child.consoleVt(0) == 1);
+	CHECK(child.consoleVt(7) == 1);
+	// A non-console fd (an opened file) reports no VT binding.
+	int fd = sc.open("/hello.txt", 0);
+	REQUIRE(fd >= 3);
+	CHECK(sc.consoleVt(fd) == -1);
+}
+
 TEST_CASE("sys_write to a regular file persists and reads back") {
 	Syscalls sc(mountFixture(), sink);
 	int fd = sc.open("/hello.txt", 0);

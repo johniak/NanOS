@@ -11,6 +11,8 @@
 #include "Route.h"      // SIOCADDRT
 #include "Packet.h"     // AF_PACKET (sockaddr_ll marshalling, ifindex)
 #include "Unix.h"       // AF_UNIX (sockaddr_un marshalling, socketpair)
+#include "vt/VtManager.h"   // g_vtmgr: the default console fds (0/1/2) bind to a VT
+#include "vt/VtConsole.h"
 #include <arch/input.h>
 
 namespace kernel {
@@ -53,6 +55,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 	for (int i = 0; i < MAXFD; i++) {
 		fds[i].used = false;
 		fds[i].isConsole = false;
+		fds[i].vt = 0;
 		fds[i].offset = 0;
 		fds[i].size = 0;
 		fds[i].flags = 0;
@@ -62,10 +65,13 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].sock = 0;
 		fds[i].isChar = false;
 	}
-	// fd 0,1,2 = stdin/stdout/stderr -> console.
+	// fd 0,1,2 = stdin/stdout/stderr -> console, bound to VT 1 (the kernel console). init/getty
+	// reopen /dev/ttyN explicitly for their text VTs; this default only matters for PID 1 before
+	// it forks (and any child that inherits 0/1/2 without reopening).
 	for (int i = 0; i < 3; i++) {
 		fds[i].used = true;
 		fds[i].isConsole = true;
+		fds[i].vt = 1;
 	}
 }
 
@@ -214,6 +220,7 @@ void Syscalls::closeCloexec() {
 void Syscalls::shareInto(int dst, int src) {
 	fds[dst].used = true;
 	fds[dst].isConsole = fds[src].isConsole;
+	fds[dst].vt = fds[src].vt;
 	fds[dst].path = fds[src].path;
 	fds[dst].offset = fds[src].offset;
 	fds[dst].size = fds[src].size;
@@ -356,9 +363,15 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 			return -EAGAIN;                   // empty but writers remain -> would block
 		return r;                             // r>0 = data; r==0 = EOF (all writers closed)
 	}
-	if (fds[fd].isConsole)
+	if (fds[fd].isConsole) {
+		// Read from the VT this fd is bound to (default VT1), not whatever VT happens to be
+		// active — so a backgrounded PID-1 console fd never steals the foreground VT's input.
 		// cooked line or raw bytes; 0 = EOF. O_NONBLOCK -> -EAGAIN instead of blocking.
-		return arch::inputRead((char*) buf, n, (fds[fd].flags & O_NONBLOCK) != 0);
+		bool nb = (fds[fd].flags & O_NONBLOCK) != 0;
+		VtConsole* v = g_vtmgr ? g_vtmgr->vt(fds[fd].vt) : 0;
+		if (v) return v->read((char*) buf, n, nb);
+		return arch::inputRead((char*) buf, n, nb);   // pre-VT fallback (early boot / host tests)
+	}
 	int r = vfs->read(fds[fd].path, n, (unsigned) fds[fd].offset, buf);
 	if (r < 0)
 		return r;   // propagate the error (e.g. -EAGAIN would-block, -EIO device error)
@@ -382,8 +395,15 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 			return -EAGAIN;                   // full -> would block
 		return w;
 	}
-	if (fds[fd].isConsole)
+	if (fds[fd].isConsole) {
+		// Write to the bound VT through the manager's locked output funnel (rasterizes iff that
+		// VT is live); falls back to the injected console sink pre-VT / in host tests.
+		if (g_vtmgr && g_vtmgr->vt(fds[fd].vt)) {
+			g_vtmgr->write(fds[fd].vt, (const char*) buf, n);
+			return (int) n;
+		}
 		return consoleWrite((const char*) buf, n);
+	}
 	if (fds[fd].flags & O_APPEND)             // O_APPEND: each write lands at end-of-file
 		fds[fd].offset = fds[fd].size;
 	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
