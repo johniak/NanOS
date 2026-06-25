@@ -29,8 +29,7 @@ TEST_CASE("VT_ACTIVATE via ioctl switches the active console; VT_GETSTATE report
 	static unsigned char buf[80*64*4];
 	VtManager* m = mgr(buf);
 	VtTty tty(1);
-	int n = 4;
-	CHECK(tty.ioctl(VT_ACTIVATE, &n) == 0);
+	CHECK(tty.ioctl(VT_ACTIVATE, (void*) 4) == 0);   // VT_ACTIVATE: VT number BY VALUE (Linux ABI)
 	CHECK(m->active() == 4);
 	vt_stat st;
 	CHECK(tty.ioctl(VT_GETSTATE, &st) == 0);
@@ -41,10 +40,9 @@ TEST_CASE("KDSETMODE/KDGETMODE round-trips the console graphics mode") {
 	static unsigned char buf[80*64*4];
 	VtManager* m = mgr(buf);
 	VtTty tty(3);
-	int mode = KD_GRAPHICS;
-	CHECK(tty.ioctl(KDSETMODE, &mode) == 0);
+	CHECK(tty.ioctl(KDSETMODE, (void*) (long) KD_GRAPHICS) == 0);   // KDSETMODE: mode BY VALUE
 	int got = 0;
-	CHECK(tty.ioctl(KDGETMODE, &got) == 0);
+	CHECK(tty.ioctl(KDGETMODE, &got) == 0);                        // KDGETMODE: BY POINTER
 	CHECK(got == KD_GRAPHICS);
 	CHECK(m->vt(3)->mode() == KD_GRAPHICS);
 }
@@ -52,7 +50,7 @@ TEST_CASE("KDSETMODE/KDGETMODE round-trips the console graphics mode") {
 TEST_CASE("tty0 resolves to the active VT") {
 	static unsigned char buf[80*64*4];
 	VtManager* m = mgr(buf);
-	int n = 5; VtTty(1).ioctl(VT_ACTIVATE, &n);
+	VtTty(1).ioctl(VT_ACTIVATE, (void*) 5);          // by value
 	VtTty active(0);                            // /dev/tty0
 	int pg = 77;
 	CHECK(active.ioctl(IOCTL_TIOCSPGRP, &pg) == 0);

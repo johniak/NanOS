@@ -73,6 +73,7 @@ static volatile int g_own = 0;            /* do we own the framebuffer? (VT_SETM
 static int g_ttyfd = -1;                  /* our graphics VT (tty7) for KD/VT ioctls + VT_RELDISP    */
 static int g_wakefd[2] = { -1, -1 };      /* self-pipe so VT signals wake the poll() loop            */
 static int g_started = 0;                 /* have we spawned the desktop yet? (once, on first own)  */
+static volatile int g_force_full = 0;     /* next present() must repaint the WHOLE screen (after acquire) */
 static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
 static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
 static struct nw_surface g_bd_surf;
@@ -423,6 +424,7 @@ static void present(void)
 		nw_render_dirty_frames(&S);              /* refresh any window whose content/focus changed */
 		int dx, dy, dw, dh;
 		int have = nw_peek_damage(&S, &dx, &dy, &dw, &dh);
+		if (g_force_full) { have = 0; g_force_full = 0; }   /* after a VT acquire: full recompose + blit */
 		if (have) {                                /* recompose only the damage region */
 			nw_surface_clip(&g_scene_surf, dx, dy, dw, dh);
 			nw_surface_clip(&g_scratch_surf, dx, dy, dw, dh);   /* render windows only there too */
@@ -574,7 +576,8 @@ static void vt_on_release(int s) {  /* SIGUSR1: kernel asks us to yield the cons
 static void vt_on_acquire(int s) {  /* SIGUSR2: kernel handed the console back to us */
 	(void) s;
 	g_own = 1;
-	g_prev_cx = -1;                 /* force the cursor + a full scene repaint on the next present() */
+	g_force_full = 1;               /* the LFB held another VT — repaint the whole screen, not damage */
+	g_prev_cx = -1;                 /* force the cursor redraw too */
 	S.dirty = 1;
 	if (g_wakefd[1] >= 0) { char c = 'a'; write(g_wakefd[1], &c, 1); }
 }
@@ -687,8 +690,10 @@ int main(void)
 				pfd[n].fd = cl_evt[i]; pfd[n].events = POLLOUT; pfd[n].revents = 0; n++;
 			}
 		}
-		/* The desktop persists with zero windows — leave only via Quit/Shutdown. */
-		poll(pfd, n, -1);
+		/* A modest timeout (not -1): a VT acquire/release arrives as a signal, and a self-pipe poke
+		 * may race the poll re-arm, so wake periodically to service g_own changes + the menu clock.
+		 * present() early-outs when nothing changed, so an idle wake is cheap. */
+		poll(pfd, n, 200);
 
 		/* COALESCE: drain every input + request before drawing */
 		if (g_wakefd[0] >= 0) { char wb[16]; while (read(g_wakefd[0], wb, sizeof wb) > 0) {} }  /* drain VT-signal pokes */

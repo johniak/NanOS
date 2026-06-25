@@ -62,8 +62,9 @@ int VtTty::ioctl(unsigned cmd, void* arg) {
 		if (p) p->cttyVt = idx;       // this terminal becomes the caller's controlling tty
 		return 0;
 	}
-	case VT_ACTIVATE:   if (!arg) return -EINVAL; g_vtmgr->switchTo(*(int*) arg); return 0;
-	case VT_WAITACTIVE: if (!arg) return -EINVAL; return g_vtmgr->active() == *(int*) arg ? 0 : 0;  // non-blocking ack
+	// VT_ACTIVATE / VT_WAITACTIVE take the VT number BY VALUE (Linux ABI), not a pointer.
+	case VT_ACTIVATE:   g_vtmgr->switchTo((int) (long) arg); return 0;
+	case VT_WAITACTIVE: return 0;   // non-blocking ack (the target is arg-by-value; we don't block)
 	case VT_GETSTATE: {
 		if (!arg) return -EINVAL;
 		vt_stat* st = (vt_stat*) arg;
@@ -75,7 +76,7 @@ int VtTty::ioctl(unsigned cmd, void* arg) {
 	}
 	case VT_OPENQRY:  if (!arg) return -EINVAL; *(int*) arg = g_vtmgr->openqry(); return 0;
 	case KDGETMODE:   if (!arg) return -EINVAL; *(int*) arg = v->mode(); return 0;
-	case KDSETMODE:   if (!arg) return -EINVAL; v->setMode(*(int*) arg); return 0;
+	case KDSETMODE:   v->setMode((int) (long) arg); return 0;   // mode is BY VALUE (Linux ABI), not a pointer
 	case VT_GETMODE: {
 		if (!arg) return -EINVAL;
 		vt_mode* vm = (vt_mode*) arg;
