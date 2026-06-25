@@ -653,7 +653,14 @@ int main(void)
 	g_ttyfd = open("/dev/tty7", O_RDWR);
 	if (g_ttyfd >= 0) {
 		set_cloexec(g_ttyfd);
-		if (pipe(g_wakefd) == 0) { set_cloexec(g_wakefd[0]); set_cloexec(g_wakefd[1]); }
+		if (pipe(g_wakefd) == 0) {
+			set_cloexec(g_wakefd[0]); set_cloexec(g_wakefd[1]);
+			/* The self-pipe is a poll() wakeup ONLY: the loop drains it with `while (read() > 0)`,
+			 * which needs the read end non-blocking (else it blocks on the empty pipe and the whole
+			 * event loop stalls). The write end is non-blocking too so the signal handler's poke can
+			 * never block if the pipe is momentarily full. */
+			set_nonblock(g_wakefd[0]); set_nonblock(g_wakefd[1]);
+		}
 		signal(SIGUSR1, vt_on_release);
 		signal(SIGUSR2, vt_on_acquire);
 		ioctl(g_ttyfd, KDSETMODE, KD_GRAPHICS);
@@ -695,8 +702,10 @@ int main(void)
 		 * present() early-outs when nothing changed, so an idle wake is cheap. */
 		poll(pfd, n, 200);
 
-		/* COALESCE: drain every input + request before drawing */
-		if (g_wakefd[0] >= 0) { char wb[16]; while (read(g_wakefd[0], wb, sizeof wb) > 0) {} }  /* drain VT-signal pokes */
+		/* COALESCE: drain every input + request before drawing. The (int) cast matches the other
+		 * drain loops: libc's read() returns a 32-bit int, but <unistd.h> prototypes it ssize_t, so an
+		 * uncast -1 (EAGAIN) widens to 0xFFFFFFFF (> 0) and the loop would spin forever. */
+		if (g_wakefd[0] >= 0) { char wb[16]; while ((int) read(g_wakefd[0], wb, sizeof wb) > 0) {} }  /* drain VT-signal pokes */
 		if (g_own && !g_started)              /* first switch to F7: bring up the desktop now */
 			start_desktop();
 		drain_keyboard(in0);
