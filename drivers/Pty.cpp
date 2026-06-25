@@ -1,7 +1,19 @@
 #include "Pty.h"
 #include "Signal.h"   // SIGINT / SIGQUIT / SIGTSTP numbers
+#include "Process.h"  // PtySlave TIOCSCTTY records the controlling terminal on the process
 
 namespace kernel {
+
+// TIOCSCTTY on the slave (login_tty / nwterm) makes this pty the caller's controlling terminal,
+// so /dev/tty (ControllingTty) forwards to it. Other ioctls go to the shared Pty line discipline.
+int PtySlave::ioctl(unsigned cmd, void* arg) {
+	if (cmd == IOCTL_TIOCSCTTY) {
+		Process* p = ProcTable::current();
+		if (p) p->cttyDev = this;
+		return 0;
+	}
+	return m_pty->ioctl(cmd, arg);
+}
 
 Pty::Pty() {
 	m_s2mHead = m_s2mTail = m_s2mCount = 0;

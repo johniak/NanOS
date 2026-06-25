@@ -443,13 +443,14 @@ void Kernel::start() {
 	pty->setSignalFn(ptySignal, 0);
 	root->addChar(root->dev(), "ptmx", new PtyMaster(pty), 0666);
 	root->addChar(root->dev(), "pts0", new PtySlave(pty), 0666);
-	// /dev/tty = the controlling terminal. With virtual terminals it resolves per-caller to that
-	// process's controlling VT (set via TIOCSCTTY); a VtTty(-1) does that resolution. Without a
-	// framebuffer (no VTs) it falls back to the single pty slave, the legacy behaviour.
-	// NOTE: a shell whose controlling terminal is the pty (nterm, Phase 5) still reaches its tty
-	// via /dev/pts0; unified VT-or-pts /dev/tty resolution is a follow-up.
+	// /dev/tty = the controlling terminal, resolved per-caller. ControllingTty forwards to the
+	// process's Process::cttyDev — the VtTty a getty adopted (TIOCSCTTY on /dev/ttyN) OR the
+	// PtySlave an nterm/ssh shell adopted (TIOCSCTTY on /dev/pts0) — so /dev/tty is unified across
+	// VTs and the pty. Without a framebuffer (no VTs) the only ctty is the pty, but ControllingTty
+	// still routes there once the shell TIOCSCTTYs it; keep the direct PtySlave as the legacy
+	// fallback for that headless path.
 	if (kernel::g_vtmgr)
-		root->addChar(root->dev(), "tty", new kernel::VtTty(-1), 0666);
+		root->addChar(root->dev(), "tty", new kernel::ControllingTty(), 0666);
 	else
 		root->addChar(root->dev(), "tty", new PtySlave(pty), 0666);
 	okEnd();

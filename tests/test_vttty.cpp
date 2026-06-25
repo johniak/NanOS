@@ -3,6 +3,8 @@
 #include "vt/VtManager.h"
 #include "vt/VtIoctl.h"
 #include "Termios.h"
+#include "Process.h"
+#include "Pty.h"
 using namespace kernel;
 
 static VtManager* mgr(unsigned char* buf) {
@@ -55,4 +57,56 @@ TEST_CASE("tty0 resolves to the active VT") {
 	int pg = 77;
 	CHECK(active.ioctl(IOCTL_TIOCSPGRP, &pg) == 0);
 	CHECK(m->vt(5)->fgPgrp() == 77);           // routed to VT5 (the active one)
+}
+
+TEST_CASE("/dev/tty (ControllingTty) is ENXIO until TIOCSCTTY, then forwards to the adopted VT") {
+	static unsigned char buf[80*64*4];
+	VtManager* m = mgr(buf);
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	ProcTable::setCurrent(p);
+
+	ControllingTty ctty;                       // /dev/tty
+	// No controlling terminal yet -> every op reports ENXIO / not-ready.
+	CHECK(p->cttyDev == nullptr);
+	int pg = 0;
+	CHECK(ctty.ioctl(IOCTL_TIOCGPGRP, &pg) == -ENXIO);
+	char c;
+	CHECK(ctty.read(0, &c, 1) == -ENXIO);
+	CHECK(ctty.pollReady(POLLIN) == 0);
+
+	// A getty adopts /dev/tty2 as its controlling terminal.
+	VtTty tty2(2);
+	CHECK(tty2.ioctl(IOCTL_TIOCSCTTY, (void*) 0) == 0);
+	CHECK(p->cttyDev == &tty2);
+
+	// /dev/tty now forwards to VT2: setting its fg pgrp lands on VT2.
+	pg = 91;
+	CHECK(ctty.ioctl(IOCTL_TIOCSPGRP, &pg) == 0);
+	CHECK(m->vt(2)->fgPgrp() == 91);
+}
+
+TEST_CASE("/dev/tty forwards to a pty slave when the controlling terminal is the pty") {
+	static unsigned char buf[80*64*4];
+	mgr(buf);
+	ProcTable::init();
+	Process* p = ProcTable::alloc(0);
+	ProcTable::setCurrent(p);
+
+	Pty pty;
+	PtySlave slave(&pty);
+	// The shell (login_tty/nwterm) adopts the pty slave as its controlling terminal.
+	CHECK(slave.ioctl(IOCTL_TIOCSCTTY, (void*) 0) == 0);
+	CHECK(p->cttyDev == &slave);
+
+	// /dev/tty now reads/writes the pty, NOT a VT: a line written to the master surfaces on
+	// the slave (cooked line discipline flushes on '\n'), and a read of /dev/tty returns it.
+	ControllingTty ctty;
+	const char* in = "x\n";
+	CHECK(pty.masterWrite(in, 2) == 2);        // emulator keystrokes -> slave input
+	char got[8] = {0};
+	int r = ctty.read(0, got, sizeof got);     // /dev/tty -> slave read
+	CHECK(r == 2);
+	CHECK(got[0] == 'x');
+	CHECK(got[1] == '\n');
 }

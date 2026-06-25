@@ -20,6 +20,7 @@ int setsid(void);
 int getpid(void);
 int ioctl(int fd, unsigned long request, ...);
 #define NWT_TIOCSPGRP   0x5410
+#define NWT_TIOCSCTTY   0x540E           /* adopt pts0 as the controlling terminal (so /dev/tty resolves here) */
 #define NWT_TIOCSWINSZ  0x5414           /* tell the pty its size so vim/bash size their screen */
 struct nwt_winsize { unsigned short row, col, xpixel, ypixel; };
 #include "nw_gfx.h"
@@ -125,11 +126,13 @@ static int spawn_shell(void)
 	if (pid == 0) {
 		/* Own session with pts0 as its job-control terminal, isolated from the console — else a
 		 * job-control shell (bash) grabs the console and writes to the screen, not the window.
-		 * No TIOCSCTTY in the kernel, so make pts0's foreground group our new session group; that
-		 * keeps bash's job-control gate (tcgetpgrp == our pgid) satisfied so it doesn't stop. */
+		 * TIOCSCTTY makes pts0 this session's controlling terminal (so /dev/tty resolves to the
+		 * pty, not a VT), and the foreground group = our new session group keeps bash's job-control
+		 * gate (tcgetpgrp == our pgid) satisfied so it doesn't stop. */
 		setsid();
 		int s = open("/dev/pts0", O_RDWR);
 		int pg = getpid();
+		ioctl(s, NWT_TIOCSCTTY, (void*) 0);
 		ioctl(s, NWT_TIOCSPGRP, &pg);
 		dup2(s, 0); dup2(s, 1); dup2(s, 2);
 		if (s > 2) close(s);

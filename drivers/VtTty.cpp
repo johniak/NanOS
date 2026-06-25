@@ -8,15 +8,11 @@
 
 namespace kernel {
 
-// /dev/tty (index -1) is the caller's controlling terminal; /dev/tty0 (index 0) is the active VT.
+// /dev/tty0 (index 0) is the active VT; /dev/tty1../dev/tty7 carry a fixed index.
 int VtTty::resolve() const {
 	if (!g_vtmgr) return 0;
 	if (m_index >= 1 && m_index <= kVtCount) return m_index;
-	if (m_index == 0) return g_vtmgr->active();
-	// controlling tty: the session's ctty VT, else the active one (refined once ctty is tracked).
-	Process* p = ProcTable::current();
-	int ctty = p ? p->cttyVt : 0;
-	return ctty ? ctty : g_vtmgr->active();
+	return g_vtmgr->active();    // index 0 (and any other sentinel) -> the active VT
 }
 
 int VtTty::read(unsigned, void* buf, unsigned n) {
@@ -59,7 +55,7 @@ int VtTty::ioctl(unsigned cmd, void* arg) {
 	}
 	case IOCTL_TIOCSCTTY: {
 		Process* p = ProcTable::current();
-		if (p) p->cttyVt = idx;       // this terminal becomes the caller's controlling tty
+		if (p) p->cttyDev = this;     // this VT becomes the caller's controlling tty (/dev/tty -> here)
 		return 0;
 	}
 	// VT_ACTIVATE / VT_WAITACTIVE take the VT number BY VALUE (Linux ABI), not a pointer.
@@ -115,6 +111,38 @@ WaitQueue* VtTty::waitQueue() {
 	int idx = resolve();
 	VtConsole* v = g_vtmgr ? g_vtmgr->vt(idx) : 0;
 	return v ? v->inputWaitQueue() : 0;
+}
+
+// ---- /dev/tty: forward to the caller's controlling terminal (cttyDev) ----------------------
+CharDevice* ControllingTty::target() const {
+	Process* p = ProcTable::current();
+	CharDevice* d = p ? p->cttyDev : 0;
+	return (d == this) ? 0 : d;   // never recurse into ourselves
+}
+
+int ControllingTty::read(unsigned off, void* buf, unsigned n) {
+	CharDevice* d = target();
+	return d ? d->read(off, buf, n) : -ENXIO;
+}
+int ControllingTty::write(unsigned off, const void* buf, unsigned n) {
+	CharDevice* d = target();
+	return d ? d->write(off, buf, n) : -ENXIO;
+}
+int ControllingTty::ioctl(unsigned cmd, void* arg) {
+	CharDevice* d = target();
+	return d ? d->ioctl(cmd, arg) : -ENXIO;
+}
+int ControllingTty::mmapInfo(uint64_t* p, unsigned* l) {
+	CharDevice* d = target();
+	return d ? d->mmapInfo(p, l) : -1;
+}
+short ControllingTty::pollReady(short events) {
+	CharDevice* d = target();
+	return d ? d->pollReady(events) : 0;
+}
+WaitQueue* ControllingTty::waitQueue() {
+	CharDevice* d = target();
+	return d ? d->waitQueue() : 0;
 }
 
 }  // namespace kernel

@@ -16,6 +16,7 @@ namespace kernel {
 
 struct Task;       // scheduler task (Scheduler.h)
 class Syscalls;    // per-process syscall state incl. the fd table (Syscall.h)
+struct CharDevice; // a tty device (VtTty / PtySlave) the process can adopt as its controlling terminal
 struct Process;
 
 // One freed range in a process's mmap window, recycled by a later mmap before the bump
@@ -114,7 +115,11 @@ struct Process {
 	// group (TIOCSPGRP) is the one that receives terminal-generated signals (Ctrl+C).
 	int pgid;            // process group id (group leader has pgid == pid)
 	int sid;             // session id (session leader has sid == pid)
-	int cttyVt;          // controlling terminal: a 1-based VT index (0 = none), set by TIOCSCTTY
+	// Controlling terminal: the tty device this session adopted via TIOCSCTTY (a VtTty for a text/
+	// graphics VT, or the PtySlave for a pty). /dev/tty resolves to it. 0 = no controlling tty.
+	// fork inherits the pointer (devices are stable, heap-registered in /dev); a fresh login session
+	// re-points it. This is what unifies /dev/tty across VTs and the pty.
+	CharDevice* cttyDev;
 
 	// CPU accounting (in timer ticks; the timer attributes each tick to the running process,
 	// split user vs system by the ring it interrupted). Surfaced in /proc/<pid>/stat.

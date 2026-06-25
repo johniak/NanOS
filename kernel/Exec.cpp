@@ -285,7 +285,7 @@ int forkProcess(arch::TrapFrame* tf) {
 		child->cmdline[i] = parent->cmdline[i];
 	child->pgid = parent->pgid;                // inherit the process group + session
 	child->sid = parent->sid;
-	child->cttyVt = parent->cttyVt;            // inherit the controlling terminal (VT)
+	child->cttyDev = parent->cttyDev;          // inherit the controlling terminal (VT or pty)
 	// POSIX: fork in a multithreaded process duplicates ONLY the calling thread — the child
 	// gets a single leader thread that is a copy of whichever parent thread issued fork(), NOT
 	// necessarily the parent's leader. So the per-thread state (block mask, TLS base) is inherited

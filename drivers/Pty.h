@@ -111,7 +111,9 @@ public:
 	void close() { m_pty->slaveClosed(); }    // last close -> the pty hangs up, master reads EOF
 	int read(unsigned, void* b, unsigned n) { return m_pty->slaveRead(b, n); }
 	int write(unsigned, const void* b, unsigned n) { return m_pty->slaveWrite(b, n); }
-	int ioctl(unsigned cmd, void* arg) { return m_pty->ioctl(cmd, arg); }
+	// Out-of-line (Pty.cpp): TIOCSCTTY adopts this slave as the caller's controlling terminal
+	// (Process::cttyDev) so /dev/tty resolves to the pty; everything else forwards to the Pty.
+	int ioctl(unsigned cmd, void* arg);
 	int mmapInfo(uint64_t*, unsigned*) { return -1; }
 	short pollReady(short events) {
 		short r = events & POLLOUT;
