@@ -107,8 +107,8 @@ int execProgram(Vfs* vfs, const char* path) {
 	int rc = (h->neededCount || h->importCount)
 			? dynLoadProgram(vfs, image, STAGE_CAP, space, &entry)
 			: loadStaged(&entry);
-	g_execLock.unlock();   // image is now copied into `space`; the staging window is free again
 	if (rc < 0) {
+		g_execLock.unlock();
 		arch::mmuFreeAddressSpace(space);
 		return rc;
 	}
@@ -126,6 +126,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	int argc = 0; while (argv[argc]) argc++;             // count, don't hard-code (a stale literal
 	int envc = 0; while (envp[envc]) envc++;             // silently truncated newly-added entries)
 	unsigned esp = arch::archLoadUser(space, h->loadBase, h->bssEnd, argv, argc, envp, envc);
+	g_execLock.unlock();   // archLoadUser has copied the image out of the staging window (see execve)
 	ProcTable::current()->space = space;
 	initBrk(ProcTable::current());
 	ProcTable::current()->mmapNext = 0;          // fresh image -> empty mmap window
@@ -217,13 +218,19 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	int rc = (h->neededCount || h->importCount)
 			? dynLoadProgram(vfs, image, STAGE_CAP, newSpace, &entry)
 			: loadStaged(&entry);
-	g_execLock.unlock();   // image is now copied into newSpace; the staging window is free again
 	if (rc < 0) {
+		g_execLock.unlock();
 		arch::mmuFreeAddressSpace(newSpace);
 		arch::mmuLoadDirPhys(userDir);
 		return rc;
 	}
+	// archLoadUser copies the image OUT of the shared staging window — it memcpy's from
+	// loadBase (== STAGE_BASE) into newSpace's private frames — so g_execLock MUST stay held across
+	// it. Releasing earlier (the old code unlocked right after the loader) would let a concurrent
+	// execve on another CPU read its own .nxe into STAGE_BASE mid-copy, so this process would get
+	// THAT program's image. Holding the lock through the copy closes that window on multi-core.
 	unsigned esp = arch::archLoadUser(newSpace, h->loadBase, h->bssEnd, argv, argc, envp, envc);
+	g_execLock.unlock();   // image now in newSpace's private frames; the staging window is free
 
 	// ---- POINT OF NO RETURN ----------------------------------------------------------------
 	// The new image loaded cleanly, so we now commit to replacing the process. POSIX: execve in a
