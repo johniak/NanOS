@@ -12,6 +12,7 @@
 #include "CloneFlags.h"
 #include "ThreadArea.h"   // UserDesc: CLONE_SETTLS reads the child's TLS base from it
 #include "String.h"
+#include "Console.h"     // surface a short staging read on the console (real-HW diagnostic)
 #include "memory_manager.h"   // malloc/free: process-table snapshots go on the heap, not the
                               // 8 KB kernel stack (the table now holds up to ProcTable::MAX)
 #include <arch/usermode.h>
@@ -171,8 +172,39 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	}
 	g_execLock.lock();   // SMP: own the shared staging window + loader globals for this load
 	char* image = (char*) STAGE_BASE;
-	if (vfs->read(pp, st.size, 0, image) < 0) {
+	// Require the WHOLE image to be read. The staging window is shared and reused across execs and
+	// is NOT zeroed, so a short/zero read (only <0 was checked before — a positive partial count
+	// slipped through) would leave the PREVIOUS program in the window and load THAT. In practice a
+	// getty execs toybox just before init execs the greeter, so a short greeter read ran toybox in
+	// its place ("toybox: Unknown command nwlogin"). Treat anything but a full read as a load error.
+	// Read the WHOLE image, LOOPING over short reads. A single vfs->read can return fewer bytes
+	// than requested (e.g. block-at-a-time on real hardware) — the old code issued one read and
+	// only checked for <0, so a partial read fell through and the loader ran whatever the PREVIOUS
+	// exec left in the shared, non-zeroed staging window. Since a getty execs toybox just before
+	// init execs the greeter, a short greeter read ran toybox in its place ("toybox: Unknown
+	// command nwlogin"). Loop to completion; treat a stall (0/<0 before EOF) as a load error.
+	unsigned got = 0;
+	int stalls = 0;
+	while (got < st.size) {
+		int r = vfs->read(pp, st.size - got, got, image + got);
+		if (r < 0)
+			break;                       // hard error: give up
+		if (r == 0) {                    // no progress this call: tolerate a few (flaky real-HW reads)
+			if (++stalls > 8)
+				break;
+			continue;
+		}
+		stalls = 0;
+		got += (unsigned) r;
+	}
+	if (got != st.size) {
 		g_execLock.unlock();
+		Console::write("exec: short read ");
+		Console::write((int) got);
+		Console::write("/");
+		Console::write((int) st.size);
+		Console::write(" ");
+		Console::writeLine(path);
 		arch::mmuLoadDirPhys(userDir);
 		return -1;
 	}
