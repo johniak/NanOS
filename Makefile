@@ -812,7 +812,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-vt smoke-smp verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-vt smoke-smp verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -827,6 +827,12 @@ smoke-x86_64: image64
 # device (no -drive disk) and assert the in-kernel xHCI+USB-core+MSC path mounts root and boots.
 smoke-usb: image64
 	bash scripts/smoke-usb.sh
+
+# `smoke-usb-smp` is the live-USB-on-multicore gate: root-on-USB + -smp 2 (the real Dell's config),
+# which exposed the xHCI event-ring data race between USB-MSC reads and the USB-HID poll thread.
+# Logs in at the tty7 greeter and requires the nwm desktop to render (a clean read path).
+smoke-usb-smp: image64
+	bash scripts/smoke-usb-smp.sh
 
 # `smoke-vt` is the virtual-terminal gate: boot, log in on tty1, and drive Ctrl+Alt+Fn via the QEMU
 # monitor — switching to tty2 must change the screen, switching back must restore it (byte-exact).
@@ -873,8 +879,8 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-vt smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + VT switch + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-vt smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
