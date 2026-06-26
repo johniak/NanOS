@@ -49,17 +49,34 @@ char buf[1024];
 
 namespace kernel {
 
-// Live system memory figures (kB) for /proc/meminfo. MemTotal is the whole RAM from the
-// boot map; MemFree is the free physical page frames; KHeap* is the kernel byte heap.
-unsigned sysMemTotalKb() { return (unsigned) (arch::bootMemTop() / 1024ull); }   // 64-bit top -> KB (fits unsigned up to 4 TiB)
+// Total usable RAM in bytes — the SUM of the boot map's usable regions, NOT bootMemTop() (the
+// highest usable *address*). On real hardware the span from low RAM up to the top is riddled with
+// PCI MMIO, ACPI/EFI-reserved and GPU-stolen holes; using the top address made MemTotal-MemFree
+// count those gigabytes of holes as "used" (~2.5 GiB phantom on a real laptop, near-0 in QEMU).
+// Computed once at boot in the free-marking pass (markFreeAndCount). bootMemTop() stays the top
+// address — correct for sizing the frame bitmap and the identity map.
+uint64_t g_usableRamBytes = 0;
+
+// Live system memory figures (kB) for /proc/meminfo. MemTotal is total usable RAM; MemFree is the
+// free physical page frames; KHeap* is the kernel byte heap.
+unsigned sysMemTotalKb() {
+	uint64_t b = g_usableRamBytes ? g_usableRamBytes : arch::bootMemTop();   // fallback before boot pass
+	return (unsigned) (b / 1024ull);
+}
 unsigned sysMemFreeKb()  { return (unsigned) (g_frames.freeCount() * (FRAME_SIZE / 1024u)); }
 unsigned sysHeapTotalKb() { return heapTotalBytes() / 1024u; }
 unsigned sysHeapFreeKb()  { return heapFreeBytes() / 1024u; }
 
-// Mark a usable physical range free in the frame allocator (arch reports only
-// usable ranges via <arch/bootinfo.h>).
-static void markFree(void* fa, uint64_t base, uint64_t len) {
-	((FrameAllocator*) fa)->markRangeFree(base, len);   // 64-bit: a range based >4 GiB must not wrap
+// Mark a usable physical range free in the frame allocator AND accumulate total usable RAM
+// (arch reports only usable ranges via <arch/bootinfo.h>). The length is clamped to the
+// frame-pool span so MemTotal stays consistent with MemFree (both bounded by the bitmap).
+struct UsableScan { FrameAllocator* fa; uint64_t top; };
+static void markFreeAndCount(void* c, uint64_t base, uint64_t len) {
+	UsableScan* s = (UsableScan*) c;
+	s->fa->markRangeFree(base, len);   // 64-bit: a range based >4 GiB must not wrap
+	uint64_t end = base + len;
+	if (end > s->top) end = s->top;    // drop anything beyond the bitmap-tracked span
+	if (end > base)   g_usableRamBytes += end - base;
 }
 
 // PTY terminal-generated signal (Ctrl+C/\/Z on the master) -> the tty's foreground process
@@ -239,7 +256,8 @@ static void okEnd() {
 void Kernel::initPaging() {
 	uint64_t top = arch::bootMemTop();   // 64-bit top-of-RAM (capped at the 16 GiB frame-pool capacity)
 	g_frames.init(top);
-	arch::bootMemForEachUsable(&g_frames, markFree);
+	UsableScan scan = { &g_frames, top };
+	arch::bootMemForEachUsable(&scan, markFreeAndCount);   // free each usable range + sum total usable RAM
 	arch::mmuInitKernel(g_frames, top);  // builds the full huge-page map, swaps CR3, brings up LAPIC
 
 	// If the bootloader gave us a graphics framebuffer (vesafb model), map its MMIO into
