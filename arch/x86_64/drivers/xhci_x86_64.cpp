@@ -496,6 +496,9 @@ void xhciInit() {
     Console::write(" @ BAR0=");
     Console::writeHex((uint64_t) g_mmioPhys);
     Console::writeLine("");
+    // Kernel-side build stamp from THIS (locked) file: proves the running KERNEL carries the xHCI
+    // serialization fix, independent of init's stamp. If this date is stale, the kernel.bin is old.
+    Console::writeLine("xHCI: serialized HC access (SMP-safe), build " __DATE__ " " __TIME__);
 
     biosHandoff();          // take the controller from BIOS/SMM (no-op on QEMU)
     intelPortRoute(d);      // route USB2 ports to xHCI on Intel (no-op elsewhere)

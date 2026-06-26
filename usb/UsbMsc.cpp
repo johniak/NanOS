@@ -1,6 +1,11 @@
 // usb/UsbMsc.cpp — BOT + SCSI read over the <arch/usbhc.h> host controller (MI). See UsbMsc.h.
 #include "UsbMsc.h"
+#include "UsbHcLock.h"
 namespace kernel {
+
+// The host-controller serialization lock (see UsbHcLock.h). Defined here; the USB-HID poll thread
+// references it via the extern to stay mutually exclusive with MSC commands.
+Spinlock g_usbHcLock;
 
 static int bulk(int slot, int ep, arch::UsbDir dir, void* data, uint32_t len) {
     auto ops = arch::usbHcOps(); if (!ops) return -1;
@@ -12,6 +17,10 @@ static int bulk(int slot, int ep, arch::UsbDir dir, void* data, uint32_t len) {
 
 // One Bulk-Only Transport command: CBW out -> optional data -> CSW in. Returns 0 on PASSED.
 static int bot(UsbMsc* m, const uint8_t* cdb, int cdbLen, arch::UsbDir dataDir, void* data, uint32_t dataLen) {
+    // Serialize the WHOLE command (CBW -> data -> CSW) against the USB-HID poll thread, so it cannot
+    // drain this transfer's completion off the shared event ring between our phases. RAII releases
+    // on every return path below.
+    SpinGuard _hc(g_usbHcLock);
     uint8_t cbw[31] = {0};
     cbw[0] = 0x55; cbw[1] = 0x53; cbw[2] = 0x42; cbw[3] = 0x43;   // dCBWSignature "USBC"
     uint32_t tag = ++m->tag;

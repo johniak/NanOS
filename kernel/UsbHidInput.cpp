@@ -4,6 +4,7 @@
 #include "UsbHid.h"
 #include "MouseDevice.h"     // kext::MouseDevice (compiled into the kernel for the USB mouse)
 #include "Scheduler.h"
+#include "UsbHcLock.h"       // g_usbHcLock: serialize controller access vs MSC commands
 #include <arch/usbhc.h>
 #include <string.h>
 
@@ -43,6 +44,12 @@ void usbHidPollBody() {
     static uint8_t report[4][16];   // one DMA buffer per HID device (no cross-device collision)
     for (;;) {
         for (int i = 0; i < g_hidN; i++) {
+            // Hold the HC lock across this device's controller work (setup + interrupt poll) so it
+            // is mutually exclusive with an in-flight MSC command's CBW/data/CSW on another CPU —
+            // otherwise this poll drains that command's completion off the shared event ring. The
+            // guard is scoped to the loop body, so it is released before Scheduler::ioWait() below
+            // (never yield holding a spinlock).
+            SpinGuard hc(g_usbHcLock);
             HidDev& h = g_hid[i];
             if (!h.setup) {
                 // SET_PROTOCOL(boot=0) for this interface, then configure its interrupt-IN EP.
