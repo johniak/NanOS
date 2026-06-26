@@ -11,18 +11,30 @@ int UsbMscBlockDevice::readSectors(uint64_t lba, unsigned count, void* buf) {
     // larger transfer, hiding it. Same one-command-per-sector rule AtaBlockDevice uses for the
     // analogous ATA multi-sector desync. (Per-sector is slower; a proper multi-TRB bulk path in
     // xhciSubmit is the future optimization.)
-    for (unsigned i = 0; i < count; i++)
-        if (usbMscRead10(m_msc, (uint32_t)(lba + i), 1, p + (uint64_t)i * bs) < 0)
+    // Retry each sector a few times: a real xHCI bulk-IN can transiently complete short or fail,
+    // and bot() now FAILS such a read instead of returning stale data (see UsbMsc.cpp). Re-issuing
+    // the whole READ(10) command recovers the sector; without the retry a single flaky read would
+    // abort a file (e.g. init reading the tty7 greeter) and fall back to the wrong behaviour.
+    for (unsigned i = 0; i < count; i++) {
+        int rc = -1;
+        for (int tries = 0; tries < 4 && rc < 0; tries++)
+            rc = usbMscRead10(m_msc, (uint32_t)(lba + i), 1, p + (uint64_t)i * bs);
+        if (rc < 0)
             return -1;
+    }
     return 0;   // 0 = success (BlockDevice HAL convention)
 }
 
 int UsbMscBlockDevice::writeSectors(uint64_t lba, unsigned count, const void* buf) {
     unsigned bs = sectorSize();
     const uint8_t* p = (const uint8_t*) buf;
-    for (unsigned i = 0; i < count; i++)               // one WRITE(10) per sector — see readSectors
-        if (usbMscWrite10(m_msc, (uint32_t)(lba + i), 1, p + (uint64_t)i * bs) < 0)
+    for (unsigned i = 0; i < count; i++) {             // one WRITE(10) per sector — see readSectors
+        int rc = -1;                                   // WRITE(10) is idempotent, so a retry is safe
+        for (int tries = 0; tries < 4 && rc < 0; tries++)
+            rc = usbMscWrite10(m_msc, (uint32_t)(lba + i), 1, p + (uint64_t)i * bs);
+        if (rc < 0)
             return -1;
+    }
     return 0;
 }
 

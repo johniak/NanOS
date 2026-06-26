@@ -35,7 +35,16 @@ static int bot(UsbMsc* m, const uint8_t* cdb, int cdbLen, arch::UsbDir dataDir, 
     if (bulk(m->slot, m->epOut, arch::USB_OUT, cbw, 31) < 31) return -1;
     if (dataLen) {
         int ep = (dataDir == arch::USB_IN) ? m->epIn : m->epOut;
-        if (bulk(m->slot, ep, dataDir, data, dataLen) < 0) return -1;
+        // The data phase MUST move the whole dataLen. A real xHCI device can complete a bulk-IN
+        // SHORT (cc=13) — xhciSubmit reports that as success with a partial byte count. The old
+        // check (< 0 only) then accepted a partially-filled buffer, leaving the PREVIOUS transfer's
+        // bytes in the tail. With one READ(10) per 512 B sector, a fully-short read left the entire
+        // sector holding stale data: when init read the greeter (nwlogin.nxe) right after a getty
+        // read toybox (login.nxe), the greeter sector came back as toybox -> "toybox: Unknown
+        // command nwlogin" and no tty7 login. QEMU always transfers the full 512 B, so it never hit
+        // this. Treat any short/failed data phase as a command failure (the block layer retries).
+        int moved = bulk(m->slot, ep, dataDir, data, dataLen);
+        if (moved < 0 || (uint32_t) moved != dataLen) return -1;
     }
     uint8_t csw[13] = {0};
     if (bulk(m->slot, m->epIn, arch::USB_IN, csw, 13) < 13) return -1;
