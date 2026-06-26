@@ -10,6 +10,7 @@
 #include <arch/smp.h>     // SMP_MAX_CPUS / smpThisCpu — per-CPU GDT+TSS
 #include "Gdt64.h"
 #include "Idt64.h"
+#include "Console.h"      // one-line HWP confirmation on the BSP (silent in QEMU: HWP absent)
 
 namespace {
 // One GDT (with its own TSS) PER CPU: each CPU `ltr`s its own TSS (a shared one can't be loaded
@@ -46,8 +47,56 @@ static void enableSse() {
     __asm__ __volatile__("mov %0, %%cr4" : : "r"(cr4) : "memory");
 }
 
+// Enable Intel Hardware-Managed P-States (HWP / "Speed Shift") so the CPU scales its own
+// frequency down at idle instead of sitting pinned at the firmware's hand-off multiplier. Without
+// this the cores run at a fixed (often near-max) frequency forever and only ever reach C1 via hlt,
+// so a real laptop runs hot even at idle — the job Linux's intel_pstate driver does. HWP is a
+// per-logical-processor feature, so this runs once per CPU (BSP in cpuInit, each AP in
+// archApCpuInit). It is a complete no-op where HWP is absent (CPUID.06H:EAX[7] clear) — notably
+// every QEMU CPU model we boot — so it cannot change behaviour under emulation.
+static void enableHwp() {
+    unsigned a, b, c, d;
+    __asm__ __volatile__("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(6u), "c"(0u));
+    if (!(a & (1u << 7)))                          // CPUID.06H:EAX[7] = HWP supported
+        return;
+
+    auto rdmsr = [](unsigned msr) -> uint64_t {
+        unsigned lo, hi;
+        __asm__ __volatile__("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+        return ((uint64_t) hi << 32) | lo;
+    };
+    auto wrmsr = [](unsigned msr, uint64_t v) {
+        __asm__ __volatile__("wrmsr" :: "c"(msr), "a"((unsigned) v), "d"((unsigned) (v >> 32)));
+    };
+    enum { IA32_PM_ENABLE = 0x770, IA32_HWP_CAPABILITIES = 0x771, IA32_HWP_REQUEST = 0x774 };
+
+    wrmsr(IA32_PM_ENABLE, 1);                      // bit0 = HWP_ENABLE (sticky until reset)
+
+    // Capabilities give the perf-level scale: [7:0] Highest, [31:24] Lowest (most efficient floor).
+    uint64_t cap = rdmsr(IA32_HWP_CAPABILITIES);
+    uint32_t highest = (uint32_t) (cap & 0xFF);
+    uint32_t lowest  = (uint32_t) ((cap >> 24) & 0xFF);
+
+    // HWP_REQUEST: Min[7:0]=lowest (allow the deepest idle frequency), Max[15:8]=highest (do NOT
+    // cap peak performance under load), Desired[23:16]=0 (hardware-autonomous), EPP[31:24]=0x80
+    // (balanced energy/performance preference). The result: idles cool, ramps under real work.
+    uint64_t req = (uint64_t) lowest
+                 | ((uint64_t) highest << 8)
+                 | (0ull << 16)
+                 | (0x80ull << 24);
+    wrmsr(IA32_HWP_REQUEST, req);
+
+    if (smpThisCpu() == 0) {      // BSP only: one confirmation line (this whole branch is QEMU-silent)
+        kernel::Console::write("       CPU: HWP/Speed-Shift enabled (idle freq scaling), perf range ");
+        kernel::Console::write((int) lowest); kernel::Console::write("..");
+        kernel::Console::write((int) highest);
+        kernel::Console::writeLine(", EPP=0x80");
+    }
+}
+
 void cpuInit() {
     enableSse();
+    enableHwp();
     // BSP is dense CPU 0. GDT first: the IDT gates reference code selector 0x08, valid only once
     // we own the GDT.
     g_cpuGdt[0].initialize();
@@ -74,6 +123,7 @@ void cpuInit() {
 void archApCpuInit(uint64_t kstackTop) {
     int cpu = smpThisCpu();
     enableSse();
+    enableHwp();                  // per-CPU HWP enable (idle frequency scaling); no-op without HWP
     g_cpuGdt[cpu].initialize();
     g_cpuGdt[cpu].setKernelStack(kstackTop);
     g_cpuGdt[cpu].loadTss();
