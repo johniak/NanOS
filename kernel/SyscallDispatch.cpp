@@ -962,19 +962,31 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		// Deep-copy path + argv + envp from the caller's (currently active) user space into
 		// kernel buffers before execve swaps CR3 to the kernel directory to stage and
 		// load the new image (after which the caller's user pointers are unmapped).
-		static char pathBuf[256];
-		static char strBuf[ARG_STRBYTES];          // packed argv+envp strings (shared budget)
-		static const char* argPtrs[ARG_MAXVEC + 1];
-		static const char* envPtrs[ARG_MAXVEC + 1];
-		copyStr(pathBuf, (const char*) a0, sizeof pathBuf);
+		//
+		// PER-CPU, not plain static: with these shared across CPUs, two concurrent execve calls
+		// clobbered each other's pathBuf — at boot a getty's short ".../login.nxe" overwrote the
+		// greeter's ".../nwlogin.nxe" at the same basename offset (identical directory prefix), so
+		// the greeter exec'd TOYBOX ("toybox: Unknown command nwlogin", no tty7 login). One buffer
+		// set per CPU removes the sharing without a lock; execve runs in ring 0 (not preempted) and
+		// its reads busy-poll (never yield), so the task cannot migrate mid-call to another CPU's set.
+		static char pathBuf[arch::SMP_MAX_CPUS][256];
+		static char strBuf[arch::SMP_MAX_CPUS][ARG_STRBYTES];   // packed argv+envp strings per CPU
+		static const char* argPtrs[arch::SMP_MAX_CPUS][ARG_MAXVEC + 1];
+		static const char* envPtrs[arch::SMP_MAX_CPUS][ARG_MAXVEC + 1];
+		int cpu = arch::smpThisCpu();
+		char* pb = pathBuf[cpu];
+		char* sb = strBuf[cpu];
+		const char** ap = argPtrs[cpu];
+		const char** ep = envPtrs[cpu];
+		copyStr(pb, (const char*) a0, 256);
 		int used = 0;
-		int argc = copyVec((const char* const*) a1, argPtrs, strBuf, &used);
+		int argc = copyVec((const char* const*) a1, ap, sb, &used);
 		if (argc < 0) { ret = argc; break; }       // -E2BIG: too many/too-long arguments
-		argPtrs[argc] = 0;
-		int envc = copyVec((const char* const*) a2, envPtrs, strBuf, &used);
+		ap[argc] = 0;
+		int envc = copyVec((const char* const*) a2, ep, sb, &used);
 		if (envc < 0) { ret = envc; break; }        // -E2BIG: environment too large
-		envPtrs[envc] = 0;
-		ret = execve(g_vfs, pathBuf, argPtrs, argc, envPtrs, envc, tf);   // rewrites tf, no return
+		ep[envc] = 0;
+		ret = execve(g_vfs, pb, ap, argc, ep, envc, tf);   // rewrites tf, no return
 		break;
 	}
 	case SYS_brk: {
