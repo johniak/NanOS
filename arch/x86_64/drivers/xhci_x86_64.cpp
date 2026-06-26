@@ -11,6 +11,7 @@
 #include "Pci.h"
 #include "Console.h"
 #include "FrameAllocator.h"
+#include "Spinlock.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -23,6 +24,16 @@ namespace {
 using kernel::Pci;
 using kernel::PciDevice;
 using kernel::g_frames;
+
+// Serializes ALL controller access (TRB rings + the single shared event ring + doorbells). Without
+// it, an MSC bulk read (xhciSubmit, on any CPU) and the USB-HID poll thread (xhciIntPoll, every
+// tick) consume the SAME event ring concurrently under SMP: one steals the other's completion and
+// both race the dequeue pointer, so a file read returns corrupted bytes. Single-CPU hid this (no
+// true concurrency), so it only bit on real multi-core hardware booting root-on-USB. A plain ticket
+// Spinlock is zero-init safe as a file-scope global (no global ctors run on NanOS); SpinGuard keeps
+// IRQs enabled across the (potentially long) event poll, like the block cache's device-I/O lock.
+kernel::Spinlock g_xhciLock;
+using kernel::SpinGuard;
 
 // ---- register offsets ----
 // Capability registers (bytes from g_mmio).
@@ -301,6 +312,7 @@ int xhciEnablePort(UsbHc*, int port, int* speedOut) {
 }
 
 int xhciSubmit(UsbHc*, UsbTransfer* t) {
+    SpinGuard _xg(g_xhciLock);   // serialize TRB submit + event-ring poll vs the HID poll thread
     if (t->slot <= 0 || t->slot >= MAX_SLOTS) { t->result = -1; t->complete = 1; return -1; }
     SlotState& s = g_slots[t->slot];
     int dci = dciOf(t->endpoint);
@@ -377,6 +389,7 @@ void drainTransferEvents() {
 // Non-blocking interrupt-IN poll: arm one Normal TRB if none outstanding; return bytes once a
 // report has arrived (re-arming next call), 0 if not ready, <0 on error.
 int xhciIntPoll(UsbHc*, UsbTransfer* t) {
+    SpinGuard _xg(g_xhciLock);   // drains the shared event ring — must not race MSC xhciSubmit
     if (t->slot <= 0 || t->slot >= MAX_SLOTS) return -1;
     SlotState& s = g_slots[t->slot];
     int dci = dciOf(t->endpoint);
@@ -398,6 +411,7 @@ int xhciIntPoll(UsbHc*, UsbTransfer* t) {
 }
 
 int xhciConfigureEndpoint(UsbHc*, int slot, int endpoint, UsbXfer type, UsbDir dir, int maxPacket) {
+    SpinGuard _xg(g_xhciLock);   // issues a Configure-EP command + drains events: serialize the ring
     if (slot <= 0 || slot >= MAX_SLOTS) return -1;
     SlotState& s = g_slots[slot];
     int dci = dciOf(endpoint);
