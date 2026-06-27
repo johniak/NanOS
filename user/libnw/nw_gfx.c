@@ -12,25 +12,51 @@
 extern const unsigned char nx_font8x16[256][16];
 
 #include "nwfont.h"
-#include "nw_settings.h"
 #include <fcntl.h>
 #include <unistd.h>
-#define NW_UI_FONT_PX   15
+#define NW_UI_FONT_PX     15
+#define NW_SETTINGS_PATH  "/disks/main/nanos/config/settings.yaml"
+#define NW_FONTS_DIR      "/disks/main/nanos/share/fonts"
+#define NW_UI_FONT_DEFAULT "UISans-Regular.ttf"
 
-/* Load the UI font named in settings.yaml (ui_font key) from NW_FONTS_DIR; default UISans. Every
- * process does this so the user's chosen font applies everywhere (apps at launch, nwm live). */
+/* Load the UI font named in settings.yaml (the `ui_font:` line) from NW_FONTS_DIR; default UISans.
+ * A tiny self-contained scanner — libnw must NOT depend on the nw_settings module (it isn't linked
+ * into libnw.elf). Every process does this so the chosen font applies everywhere. */
 static void load_ui_from_settings(void)
 {
-    struct nw_settings st;
-    nw_settings_defaults(&st);
+    char name[64];
+    int nl = 0;
     int fd = open(NW_SETTINGS_PATH, O_RDONLY);
     if (fd >= 0) {
         char b[1024];
-        int n = (int) read(fd, b, sizeof b);
+        int n = (int) read(fd, b, sizeof b - 1);
         close(fd);
-        if (n > 0) nw_settings_parse(b, n, &st);
+        if (n > 0) {
+            b[n] = 0;
+            for (int i = 0; i < n; ) {
+                int s = i;
+                while (i < n && b[i] != '\n') i++;
+                const char *L = b + s;
+                int len = i - s;
+                int p = 0;
+                while (p < len && (L[p] == ' ' || L[p] == '\t')) p++;
+                const char *key = "ui_font:";
+                int kl = 8, match = (len - p >= kl);
+                for (int j = 0; match && j < kl; j++) if (L[p + j] != key[j]) match = 0;
+                if (match) {
+                    int v = p + kl;
+                    while (v < len && (L[v] == ' ' || L[v] == '\t')) v++;
+                    int e = len;
+                    while (e > v && (L[e - 1] == ' ' || L[e - 1] == '\t' || L[e - 1] == '\r')) e--;
+                    nl = 0;
+                    for (int j = v; j < e && nl < 63; j++) name[nl++] = L[j];
+                    name[nl] = 0;
+                }
+                i++;   /* skip the newline */
+            }
+        }
     }
-    const char *nm = st.ui_font[0] ? st.ui_font : NW_UI_FONT_DEFAULT;
+    const char *nm = nl ? name : NW_UI_FONT_DEFAULT;
     char path[160];
     int i = 0;
     for (const char *d = NW_FONTS_DIR; *d && i < 120; d++) path[i++] = *d;
