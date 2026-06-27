@@ -1171,7 +1171,7 @@ _image64: _all _userland64 _kext
 	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config,cache,logs,
 	# share/terminfo/x} + the /apps bundle root + the /bin link farm, created upfront so every
 	# subsequent install step (and the optional-app blocks below) finds its parent directory.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/icons\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
 	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot
 	# (loadAllKexts). The PS/2 keyboard + mouse + e1000 NIC drivers live here, NOT in kernel.bin.
@@ -1215,6 +1215,13 @@ _image64: _all _userland64 _kext
 	if [ -f $(BINFOLDER)logo.raw ]; then \
 	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
+	# Icon set for the Rust file explorer (rsexp) -> /nanos/share/icons. Decoded at runtime via the
+	# toolkit PNG loader; the iconview color-keys magenta as transparent.
+	for ic in computer drive folder home program text image file; do \
+	  if [ -f assets/icons/$$ic.png ]; then \
+	    printf "rm /nanos/share/icons/$$ic.png\nwrite assets/icons/$$ic.png /nanos/share/icons/$$ic.png\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  fi; \
+	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	# passwd (x in field 2), shadow (hashes, 0600 root), group (with members), sudoers (%wheel).
 	# The kernel copies all four into the writable /etc tmpfs at boot (Kernel.cpp populateEtc).
