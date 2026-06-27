@@ -1,0 +1,21 @@
+# rsexp — the NanOS file explorer, written from scratch in Rust against the C-ABI libnwui through
+# the reusable libnwui-rs bindings. A no_std cargo staticlib linked with crt0 + the .ndl import
+# libraries, then mknx'd into rsexp.nxe — the desktop's Files app (replaces the C nwexp).
+[package]
+name = "rsexp"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+libnwui-rs = { path = "../libnwui-rs" }
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+
+[profile.dev]
+panic = "abort"

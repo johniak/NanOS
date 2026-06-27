@@ -1,0 +1,12 @@
+# libnwui-rs — reusable safe Rust bindings over the C-ABI libnwui toolkit (NanWM apps). A no_std
+# rlib: the runtime (heap over C malloc, panic = abort) lives here, plus idiomatic wrappers over
+# windows, the icon-grid + panel widgets, image loading, menus and spawn. Apps depend on it and
+# just write `main` — proving the stable C ABI is language-agnostic (cf. the i686 rustform demo).
+[package]
+name = "libnwui-rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]

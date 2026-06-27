@@ -378,33 +378,39 @@ TEST_CASE("menu spec parses into top menus + items") {
 	CHECK(nw_menu_top_count("") == 0);
 }
 
-TEST_CASE("logo menu: About queues a spawn, Shut Down / Quit set the flags") {
+TEST_CASE("logo menu: My Computer / About queue spawns, Run opens, Shut Down sets the flag") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
 	// click the logo mark -> logo menu opens
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
 	CHECK(s.menu_open == 1);
 	CHECK(s.menu_which == NW_MENU_LOGO);
-	CHECK(nw_menu_open_item_count(&s) == 4);   // About, Run..., Shut Down, Quit
-	// hover + click "About This Computer" (item 0) -> spawn nwabout queued
+	CHECK(nw_menu_open_item_count(&s) == 5);   // My Computer, About, Run..., Shut Down, Quit
 	int ix, iy, iw, ih; nw_menu_dropdown_rect(&s, &ix, &iy, &iw, &ih);
+	// hover + click "My Computer" (item 0) -> spawn rsexp queued
 	int cy = iy + NW_MENU_ITEM_H / 2;
-	nw_pointer(&s, ix + 5, cy, 0);                  // hover item 0
-	nw_pointer(&s, ix + 5, cy, NW_BTN_LEFT);        // click item 0
-	nw_pointer(&s, ix + 5, cy, 0);                  // release
+	nw_pointer(&s, ix + 5, cy, 0);
+	nw_pointer(&s, ix + 5, cy, NW_BTN_LEFT);
+	nw_pointer(&s, ix + 5, cy, 0);
 	CHECK(s.menu_open == 0);
 	char out[64];
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
-	CHECK(strcmp(out, "nwabout") == 0);
-	// reopen, click "Run..." (item 1) -> opens the Run launcher
+	CHECK(strcmp(out, "rsexp") == 0);
+	// reopen, click "About This Computer" (item 1) -> spawn nwabout queued
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
 	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
 	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, 0);
-	CHECK(s.run_open == 1);
-	s.run_open = 0;
-	// reopen, click "Shut Down" (item 2)
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
+	CHECK(strcmp(out, "nwabout") == 0);
+	// reopen, click "Run..." (item 2) -> opens the Run launcher
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
 	nw_pointer(&s, ix + 5, iy + 2 * NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
+	nw_pointer(&s, ix + 5, iy + 2 * NW_MENU_ITEM_H + 5, 0);
+	CHECK(s.run_open == 1);
+	s.run_open = 0;
+	// reopen, click "Shut Down" (item 3)
+	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
+	nw_pointer(&s, ix + 5, iy + 3 * NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
 	CHECK(s.want_shutdown == 1);
 }
 

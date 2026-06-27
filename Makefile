@@ -1927,6 +1927,16 @@ $(RUST_LIB): user/rust/rustform/src/lib.rs user/rust/rustform/src/nanos.rs user/
 $(BINFOLDER)rustform.nxe: $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)rustform.elf $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX) $(BINFOLDER)rustform.elf $@ --need libnwui.ndl
+# rsexp: the x86_64 Rust file explorer (the desktop's Files app). Same scheme as rustform but for
+# the x86_64-nanos target, depending on the reusable libnwui-rs bindings crate. Linked with the
+# x64 glue + USER_NX_LD + MKNX_TOOL; --need libnwui.ndl pulls the toolkit + PNG/fs helpers.
+RSEXP_TARGET=user/rust/x86_64-nanos.json
+RSEXP_LIB=user/rust/rsexp/target/x86_64-nanos/release/librsexp.a
+$(RSEXP_LIB): user/rust/rsexp/src/lib.rs user/rust/libnwui-rs/src/lib.rs user/rust/rsexp/Cargo.toml user/rust/libnwui-rs/Cargo.toml $(RSEXP_TARGET)
+	cd user/rust/rsexp && cargo build -Z build-std=core,alloc -Z json-target-spec --target ../x86_64-nanos.json --release
+$(BINFOLDER)rsexp.nxe: $(DYN_GLUE) $(RSEXP_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)rsexp.elf $(DYN_GLUE) $(RSEXP_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)rsexp.elf $@ --need libnwui.ndl
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
 
@@ -2044,7 +2054,7 @@ $(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX_TOOL)
 # Composable widget tree + flex layout + paint, exporting the nwui_* API. Uses libnw (gfx) AND
 # libc (malloc); links both import libraries and declares both needs. A client that --need
 # libnwui.ndl gets the whole chain app->libnwui->libnw->libc via the recursive loader.
-LIBNWUI_OBJS=$(BINFOLDER)nwui_core.o $(BINFOLDER)nwui_paint.o $(BINFOLDER)nwui.o $(BINFOLDER)nwui_png.o
+LIBNWUI_OBJS=$(BINFOLDER)nwui_core.o $(BINFOLDER)nwui_paint.o $(BINFOLDER)nwui.o $(BINFOLDER)nwui_png.o $(BINFOLDER)nwui_fs.o
 $(BINFOLDER)libnwui.elf: $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 $(BINFOLDER)libnwui.ndl: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
@@ -2071,7 +2081,7 @@ X64_GUI_PROGS=nwm nwlogin
 # NanWM desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
 # (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
-X64_GUI_APPS=nwexp nwset nwabout nwnote nwform nwterm
+X64_GUI_APPS=rsexp nwset nwabout nwnote nwform nwterm
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
 X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
 _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))
@@ -2251,6 +2261,7 @@ TEST_MODULES+= user/nwm/nwm_core.c user/nwm/nw_compose.c
 TEST_MODULES+= user/nwm/nw_backdrop.c   # pure backdrop-blur math (rect helpers, downsample, upsample)
 TEST_MODULES+= user/libnwui/nwui_core.c   # the pure UI-toolkit core (tree/layout/events)
 TEST_MODULES+= user/libnwui/nwui_png.c    # the PNG decoder + nwui_image_load_png file loader (not gated: many format branches exercised live)
+TEST_MODULES+= user/libnwui/nwui_fs.c     # reusable directory-enumeration shim (opendir/readdir wrapper)
 TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (shared by nterm/nwterm)
 TEST_MODULES+= kernel/Pci.cpp             # MI PCI enumeration/BAR decode (mock config-space backend)
 TEST_MODULES+= kernel/MsiRouter.cpp       # MI MSI/MSI-X cap walk + programming (mock config space)

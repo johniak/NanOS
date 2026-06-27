@@ -16,7 +16,7 @@ coverage/
 *.gcda
 *.gcno
 *.gcov
-user/rust/rustform/target/
+user/rust/*/target/
 disk/*_deep.img
 disk/*_full.img
 disk/*_split.img

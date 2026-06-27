@@ -336,8 +336,8 @@ int nw_run_take_spawn(struct nw_server *s, char *out, int cap)
 #define MENU_SEP_FLD ((char) 0x1f)   /* between a menu's title + item labels */
 
 /* The logo (system) menu is compositor-owned. */
-static const char *const LOGO_ITEMS[4] = { "About This Computer", "Run...", "Shut Down", "Quit" };
-enum { LOGO_NITEMS = 4 };
+static const char *const LOGO_ITEMS[5] = { "My Computer", "About This Computer", "Run...", "Shut Down", "Quit" };
+enum { LOGO_NITEMS = 5 };
 
 static const char *focus_spec(const struct nw_server *s)
 {
@@ -469,14 +469,14 @@ static void menu_close(struct nw_server *s)
 static void menu_activate(struct nw_server *s, int item)   /* an item was chosen */
 {
 	if (s->menu_which == NW_MENU_LOGO) {
-		if (item == 0) {                            /* About This Computer */
-			const char *cmd = "nwabout"; int i = 0;
+		if (item == 0 || item == 1) {               /* My Computer (rsexp) / About (nwabout) */
+			const char *cmd = item == 0 ? "rsexp" : "nwabout"; int i = 0;
 			for (; cmd[i] && i < NW_RUN_MAX - 1; i++) s->run_cmd[i] = cmd[i];
 			s->run_cmd[i] = 0; s->want_spawn = 1;
-		} else if (item == 1) {                      /* Run... -> the Super+R launcher dialog */
+		} else if (item == 2) {                      /* Run... -> the Super+R launcher dialog */
 			s->run_open = 1; s->run_len = 0; damage_run(s);
-		} else if (item == 2) s->want_shutdown = 1;  /* Shut Down */
-		else if (item == 3) s->want_quit = 1;        /* Quit (leave the desktop) */
+		} else if (item == 3) s->want_shutdown = 1;  /* Shut Down */
+		else if (item == 4) s->want_quit = 1;        /* Quit (leave the desktop) */
 	} else if (s->focus >= 0) {
 		emit_win(s, s->focus, NW_EVT_MENU, s->menu_which, item, 0, 0, 0, 0);
 	}

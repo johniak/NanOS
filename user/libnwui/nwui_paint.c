@@ -20,6 +20,7 @@
 #define COL_SB_THUMB 0x00b8c6d8
 #define COL_PANEL_BG  0x00eef4fb   /* task-pane panel body (light glass) */
 #define COL_PANEL_HDR 0x0039b4f7   /* task-pane panel title band (accent blue) */
+#define NWUI_ICON_KEY 0x00ff00ff   /* icon transparency color-key (magenta); generator must match */
 
 static void paint_self(nwui_node *n, const struct nw_surface *s)
 {
@@ -155,10 +156,14 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			if (it->icon && it->iw > 0 && it->ih > 0) {
 				int iw = it->iw, ih = it->ih;
 				int ix = cx + (NWUI_ICON_CELL_W - iw) / 2, iy = cy + 8;
-				struct nw_surface src;
-				src.px = (uint32_t *) it->icon; src.w = iw; src.h = ih; src.stride = iw;
-				nw_surface_noclip(&src);
-				nw_blit(s, ix, iy, &src, 0, 0, iw, ih);     /* natural size (icons authored 48x48) */
+				/* Color-keyed blit: the decoder drops alpha, so icons use a magenta key
+				 * (NWUI_ICON_KEY) for transparency — keyed pixels are skipped so the cell
+				 * background (and the selection highlight) shows through. Icons are 48x48. */
+				for (int yy = 0; yy < ih; yy++)
+					for (int xx = 0; xx < iw; xx++) {
+						uint32_t px = it->icon[yy * iw + xx] & 0x00ffffff;
+						if (px != NWUI_ICON_KEY) nw_put_pixel(s, ix + xx, iy + yy, px);
+					}
 			}
 			if (it->label) {
 				int maxc = (NWUI_ICON_CELL_W - 4) / NW_FONT_W; if (maxc < 1) maxc = 1;
