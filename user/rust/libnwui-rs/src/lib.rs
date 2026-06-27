@@ -79,6 +79,7 @@ extern "C" {
     fn nwui_image_load_png(path: *const u8, w: *mut i32, h: *mut i32) -> *mut u32;
     fn nwui_menu(u: *mut NwUi, title: *const u8) -> i32;
     fn nwui_menu_item(u: *mut NwUi, menu: i32, label: *const u8, cb: RawCb, user: *mut c_void);
+    fn nwui_iconbtn(u: *mut NwUi, icon: *const u32, iw: i32, ih: i32, cb: RawCb, user: *mut c_void) -> *mut NwNode;
 }
 
 /// NUL-terminate a `&str` for a C call. libnwui copies captions immediately, so the buffer only
@@ -145,6 +146,11 @@ impl Ui {
     pub fn link_raw(&self, s: &str, cb: RawCb, user: *mut c_void) -> Node {
         let c = cstr(s);
         unsafe { Node(nwui_link(self.0, c.as_ptr(), cb, user)) }
+    }
+
+    /// A flat clickable toolbar icon button. `icon` = (pixels, w, h) from load_png.
+    pub fn iconbtn(&self, icon: (*const u32, i32, i32), cb: RawCb, user: *mut c_void) -> Node {
+        unsafe { Node(nwui_iconbtn(self.0, icon.0, icon.1, icon.2, cb, user)) }
     }
 
     /// An icon-grid view using the raw C callback ABI: `on_activate` (double-click/Enter) and

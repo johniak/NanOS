@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  html,body{margin:0;padding:0;background:transparent}
+  .row{display:flex}
+  .ic{width:64px;height:64px}
+</style></head><body>
+<div class="row">
+<svg class="ic" id="folder" viewBox="0 0 64 64"><defs>
+ <linearGradient id="fold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6ec8ff"/><stop offset="1" stop-color="#1480fa"/></linearGradient>
+ <linearGradient id="foldback" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a4dcff"/><stop offset="1" stop-color="#78beff"/></linearGradient>
+ <linearGradient id="disk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c4ccd6"/><stop offset="1" stop-color="#788292"/></linearGradient>
+ <linearGradient id="homeg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffa560"/><stop offset="1" stop-color="#ff6034"/></linearGradient>
+ <linearGradient id="appg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8c96ff"/><stop offset="1" stop-color="#5444ff"/></linearGradient>
+ <linearGradient id="imgg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46deA4"/><stop offset="1" stop-color="#0ca070"/></linearGradient>
+ <linearGradient id="compg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c4ccd6"/><stop offset="1" stop-color="#8a93a3"/></linearGradient>
+ <linearGradient id="paperg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e4eaf4"/></linearGradient>
+ <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".28"/><stop offset=".5" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+ </defs>
+ <path d="M6 18 h17 l5 5 h26 a5 5 0 0 1 5 5 v2 H6 z" fill="url(#foldback)"/>
+ <rect x="5" y="23" width="54" height="34" rx="9" fill="url(#fold)"/>
+ <rect x="5" y="23" width="54" height="34" rx="9" fill="url(#sheen)"/></svg>
+
+<svg class="ic" id="drive" viewBox="0 0 64 64">
+ <rect x="6" y="12" width="52" height="40" rx="14" fill="url(#disk)"/>
+ <rect x="6" y="12" width="52" height="40" rx="14" fill="url(#sheen)"/>
+ <rect x="16" y="40" width="32" height="6" rx="3" fill="#5a6273"/>
+ <circle cx="45" cy="22" r="3" fill="#3ad07f"/></svg>
+
+<svg class="ic" id="home" viewBox="0 0 64 64">
+ <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#homeg)"/>
+ <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#sheen)"/>
+ <path d="M32 15 L51 32 H45 V47 H19 V32 H13 Z" fill="#fff"/>
+ <rect x="27" y="37" width="10" height="10" rx="1" fill="#ff7a48"/></svg>
+
+<svg class="ic" id="program" viewBox="0 0 64 64">
+ <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#appg)"/>
+ <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#sheen)"/>
+ <path d="M26 21 L45 32 L26 43 Z" fill="#fff"/></svg>
+
+<svg class="ic" id="text" viewBox="0 0 64 64">
+ <rect x="15" y="7" width="34" height="50" rx="6" fill="url(#paperg)" stroke="#cfd6e0" stroke-width="1"/>
+ <rect x="15" y="7" width="34" height="8" rx="6" fill="#0a84ff"/>
+ <rect x="21" y="24" width="22" height="3" rx="1.5" fill="#c2c8d2"/>
+ <rect x="21" y="32" width="22" height="3" rx="1.5" fill="#c2c8d2"/>
+ <rect x="21" y="40" width="14" height="3" rx="1.5" fill="#c2c8d2"/></svg>
+
+<svg class="ic" id="image" viewBox="0 0 64 64">
+ <rect x="7" y="13" width="50" height="38" rx="12" fill="url(#imgg)"/>
+ <rect x="7" y="13" width="50" height="38" rx="12" fill="url(#sheen)"/>
+ <circle cx="22" cy="25" r="5" fill="#fff" opacity=".95"/>
+ <path d="M13 50 L27 35 L37 45 L45 34 L55 50 Z" fill="#ffffff" opacity=".9"/></svg>
+
+<svg class="ic" id="file" viewBox="0 0 64 64">
+ <path d="M16 7 h22 l11 11 v39 a0 0 0 0 1 0 0 H16 z" fill="url(#paperg)" stroke="#cfd6e0" stroke-width="1"/>
+ <path d="M38 7 v11 h11 z" fill="#d2d9e3"/>
+ <rect x="22" y="30" width="20" height="3" rx="1.5" fill="#c2c8d2"/>
+ <rect x="22" y="38" width="20" height="3" rx="1.5" fill="#c2c8d2"/></svg>
+
+<svg class="ic" id="computer" viewBox="0 0 64 64">
+ <rect x="6" y="10" width="52" height="38" rx="10" fill="url(#compg)"/>
+ <rect x="12" y="16" width="40" height="22" rx="3" fill="#1480fa"/>
+ <rect x="12" y="16" width="40" height="22" rx="3" fill="url(#sheen)"/>
+ <rect x="26" y="48" width="12" height="6" fill="#8a93a3"/>
+ <rect x="20" y="54" width="24" height="3" rx="1.5" fill="#788292"/></svg>
+</div>
+</body></html>

@@ -503,6 +503,7 @@ static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 	uint32_t *src = png_decode(file, got, &iw, &ih);
 	free(file);
 	if (!src || iw <= 0 || ih <= 0) { free(src); return 0; }
+	for (size_t i = 0; i < (size_t) iw * ih; i++) src[i] &= 0x00ffffffu;  /* opaque wallpaper: drop alpha */
 
 	/* Cover-fit: source pixels per screen pixel = min(iw/w, ih/h) in 16.16 fixed point (the smaller
 	 * step zooms in to fill, cropping the other axis); center the sampled region. Each destination

@@ -368,6 +368,9 @@ pub extern "C" fn main() -> i32 {
         file,
     };
 
+    let ic_up = load_icon("/disks/main/nanos/share/icons/ui-up.png", nothing);
+    let ic_home = load_icon("/disks/main/nanos/share/icons/ui-home.png", nothing);
+
     let crumb = ui.label("My Computer");
 
     let app = alloc::boxed::Box::new(App {
@@ -438,11 +441,11 @@ pub extern "C" fn main() -> i32 {
     let sidebar = sidebar.gap(4).pad(12).colors(0, SIDE_BG).size(200, 0);
 
     let toolbar = ui.hbox()
-        .add(ui.link_raw("Up", cb_up, app_ptr))
-        .add(ui.link_raw("Home", cb_homebtn, app_ptr))
+        .add(ui.iconbtn(ic_up, cb_up, app_ptr))
+        .add(ui.iconbtn(ic_home, cb_homebtn, app_ptr))
         .add(crumb.flex(1))
-        .gap(8)
-        .pad(8)
+        .gap(6)
+        .pad(6)
         .colors(0x001d2733, 0x00eef2f8);   /* a defined toolbar strip */
 
     let body = ui.hbox().add(sidebar).add(view.flex(1));

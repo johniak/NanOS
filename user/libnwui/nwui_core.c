@@ -162,6 +162,21 @@ void nwui_link_set_active(nwui_node *n, int active)
 	n->dirty  = 1;
 }
 
+nwui_node *nwui_iconbtn(nwui *u, const uint32_t *icon, int iw, int ih, nwui_cb on_click, void *user)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_BUTTON);
+	n->on_click  = on_click;
+	n->user      = user;
+	n->focusable = 1;
+	n->flat      = 1;            /* flat (no gradient): a toolbar icon */
+	n->img       = icon;         /* app-owned 0xAARRGGBB buffer */
+	n->pref_w    = iw + 10;      /* click area = icon + a little padding */
+	n->pref_h    = ih + 8;
+	n->count     = iw;           /* stash native icon size (count/sel unused on a button) */
+	n->sel       = ih;
+	return n;
+}
+
 nwui_node *nwui_panel(nwui *u, const char *title)
 {
 	nwui_node *n = nwui_alloc(u, NWUI_PANEL);

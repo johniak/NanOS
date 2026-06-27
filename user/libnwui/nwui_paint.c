@@ -44,6 +44,19 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		}
 		break;
 	case NWUI_BUTTON: {
+		if (n->flat && n->img) {               /* toolbar icon button */
+			if (n->pressed)
+				nw_fill_round(s, n->x, n->y + 1, n->w, n->h - 2, 7, COL_ACCENT, 28);
+			int iw = n->count, ih = n->sel;     /* native icon size (stashed by nwui_iconbtn) */
+			int ix = n->x + (n->w - iw) / 2, iy = n->y + (n->h - ih) / 2;
+			for (int yy = 0; yy < ih; yy++)
+				for (int xx = 0; xx < iw; xx++) {
+					uint32_t p = n->img[yy * iw + xx];
+					int a = (int) (p >> 24);
+					if (a) nw_blend_pixel(s, ix + xx, iy + yy, p & 0x00ffffff, a);
+				}
+			break;
+		}
 		if (n->flat) {                         /* sidebar link / nav-row */
 			int ty = n->y + (n->h - NW_FONT_H) / 2;
 			if (n->active) {                   /* current location -> filled accent pill */
@@ -173,13 +186,14 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 				int ix = cx + (NWUI_ICON_CELL_W - iw) / 2, iy = cy + 12;
 				/* soft drop shadow under the icon for depth */
 				nw_fill_round(s, ix + 5, iy + ih - 8, iw - 10, 12, 8, COL_ICON_SHADOW, 34);
-				/* Color-keyed blit: the decoder drops alpha, so icons use a magenta key
-				 * (NWUI_ICON_KEY) for transparency — keyed pixels are skipped so the cell
-				 * background (and the selection highlight) shows through. Icons are 48x48. */
+				/* Alpha-composite the icon (0xAARRGGBB from the PNG decoder) over the cell, so
+				 * anti-aliased edges + rounded corners blend cleanly and the selection shows
+				 * through transparent areas. */
 				for (int yy = 0; yy < ih; yy++)
 					for (int xx = 0; xx < iw; xx++) {
-						uint32_t px = it->icon[yy * iw + xx] & 0x00ffffff;
-						if (px != NWUI_ICON_KEY) nw_put_pixel(s, ix + xx, iy + yy, px);
+						uint32_t p = it->icon[yy * iw + xx];
+						int a = (int) (p >> 24);
+						if (a) nw_blend_pixel(s, ix + xx, iy + yy, p & 0x00ffffff, a);
 					}
 			}
 			if (it->label) {

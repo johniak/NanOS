@@ -274,11 +274,12 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 	for (unsigned y = 0; y < h; y++) {
 		for (unsigned x = 0; x < w; x++) {
 			const uint8_t *p = img + (size_t) y * stride + (size_t) x * bpp;
-			uint8_t r, g, bl;
-			if (colortype == 2 || colortype == 6) { r = p[0]; g = p[1]; bl = p[2]; }
+			uint8_t r, g, bl, a = 255;
+			if (colortype == 2 || colortype == 6) { r = p[0]; g = p[1]; bl = p[2]; if (colortype == 6) a = p[3]; }
 			else if (colortype == 3) { const uint8_t *e = pal + p[0] * 3; r = e[0]; g = e[1]; bl = e[2]; }
-			else { r = g = bl = p[0]; }   /* greyscale (+ alpha ignored) */
-			px[(size_t) y * w + x] = ((uint32_t) r << 16) | ((uint32_t) g << 8) | bl;
+			else { r = g = bl = p[0]; if (colortype == 4) a = p[1]; }   /* greyscale (+ alpha) */
+			/* 0xAARRGGBB — alpha PRESERVED (top byte). Opaque-only consumers mask it off. */
+			px[(size_t) y * w + x] = ((uint32_t) a << 24) | ((uint32_t) r << 16) | ((uint32_t) g << 8) | bl;
 		}
 	}
 	free(img);

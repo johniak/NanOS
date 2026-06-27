@@ -132,6 +132,10 @@ nwui_node *nwui_panel(nwui *u, const char *title);
 nwui_node *nwui_link(nwui *u, const char *text, nwui_cb on_click, void *user);
 void       nwui_link_set_active(nwui_node *n, int active);
 
+/* A flat clickable icon button (toolbar). icon = app-owned iw*ih 0xAARRGGBB buffer (alpha-blended,
+ * centered); click fires on_click. */
+nwui_node *nwui_iconbtn(nwui *u, const uint32_t *icon, int iw, int ih, nwui_cb on_click, void *user);
+
 /* ---- containers: variadic, NULL-terminated children (this is the nesting) ---- */
 nwui_node *nwui_column(nwui *u, ...);   /* nwui_column(u, a, b, c, (nwui_node*)0)  */
 nwui_node *nwui_row(nwui *u, ...);
