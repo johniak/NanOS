@@ -76,6 +76,7 @@ struct App {
     rename_from: Vec<u8>,         // rename source path (NUL) while the rename dialog is open
     pending: Vec<u8>,             // delete target (NUL) while the confirm dialog is open
     dlg_buf: [u8; 256],           // text-input buffer for the rename / new-folder dialogs
+    addr: [u8; 512],              // editable address-bar buffer (reflects the current path)
     status: *mut NwNode,          // the status-bar label
     // SQLite-backed recursive search: a :memory: index, (re)built per location on first search.
     #[cfg(feature = "sqlite")]
@@ -291,8 +292,36 @@ impl App {
         }
     }
 
-    fn set_crumb(&self, s: &[u8]) {
-        Node(self.crumb).set_text(unsafe { core::str::from_utf8_unchecked(s) });
+    /// Reflect the current location in the editable address bar.
+    fn set_crumb(&mut self, s: &[u8]) {
+        if self.crumb.is_null() { return; }
+        let n = s.len().min(self.addr.len() - 1);
+        self.addr[..n].copy_from_slice(&s[..n]);
+        self.addr[n] = 0;
+        Node(self.crumb).textfield_set(self.addr.as_ptr());
+    }
+
+    /// Ctrl+L: focus the address bar and select its text (type to replace, like a browser).
+    fn focus_addr(&mut self) {
+        if self.crumb.is_null() { return; }
+        let c = Node(self.crumb);
+        Ui(self.ui).focus(c);
+        c.textfield_select_all();
+    }
+
+    /// Enter pressed in the address bar: navigate to the typed path (or report if it's not found).
+    fn addr_go(&mut self) {
+        let n = cstr_len(&self.addr);
+        if n == 0 { return; }
+        let mut path = self.addr[..n].to_vec();
+        while path.len() > 1 && *path.last().unwrap() == b'/' { path.pop(); }   // strip trailing '/'
+        if self.load_dir(&path) {
+            self.record(path);                 // success: record history (load_dir set the crumb)
+        } else {
+            Ui(self.ui).message("Go", "Path not found.");
+            if self.my_computer { let m = b"My Computer".to_vec(); self.set_crumb(&m); }
+            else { let c = self.cwd[..self.cwd.len() - 1].to_vec(); self.set_crumb(&c); }
+        }
     }
 
     /// Highlight the sidebar row matching the current location (longest path-prefix match).
@@ -1139,6 +1168,13 @@ extern "C" fn cb_drag(_n: *mut NwNode, user: *mut c_void) {
 extern "C" fn cb_drop(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).do_drop() }
 }
+extern "C" fn cb_noop(_n: *mut NwNode, _user: *mut c_void) {}
+extern "C" fn cb_addr_go(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).addr_go() }
+}
+extern "C" fn cb_focus_addr(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).focus_addr() }
+}
 
 /// Case-insensitive substring test (ASCII).
 fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
@@ -1194,12 +1230,10 @@ pub extern "C" fn main() -> i32 {
     let ic_up = load_icon("/disks/main/nanos/share/icons/ui-up.png", nothing);
     let ic_home = load_icon("/disks/main/nanos/share/icons/ui-home.png", nothing);
 
-    let crumb = ui.label("My Computer");
-
     let app = alloc::boxed::Box::new(App {
         ui: ui.0,
         view: core::ptr::null_mut(),
-        crumb: crumb.0,
+        crumb: core::ptr::null_mut(),   // the address-bar textfield is created after app_ptr
         icons,
         my_computer: true,
         cwd: alloc::vec![b'/', 0],
@@ -1221,6 +1255,7 @@ pub extern "C" fn main() -> i32 {
         rename_from: Vec::new(),
         pending: Vec::new(),
         dlg_buf: [0u8; 256],
+        addr: [0u8; 512],
         status: core::ptr::null_mut(),
         #[cfg(feature = "sqlite")]
         db: core::ptr::null_mut(),
@@ -1255,6 +1290,7 @@ pub extern "C" fn main() -> i32 {
     ui.accel(true, b'c', 0, cb_copy, app_ptr);
     ui.accel(true, b'x', 0, cb_cut, app_ptr);
     ui.accel(true, b'v', 0, cb_paste, app_ptr);
+    ui.accel(true, b'l', 0, cb_focus_addr, app_ptr);   // Ctrl+L: focus the address bar
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");
@@ -1316,6 +1352,12 @@ pub extern "C" fn main() -> i32 {
     let qbuf = unsafe { (*(app_ptr as *mut App)).query.as_mut_ptr() };
     let search = ui.textfield(qbuf, 64, cb_search, app_ptr);
     unsafe { (&mut *(app_ptr as *mut App)).search = search.0; }   // so navigation can clear it
+
+    // editable address bar over the app's addr buffer: type a path + Enter to navigate there
+    let abuf = unsafe { (*(app_ptr as *mut App)).addr.as_mut_ptr() };
+    let crumb = ui.textfield(abuf, 512, cb_noop, app_ptr);
+    crumb.textfield_set_submit(cb_addr_go);
+    unsafe { (&mut *(app_ptr as *mut App)).crumb = crumb.0; }
 
     let toolbar = ui.hbox()
         .add(ui.iconbtn(ic_back, cb_back, app_ptr))

@@ -705,7 +705,9 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 {
 	if (code == NW_SC_LSUPER || code == NW_SC_RSUPER) { s->super_down = down; return; }
 	if (code == NW_SC_LSHIFT || code == NW_SC_RSHIFT) { s->shift_down = down; return; }
-	if (code == NW_SC_LCTRL  || code == NW_SC_RCTRL)  { s->ctrl_down  = down; return; }
+	/* Track Ctrl for drag-copy, but DO NOT consume it: the key is still forwarded to the focused
+	 * window so client toolkits can see Ctrl held (their Ctrl+<key> accelerators depend on it). */
+	if (code == NW_SC_LCTRL  || code == NW_SC_RCTRL)    s->ctrl_down  = down;
 
 	/* Super+R toggles the Run launcher (like Win+R). */
 	if (down && s->super_down && code == NW_SC_R) {

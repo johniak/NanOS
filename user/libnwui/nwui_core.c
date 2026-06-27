@@ -66,6 +66,30 @@ nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *
 	return n;
 }
 
+/* Set a textfield's value programmatically (writes the app-owned buffer, moves the caret to end).
+ * Does NOT fire on_change. Used e.g. to reflect the current path in an address bar. */
+void nwui_textfield_set(nwui_node *n, const char *s)
+{
+	if (!n || n->kind != NWUI_TEXTFIELD || !n->tbuf) return;
+	int i = 0;
+	for (; s && s[i] && i < n->tcap - 1; i++) n->tbuf[i] = s[i];
+	n->tbuf[i] = 0;
+	n->tlen = i; n->caret = i; n->anchor = i;
+	n->dirty = 1;
+}
+
+/* Register a submit (Enter) callback on a textfield — distinct from on_change (per-keystroke). */
+void nwui_textfield_set_submit(nwui_node *n, nwui_cb cb)
+{
+	if (n && n->kind == NWUI_TEXTFIELD) n->on_submit = cb;
+}
+
+/* Select the whole textfield (so the next keystroke replaces it — e.g. after Ctrl+L). */
+void nwui_textfield_select_all(nwui_node *n)
+{
+	if (n && n->kind == NWUI_TEXTFIELD) { n->anchor = 0; n->caret = n->tlen; n->dirty = 1; }
+}
+
 nwui_node *nwui_textarea(nwui *u, char *buf, int cap, nwui_cb on_change, void *user)
 {
 	nwui_node *n = nwui_alloc(u, NWUI_TEXTAREA);
@@ -1247,7 +1271,8 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		case NWUI_SC_END:   tf_move(tf, tf->tlen, shift); break;
 		default:
 			if (ev->ch == '\n' || ev->ch == '\r') {
-				if (tf->on_change) tf->on_change(tf, tf->user);
+				if (tf->on_submit) tf->on_submit(tf, tf->user);   /* Enter = submit (e.g. go) */
+				else if (tf->on_change) tf->on_change(tf, tf->user);
 			} else if (ev->ch == 8) {                /* backspace */
 				if (has_sel(tf)) tf_del_sel(tf);
 				else if (tf->caret > 0) tf_del_range(tf, tf->caret - 1, tf->caret);

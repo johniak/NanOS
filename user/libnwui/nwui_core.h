@@ -71,6 +71,7 @@ struct nwui_node {
 	/* drag-and-drop (iconview): gesture-started-a-drag / a-drop-landed callbacks, the cell
 	 * currently highlighted as a hovering drop target, and the landed drop's cell + payload. */
 	nwui_cb    on_drag, on_drop;
+	nwui_cb    on_submit;            /* textfield: fired on Enter (distinct from on_change)  */
 	int        drop_hover;           /* cell under a hovering drag, or -1                  */
 	int        drop_cell;            /* cell a drop landed on, or -1 (= the empty area)     */
 	int        drop_mods;            /* modifier bits at the drop (bit0 shift, bit1 ctrl)   */

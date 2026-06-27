@@ -50,6 +50,12 @@ nwui_node *nwui_image(nwui *u, const uint32_t *px, int w, int h);
 uint32_t *nwui_image_load_png(const char *path, int *w, int *h);
 /* An editable field over an APP-OWNED buffer (the app reads the typed value straight from it). */
 nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *user);
+/* Set a textfield's displayed value programmatically (no on_change fired). */
+void       nwui_textfield_set(nwui_node *n, const char *s);
+/* Fire `cb` when Enter is pressed in the textfield (distinct from per-keystroke on_change). */
+void       nwui_textfield_set_submit(nwui_node *n, nwui_cb cb);
+/* Select the whole field so the next keystroke replaces it (e.g. focusing an address bar). */
+void       nwui_textfield_select_all(nwui_node *n);
 
 /* A multiline text editor over an APP-OWNED buffer: caret + selection + scroll + optional
  * word-wrap. The reusable heart of any text app (Notepad, log viewer, code box). */

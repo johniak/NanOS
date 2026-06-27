@@ -89,6 +89,9 @@ extern "C" {
     fn nwui_context_add(u: *mut NwUi, label: *const u8, cb: RawCb, user: *mut c_void);
     fn nwui_iconbtn(u: *mut NwUi, icon: *const u32, iw: i32, ih: i32, cb: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_textfield(u: *mut NwUi, buf: *mut u8, cap: i32, on_change: RawCb, user: *mut c_void) -> *mut NwNode;
+    fn nwui_textfield_set(n: *mut NwNode, s: *const u8);
+    fn nwui_textfield_set_submit(n: *mut NwNode, cb: RawCb);
+    fn nwui_textfield_select_all(n: *mut NwNode);
     fn nwui_message(u: *mut NwUi, title: *const u8, text: *const u8);
     fn nwui_prompt(u: *mut NwUi, title: *const u8, buf: *mut u8, cap: i32, on_ok: RawCb, user: *mut c_void);
     fn nwui_confirm(u: *mut NwUi, title: *const u8, text: *const u8, ok_label: *const u8,
@@ -151,6 +154,12 @@ impl Node {
         unsafe { nwui_iconview_set(self.0, items.as_ptr(), items.len() as i32) }
     }
     pub fn iconview_selected(self) -> i32 { unsafe { nwui_iconview_selected(self.0) } }
+    /// Set a textfield's displayed value (NUL-terminated ptr); does not fire on_change.
+    pub fn textfield_set(self, s: *const u8) { unsafe { nwui_textfield_set(self.0, s) } }
+    /// Fire `cb` when Enter is pressed in this textfield (submit, vs per-keystroke on_change).
+    pub fn textfield_set_submit(self, cb: RawCb) { unsafe { nwui_textfield_set_submit(self.0, cb) } }
+    /// Select the whole field (next keystroke replaces it).
+    pub fn textfield_select_all(self) { unsafe { nwui_textfield_select_all(self.0) } }
     /// Make this iconview a drag source (on_drag) + drop target (on_drop), raw-callback ABI.
     pub fn iconview_set_dnd(self, on_drag: RawCb, on_drop: RawCb) {
         unsafe { nwui_iconview_set_dnd(self.0, on_drag, on_drop) }

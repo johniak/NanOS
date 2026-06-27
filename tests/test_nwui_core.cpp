@@ -712,3 +712,24 @@ TEST_CASE("nwui_post_copy cuts the focused textarea, nwui_post_paste requests th
 	CHECK(u->clip_get == 1);                  // run loop will turn this into nw_get_clipboard
 	delete u;
 }
+
+/* ---- textfield submit (Enter) + programmatic set ---- */
+static int g_submit;
+static void on_submit_cb(nwui_node *, void *) { g_submit++; }
+TEST_CASE("textfield: Enter fires on_submit; nwui_textfield_set updates the value") {
+    nwui *u = new nwui; nwui_init(u);
+    static char tb[64] = "";
+    nwui_node *tf = nwui_textfield(u, tb, sizeof tb, 0, 0);
+    nwui_textfield_set_submit(tf, on_submit_cb);
+    nwui_set_root(u, nwui_column(u, tf, (nwui_node *) 0));
+    nwui_layout(u);
+    nwui_focus(u, tf);
+    g_submit = 0;
+    key(u, '\n');                                  // Enter -> on_submit (once)
+    CHECK(g_submit == 1);
+    nwui_textfield_set(tf, "/disks/main");         // programmatic value (no on_change)
+    CHECK(strcmp(tb, "/disks/main") == 0);
+    CHECK(tf->tlen == 11);
+    CHECK(tf->caret == 11);
+    delete u;
+}
