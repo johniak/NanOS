@@ -223,6 +223,30 @@ void sync(void)                         { sys3(SYS_sync, 0, 0, 0); }
 int fchdir(int fd)                      { return reterr(sys3(SYS_fchdir, fd, 0, 0)); }
 int ftruncate(int fd, off_t length)     { return reterr(sys3(SYS_ftruncate, fd, (int) length, 0)); }
 int truncate(const char* p, off_t length) { return reterr(sys3(SYS_truncate, (int) p, (int) length, 0)); }
+/* statfs(2)/fstatfs(2): real filesystem stats (free/total blocks). The kernel always fills the
+ * Linux i386 layout — sixteen 32-bit words — regardless of arch, so read it into a uint32_t[16]
+ * and map onto the (long-field) userspace struct statfs. This is what the file explorer uses for
+ * "free space"; it supersedes the canned statvfs() stub for callers that go through statfs(). */
+#include <sys/statfs.h>
+static int statfs_words(int nr, int a, struct statfs* buf) {
+	if (!buf) { errno = EFAULT; return -1; }
+	uint32_t k[16];
+	int r = reterr(sys3(nr, a, (int) k, 0));
+	if (r < 0) return r;
+	memset(buf, 0, sizeof *buf);
+	buf->f_type    = (long) k[0];
+	buf->f_bsize   = (long) k[1];
+	buf->f_blocks  = (long) k[2];
+	buf->f_bfree   = (long) k[3];
+	buf->f_bavail  = (long) k[4];
+	buf->f_files   = (long) k[5];
+	buf->f_ffree   = (long) k[6];
+	buf->f_namelen = (long) k[9];
+	buf->f_frsize  = (long) k[10];
+	return 0;
+}
+int statfs(const char* p, struct statfs* buf)  { return statfs_words(SYS_statfs, (int) p, buf); }
+int fstatfs(int fd, struct statfs* buf)         { return statfs_words(SYS_fstatfs, fd, buf); }
 /* utime(2): the kernel reads struct utimbuf {time_t actime, modtime} directly (NULL -> now). */
 int utime(const char* path, const struct utimbuf* times) {
 	return reterr(sys3(SYS_utime, (int) path, (int) times, 0));

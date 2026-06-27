@@ -103,9 +103,9 @@ struct nwui {
 	/* a custom app context menu (shown on right-click of an iconview). menu_custom selects it
 	 * over the built-in textfield menu while a popup is open. */
 	int         menu_custom;
-	const char *cmenu_label[8];
-	nwui_cb     cmenu_cb[8];
-	void       *cmenu_user[8];
+	const char *cmenu_label[16];
+	nwui_cb     cmenu_cb[16];
+	void       *cmenu_user[16];
 	int         cmenu_n;
 
 	/* global (menu-bar) menus the app declares; sent to the compositor via nw_set_menu */
@@ -122,6 +122,10 @@ struct nwui {
 	nwui_node *saved_focus;      /* focus to restore on close */
 	nwui_cb    modal_close_cb;
 	void      *modal_close_user;
+	/* default action fired by Enter while the modal is open (e.g. the prompt's OK / confirm's
+	 * affirmative button), so dialogs are keyboard-complete. NULL = Enter does nothing. */
+	nwui_cb    modal_default;
+	void      *modal_default_user;
 };
 
 /* Built-in context-menu items (indices). */

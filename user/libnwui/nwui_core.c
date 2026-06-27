@@ -479,6 +479,8 @@ void nwui_open_modal(nwui *u, nwui_node *subtree, nwui_cb on_close, void *user)
 	if (u->focus) u->focus->focused = 0;
 	u->modal_close_cb = on_close;
 	u->modal_close_user = user;
+	u->modal_default = 0;                     /* dialog helpers set this after opening, if any */
+	u->modal_default_user = 0;
 	u->focus = first_focusable(subtree);
 	if (u->focus) u->focus->focused = 1;
 	u->layout_dirty = 1;
@@ -493,6 +495,8 @@ void nwui_close_modal(nwui *u)
 	u->saved_focus = 0;
 	if (u->focus) u->focus->focused = 1;
 	u->modal_close_cb = 0;
+	u->modal_default = 0;
+	u->modal_default_user = 0;
 	u->layout_dirty = 1;
 	if (cb) cb(0, usr);
 }
@@ -920,7 +924,7 @@ static void menu_action(nwui *u, int item)
 void nwui_context_clear(nwui *u) { u->cmenu_n = 0; }
 void nwui_context_add(nwui *u, const char *label, nwui_cb cb, void *user)
 {
-	if (u->cmenu_n >= 8) return;
+	if (u->cmenu_n >= 16) return;
 	int i = u->cmenu_n++;
 	u->cmenu_label[i] = label;
 	u->cmenu_cb[i] = cb;
@@ -1112,8 +1116,18 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 	case NW_EV_KEY: {
 		if (ev->code == NWUI_SC_CTRL || ev->code == NWUI_SC_RCTRL) { u->ctrl_down = ev->down; break; }
 		if (!ev->down) break;
-		if (accel_fire(u, ev)) break;            /* a shortcut consumed the key */
-		if (u->ctrl_down) break;                 /* suppress Ctrl+<key> from inserting/navigating */
+		if (u->modal) {                          /* a modal dialog owns the keyboard while open */
+			if (ev->ch == '\n' || ev->ch == '\r') {
+				if (u->modal_default) u->modal_default(0, u->modal_default_user);   /* Enter = OK/Yes */
+				break;
+			}
+			if (ev->code == NWUI_SC_ESC) { nwui_close_modal(u); break; }            /* Esc = Cancel */
+			if (u->ctrl_down) break;             /* don't fire app accelerators under a modal */
+			/* otherwise fall through to in-field editing (the modal's textfield) below */
+		} else {
+			if (accel_fire(u, ev)) break;        /* a shortcut consumed the key */
+			if (u->ctrl_down) break;             /* suppress Ctrl+<key> from inserting/navigating */
+		}
 		if (u->menu_open) { if (ev->code == NWUI_SC_ESC) menu_close(u); break; }
 		if (u->focus && u->focus->kind == NWUI_LIST) {
 			nwui_node *L = u->focus;
@@ -1301,6 +1315,7 @@ void nwui_message(nwui *u, const char *title, const char *text)
 	nwui_add(col, nwui_button(u, "OK", dlg_close, u));
 	nwui_colors(col, 0, 0x00ffffff);
 	nwui_open_modal(u, col, 0, 0);
+	u->modal_default = dlg_close; u->modal_default_user = u;   /* Enter closes the alert */
 }
 
 static struct { nwui *u; nwui_cb on_ok; void *user; } g_prompt;   /* one prompt modal at a time */
@@ -1318,13 +1333,44 @@ void nwui_prompt(nwui *u, const char *title, char *buf, int cap, nwui_cb on_ok, 
 	g_prompt.u = u; g_prompt.on_ok = on_ok; g_prompt.user = user;
 	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 14), 10);
 	nwui_add(col, nwui_colors(nwui_label(u, title), 0x172130, 0));
-	nwui_add(col, nwui_textfield(u, buf, cap, 0, 0));
+	nwui_node *tf = nwui_textfield(u, buf, cap, 0, 0);
+	tf->anchor = 0; tf->caret = tf->tlen;    /* select-all the prefill so typing replaces it */
+	nwui_add(col, tf);
 	nwui_node *btns = nwui_gap(nwui_hbox(u), 8);
 	nwui_add(btns, nwui_button(u, "OK", prompt_ok, 0));
 	nwui_add(btns, nwui_button(u, "Cancel", dlg_close, u));
 	nwui_add(col, btns);
 	nwui_colors(col, 0, 0x00ffffff);
 	nwui_open_modal(u, col, 0, 0);
+	u->modal_default = prompt_ok; u->modal_default_user = 0;   /* Enter = OK */
+}
+
+static struct { nwui *u; nwui_cb on_yes; void *user; } g_confirm;   /* one confirm modal at a time */
+static void confirm_yes(nwui_node *self, void *unused)
+{
+	(void) self; (void) unused;
+	nwui *u = g_confirm.u;
+	nwui_cb cb = g_confirm.on_yes;
+	void *usr = g_confirm.user;
+	nwui_close_modal(u);
+	if (cb) cb(0, usr);
+}
+/* A yes/no confirmation: title + body line + an affirmative button (label `ok_label`, e.g.
+ * "Delete") that fires on_yes then closes, and a Cancel button that just closes. */
+void nwui_confirm(nwui *u, const char *title, const char *text, const char *ok_label,
+                  nwui_cb on_yes, void *user)
+{
+	g_confirm.u = u; g_confirm.on_yes = on_yes; g_confirm.user = user;
+	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 14), 10);
+	nwui_add(col, nwui_colors(nwui_label(u, title), 0x172130, 0));
+	nwui_add(col, nwui_label(u, text));
+	nwui_node *btns = nwui_gap(nwui_hbox(u), 8);
+	nwui_add(btns, nwui_button(u, ok_label ? ok_label : "OK", confirm_yes, 0));
+	nwui_add(btns, nwui_button(u, "Cancel", dlg_close, u));
+	nwui_add(col, btns);
+	nwui_colors(col, 0, 0x00ffffff);
+	nwui_open_modal(u, col, 0, 0);
+	u->modal_default = confirm_yes; u->modal_default_user = 0;   /* Enter = the affirmative action */
 }
 
 /* ---- programmatic clipboard (so menu items can Cut/Copy/Paste the focused field) ---- */

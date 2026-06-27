@@ -91,6 +91,10 @@ void       nwui_message(nwui *u, const char *title, const char *text);
 /* Input dialog over an APP-OWNED buffer: title + textfield + OK/Cancel. OK fires on_ok then
  * closes; Cancel just closes. (Find, Go To, rename, …) */
 void       nwui_prompt(nwui *u, const char *title, char *buf, int cap, nwui_cb on_ok, void *user);
+/* Confirmation dialog: title + body + an affirmative button (label `ok_label`) that fires on_yes
+ * then closes, plus a Cancel button. (Delete confirmation, overwrite prompts, …) */
+void       nwui_confirm(nwui *u, const char *title, const char *text, const char *ok_label,
+                        nwui_cb on_yes, void *user);
 
 /* ---- path helpers (pure) + the file open/save dialog ---- */
 void       nwui_path_join(const char *dir, const char *name, char *out, int cap);
