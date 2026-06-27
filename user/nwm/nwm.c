@@ -23,7 +23,7 @@
 #include "nw_compose.h"
 #include "nwproto.h"
 #include "nw_gfx.h"
-#include "png.h"                  /* decode the branded wallpaper.png at runtime */
+#include "nwui_png.h"             /* decode the branded wallpaper.png at runtime (toolkit decoder) */
 #include "nw_settings.h"          /* desktop preferences (blur/transparency) from settings.yaml */
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
 

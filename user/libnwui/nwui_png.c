@@ -3,9 +3,11 @@
  * after Mark Adler's public-domain reference) + PNG chunk parsing + scanline defiltering. Handles
  * non-interlaced 8-bit greyscale / RGB / RGBA / palette images — enough for the wallpaper.
  */
-#include "png.h"
+#include "nwui_png.h"
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /* ---- DEFLATE (RFC 1951) inflate ------------------------------------------------------------ */
 
@@ -281,5 +283,23 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 	}
 	free(img);
 	*wout = (int) w; *hout = (int) h;
+	return px;
+}
+
+/* Read an entire file into a malloc'd buffer, then png_decode it. Icons/wallpapers are small;
+ * cap the read at 256 KiB like nwm's wallpaper loader. */
+uint32_t *nwui_image_load_png(const char *path, int *w, int *h)
+{
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return 0;
+	unsigned cap = 256u * 1024u;
+	uint8_t *file = (uint8_t *) malloc(cap);
+	if (!file) { close(fd); return 0; }
+	int total = 0, got;
+	while (total < (int) cap && (got = read(fd, file + total, cap - total)) > 0)
+		total += got;
+	close(fd);
+	uint32_t *px = (total > 0) ? png_decode(file, (unsigned) total, w, h) : 0;
+	free(file);
 	return px;
 }

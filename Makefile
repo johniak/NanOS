@@ -1882,7 +1882,7 @@ $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
-$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
+$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)nwui_png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
 # nwnote (the Notepad) is now a pure toolkit client like nwform/nwexp: --need libnwui.ndl pulls
 # the whole chain libnwui->libnw->libc via the recursive loader.
 $(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
@@ -2037,7 +2037,7 @@ $(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX_TOOL)
 # Composable widget tree + flex layout + paint, exporting the nwui_* API. Uses libnw (gfx) AND
 # libc (malloc); links both import libraries and declares both needs. A client that --need
 # libnwui.ndl gets the whole chain app->libnwui->libnw->libc via the recursive loader.
-LIBNWUI_OBJS=$(BINFOLDER)nwui_core.o $(BINFOLDER)nwui_paint.o $(BINFOLDER)nwui.o
+LIBNWUI_OBJS=$(BINFOLDER)nwui_core.o $(BINFOLDER)nwui_paint.o $(BINFOLDER)nwui.o $(BINFOLDER)nwui_png.o
 $(BINFOLDER)libnwui.elf: $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNWUI_OBJS) $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 $(BINFOLDER)libnwui.ndl: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
@@ -2243,6 +2243,7 @@ TEST_MODULES+= user/libnw/nw_settings.c   # pure desktop-preferences model (pars
 TEST_MODULES+= user/nwm/nwm_core.c user/nwm/nw_compose.c
 TEST_MODULES+= user/nwm/nw_backdrop.c   # pure backdrop-blur math (rect helpers, downsample, upsample)
 TEST_MODULES+= user/libnwui/nwui_core.c   # the pure UI-toolkit core (tree/layout/events)
+TEST_MODULES+= user/libnwui/nwui_png.c    # the PNG decoder + nwui_image_load_png file loader (not gated: many format branches exercised live)
 TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (shared by nterm/nwterm)
 TEST_MODULES+= kernel/Pci.cpp             # MI PCI enumeration/BAR decode (mock config-space backend)
 TEST_MODULES+= kernel/MsiRouter.cpp       # MI MSI/MSI-X cap walk + programming (mock config space)
