@@ -96,6 +96,52 @@ inline void     wportsc(int port, uint32_t v) {
 inline uint64_t phys(void* p) { return (uint64_t)(uintptr_t) p; }
 uint8_t* allocFrame() { uint64_t f = g_frames.alloc(); if (f) memset((void*)(uintptr_t)f, 0, kernel::FRAME_SIZE); return (uint8_t*)(uintptr_t)f; }
 
+// TEST ONLY (XHCI_TEST_FORCE_WINDOW): force a ring frame into the user-window range [8MiB,64MiB) to
+// deterministically reproduce the per-process-CR3 fault in QEMU (where rings otherwise land in the
+// always-identity region). The staging window reserves [8MiB,40MiB), so the first free frame >= 8MiB
+// is in [40MiB,64MiB) — inside the user window. Discarded sub-window frames leak (test build only).
+#ifdef XHCI_TEST_FORCE_WINDOW
+uint8_t* allocFrameDma() {
+    for (int g = 0; g < 100000; g++) {
+        uint64_t f = g_frames.alloc();
+        if (!f) return 0;
+        if (f >= VA_USER_BASE && f < VA_USER_END) { memset((void*)(uintptr_t)f, 0, kernel::FRAME_SIZE); return (uint8_t*)(uintptr_t)f; }
+    }
+    return 0;
+}
+#else
+inline uint8_t* allocFrameDma() { return allocFrame(); }
+#endif
+
+// Run host-controller access under the KERNEL page directory. The xHCI command/event rings, the
+// per-endpoint transfer rings, the DCBAA, scratchpad and device/input contexts are kernel frames
+// the CPU touches via phys==virt (ringPush, event-ring drain, doorbell context reads). That
+// identity only holds under the kernel CR3: a per-process address space PRIVATIZES the user-window
+// VA range [VA_USER_BASE, VA_USER_END) = [8 MiB, 64 MiB) (mmu_x86_64.cpp dropUserWindows), so a low
+// physical frame that lands there is remapped to the process's private pages. A USB transfer issued
+// from a user process (e.g. a file read off the USB root by the greeter/nwm) runs on THAT process's
+// CR3, so ringPush to a ring frame in [8,64) MiB faulted (#PF in ringPush, cr2 inside the window).
+// Switching to the kernel CR3 makes the full identity map active regardless of caller context;
+// [64 MiB, 1 GiB) (kernel heap, DMA buffers) stays identity in every space, so data buffers are
+// unaffected. No-op when already on the kernel directory (enumeration + the HID poll thread).
+struct KernelCr3 {
+    uint32_t prev;
+    bool switched;
+    KernelCr3() {
+#ifdef XHCI_TEST_NO_GUARD
+        switched = false;   // TEST ONLY: disable the guard to confirm the fault reproduces
+#else
+        prev = mmuCurrentDirPhys();
+        uint32_t k = mmuKernelDirPhys();
+        switched = (prev != k);
+        if (switched) mmuLoadDirPhys(k);
+#endif
+    }
+    ~KernelCr3() { if (switched) mmuLoadDirPhys(prev); }
+    KernelCr3(const KernelCr3&) = delete;
+    KernelCr3& operator=(const KernelCr3&) = delete;
+};
+
 void ioWaitSpin() { for (volatile int i = 0; i < 1000; i++) {} }
 
 // Push one TRB onto a ring; returns the physical address of the slot it was written to.
@@ -313,6 +359,7 @@ int xhciEnablePort(UsbHc*, int port, int* speedOut) {
 
 int xhciSubmit(UsbHc*, UsbTransfer* t) {
     SpinGuard _xg(g_xhciLock);   // serialize TRB submit + event-ring poll vs the HID poll thread
+    KernelCr3 _kc;                // ring/event-ring access via phys==virt must run under kernel CR3
     if (t->slot <= 0 || t->slot >= MAX_SLOTS) { t->result = -1; t->complete = 1; return -1; }
     SlotState& s = g_slots[t->slot];
     int dci = dciOf(t->endpoint);
@@ -390,6 +437,7 @@ void drainTransferEvents() {
 // report has arrived (re-arming next call), 0 if not ready, <0 on error.
 int xhciIntPoll(UsbHc*, UsbTransfer* t) {
     SpinGuard _xg(g_xhciLock);   // drains the shared event ring — must not race MSC xhciSubmit
+    KernelCr3 _kc;                // see KernelCr3: identity-mapped ring access needs the kernel CR3
     if (t->slot <= 0 || t->slot >= MAX_SLOTS) return -1;
     SlotState& s = g_slots[t->slot];
     int dci = dciOf(t->endpoint);
@@ -412,11 +460,12 @@ int xhciIntPoll(UsbHc*, UsbTransfer* t) {
 
 int xhciConfigureEndpoint(UsbHc*, int slot, int endpoint, UsbXfer type, UsbDir dir, int maxPacket) {
     SpinGuard _xg(g_xhciLock);   // issues a Configure-EP command + drains events: serialize the ring
+    KernelCr3 _kc;                // ring/context frames are phys==virt — must run under kernel CR3
     if (slot <= 0 || slot >= MAX_SLOTS) return -1;
     SlotState& s = g_slots[slot];
     int dci = dciOf(endpoint);
     if (dci < 2 || dci >= 32) return -1;
-    if (!s.ep[dci].ring) { s.ep[dci].ring = (Trb*) allocFrame(); s.ep[dci].enq = 0; s.ep[dci].cycle = 1; }
+    if (!s.ep[dci].ring) { s.ep[dci].ring = (Trb*) allocFrameDma(); s.ep[dci].enq = 0; s.ep[dci].cycle = 1; }
 
     memset(s.inputCtx, 0, kernel::FRAME_SIZE);
     ctxAt(s.inputCtx, 0)[1] = (1u << 0) | (1u << dci);          // add Slot + the new EP
