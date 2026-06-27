@@ -29,6 +29,6 @@ render("tools/icons.html", 8 * 64, 64, "/tmp/_iconsheet.png")
 slice_sheet("/tmp/_iconsheet.png", 64,
             ["folder", "drive", "home", "program", "text", "image", "file", "computer"])
 
-# toolbar glyphs
-render("tools/toolbar-icons.html", 3 * 24, 24, "/tmp/_tbsheet.png")
-slice_sheet("/tmp/_tbsheet.png", 24, ["ui-up", "ui-back", "ui-home"])
+# toolbar glyphs (order matches tools/toolbar-icons.html)
+render("tools/toolbar-icons.html", 4 * 24, 24, "/tmp/_tbsheet.png")
+slice_sheet("/tmp/_tbsheet.png", 24, ["ui-back", "ui-fwd", "ui-up", "ui-home"])

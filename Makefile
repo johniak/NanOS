@@ -1217,7 +1217,7 @@ _image64: _all _userland64 _kext
 	fi
 	# Icon set for the Rust file explorer (rsexp) -> /nanos/share/icons. Decoded at runtime via the
 	# toolkit PNG loader; the iconview color-keys magenta as transparent.
-	for ic in computer drive folder home program text image file ui-up ui-back ui-home; do \
+	for ic in computer drive folder home program text image file ui-back ui-fwd ui-up ui-home; do \
 	  if [ -f assets/icons/$$ic.png ]; then \
 	    printf "rm /nanos/share/icons/$$ic.png\nwrite assets/icons/$$ic.png /nanos/share/icons/$$ic.png\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  fi; \

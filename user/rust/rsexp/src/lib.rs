@@ -58,10 +58,16 @@ struct App {
     paths: Vec<Vec<u8>>,
     kinds: Vec<u8>,
     items: Vec<IconItem>,
+    item_idx: Vec<usize>,         // filtered item position -> index into names/paths/kinds
     // sidebar places
     place_nodes: Vec<*mut NwNode>,
     place_paths: Vec<Vec<u8>>,    // NUL-terminated; empty for My Computer
     place_kind: Vec<u8>,
+    // navigation history (each entry: empty = My Computer, else a path without NUL) + cursor
+    hist: Vec<Vec<u8>>,
+    hpos: i32,
+    // live search filter (NUL-terminated buffer the search field writes into)
+    query: [u8; 64],
 }
 
 fn ends_with(s: &[u8], suf: &[u8]) -> bool {
@@ -113,14 +119,69 @@ impl App {
         self.kinds.push(kind);
     }
 
-    fn commit(&mut self) {
+    /// Rebuild the (possibly filtered) icon list from the model + current search query.
+    fn apply_filter(&mut self) {
         self.items.clear();
+        self.item_idx.clear();
+        let qlen = cstr_len(&self.query);
         for i in 0..self.names.len() {
-            let (icon, iw, ih) = self.icon_for(self.kinds[i]);
-            self.items.push(IconItem { label: self.names[i].as_ptr(), icon, iw, ih });
+            let nm = &self.names[i];
+            let nlen = nm.len() - 1;            // drop the NUL
+            if qlen == 0 || contains_ci(&nm[..nlen], &self.query[..qlen]) {
+                let (icon, iw, ih) = self.icon_for(self.kinds[i]);
+                self.items.push(IconItem { label: nm.as_ptr(), icon, iw, ih });
+                self.item_idx.push(i);
+            }
         }
         Node(self.view).iconview_set(&self.items);
+    }
+
+    fn commit(&mut self) {
+        self.apply_filter();
         self.update_sidebar();
+    }
+
+    /// Re-filter when the search text changes (model unchanged).
+    fn refilter(&mut self) {
+        self.apply_filter();
+    }
+
+    /* ---- navigation history --------------------------------------------------------- */
+    fn record(&mut self, entry: Vec<u8>) {
+        let keep = (self.hpos + 1) as usize;
+        if keep < self.hist.len() {
+            self.hist.truncate(keep);          // drop the forward branch
+        }
+        self.hist.push(entry);
+        self.hpos = self.hist.len() as i32 - 1;
+    }
+
+    /// Navigate to `entry` (empty = My Computer, else a path); push history when `record`.
+    fn go(&mut self, entry: &[u8], record: bool) {
+        let ok = if entry.is_empty() {
+            self.load_my_computer();
+            true
+        } else {
+            self.load_dir(entry)
+        };
+        if ok && record {
+            self.record(entry.to_vec());
+        }
+    }
+
+    fn back(&mut self) {
+        if self.hpos > 0 {
+            self.hpos -= 1;
+            let e = self.hist[self.hpos as usize].clone();
+            self.go(&e, false);
+        }
+    }
+    fn forward(&mut self) {
+        if (self.hpos as usize) + 1 < self.hist.len() {
+            self.hpos += 1;
+            let e = self.hist[self.hpos as usize].clone();
+            self.go(&e, false);
+        }
     }
 
     fn set_crumb(&self, s: &[u8]) {
@@ -184,10 +245,10 @@ impl App {
         self.commit();
     }
 
-    fn load_dir(&mut self, path: &[u8]) {
+    fn load_dir(&mut self, path: &[u8]) -> bool {
         let d = unsafe { nwui_dir_open(nul(path).as_ptr()) };
         if d.is_null() {
-            return;
+            return false;
         }
         self.my_computer = false;
         self.cwd = nul(path);
@@ -212,6 +273,7 @@ impl App {
         let crumb = self.cwd[..self.cwd.len() - 1].to_vec();
         self.set_crumb(&crumb);
         self.commit();
+        true
     }
 
     fn nav_up(&mut self) {
@@ -221,24 +283,24 @@ impl App {
         let cwd = self.cwd[..self.cwd.len() - 1].to_vec();
         let par = parent_of(&cwd);
         if par == b"/disks" || par.is_empty() {
-            self.load_my_computer();
+            self.go(b"", true);
         } else {
             let p = par.to_vec();
-            self.load_dir(&p);
+            self.go(&p, true);
         }
     }
 
     fn activate(&mut self) {
         let sel = Node(self.view).iconview_selected();
-        if sel < 0 || sel as usize >= self.kinds.len() {
+        if sel < 0 || sel as usize >= self.item_idx.len() {
             return;
         }
-        let i = sel as usize;
+        let i = self.item_idx[sel as usize];
         match self.kinds[i] {
             K_UP => self.nav_up(),
             K_DRIVE | K_HOME | K_DIR => {
                 let p = self.paths[i][..self.paths[i].len() - 1].to_vec();
-                self.load_dir(&p);
+                self.go(&p, true);
             }
             K_NXE => {
                 let p = self.paths[i].clone();
@@ -260,11 +322,15 @@ impl App {
             return;
         }
         if self.place_kind[idx] == P_COMPUTER {
-            self.load_my_computer();
+            self.go(b"", true);
         } else {
             let p = self.place_paths[idx][..self.place_paths[idx].len() - 1].to_vec();
-            self.load_dir(&p);
+            self.go(&p, true);
         }
+    }
+
+    fn do_search(&mut self) {
+        self.refilter();
     }
 }
 
@@ -329,17 +395,49 @@ extern "C" fn cb_homebtn(_n: *mut NwNode, user: *mut c_void) {
     unsafe {
         let app = &mut *(user as *mut App);
         let h = home_dir();
-        app.load_dir(&h);
+        app.go(&h, true);
     }
 }
 extern "C" fn cb_place(n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).go_place(n) }
 }
 extern "C" fn cb_mycomputer(_n: *mut NwNode, user: *mut c_void) {
-    unsafe { (&mut *(user as *mut App)).load_my_computer() }
+    unsafe { (&mut *(user as *mut App)).go(b"", true) }
+}
+extern "C" fn cb_back(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).back() }
+}
+extern "C" fn cb_forward(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).forward() }
+}
+extern "C" fn cb_search(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).do_search() }
 }
 extern "C" fn cb_close(_n: *mut NwNode, _user: *mut c_void) {
     unsafe { libnwui_rs::exit(0) }
+}
+
+/// Case-insensitive substring test (ASCII).
+fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > hay.len() {
+        return false;
+    }
+    fn lc(b: u8) -> u8 { if b >= b'A' && b <= b'Z' { b + 32 } else { b } }
+    let mut i = 0;
+    while i + needle.len() <= hay.len() {
+        let mut j = 0;
+        while j < needle.len() && lc(hay[i + j]) == lc(needle[j]) {
+            j += 1;
+        }
+        if j == needle.len() {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 fn load_icon(path: &str, fallback: Icon) -> Icon {
@@ -368,6 +466,8 @@ pub extern "C" fn main() -> i32 {
         file,
     };
 
+    let ic_back = load_icon("/disks/main/nanos/share/icons/ui-back.png", nothing);
+    let ic_fwd = load_icon("/disks/main/nanos/share/icons/ui-fwd.png", nothing);
     let ic_up = load_icon("/disks/main/nanos/share/icons/ui-up.png", nothing);
     let ic_home = load_icon("/disks/main/nanos/share/icons/ui-home.png", nothing);
 
@@ -384,9 +484,13 @@ pub extern "C" fn main() -> i32 {
         paths: Vec::new(),
         kinds: Vec::new(),
         items: Vec::new(),
+        item_idx: Vec::new(),
         place_nodes: Vec::new(),
         place_paths: Vec::new(),
         place_kind: Vec::new(),
+        hist: Vec::new(),
+        hpos: -1,
+        query: [0u8; 64],
     });
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
     let view = ui.iconview_raw(cb_activate, cb_noop, app_ptr);
@@ -440,10 +544,17 @@ pub extern "C" fn main() -> i32 {
     }
     let sidebar = sidebar.gap(4).pad(12).colors(0, SIDE_BG).size(200, 0);
 
+    // search field over the app's query buffer (stable address: App is leaked)
+    let qbuf = unsafe { (*(app_ptr as *mut App)).query.as_mut_ptr() };
+    let search = ui.textfield(qbuf, 64, cb_search, app_ptr);
+
     let toolbar = ui.hbox()
+        .add(ui.iconbtn(ic_back, cb_back, app_ptr))
+        .add(ui.iconbtn(ic_fwd, cb_forward, app_ptr))
         .add(ui.iconbtn(ic_up, cb_up, app_ptr))
         .add(ui.iconbtn(ic_home, cb_homebtn, app_ptr))
         .add(crumb.flex(1))
+        .add(search.size(160, 0))
         .gap(6)
         .pad(6)
         .colors(0x001d2733, 0x00eef2f8);   /* a defined toolbar strip */
@@ -451,7 +562,7 @@ pub extern "C" fn main() -> i32 {
     let body = ui.hbox().add(sidebar).add(view.flex(1));
     let root = ui.vbox().add(toolbar).add(body.flex(1));
 
-    unsafe { (&mut *(app_ptr as *mut App)).load_my_computer(); }
+    unsafe { (&mut *(app_ptr as *mut App)).go(b"", true); }   // initial view + history entry
     ui.focus(view);
     ui.run(root);
     0

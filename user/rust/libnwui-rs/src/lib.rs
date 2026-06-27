@@ -80,6 +80,7 @@ extern "C" {
     fn nwui_menu(u: *mut NwUi, title: *const u8) -> i32;
     fn nwui_menu_item(u: *mut NwUi, menu: i32, label: *const u8, cb: RawCb, user: *mut c_void);
     fn nwui_iconbtn(u: *mut NwUi, icon: *const u32, iw: i32, ih: i32, cb: RawCb, user: *mut c_void) -> *mut NwNode;
+    fn nwui_textfield(u: *mut NwUi, buf: *mut u8, cap: i32, on_change: RawCb, user: *mut c_void) -> *mut NwNode;
 }
 
 /// NUL-terminate a `&str` for a C call. libnwui copies captions immediately, so the buffer only
@@ -151,6 +152,11 @@ impl Ui {
     /// A flat clickable toolbar icon button. `icon` = (pixels, w, h) from load_png.
     pub fn iconbtn(&self, icon: (*const u32, i32, i32), cb: RawCb, user: *mut c_void) -> Node {
         unsafe { Node(nwui_iconbtn(self.0, icon.0, icon.1, icon.2, cb, user)) }
+    }
+
+    /// An editable text field over an app-owned buffer; on_change fires (raw ABI) as text changes.
+    pub fn textfield(&self, buf: *mut u8, cap: i32, on_change: RawCb, user: *mut c_void) -> Node {
+        unsafe { Node(nwui_textfield(self.0, buf, cap, on_change, user)) }
     }
 
     /// An icon-grid view using the raw C callback ABI: `on_activate` (double-click/Enter) and
