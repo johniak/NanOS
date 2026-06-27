@@ -81,6 +81,7 @@ extern "C" {
     fn nwui_size(n: *mut NwNode, w: i32, h: i32) -> *mut NwNode;
     fn nwui_set_text(n: *mut NwNode, t: *const u8);
     fn nwui_spawn(u: *mut NwUi, cmd: *const u8);
+    fn nwui_spawn_arg(u: *mut NwUi, cmd: *const u8, arg: *const u8);
     fn nwui_image_load_png(path: *const u8, w: *mut i32, h: *mut i32) -> *mut u32;
     fn nwui_menu(u: *mut NwUi, title: *const u8) -> i32;
     fn nwui_menu_item(u: *mut NwUi, menu: i32, label: *const u8, cb: RawCb, user: *mut c_void);
@@ -266,6 +267,11 @@ impl Ui {
 
     pub fn focus(&self, n: Node) { unsafe { nwui_focus(self.0, n.0) } }
     pub fn spawn(&self, cmd: &str) { let c = cstr(cmd); unsafe { nwui_spawn(self.0, c.as_ptr()) } }
+    /// Launch `cmd` with `arg` (a NUL-terminated C pointer) as its argv[1] — "open with".
+    pub fn spawn_arg(&self, cmd: &str, arg: *const u8) {
+        let c = cstr(cmd);
+        unsafe { nwui_spawn_arg(self.0, c.as_ptr(), arg) }
+    }
     pub fn run(&self, root: Node) { unsafe { nwui_set_root(self.0, root.0); nwui_run(self.0) } }
 }
 

@@ -178,6 +178,9 @@ const char *nwui_get_text(nwui_node *n);
  * Run dialog does — used e.g. by a file manager to open/run an app. Fire-and-forget. */
 void        nwui_spawn(nwui *u, const char *cmd);
 
+/* Launch `cmd` passing `arg` as its argv[1] (open-with: e.g. open a file in an editor). */
+void        nwui_spawn_arg(nwui *u, const char *cmd, const char *arg);
+
 /* Ask the compositor to re-read its settings file and recompose (used by the Settings app,
  * right after it writes settings.yaml, so preference changes apply live). */
 void        nwui_reload_settings(nwui *u);

@@ -160,7 +160,7 @@ static void m_timedate(nwui_node *s, void *u){ (void) s; (void) u;
 static void m_about(nwui_node *s, void *u) { (void) s; (void) u;
 	nwui_message(g_u, "About Notepad", "NanOS Notepad - a libnwui demo editor"); }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	nwui *u = nwui_open("Notepad", 560, 420);
 	if (!u) return 1;
@@ -217,6 +217,9 @@ int main(void)
 	nwui_focus(u, g_ta);                   /* editor focused at start */
 
 	reset_undo();
+	/* "Open with": if launched with a file-path argument (e.g. from the file manager), load it. */
+	if (argc > 1 && argv[1] && argv[1][0])
+		do_load(argv[1]);
 	update_status();
 	nwui_run(u);
 	return 0;

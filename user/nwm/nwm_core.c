@@ -305,6 +305,7 @@ static void run_dialog_key(struct nw_server *s, unsigned char code)
 		if (s->run_len > 0) {
 			memcpy(s->run_cmd, s->run_text, s->run_len);
 			s->run_cmd[s->run_len] = 0;
+			s->spawn_has_arg = 0;            /* a typed Run command never carries an argument */
 			s->want_spawn = 1;
 		}
 		s->run_open = 0;
@@ -472,7 +473,7 @@ static void menu_activate(struct nw_server *s, int item)   /* an item was chosen
 		if (item == 0 || item == 1) {               /* My Computer (rsexp) / About (nwabout) */
 			const char *cmd = item == 0 ? "rsexp" : "nwabout"; int i = 0;
 			for (; cmd[i] && i < NW_RUN_MAX - 1; i++) s->run_cmd[i] = cmd[i];
-			s->run_cmd[i] = 0; s->want_spawn = 1;
+			s->run_cmd[i] = 0; s->spawn_has_arg = 0; s->want_spawn = 1;
 		} else if (item == 2) {                      /* Run... -> the Super+R launcher dialog */
 			s->run_open = 1; s->run_len = 0; damage_run(s);
 		} else if (item == 3) s->want_shutdown = 1;  /* Shut Down */
@@ -880,9 +881,21 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		 * pending-spawn slot the Run dialog uses; the I/O shell does the fork+exec. */
 		int n = (int) m->length;
 		if (n > NW_RUN_MAX - 1) n = NW_RUN_MAX - 1;
-		if (payload && n > 0) memcpy(s->run_cmd, payload, n);
-		s->run_cmd[n > 0 ? n : 0] = 0;
-		if (n > 0) s->want_spawn = 1;
+		/* payload is "cmd" or "cmd\0arg" (NUL-separated): everything before the first NUL is the
+		 * command, anything after is argv[1] (a file to open, length-delimited so paths with
+		 * spaces are fine). */
+		s->spawn_has_arg = 0;
+		s->run_arg[0] = 0;
+		int ci = 0;
+		for (; ci < n && payload && payload[ci]; ci++) s->run_cmd[ci] = payload[ci];
+		s->run_cmd[ci] = 0;
+		if (payload && ci < n) {                 /* a NUL separator -> an argument follows */
+			int ai = 0, src = ci + 1;
+			for (; src < n && ai < NW_RUN_MAX - 1; src++, ai++) s->run_arg[ai] = payload[src];
+			s->run_arg[ai] = 0;
+			s->spawn_has_arg = ai > 0;
+		}
+		if (ci > 0) s->want_spawn = 1;
 		break;
 	}
 	default:

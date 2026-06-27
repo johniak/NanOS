@@ -78,6 +78,10 @@ void nw_drag_begin(nw_display *d, const char *text, int len);
  * dialog uses. Fire-and-forget; the new program connects as its own client. */
 void nw_spawn(nw_display *d, const char *cmd);
 
+/* Like nw_spawn, but pass `arg` as the program's argv[1] (e.g. a file to open). Used for
+ * "open with": a file manager launches an editor/viewer with the document path. */
+void nw_spawn_arg(nw_display *d, const char *cmd, const char *arg);
+
 /* Ask the compositor to re-read its settings file (settings.yaml) and recompose. Fire-and-forget;
  * the Settings app calls this right after writing the file so changes apply live. */
 void nw_reload_settings(nw_display *d);

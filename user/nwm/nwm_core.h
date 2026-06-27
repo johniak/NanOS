@@ -140,6 +140,8 @@ struct nw_server {
 	int   run_len;
 	char  run_cmd[NW_RUN_MAX];      /* the committed command (on Enter)                  */
 	int   want_spawn;               /* shell: launch run_cmd, then clear                 */
+	char  run_arg[NW_RUN_MAX];      /* optional argv[1] for the spawn (e.g. a file to open) */
+	int   spawn_has_arg;            /* 1 => run_arg is set (open-with); 0 => no argument     */
 
 	/* global menu bar: an open dropdown (logo or the focused app's), + hovered item */
 	int   menu_open, menu_which, menu_hover;

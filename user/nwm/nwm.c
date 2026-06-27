@@ -151,7 +151,7 @@ static void set_cloexec(int fd) { fcntl(fd, F_SETFD, FD_CLOEXEC); }
 static void set_nonblock(int fd) { fcntl(fd, F_SETFL, O_NONBLOCK); }
 
 /* Spawn a GUI client with an inherited request(3)/event(4) pipe pair into nw_server slot. */
-static int spawn_client(int slot, const char *path)
+static int spawn_client(int slot, const char *path, const char *arg)
 {
 	int reqp[2], evtp[2];
 	if (pipe(reqp) < 0 || pipe(evtp) < 0)
@@ -169,7 +169,10 @@ static int spawn_client(int slot, const char *path)
 		fcntl(4, F_SETFD, 0);
 		const char *base = path;                     /* argv[0] = the binary's basename */
 		for (const char *p = path; *p; p++) if (*p == '/') base = p + 1;
-		char *argv[] = { (char *) base, 0 };
+		char *argv[3];
+		argv[0] = (char *) base;
+		if (arg && arg[0]) { argv[1] = (char *) arg; argv[2] = 0; }  /* open-with: argv[1] = a file */
+		else argv[1] = 0;
 		char *envp[] = { (char *) "NW_DISPLAY=1", 0 };
 		execve(path, argv, envp);
 		_exit(127);
@@ -593,9 +596,9 @@ static void start_desktop(void)
 {
 	if (g_started) return;
 	g_started = 1;
-	spawn_client(0, NWTERM_PATH);             /* the NanoOS demo desktop: Terminal + Settings */
-	spawn_client(1, NWSET_PATH);
-	spawn_client(2, NWEXP_PATH);              /* Files spawned last -> on top + focused */
+	spawn_client(0, NWTERM_PATH, 0);          /* the NanoOS demo desktop: Terminal + Settings */
+	spawn_client(1, NWSET_PATH, 0);
+	spawn_client(2, NWEXP_PATH, 0);           /* Files spawned last -> on top + focused */
 	S.dirty = 1;
 	present();                                /* first frame: desktop + cursor */
 }
@@ -748,8 +751,9 @@ int main(void)
 		if (nw_run_take_spawn(&S, cmd, sizeof cmd)) {
 			char path[256];
 			int slot = free_slot();
+			const char *arg = S.spawn_has_arg ? S.run_arg : 0;   /* open-with: argv[1] */
 			if (slot >= 0 && resolve_cmd(cmd, path, sizeof path))
-				spawn_client(slot, path);
+				spawn_client(slot, path, arg);
 		}
 
 		update_clock();   /* refresh the menu-bar clock; damages the bar when the minute ticks */

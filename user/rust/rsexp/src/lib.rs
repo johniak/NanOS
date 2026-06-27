@@ -419,6 +419,11 @@ impl App {
                 let p = self.paths[i].clone();
                 Ui(self.ui).spawn(unsafe { core::str::from_utf8_unchecked(&p[..p.len() - 1]) });
             }
+            K_TEXT => {
+                // open-with: launch the Notepad (nwnote) with this file as argv[1]
+                let p = self.paths[i].clone();   // NUL-terminated
+                Ui(self.ui).spawn_arg("nwnote", p.as_ptr());
+            }
             _ => {}
         }
     }

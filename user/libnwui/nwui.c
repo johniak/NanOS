@@ -28,6 +28,12 @@ void nwui_spawn(nwui *u, const char *cmd)
 	nw_spawn(io->d, cmd);
 }
 
+void nwui_spawn_arg(nwui *u, const char *cmd, const char *arg)
+{
+	struct nwui_io *io = (struct nwui_io *) u->io;
+	nw_spawn_arg(io->d, cmd, arg);
+}
+
 void nwui_reload_settings(nwui *u)
 {
 	struct nwui_io *io = (struct nwui_io *) u->io;

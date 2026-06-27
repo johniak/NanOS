@@ -624,3 +624,30 @@ TEST_CASE("drag-and-drop: crossing a window boundary emits DRAG_LEAVE to the old
 	nw_pointer(&s, bx, by, 0);                          // release over B -> DROP to B
 	CHECK(count(drain(s, 1), NW_EVT_DROP) == 1);
 }
+
+/* ---- open-with: SPAWN carries an optional argv[1] ---------------------------------- */
+TEST_CASE("SPAWN request splits cmd\\0arg into command + argv[1] (open-with)") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	const char payload[] = "nwnote\0/disks/main/x.txt";   // NUL-separated cmd + arg
+	nw_msg m{}; m.type = NW_REQ_SPAWN; m.length = (uint32_t) (sizeof(payload) - 1);
+	nw_client_msg(&s, 0, &m, (const unsigned char*) payload);
+	CHECK(s.want_spawn == 1);
+	CHECK(strcmp(s.run_cmd, "nwnote") == 0);
+	CHECK(s.spawn_has_arg == 1);
+	CHECK(strcmp(s.run_arg, "/disks/main/x.txt") == 0);
+	char out[128];
+	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
+	CHECK(strcmp(out, "nwnote") == 0);
+}
+
+TEST_CASE("SPAWN request without an argument carries no argv[1]") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	const char* cmd = "rsexp";
+	nw_msg m{}; m.type = NW_REQ_SPAWN; m.length = (uint32_t) strlen(cmd);
+	nw_client_msg(&s, 0, &m, (const unsigned char*) cmd);
+	CHECK(s.want_spawn == 1);
+	CHECK(strcmp(s.run_cmd, "rsexp") == 0);
+	CHECK(s.spawn_has_arg == 0);
+}

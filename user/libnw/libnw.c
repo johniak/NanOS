@@ -162,6 +162,18 @@ void nw_drag_begin(nw_display *d, const char *text, int len)
 	if (len) write_all(d->reqfd, text, len);
 }
 
+void nw_spawn_arg(nw_display *d, const char *cmd, const char *arg)
+{
+	int cl = 0; while (cmd && cmd[cl]) cl++;
+	int al = 0; while (arg && arg[al]) al++;
+	/* payload = "cmd" or "cmd\0arg" (NUL-separated) */
+	uint32_t total = (uint32_t) (cl + (al ? 1 + al : 0));
+	if (send_hdr(d->reqfd, NW_REQ_SPAWN, 0, 0, 0, 0, 0, total) < 0)
+		return;
+	if (cl) write_all(d->reqfd, cmd, cl);
+	if (al) { char z = 0; write_all(d->reqfd, &z, 1); write_all(d->reqfd, arg, al); }
+}
+
 void nw_spawn(nw_display *d, const char *cmd)
 {
 	int len = 0;
