@@ -387,6 +387,7 @@ pub extern "C" fn main() -> i32 {
         .gap(8);
 
     unsafe { (&mut *(app_ptr as *mut App)).load_my_computer(); }
+    ui.focus(view);   // so arrow keys / Enter drive the icon grid immediately
     ui.run(root);
     0
 }

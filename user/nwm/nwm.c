@@ -54,7 +54,7 @@ enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 #define CLIENT_OUTCAP   (64 * 1024)
 #define CLIENT_COMMITCAP (512 * 1024)   /* max COMMIT payload reassembled per client */
 #define NWNOTE_PATH "/disks/main/apps/nwnote/nwnote.nxe"
-#define NWEXP_PATH  "/disks/main/apps/nwexp/nwexp.nxe"
+#define NWEXP_PATH  "/disks/main/apps/rsexp/rsexp.nxe"   /* the Files app (Rust icon explorer) */
 #define NWSET_PATH  "/disks/main/apps/nwset/nwset.nxe"
 #define NWTERM_PATH "/disks/main/apps/nwterm/nwterm.nxe"
 
