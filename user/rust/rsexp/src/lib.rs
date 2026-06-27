@@ -69,11 +69,34 @@ struct App {
     // live search filter (NUL-terminated buffer the search field writes into)
     query: [u8; 64],
     search: *mut NwNode,          // the search text field (so navigation can clear it)
+    sort_key: i32,                // SORT_* applied to the current view
     // SQLite-backed recursive search: a :memory: index, (re)built per location on first search.
     #[cfg(feature = "sqlite")]
     db: *mut c_void,              // sqlite3* (lazily opened), null until the first search
     #[cfg(feature = "sqlite")]
     indexed_root: Vec<u8>,        // the path the in-memory index currently covers (no NUL)
+    // persisted per-directory sort: a file-backed SQLite DB (survives reboot).
+    #[cfg(feature = "sqlite")]
+    prefs_db: *mut c_void,        // sqlite3* for ~/.rsexp.db (lazily opened), null until used
+}
+
+const SORT_NAME: i32 = 0;         // A -> Z (case-insensitive)
+const SORT_NAME_DESC: i32 = 1;    // Z -> A
+const SORT_TYPE: i32 = 2;         // folders first, then by name
+
+fn is_dirish(kind: u8) -> bool { matches!(kind, K_DIR | K_DRIVE | K_HOME | K_UP) }
+
+/// Case-insensitive ASCII byte-string compare of two NUL-terminated names.
+fn name_cmp(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
+    fn lc(c: u8) -> u8 { if c >= b'A' && c <= b'Z' { c + 32 } else { c } }
+    let mut i = 0;
+    loop {
+        let (ca, cb) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if ca == 0 || cb == 0 { return ca.cmp(&cb); }
+        let (la, lb) = (lc(ca), lc(cb));
+        if la != lb { return la.cmp(&lb); }
+        i += 1;
+    }
 }
 
 fn ends_with(s: &[u8], suf: &[u8]) -> bool {
@@ -159,6 +182,60 @@ impl App {
     /// Re-filter when the search text changes (model unchanged).
     fn refilter(&mut self) {
         self.apply_filter();
+    }
+
+    /* ---- sorting (persisted per directory) -------------------------------------------- */
+    /// The path used as the persistence key for the current location.
+    fn loc_key(&self) -> Vec<u8> {
+        if self.my_computer { b"/disks".to_vec() } else { self.cwd[..self.cwd.len() - 1].to_vec() }
+    }
+
+    /// Reorder the model (names/paths/kinds in parallel) by `self.sort_key`. ".." stays first;
+    /// SORT_TYPE groups folders before files. No UI refresh (the caller re-renders).
+    fn sort_model(&mut self) {
+        let n = self.names.len();
+        if n < 2 { return; }
+        let mut idx: Vec<usize> = (0..n).collect();
+        let key = self.sort_key;
+        idx.sort_by(|&a, &b| {
+            use core::cmp::Ordering;
+            let (ka, kb) = (self.kinds[a], self.kinds[b]);
+            let (ua, ub) = (ka == K_UP, kb == K_UP);     // ".." is always first
+            if ua != ub { return if ua { Ordering::Less } else { Ordering::Greater }; }
+            let (na, nb) = (&self.names[a], &self.names[b]);
+            match key {
+                SORT_NAME_DESC => name_cmp(nb, na),
+                SORT_TYPE => {
+                    let (da, db) = (is_dirish(ka), is_dirish(kb));
+                    if da != db { if da { Ordering::Less } else { Ordering::Greater } }
+                    else { name_cmp(na, nb) }
+                }
+                _ => name_cmp(na, nb),
+            }
+        });
+        let on = core::mem::take(&mut self.names);
+        let op = core::mem::take(&mut self.paths);
+        let ok = core::mem::take(&mut self.kinds);
+        self.names = Vec::with_capacity(n);
+        self.paths = Vec::with_capacity(n);
+        self.kinds = Vec::with_capacity(n);
+        for &i in &idx {
+            self.names.push(on[i].clone());
+            self.paths.push(op[i].clone());
+            self.kinds.push(ok[i]);
+        }
+    }
+
+    fn apply_sort(&mut self) {
+        self.sort_model();
+        self.apply_filter();
+    }
+
+    /// Change the sort, persist it for this directory, and re-render (context-menu action).
+    fn set_sort(&mut self, key: i32) {
+        self.sort_key = key;
+        self.save_sort();
+        self.apply_sort();
     }
 
     /* ---- navigation history --------------------------------------------------------- */
@@ -257,6 +334,8 @@ impl App {
         }
         let home = home_dir();
         self.push(b"Home", &home, K_HOME);
+        self.sort_key = self.load_sort();   // persisted sort for the My Computer view too
+        self.sort_model();
         self.set_crumb(b"My Computer");
         self.commit();
     }
@@ -287,6 +366,8 @@ impl App {
             self.push(&name[..n], &full, kind);
         }
         unsafe { nwui_dir_close(d) }
+        self.sort_key = self.load_sort();   // per-directory persisted sort (default A->Z)
+        self.sort_model();
         let crumb = self.cwd[..self.cwd.len() - 1].to_vec();
         self.set_crumb(&crumb);
         self.commit();
@@ -497,6 +578,64 @@ impl App {
     }
 }
 
+/* ---- per-directory sort persistence (SQLite file DB ~/.rsexp.db) ---- */
+#[cfg(feature = "sqlite")]
+impl App {
+    fn prefs_open(&mut self) {
+        use sqlite_ffi::*;
+        if !self.prefs_db.is_null() { return; }
+        let mut path = home_dir();
+        path.extend_from_slice(b"/.rsexp.db\0");
+        let mut db: *mut c_void = core::ptr::null_mut();
+        if unsafe { sqlite3_open(path.as_ptr(), &mut db) } != 0 { return; }
+        self.prefs_db = db;
+        unsafe {
+            sqlite3_exec(db, b"CREATE TABLE IF NOT EXISTS dirsort(path TEXT PRIMARY KEY, sortkey INT);\0".as_ptr(),
+                core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
+        }
+    }
+
+    fn load_sort(&mut self) -> i32 {
+        use sqlite_ffi::*;
+        self.prefs_open();
+        if self.prefs_db.is_null() { return SORT_NAME; }
+        let mut st: *mut c_void = core::ptr::null_mut();
+        if unsafe { sqlite3_prepare_v2(self.prefs_db,
+            b"SELECT sortkey FROM dirsort WHERE path=?;\0".as_ptr(), -1, &mut st, core::ptr::null_mut()) } != 0 {
+            return SORT_NAME;
+        }
+        let key = nul(&self.loc_key());
+        unsafe { sqlite3_bind_text(st, 1, key.as_ptr(), -1, transient()); }
+        let mut v = SORT_NAME;
+        if unsafe { sqlite3_step(st) } == SQLITE_ROW { v = unsafe { sqlite3_column_int(st, 0) }; }
+        unsafe { sqlite3_finalize(st) };
+        v
+    }
+
+    fn save_sort(&mut self) {
+        use sqlite_ffi::*;
+        self.prefs_open();
+        if self.prefs_db.is_null() { return; }
+        let mut st: *mut c_void = core::ptr::null_mut();
+        if unsafe { sqlite3_prepare_v2(self.prefs_db,
+            b"INSERT INTO dirsort(path,sortkey) VALUES(?,?) ON CONFLICT(path) DO UPDATE SET sortkey=excluded.sortkey;\0".as_ptr(),
+            -1, &mut st, core::ptr::null_mut()) } != 0 { return; }
+        let key = nul(&self.loc_key());
+        unsafe {
+            sqlite3_bind_text(st, 1, key.as_ptr(), -1, transient());
+            sqlite3_bind_int(st, 2, self.sort_key);
+            sqlite3_step(st);
+            sqlite3_finalize(st);
+        }
+    }
+}
+
+#[cfg(not(feature = "sqlite"))]
+impl App {
+    fn load_sort(&mut self) -> i32 { SORT_NAME }
+    fn save_sort(&mut self) {}
+}
+
 /* ---- small no_std helpers ---- */
 fn cstr_len(b: &[u8]) -> usize {
     let mut i = 0;
@@ -604,6 +743,15 @@ extern "C" fn cb_search(_n: *mut NwNode, user: *mut c_void) {
 extern "C" fn cb_close(_n: *mut NwNode, _user: *mut c_void) {
     unsafe { libnwui_rs::exit(0) }
 }
+extern "C" fn cb_sort_name(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).set_sort(SORT_NAME) }
+}
+extern "C" fn cb_sort_name_desc(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).set_sort(SORT_NAME_DESC) }
+}
+extern "C" fn cb_sort_type(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).set_sort(SORT_TYPE) }
+}
 
 /// Case-insensitive substring test (ASCII).
 fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
@@ -680,14 +828,22 @@ pub extern "C" fn main() -> i32 {
         hpos: -1,
         query: [0u8; 64],
         search: core::ptr::null_mut(),
+        sort_key: SORT_NAME,
         #[cfg(feature = "sqlite")]
         db: core::ptr::null_mut(),
         #[cfg(feature = "sqlite")]
         indexed_root: Vec::new(),
+        #[cfg(feature = "sqlite")]
+        prefs_db: core::ptr::null_mut(),
     });
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
     let view = ui.iconview_raw(cb_activate, cb_noop, app_ptr);
     unsafe { (&mut *(app_ptr as *mut App)).view = view.0; }
+
+    // right-click context menu on the icon grid: sort options (persisted per directory)
+    ui.context_add("Sort by Name", cb_sort_name, app_ptr);
+    ui.context_add("Name (Z-A)", cb_sort_name_desc, app_ptr);
+    ui.context_add("Sort by Type", cb_sort_type, app_ptr);
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");
