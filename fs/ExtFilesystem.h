@@ -743,6 +743,20 @@ public:
 		alloc->writeInode(inodeNo, buf);
 	}
 
+	// Free an inode the way ext2/4 expects: STAMP THE INODE-TABLE ENTRY as deleted (links_count=0,
+	// i_dtime=now) and persist it, THEN clear the inode bitmap. Clearing only the bitmap (the old
+	// behaviour) left the table entry reading links_count>0, i_dtime=0 — a "live" inode that no
+	// directory references, which e2fsck flags as an unattached/orphaned inode (and whose stale
+	// block pointers make the freed data blocks look still-referenced). The caller must already
+	// have run truncateBlocks() so `inode` carries an empty block map. `inode` reflects the post-
+	// free on-disk state on return.
+	void freeInodeNow(Ext2Inode& inode, unsigned inodeNo, bool isDir = false) {
+		inode.hardlinksCount = 0;
+		inode.deleted = (int) wallClockSeconds();   // i_dtime — marks the inode deleted for fsck
+		writeInodeStruct(inodeNo, inode);
+		alloc->freeInode(inodeNo, isDir);
+	}
+
 	// getChildrenInode but also yields the child's inode number (needed to write a file by path).
 	bool getChildrenInodeNum(Ext2Inode inode, const char* name, int len, Ext2Inode& out, int& outNum) {
 		if (!isDirectory(inode))
@@ -1096,8 +1110,8 @@ public:
 		if (!dirRemoveEntry(parent, (unsigned) parentNo, name, nl)) return -2;
 		child.hardlinksCount = (short) (child.hardlinksCount - 1);
 		if (child.hardlinksCount <= 0) {
-			truncateBlocks(child, (unsigned) childNo, 0);
-			alloc->freeInode((unsigned) childNo, false);
+			truncateBlocks(child, (unsigned) childNo, 0);   // free + unmap all data blocks
+			freeInodeNow(child, (unsigned) childNo);
 		} else {
 			writeInodeStruct((unsigned) childNo, child);
 		}
@@ -1113,9 +1127,10 @@ public:
 		if (!isDirectory(child)) return -20;                // -ENOTDIR
 		if (!dirIsEmpty(child)) return -39;                 // -ENOTEMPTY
 		if (!dirRemoveEntry(parent, (unsigned) parentNo, name, nl)) return -2;
+		child.hardlinksCount = 0;                            // the dir's own "." link is gone too
 		truncateBlocks(child, (unsigned) childNo, 0);
-		alloc->freeInode((unsigned) childNo, true);
-		parent.hardlinksCount = (short) (parent.hardlinksCount - 1);
+		freeInodeNow(child, (unsigned) childNo, true);
+		parent.hardlinksCount = (short) (parent.hardlinksCount - 1);   // child's ".." backlink
 		writeInodeStruct((unsigned) parentNo, parent);
 		txFlush();
 		return 0;
@@ -1187,15 +1202,16 @@ public:
 			if (isDirectory(dst)) {
 				if (!dirIsEmpty(dst)) return -39;
 				dirRemoveEntry(newParent, (unsigned) newParentNo, newName, newNl);
+				dst.hardlinksCount = 0;
 				truncateBlocks(dst, (unsigned) dstNo, 0);
-				alloc->freeInode((unsigned) dstNo, true);
+				freeInodeNow(dst, (unsigned) dstNo, true);   // stamp deleted (dtime+links=0), then free
 				newParent.hardlinksCount = (short) (newParent.hardlinksCount - 1);
 			} else {
 				dirRemoveEntry(newParent, (unsigned) newParentNo, newName, newNl);
 				dst.hardlinksCount = (short) (dst.hardlinksCount - 1);
 				if (dst.hardlinksCount <= 0) {
 					truncateBlocks(dst, (unsigned) dstNo, 0);
-					alloc->freeInode((unsigned) dstNo, false);
+					freeInodeNow(dst, (unsigned) dstNo);
 				} else writeInodeStruct((unsigned) dstNo, dst);
 			}
 		}

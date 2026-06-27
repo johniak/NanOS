@@ -598,6 +598,43 @@ TEST_CASE("sys open(O_CREAT)+write+lseek+read on a writable tmpfs mount") {
 	sc.close(dfd);
 }
 
+TEST_CASE("open(O_CREAT) without O_TRUNC must NOT truncate an existing file") {
+	// Regression: open() used to call the make-OR-truncate create() for O_CREAT alone, so
+	// reopening an existing file O_RDWR|O_CREAT wiped it to 0 bytes. SQLite opens its database
+	// exactly that way, so every reopen lost the schema. O_CREAT = create-if-absent only;
+	// only O_TRUNC truncates.
+	Vfs* vfs = new Vfs();
+	vfs->mount("/", new RamFs());
+	Syscalls sc(vfs, sink);
+
+	// Create + populate a file.
+	int fd = sc.open(String("/db"), O_CREAT | 2 /*O_RDWR*/);
+	REQUIRE(fd >= 3);
+	CHECK(sc.write(fd, "PERSIST", 7) == 7);
+	CHECK(sc.close(fd) == 0);
+
+	// Reopen with O_CREAT (no O_TRUNC) — the contents MUST survive.
+	int re = sc.open(String("/db"), O_CREAT | 2);
+	REQUIRE(re >= 3);
+	char buf[16] = {0};
+	CHECK(sc.read(re, buf, 16) == 7);
+	CHECK(strncmp(buf, "PERSIST", 7) == 0);
+	CHECK(sc.close(re) == 0);
+
+	// O_CREAT|O_TRUNC on the existing file DOES truncate it to empty.
+	int tr = sc.open(String("/db"), O_CREAT | O_TRUNC | 2);
+	REQUIRE(tr >= 3);
+	char z[4];
+	CHECK(sc.read(tr, z, 4) == 0);           // truncated -> EOF immediately
+	CHECK(sc.close(tr) == 0);
+
+	// O_CREAT on a brand-new path still creates it.
+	int nw = sc.open(String("/fresh"), O_CREAT | 2);
+	REQUIRE(nw >= 3);
+	CHECK(sc.write(nw, "x", 1) == 1);
+	sc.close(nw);
+}
+
 TEST_CASE("fcntl gets/sets the file status flags (O_NONBLOCK)") {
 	Syscalls sc(mountFixture(), sink);
 	// A fresh fd starts with no status flags.

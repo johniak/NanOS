@@ -126,17 +126,24 @@ int Syscalls::open(String path, int flags) {
 	FileStat st;
 	bool exists = vfs->stat(path, st) >= 0;
 	bool preExisted = exists;
-	// O_CREAT (and O_TRUNC) ask the filesystem to make-or-truncate the file. On a
-	// read-only fs create() returns -EROFS; if the file already exists we ignore that
-	// and open it read-only, otherwise the open fails.
-	if (flags & (O_CREAT | O_TRUNC)) {
+	// POSIX open flags, kept DISTINCT (conflating them corrupts data):
+	//   O_CREAT  — create the file IFF it does not exist; a no-op on an existing file.
+	//   O_TRUNC  — truncate an existing (writable) file to zero length.
+	// The old code called the make-OR-truncate create() for either flag, so O_CREAT alone
+	// truncated an existing file. Any app that opens an existing file O_RDWR|O_CREAT and
+	// expects its contents to survive (SQLite's database, dotlock-style writers, ...) lost
+	// its data on every reopen. Handle the two flags separately.
+	if (!exists && (flags & O_CREAT)) {
 		int cr = vfs->create(path, 0666 & ~m_umask);   // honor the file-creation mask (POSIX)
-		if (cr == 0) {
-			st.size = 0;
-			exists = true;
-		} else if (!exists) {
-			return cr < 0 ? cr : -ENOENT;
-		}
+		if (cr < 0)
+			return cr;                                 // e.g. -EROFS / -ENOSPC -> the open fails
+		st.size = 0;
+		exists = true;
+	} else if (exists && (flags & O_TRUNC)) {
+		int tr = vfs->truncate(path, 0);               // shrink an existing file to empty
+		if (tr < 0)
+			return tr;                                 // -EROFS on a read-only fs, etc.
+		st.size = 0;
 	}
 	if (!exists)
 		return -ENOENT;
