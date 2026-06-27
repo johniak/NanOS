@@ -335,6 +335,12 @@ extern "C" fn cb_homebtn(_n: *mut NwNode, user: *mut c_void) {
 extern "C" fn cb_place(n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).go_place(n) }
 }
+extern "C" fn cb_mycomputer(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).load_my_computer() }
+}
+extern "C" fn cb_close(_n: *mut NwNode, _user: *mut c_void) {
+    unsafe { libnwui_rs::exit(0) }
+}
 
 fn load_icon(path: &str, fallback: Icon) -> Icon {
     match libnwui_rs::load_png(path) {
@@ -383,6 +389,14 @@ pub extern "C" fn main() -> i32 {
     let view = ui.iconview_raw(cb_activate, cb_noop, app_ptr);
     unsafe { (&mut *(app_ptr as *mut App)).view = view.0; }
 
+    // global menu (shown in the system menu bar when Files is focused)
+    let mfile = ui.menu("File");
+    ui.menu_item(mfile, "Close", cb_close, app_ptr);
+    let mgo = ui.menu("Go");
+    ui.menu_item(mgo, "My Computer", cb_mycomputer, app_ptr);
+    ui.menu_item(mgo, "Home", cb_homebtn, app_ptr);
+    ui.menu_item(mgo, "Up", cb_up, app_ptr);
+
     // ---- sidebar: Favorites + Locations, place rows with a "current location" pill ----
     let sidebar = ui.vbox();
     sidebar.add(ui.label("FAVORITES").colors(MUTED, 0));
@@ -426,9 +440,10 @@ pub extern "C" fn main() -> i32 {
     let toolbar = ui.hbox()
         .add(ui.link_raw("Up", cb_up, app_ptr))
         .add(ui.link_raw("Home", cb_homebtn, app_ptr))
-        .add(crumb)
+        .add(crumb.flex(1))
         .gap(8)
-        .pad(8);
+        .pad(8)
+        .colors(0x001d2733, 0x00eef2f8);   /* a defined toolbar strip */
 
     let body = ui.hbox().add(sidebar).add(view.flex(1));
     let root = ui.vbox().add(toolbar).add(body.flex(1));

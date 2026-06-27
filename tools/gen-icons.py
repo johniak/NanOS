@@ -76,13 +76,13 @@ def emit(name, b):
 
 WHITE=(255,255,255)
 # gradient tile pairs
-BLUE=((94,194,255),(31,140,255)); BLUEBACK=((154,214,255),(111,184,255))
-GREY=((174,180,189),(124,132,146)); ORANGE=((255,157,92),(255,107,61))
-INDIGO=((123,140,255),(91,76,255)); GREEN=((55,211,154),(19,168,119))
-PAPERTOP=(255,255,255); PAPERBOT=(233,238,246); PAPEREDGE=(196,200,210); BLUESTRIP=(10,132,255)
+BLUE=((110,200,255),(20,128,250)); BLUEBACK=((164,220,255),(120,190,255))
+GREY=((196,204,214),(120,130,146)); ORANGE=((255,165,96),(255,96,52))
+INDIGO=((140,150,255),(84,68,255)); GREEN=((70,222,164),(12,160,112))
+PAPERTOP=(255,255,255); PAPERBOT=(228,234,244); PAPEREDGE=(196,200,210); BLUESTRIP=(10,132,255)
 
-def tile(b, grad, r=14, x0=6, y0=6, x1=58, y1=58):
-    vgrad(b, x0, y0, x1, y1, grad[0], grad[1], r=r); sheen(b, x0, y0, x1, 14, r)
+def tile(b, grad, r=16, x0=5, y0=5, x1=59, y1=59):
+    vgrad(b, x0, y0, x1, y1, grad[0], grad[1], r=r); sheen(b, x0, y0, x1, 16, r)
 
 def folder():
     b = blank()

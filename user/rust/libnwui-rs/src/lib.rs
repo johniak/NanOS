@@ -77,6 +77,8 @@ extern "C" {
     fn nwui_set_text(n: *mut NwNode, t: *const u8);
     fn nwui_spawn(u: *mut NwUi, cmd: *const u8);
     fn nwui_image_load_png(path: *const u8, w: *mut i32, h: *mut i32) -> *mut u32;
+    fn nwui_menu(u: *mut NwUi, title: *const u8) -> i32;
+    fn nwui_menu_item(u: *mut NwUi, menu: i32, label: *const u8, cb: RawCb, user: *mut c_void);
 }
 
 /// NUL-terminate a `&str` for a C call. libnwui copies captions immediately, so the buffer only
@@ -151,6 +153,13 @@ impl Ui {
         unsafe { Node(nwui_iconview(self.0, on_activate, on_change, user)) }
     }
 
+    /* Global menu: declare a top-bar menu (returns its index) + add items (raw callback ABI).
+     * The compositor renders the focused window's menus in the system menu bar. */
+    pub fn menu(&self, title: &str) -> i32 { let c = cstr(title); unsafe { nwui_menu(self.0, c.as_ptr()) } }
+    pub fn menu_item(&self, menu: i32, label: &str, cb: RawCb, user: *mut c_void) {
+        let c = cstr(label);
+        unsafe { nwui_menu_item(self.0, menu, c.as_ptr(), cb, user) }
+    }
     pub fn focus(&self, n: Node) { unsafe { nwui_focus(self.0, n.0) } }
     pub fn spawn(&self, cmd: &str) { let c = cstr(cmd); unsafe { nwui_spawn(self.0, c.as_ptr()) } }
     pub fn run(&self, root: Node) { unsafe { nwui_set_root(self.0, root.0); nwui_run(self.0) } }
