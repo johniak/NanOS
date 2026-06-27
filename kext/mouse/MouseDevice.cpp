@@ -22,7 +22,8 @@ void MouseDevice::feed(unsigned char byte, unsigned long long now_us) {
 	if (m_idx == 0 && !(byte & 0x08))
 		return;
 	m_pkt[m_idx++] = byte;
-	if (m_idx < 3)
+	int plen = m_wheel ? 4 : 3;
+	if (m_idx < plen)
 		return;
 	m_idx = 0;
 
@@ -47,6 +48,13 @@ void MouseDevice::feed(unsigned char byte, unsigned long long now_us) {
 	if (changed & 0x04)
 		push(EV_KEY, BTN_MIDDLE, (b & 0x04) ? 1 : 0, now_us);
 	m_buttons = b;
+
+	if (m_wheel) {
+		// IntelliMouse 4th byte: scroll Z in the low nibble, two's-complement (−8..+7).
+		int z = m_pkt[3] & 0x0f;
+		if (z & 0x08) z -= 16;
+		if (z) push(EV_REL, REL_WHEEL, z, now_us);   // +1 = wheel forward (Linux convention)
+	}
 
 	push(EV_SYN, SYN_REPORT, 0, now_us);   // terminate the report
 }

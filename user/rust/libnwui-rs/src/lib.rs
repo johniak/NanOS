@@ -79,6 +79,8 @@ extern "C" {
     fn nwui_image_load_png(path: *const u8, w: *mut i32, h: *mut i32) -> *mut u32;
     fn nwui_menu(u: *mut NwUi, title: *const u8) -> i32;
     fn nwui_menu_item(u: *mut NwUi, menu: i32, label: *const u8, cb: RawCb, user: *mut c_void);
+    fn nwui_context_clear(u: *mut NwUi);
+    fn nwui_context_add(u: *mut NwUi, label: *const u8, cb: RawCb, user: *mut c_void);
     fn nwui_iconbtn(u: *mut NwUi, icon: *const u32, iw: i32, ih: i32, cb: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_textfield(u: *mut NwUi, buf: *mut u8, cap: i32, on_change: RawCb, user: *mut c_void) -> *mut NwNode;
 }
@@ -171,6 +173,20 @@ impl Ui {
     pub fn menu_item(&self, menu: i32, label: &str, cb: RawCb, user: *mut c_void) {
         let c = cstr(label);
         unsafe { nwui_menu_item(self.0, menu, c.as_ptr(), cb, user) }
+    }
+
+    /* Right-click context menu: clear, then add items (raw callback ABI). It pops up
+     * automatically when an iconview is right-clicked. Labels must outlive the Ui (libnwui
+     * keeps the pointer), so pass &'static str literals. */
+    pub fn context_clear(&self) { unsafe { nwui_context_clear(self.0) } }
+    pub fn context_add(&self, label: &'static str, cb: RawCb, user: *mut c_void) {
+        // NUL-terminate; leak it (the menu holds the pointer for the app's lifetime).
+        let mut v = alloc::vec::Vec::with_capacity(label.len() + 1);
+        v.extend_from_slice(label.as_bytes());
+        v.push(0);
+        let p = v.as_ptr();
+        core::mem::forget(v);
+        unsafe { nwui_context_add(self.0, p, cb, user) }
     }
     pub fn focus(&self, n: Node) { unsafe { nwui_focus(self.0, n.0) } }
     pub fn spawn(&self, cmd: &str) { let c = cstr(cmd); unsafe { nwui_spawn(self.0, c.as_ptr()) } }

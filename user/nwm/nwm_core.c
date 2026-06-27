@@ -562,7 +562,7 @@ static void toggle_maximize(struct nw_server *s, int idx)
 	}
 }
 
-void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
+void nw_pointer(struct nw_server *s, int sx, int sy, int buttons, int wheel)
 {
 	if (sx < 0) sx = 0;
 	if (sy < 0) sy = 0;
@@ -662,7 +662,14 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons)
 	if (widx2 >= 0 && region2 == NW_HIT_CONTENT) {
 		int rx = sx - (s->win[widx2].x + NW_BORDER);
 		int ry = sy - (s->win[widx2].y + NW_TITLEBAR_H);
-		emit_win(s, widx2, NW_EVT_POINTER, rx, ry, buttons, 0, 0, 0);
+		emit_win(s, widx2, NW_EVT_POINTER, rx, ry, buttons, 0, 0, 0);   /* motion/buttons */
+	}
+	/* The scroll wheel drives the FOCUSED (active) window, like most desktops — independent of
+	 * exactly which window the pointer floats over. Delivered as a POINTER carrying d=wheel. */
+	if (wheel != 0 && s->focus >= 0 && s->win[s->focus].used) {
+		int fx = sx - (s->win[s->focus].x + NW_BORDER);
+		int fy = sy - (s->win[s->focus].y + NW_TITLEBAR_H);
+		emit_win(s, s->focus, NW_EVT_POINTER, fx, fy, buttons, wheel, 0, 0);
 	}
 
 	s->cursor_x = sx;

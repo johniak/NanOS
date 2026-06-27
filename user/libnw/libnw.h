@@ -30,6 +30,7 @@ struct nw_event {
 	int       type;
 	uint32_t  window;
 	int       x, y, buttons;   /* POINTER */
+	int       wheel;           /* POINTER: scroll-wheel delta this report (+ = forward/up) */
 	int       code, down;      /* KEY: raw scancode + press/release */
 	char      ch;              /* KEY: decoded ASCII (0 if none)    */
 	int       mods;            /* KEY: modifier bitmask (bit0 = shift) */

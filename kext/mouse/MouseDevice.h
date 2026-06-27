@@ -21,7 +21,7 @@ struct InputEvent {
 
 // evdev event types / codes (subset needed for a 3-button mouse).
 enum { EV_SYN = 0, EV_KEY = 1, EV_REL = 2 };
-enum { REL_X = 0, REL_Y = 1 };
+enum { REL_X = 0, REL_Y = 1, REL_WHEEL = 8 };
 enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 enum { SYN_REPORT = 0 };
 
@@ -39,6 +39,10 @@ public:
 	// Consume one raw PS/2 byte; `now_us` stamps any events emitted by a completed packet.
 	void feed(unsigned char byte, unsigned long long now_us);
 
+	// Switch to the IntelliMouse 4-byte protocol (the 4th byte carries the scroll wheel). The
+	// PS/2 glue calls this after the sample-rate "knock" reports device id 3.
+	void setWheel(bool on) { m_wheel = on ? 1 : 0; }
+
 	// Emit one evdev event directly (the in-kernel USB-HID path already has decoded dx/dy/buttons
 	// and bypasses PS/2 packet assembly).
 	void event(unsigned short type, unsigned short code, int value, unsigned long long now_us) {
@@ -52,9 +56,10 @@ private:
 	InputEvent m_ring[CAP];
 	int m_head, m_tail;
 
-	unsigned char m_pkt[3];          // PS/2 3-byte packet assembly
+	unsigned char m_pkt[4];          // PS/2 packet assembly (3 bytes, or 4 with the wheel)
 	int m_idx;
 	int m_buttons;                   // previous button bitmask (for press/release edges)
+	int m_wheel = 0;                 // 1 once the IntelliMouse 4-byte protocol is enabled
 };
 
 }  // namespace kext

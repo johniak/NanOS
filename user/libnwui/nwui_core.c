@@ -827,13 +827,52 @@ static void list_activate(nwui_node *L)      /* fire on_click for the current se
 	if (L->sel >= 0 && L->on_click) L->on_click(L, L->user);
 }
 
-/* ---- context menu ---- */
+/* ---- iconview scrolling: like the list, but the unit is a ROW of `cols` cells ---- */
+static int iv_cols(const nwui_node *V) { return V->cols < 1 ? 1 : V->cols; }
+static int iv_rows(const nwui_node *V) { int c = iv_cols(V); return (V->count + c - 1) / c; }
+static int iv_vis_rows(const nwui_node *V) { int r = V->h / NWUI_ICON_CELL_H; return r < 1 ? 1 : r; }
+static int iv_max_scroll(const nwui_node *V) { int m = iv_rows(V) - iv_vis_rows(V); return m > 0 ? m : 0; }
+static int iv_has_sb(const nwui_node *V) { return iv_max_scroll(V) > 0; }
+static void iv_clamp_scroll(nwui_node *V)
+{
+	int m = iv_max_scroll(V);
+	if (V->scroll > m) V->scroll = m;
+	if (V->scroll < 0) V->scroll = 0;
+}
+static void iv_thumb(const nwui_node *V, int *ty, int *th)   /* thumb top + height, screen px */
+{
+	int track = V->h - 6;                          /* must match the paint formula (nwui_paint.c) */
+	int rows = iv_rows(V);
+	int t = rows > 0 ? track * iv_vis_rows(V) / rows : track;
+	if (t < NWUI_SB_MIN) t = NWUI_SB_MIN;
+	if (t > track)       t = track;
+	int maxs = iv_max_scroll(V);
+	int span = track - t;
+	int pos  = maxs > 0 ? span * V->scroll / maxs : 0;
+	*ty = V->y + 3 + pos;
+	*th = t;
+}
+static void iv_sb_set_from_y(nwui_node *V, int mouse_y)      /* drag: map thumb-top to scroll row */
+{
+	int ty, th; iv_thumb(V, &ty, &th);
+	int track = V->h - 2;
+	int span  = track - th;
+	int maxs  = iv_max_scroll(V);
+	int top   = mouse_y - V->sb_grab - (V->y + 1);
+	V->scroll = span > 0 ? top * maxs / span : 0;
+	iv_clamp_scroll(V);
+}
+
+/* ---- context menu (built-in textfield Cut/Copy/Paste/All, or a custom app menu) ---- */
 static const char *const MENU_LABELS[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
 
-static void menu_open(nwui *u, nwui_node *tf, int x, int y)
+static int menu_count(const nwui *u) { return u->menu_custom ? u->cmenu_n : NWUI_MI_COUNT; }
+
+/* Place + show a popup of `count` items at (x,y), clamped into the window. */
+static void menu_place(nwui *u, int count, int x, int y)
 {
-	u->menu_open = 1; u->menu_target = tf; u->menu_hover = -1;
-	int mh = NWUI_MI_COUNT * NWUI_MENU_ITEM_H;
+	u->menu_open = 1; u->menu_hover = -1;
+	int mh = count * NWUI_MENU_ITEM_H;
 	if (x + NWUI_MENU_W > u->win_w) x = u->win_w - NWUI_MENU_W;
 	if (y + mh > u->win_h) y = u->win_h - mh;
 	if (x < 0) x = 0;
@@ -841,17 +880,32 @@ static void menu_open(nwui *u, nwui_node *tf, int x, int y)
 	u->menu_x = x; u->menu_y = y;
 	u->layout_dirty = 1;          /* simplest: repaint the frame so the popup shows/clears */
 }
-static void menu_close(nwui *u) { u->menu_open = 0; u->menu_target = 0; u->layout_dirty = 1; }
+static void menu_open(nwui *u, nwui_node *tf, int x, int y)   /* built-in textfield menu */
+{
+	u->menu_custom = 0; u->menu_target = tf;
+	menu_place(u, NWUI_MI_COUNT, x, y);
+}
+static void menu_open_custom(nwui *u, int x, int y)           /* the app's registered context menu */
+{
+	u->menu_custom = 1; u->menu_target = 0;
+	menu_place(u, u->cmenu_n, x, y);
+}
+static void menu_close(nwui *u) { u->menu_open = 0; u->menu_target = 0; u->menu_custom = 0; u->layout_dirty = 1; }
 static int menu_item_at(const nwui *u, int x, int y)
 {
 	if (x < u->menu_x || x >= u->menu_x + NWUI_MENU_W) return -1;
 	int rel = y - u->menu_y;
 	if (rel < 0) return -1;
 	int i = rel / NWUI_MENU_ITEM_H;
-	return i < NWUI_MI_COUNT ? i : -1;
+	return i < menu_count(u) ? i : -1;
 }
 static void menu_action(nwui *u, int item)
 {
+	if (u->menu_custom) {                       /* custom app menu -> the item's callback */
+		if (item >= 0 && item < u->cmenu_n && u->cmenu_cb[item])
+			u->cmenu_cb[item](0, u->cmenu_user[item]);
+		return;
+	}
 	nwui_node *tf = u->menu_target;
 	if (!tf) return;
 	switch (item) {
@@ -861,6 +915,16 @@ static void menu_action(nwui *u, int item)
 	case NWUI_MI_SELALL: tf->anchor = 0; tf->caret = tf->tlen; tf->dirty = 1; break;
 	default: break;
 	}
+}
+
+void nwui_context_clear(nwui *u) { u->cmenu_n = 0; }
+void nwui_context_add(nwui *u, const char *label, nwui_cb cb, void *user)
+{
+	if (u->cmenu_n >= 8) return;
+	int i = u->cmenu_n++;
+	u->cmenu_label[i] = label;
+	u->cmenu_cb[i] = cb;
+	u->cmenu_user[i] = user;
 }
 
 static void cb_toggle(nwui_node *n)
@@ -923,9 +987,25 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		}
 
 		nwui_node *over = nwui_hit(u->modal ? u->modal : u->root, ev->x, ev->y);
+		if (ev->wheel) {                             /* mouse wheel: scroll the grid/list */
+			/* prefer the widget under the cursor; otherwise the focused one (so the wheel works
+			 * even when the pointer isn't precisely over the grid). */
+			nwui_node *t = (over && (over->kind == NWUI_ICONVIEW || over->kind == NWUI_LIST)) ? over
+			    : (u->focus && (u->focus->kind == NWUI_ICONVIEW || u->focus->kind == NWUI_LIST)) ? u->focus : 0;
+			if (t && t->kind == NWUI_ICONVIEW) {
+				t->scroll -= ev->wheel;              /* +wheel = forward = scroll up */
+				iv_clamp_scroll(t); t->dirty = 1;
+			} else if (t && t->kind == NWUI_LIST) {
+				t->scroll -= ev->wheel * 3;          /* 3 lines per tick, like most toolkits */
+				list_clamp_scroll(t); t->dirty = 1;
+			}
+		}
 		if (right && !pright && over && over->kind == NWUI_TEXTFIELD) {
 			set_focus(u, over);
 			menu_open(u, over, ev->x, ev->y);        /* right-click -> context menu */
+		} else if (right && !pright && over && over->kind == NWUI_ICONVIEW && u->cmenu_n > 0) {
+			set_focus(u, over);
+			menu_open_custom(u, ev->x, ev->y);       /* right-click an iconview -> app context menu */
 		} else if (left && !pleft) {                 /* left press edge */
 			u->armed = over;
 			if (over && over->kind == NWUI_BUTTON) { over->pressed = 1; over->dirty = 1; }
@@ -972,6 +1052,15 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			}
 				else if (over && over->kind == NWUI_ICONVIEW && over->cols > 0) {
 					set_focus(u, over);
+					int sb_x = over->x + over->w - NWUI_SB_W;
+					if (iv_has_sb(over) && ev->x >= sb_x) {        /* hit the scrollbar */
+						int ty, th; iv_thumb(over, &ty, &th);
+						if (ev->y >= ty && ev->y < ty + th) over->sb_grab = ev->y - ty;
+						else { over->sb_grab = th / 2; iv_sb_set_from_y(over, ev->y); }
+						over->sb_drag = 1; over->dirty = 1;
+						u->prev_buttons = ev->buttons;
+						break;
+					}
 					int relx = ev->x - over->x;
 					int rely = ev->y - over->y + over->scroll * NWUI_ICON_CELL_H;
 					int col = relx / NWUI_ICON_CELL_W;
@@ -1000,6 +1089,9 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_LIST && u->armed->sb_drag) {
 			list_sb_set_from_y(u->armed, ev->y);                     /* drag the scrollbar thumb */
 			u->armed->dirty = 1;
+		} else if (left && pleft && u->armed && u->armed->kind == NWUI_ICONVIEW && u->armed->sb_drag) {
+			iv_sb_set_from_y(u->armed, ev->y);                       /* drag the iconview scrollbar */
+			u->armed->dirty = 1;
 		} else if (!left && pleft) {                  /* left release edge */
 			if (u->armed && u->armed->kind == NWUI_BUTTON) {
 				u->armed->pressed = 0; u->armed->dirty = 1;
@@ -1009,7 +1101,8 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				u->armed->pressed = 0; u->armed->dirty = 1;
 				if (over == u->armed) cb_toggle(u->armed);
 			}
-			if (u->armed && u->armed->kind == NWUI_LIST) u->armed->sb_drag = 0;
+			if (u->armed && (u->armed->kind == NWUI_LIST || u->armed->kind == NWUI_ICONVIEW))
+				u->armed->sb_drag = 0;
 			u->armed = 0;
 		}
 		u->prev_buttons = ev->buttons;

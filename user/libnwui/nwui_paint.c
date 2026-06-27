@@ -214,6 +214,18 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 				nw_text(s, tx, ty, buf, (i == n->sel) ? COL_ACCENT_DEEP : COL_INK);
 			}
 		}
+		/* vertical scrollbar when the grid overflows the visible rows (row = `cols` cells) */
+		int rows = (n->count + cols - 1) / cols;
+		int vis_rows = n->h / NWUI_ICON_CELL_H; if (vis_rows < 1) vis_rows = 1;
+		int ivmaxs = rows - vis_rows;
+		if (ivmaxs > 0) {
+			int sbx = n->x + n->w - NWUI_SB_W;
+			int track = n->h - 6;
+			int th = track * vis_rows / rows; if (th < NWUI_SB_MIN) th = NWUI_SB_MIN;
+			if (th > track) th = track;
+			int ty = n->y + 3 + (track - th) * n->scroll / ivmaxs;
+			nw_fill_round(s, sbx + 2, ty, NWUI_SB_W - 5, th, (NWUI_SB_W - 5) / 2, COL_SB_THUMB, 255);
+		}
 		nw_stroke_round(s, n->x, n->y, n->w, n->h, 8,
 		                n->focused ? COL_TF_FOC : COL_TF_BRD, n->focused ? 255 : 200);
 		break;
@@ -278,15 +290,17 @@ static void draw_menu(const nwui *u, const struct nw_surface *s)
 {
 	if (!u->menu_open)
 		return;
-	static const char *const L[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
-	int mh = NWUI_MI_COUNT * NWUI_MENU_ITEM_H;
+	static const char *const BUILTIN[NWUI_MI_COUNT] = { "Cut", "Copy", "Paste", "Select All" };
+	int count = u->menu_custom ? u->cmenu_n : NWUI_MI_COUNT;
+	int mh = count * NWUI_MENU_ITEM_H;
 	nw_fill_round(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9, 0x00f4f8fd, 255);
 	nw_stroke_round(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9, 0x00b8c6d8, 220);
-	for (int i = 0; i < NWUI_MI_COUNT; i++) {
+	for (int i = 0; i < count; i++) {
+		const char *lbl = u->menu_custom ? u->cmenu_label[i] : BUILTIN[i];
 		int iy = u->menu_y + i * NWUI_MENU_ITEM_H;
 		int hov = (i == u->menu_hover);
 		if (hov) nw_fill_round(s, u->menu_x - 1, iy, NWUI_MENU_W + 2, NWUI_MENU_ITEM_H, 5, COL_SEL, 255);
-		nw_text(s, u->menu_x + 8, iy + (NWUI_MENU_ITEM_H - NW_FONT_H) / 2, L[i],
+		nw_text(s, u->menu_x + 8, iy + (NWUI_MENU_ITEM_H - NW_FONT_H) / 2, lbl ? lbl : "",
 		        hov ? 0x00ffffff : COL_INK);
 	}
 }

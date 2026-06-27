@@ -65,9 +65,24 @@ extern "C" int nkext_init() {
 	readData();                      // 0xAA self-test passed
 	readData();                      // 0x00 device id
 	mouseCmd(0xF6);                  // set defaults (100 Hz, 3-button)
-	mouseCmd(0xF4);                  // enable data reporting
 
 	g_mouse = new kext::MouseDevice();
+
+	// IntelliMouse "knock": set sample rate 200 -> 100 -> 80, then read the device id. A mouse
+	// that supports the scroll wheel reports id 3 and from then on sends 4-byte packets whose
+	// 4th byte is the wheel Z. (QEMU's PS/2 mouse implements this.)
+	mouseCmd(0xF3); mouseCmd(200);
+	mouseCmd(0xF3); mouseCmd(100);
+	mouseCmd(0xF3); mouseCmd(80);
+	mouseCmd(0xF2);                  // get device id (ACK consumed by mouseCmd)
+	unsigned char id = readData();   // the id byte
+	if (id == 0x03) {
+		g_mouse->setWheel(true);
+		knx_log("  mouse: scroll wheel enabled\n");
+	}
+
+	mouseCmd(0xF4);                  // enable data reporting
+
 	int n = knx_add_input_dev(g_mouse);   // -> /dev/input<n> (auto-numbered; keyboard is 0)
 	knx_register_irq(12, mouseIrq);
 	knx_log(n >= 0 ? "  mouse: PS/2 ready\n" : "  mouse: register failed\n");

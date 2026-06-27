@@ -48,7 +48,7 @@ struct fb_fix { char id[16]; uint32_t smem_start, smem_len, type, type_aux, visu
 /* mouse evdev (mirrors kext/mouse/MouseDevice.h). */
 struct input_event { uint32_t tv_sec, tv_usec; uint16_t type, code; int32_t value; };
 enum { EV_SYN = 0, EV_KEY = 1, EV_REL = 2 };
-enum { REL_X = 0, REL_Y = 1 };
+enum { REL_X = 0, REL_Y = 1, REL_WHEEL = 8 };
 enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 
 #define CLIENT_OUTCAP   (64 * 1024)
@@ -235,6 +235,7 @@ static void drain_mouse(int fd)
 {
 	static int cx = -1, cy = -1, btn = 0;
 	if (cx < 0) { cx = (int) g_xres / 2; cy = (int) g_yres / 2; }
+	int wheel = 0;                                   /* wheel ticks accumulated for this report */
 	struct input_event ev[32];
 	int n;
 	while ((n = (int) read(fd, ev, sizeof ev)) > 0) {
@@ -244,6 +245,7 @@ static void drain_mouse(int fd)
 			if (e->type == EV_REL) {
 				if (e->code == REL_X) cx += e->value;
 				else if (e->code == REL_Y) cy += e->value;
+				else if (e->code == REL_WHEEL) wheel += e->value;
 			} else if (e->type == EV_KEY) {
 				int m = e->code == BTN_LEFT ? NW_BTN_LEFT :
 				        e->code == BTN_RIGHT ? NW_BTN_RIGHT :
@@ -254,7 +256,8 @@ static void drain_mouse(int fd)
 				if (cy < 0) cy = 0;
 				if (cx >= (int) g_xres) cx = (int) g_xres - 1;
 				if (cy >= (int) g_yres) cy = (int) g_yres - 1;
-				nw_pointer(&S, cx, cy, btn);
+				nw_pointer(&S, cx, cy, btn, wheel);
+				wheel = 0;                           /* one scroll delta per report */
 			}
 		}
 	}

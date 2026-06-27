@@ -100,6 +100,13 @@ struct nwui {
 	/* context-menu overlay (a popup over the window; v1: the textfield's Cut/Copy/Paste/All) */
 	int        menu_open, menu_x, menu_y, menu_hover;
 	nwui_node *menu_target;
+	/* a custom app context menu (shown on right-click of an iconview). menu_custom selects it
+	 * over the built-in textfield menu while a popup is open. */
+	int         menu_custom;
+	const char *cmenu_label[8];
+	nwui_cb     cmenu_cb[8];
+	void       *cmenu_user[8];
+	int         cmenu_n;
 
 	/* global (menu-bar) menus the app declares; sent to the compositor via nw_set_menu */
 	struct nwui_topmenu appmenu[6];
@@ -144,6 +151,10 @@ int        nwui_dispatch(nwui *u, const struct nw_event *ev);  /* route one even
 /* ---- application menu (the global menu bar) ---- */
 int        nwui_menu(nwui *u, const char *title);                       /* add top menu -> index */
 void       nwui_menu_item(nwui *u, int menu, const char *label, nwui_cb cb, void *user);
+/* custom right-click context menu (e.g. on an iconview): clear, then add items; it pops up
+ * automatically when an iconview is right-clicked. cb(0, user) fires on the chosen item. */
+void       nwui_context_clear(nwui *u);
+void       nwui_context_add(nwui *u, const char *label, nwui_cb cb, void *user);
 void       nwui_menu_separator(nwui *u, int menu);
 int        nwui_menu_encode(const nwui *u, char *out, int cap);         /* -> wire spec; len */
 void       nwui_menu_dispatch(nwui *u, int menu, int item);             /* invoke the callback */

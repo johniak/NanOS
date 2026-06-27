@@ -149,7 +149,11 @@ void nw_client_connect(struct nw_server *s, int client, unsigned char *outbuf, u
 void nw_client_disconnect(struct nw_server *s, int client);   /* drops its windows */
 
 /* ---- input (from /dev/input1 / /dev/input0) ---- */
-void nw_pointer(struct nw_server *s, int sx, int sy, int buttons);
+#ifdef __cplusplus
+void nw_pointer(struct nw_server *s, int sx, int sy, int buttons, int wheel = 0);
+#else
+void nw_pointer(struct nw_server *s, int sx, int sy, int buttons, int wheel);
+#endif
 void nw_key(struct nw_server *s, unsigned char code, int down);
 
 /* ---- client requests (already decoded by nwproto) ---- */
