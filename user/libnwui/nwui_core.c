@@ -113,6 +113,46 @@ int nwui_list_selected(nwui_node *list)
 	return (list && list->kind == NWUI_LIST) ? list->sel : -1;
 }
 
+nwui_node *nwui_iconview(nwui *u, nwui_cb on_activate, nwui_cb on_change, void *user)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_ICONVIEW);
+	n->on_click  = on_activate;     /* reuse on_click for "activate", matching the list */
+	n->on_change = on_change;
+	n->user      = user;
+	n->focusable = 1;
+	n->sel       = -1;
+	n->last_row  = -1;              /* no prior click -> first click is never a double */
+	return n;
+}
+
+void nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count)
+{
+	if (!n || n->kind != NWUI_ICONVIEW) return;
+	n->icons    = items;
+	n->count    = count;
+	n->scroll   = 0;
+	if (n->sel >= count) n->sel = -1;
+	n->last_row = -1;
+	n->dirty    = 1;
+	if (n->owner) n->owner->layout_dirty = 1;
+}
+
+int nwui_iconview_selected(nwui_node *n)
+{
+	return (n && n->kind == NWUI_ICONVIEW) ? n->sel : -1;
+}
+
+nwui_node *nwui_panel(nwui *u, const char *title)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_PANEL);
+	int i = 0;
+	for (; title && title[i] && i < NWUI_TEXT_CAP - 1; i++) n->text[i] = title[i];
+	n->text[i] = 0;
+	n->pad = 8;
+	n->gap = 4;
+	return n;
+}
+
 static nwui_node *collect(nwui_node *n, va_list ap)
 {
 	nwui_node *c;
@@ -223,6 +263,22 @@ void nwui_measure(nwui_node *n)
 		n->mw = 220;
 		n->mh = 4 * NWUI_ROW_H;        /* default 4 visible rows; flex stretches it */
 		break;
+	case NWUI_ICONVIEW:
+		n->mw = NWUI_ICON_CELL_W * 2;  /* default 2 columns; flex stretches it */
+		n->mh = NWUI_ICON_CELL_H * 2;  /* default 2 rows */
+		break;
+	case NWUI_PANEL: {                 /* column layout + a title header band */
+		int maxw = 0, sumh = 0;
+		for (i = 0; i < n->nchild; i++) {
+			nwui_measure(n->child[i]);
+			if (n->child[i]->mw > maxw) maxw = n->child[i]->mw;
+			sumh += n->child[i]->mh;
+		}
+		if (n->nchild > 0) sumh += n->gap * (n->nchild - 1);
+		n->mw = maxw + 2 * n->pad;
+		n->mh = sumh + 2 * n->pad + NWUI_PANEL_TITLE_H;
+		break;
+	}
 	case NWUI_ROW: {
 		int sumw = 0, maxh = 0;
 		for (i = 0; i < n->nchild; i++) {
@@ -294,9 +350,27 @@ void nwui_arrange(nwui_node *n, int x, int y, int w, int h)
 			nwui_arrange(c, cx, iy, chw, ih);     /* stretch cross-axis (height) */
 			cx += chw + n->gap;
 		}
+	} else if (n->kind == NWUI_PANEL) {
+		/* like a column, but children start below the title header band */
+		int hy = iy + NWUI_PANEL_TITLE_H;
+		int avail = ih - NWUI_PANEL_TITLE_H;
+		int used = 0, tflex = 0;
+		for (i = 0; i < n->nchild; i++) { used += n->child[i]->mh; tflex += n->child[i]->flex; }
+		if (n->nchild > 0) used += n->gap * (n->nchild - 1);
+		int leftover = avail - used; if (leftover < 0) leftover = 0;
+		int cy = hy;
+		for (i = 0; i < n->nchild; i++) {
+			nwui_node *c = n->child[i];
+			int chh = c->mh + (c->flex > 0 && tflex > 0 ? leftover * c->flex / tflex : 0);
+			nwui_arrange(c, ix, cy, iw, chh);
+			cy += chh + n->gap;
+		}
 	} else if (n->kind == NWUI_BOX) {
 		if (n->nchild > 0)
 			nwui_arrange(n->child[0], ix, iy, iw, ih);
+	} else if (n->kind == NWUI_ICONVIEW) {
+		int c = n->w / NWUI_ICON_CELL_W;
+		n->cols = c < 1 ? 1 : c;
 	}
 }
 
@@ -856,6 +930,27 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 					}
 				}
 			}
+				else if (over && over->kind == NWUI_ICONVIEW && over->cols > 0) {
+					set_focus(u, over);
+					int relx = ev->x - over->x;
+					int rely = ev->y - over->y + over->scroll * NWUI_ICON_CELL_H;
+					int col = relx / NWUI_ICON_CELL_W;
+					int row = rely / NWUI_ICON_CELL_H;
+					int idx = (relx >= 0 && col < over->cols) ? row * over->cols + col : -1;
+					if (idx >= 0 && idx < over->count) {
+						over->sel = idx; over->dirty = 1;
+						int dbl = (idx == over->last_row &&
+						           u->now_ms - over->last_ms <= NWUI_DBL_MS);
+						over->last_row = idx;
+						over->last_ms  = u->now_ms;
+						if (dbl) {                       /* double-click -> open/run */
+							over->last_row = -1;
+							if (over->on_click) over->on_click(over, over->user);
+						} else if (over->on_change) {    /* single click -> selection changed */
+							over->on_change(over, over->user);
+						}
+					}
+				}
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTFIELD) {
 			u->armed->caret = char_at_x(u->armed, ev->x);            /* drag-select */
 			u->armed->dirty = 1;
@@ -896,6 +991,25 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			} else if (ev->ch == '\n' || ev->ch == '\r') {
 				list_activate(L);
 			}
+			break;
+		}
+		if (u->focus && u->focus->kind == NWUI_ICONVIEW) {
+			nwui_node *V = u->focus;
+			int cols = V->cols < 1 ? 1 : V->cols;
+			int s = V->sel < 0 ? 0 : V->sel;
+			if (ev->code == NWUI_SC_LEFT  && s > 0)              s -= 1;
+			else if (ev->code == NWUI_SC_RIGHT && s < V->count - 1) s += 1;
+			else if (ev->code == NWUI_SC_UP    && s - cols >= 0)    s -= cols;
+			else if (ev->code == NWUI_SC_DOWN  && s + cols < V->count) s += cols;
+			else if (ev->ch == '\n' || ev->ch == '\r') { if (V->sel >= 0 && V->on_click) V->on_click(V, V->user); break; }
+			else break;
+			V->sel = s; V->dirty = 1;
+			int vis_rows = V->h / NWUI_ICON_CELL_H; if (vis_rows < 1) vis_rows = 1;
+			int srow = s / cols;
+			if (srow < V->scroll) V->scroll = srow;
+			else if (srow >= V->scroll + vis_rows) V->scroll = srow - vis_rows + 1;
+			if (V->scroll < 0) V->scroll = 0;
+			if (V->on_change) V->on_change(V, V->user);
 			break;
 		}
 		if (u->focus && u->focus->kind == NWUI_CHECKBOX) {

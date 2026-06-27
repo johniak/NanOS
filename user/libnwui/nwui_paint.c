@@ -18,6 +18,8 @@
 #define COL_MUTED   0x00657184
 #define COL_SEL     0x0012a8f4
 #define COL_SB_THUMB 0x00b8c6d8
+#define COL_PANEL_BG  0x00eef4fb   /* task-pane panel body (light glass) */
+#define COL_PANEL_HDR 0x0039b4f7   /* task-pane panel title band (accent blue) */
 
 static void paint_self(nwui_node *n, const struct nw_surface *s)
 {
@@ -139,6 +141,46 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		}
 		break;
 	}
+	case NWUI_ICONVIEW: {
+		nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
+		int cols = n->cols < 1 ? 1 : n->cols;
+		for (int i = 0; i < n->count; i++) {
+			int row = i / cols, col = i % cols;
+			int cx = n->x + col * NWUI_ICON_CELL_W;
+			int cy = n->y + (row - n->scroll) * NWUI_ICON_CELL_H;
+			if (cy < n->y || cy + NWUI_ICON_CELL_H > n->y + n->h) continue;  /* whole rows only */
+			if (i == n->sel)
+				nw_fill_round(s, cx + 4, cy + 2, NWUI_ICON_CELL_W - 8, NWUI_ICON_CELL_H - 4, 6, COL_SEL, 200);
+			const nwui_icon_item *it = &n->icons[i];
+			if (it->icon && it->iw > 0 && it->ih > 0) {
+				int iw = it->iw, ih = it->ih;
+				int ix = cx + (NWUI_ICON_CELL_W - iw) / 2, iy = cy + 8;
+				struct nw_surface src;
+				src.px = (uint32_t *) it->icon; src.w = iw; src.h = ih; src.stride = iw;
+				nw_surface_noclip(&src);
+				nw_blit(s, ix, iy, &src, 0, 0, iw, ih);     /* natural size (icons authored 48x48) */
+			}
+			if (it->label) {
+				int maxc = (NWUI_ICON_CELL_W - 4) / NW_FONT_W; if (maxc < 1) maxc = 1;
+				char buf[40];
+				int len = 0;
+				for (; it->label[len] && len < maxc && len < (int) sizeof buf - 1; len++)
+					buf[len] = it->label[len];
+				buf[len] = 0;
+				int tx = cx + (NWUI_ICON_CELL_W - len * NW_FONT_W) / 2;
+				int ty = cy + 8 + NWUI_ICON_PX + 4;
+				nw_text(s, tx, ty, buf, (i == n->sel) ? 0x00ffffff : COL_INK);
+			}
+		}
+		nw_stroke_round(s, n->x, n->y, n->w, n->h, 8,
+		                n->focused ? COL_TF_FOC : COL_TF_BRD, n->focused ? 255 : 200);
+		break;
+	}
+	case NWUI_PANEL:
+		nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_PANEL_BG, 235);          /* glass body */
+		nw_fill_round(s, n->x, n->y, n->w, NWUI_PANEL_TITLE_H, 8, COL_PANEL_HDR, 255); /* header */
+		nw_text(s, n->x + 8, n->y + (NWUI_PANEL_TITLE_H - NW_FONT_H) / 2, n->text, 0x00ffffff);
+		break;   /* children painted by the recursive walk */
 	case NWUI_CHECKBOX: {
 		int bs = 14, by = n->y + (n->h - bs) / 2;
 		nw_fill_round(s, n->x, by, bs, bs, 3, COL_TF_BG, 255);

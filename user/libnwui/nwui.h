@@ -111,6 +111,21 @@ nwui_node *nwui_list(nwui *u, nwui_cb on_activate, void *user);
 void       nwui_list_set(nwui_node *list, const char *const *items, int count);
 int        nwui_list_selected(nwui_node *list);
 
+/* One icon-grid cell: a label plus an icon (app-owned w*h 0x00RRGGBB buffer; may be shared across
+ * cells). Authored icons are 48x48; the view blits them at natural size, centered in the cell. */
+typedef struct { const char *label; const uint32_t *icon; int iw, ih; } nwui_icon_item;
+
+/* A wrapping grid of large icons. A single click selects a cell (fires on_change); a DOUBLE-click
+ * (or Enter) fires on_activate ("open"). Arrows move the selection and auto-scroll. Items are an
+ * APP-OWNED array (set with nwui_iconview_set); read the selection with nwui_iconview_selected. */
+nwui_node *nwui_iconview(nwui *u, nwui_cb on_activate, nwui_cb on_change, void *user);
+void       nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count);
+int        nwui_iconview_selected(nwui_node *n);
+
+/* A titled panel (glass group-box) — the building block of a sidebar/task pane. Add children with
+ * nwui_add(); they stack vertically beneath the title header. */
+nwui_node *nwui_panel(nwui *u, const char *title);
+
 /* ---- containers: variadic, NULL-terminated children (this is the nesting) ---- */
 nwui_node *nwui_column(nwui *u, ...);   /* nwui_column(u, a, b, c, (nwui_node*)0)  */
 nwui_node *nwui_row(nwui *u, ...);

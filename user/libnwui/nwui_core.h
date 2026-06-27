@@ -11,11 +11,15 @@
 #include "libnw.h"     /* struct nw_event + NW_EV_* / NW_BTN_* — the core only READS events */
 
 enum { NWUI_BOX, NWUI_ROW, NWUI_COLUMN, NWUI_LABEL, NWUI_BUTTON, NWUI_TEXTFIELD, NWUI_LIST, NWUI_IMAGE,
-       NWUI_TEXTAREA, NWUI_CHECKBOX };
+       NWUI_TEXTAREA, NWUI_CHECKBOX, NWUI_ICONVIEW, NWUI_PANEL };
 
 enum { NWUI_ROW_H = 18 };   /* list item row height */
 enum { NWUI_SB_W = 12, NWUI_SB_MIN = 16 };   /* list scrollbar: width, min thumb height */
 enum { NWUI_DBL_MS = 400 };   /* two clicks on the same row within this -> a double-click */
+
+enum { NWUI_ICON_CELL_W = 92, NWUI_ICON_CELL_H = 84 };   /* icon-grid cell box */
+enum { NWUI_ICON_PX = 48 };                              /* nominal icon size (authored 48x48) */
+enum { NWUI_PANEL_TITLE_H = 22 };                        /* titled-panel header band height */
 
 enum {
 	NWUI_MAX_NODES = 128,
@@ -51,9 +55,12 @@ struct nwui_node {
 
 	const uint32_t *img;             /* image: app-owned w*h pixel buffer (0x00RRGGBB) */
 	const char *const *items;        /* list: app-owned array of item strings */
-	int        count, sel, scroll;   /* list: item count, selected/visible-from index */
+	int        count, sel, scroll;   /* list/iconview: item count, selected, visible-from index */
 	int        sb_drag, sb_grab;     /* list: scrollbar thumb being dragged + grab offset (px) */
-	int        last_row, last_ms;    /* list: last clicked row + time, for double-click detect */
+	int        last_row, last_ms;    /* list/iconview: last clicked cell + time, for double-click */
+
+	const nwui_icon_item *icons;     /* iconview: app-owned array of cells (reuses count/sel/scroll) */
+	int        cols;                 /* iconview: column count computed at arrange time */
 
 	nwui_cb    on_click, on_change;
 	void      *user;
