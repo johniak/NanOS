@@ -30,7 +30,11 @@ struct nw_settings {
 	int clock_seconds;       /* show seconds on the bar clock      */
 	int shadow;              /* draw window drop shadows (0/1)     */
 	int corner_radius;       /* window corner radius px, 0..20     */
+	char ui_font[64];        /* UI font filename under /nanos/share/fonts (proportional, AA) */
 };
+
+#define NW_UI_FONT_DEFAULT "UISans-Regular.ttf"
+#define NW_FONTS_DIR "/disks/main/nanos/share/fonts"
 
 /* Reset to the shipped defaults (blur OFF — it is expensive; translucency ON). */
 void nw_settings_defaults(struct nw_settings *s);

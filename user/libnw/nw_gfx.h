@@ -50,6 +50,8 @@ int  nw_text_w(const char *str);
 void nw_draw_char_t(const struct nw_surface *s, int x, int y, unsigned char ch, uint32_t fg);
 /* Reload the proportional UI font (e.g. a Settings font switch). px<=0 keeps the default size. */
 void nw_font_set_ui(const char *path, int px);
+/* Re-read settings.yaml (ui_font key) and reload the UI font. Compositor calls this on reload. */
+void nw_font_reload_from_settings(void);
 /* Copy a w*h block from src(sx,sy) to dst(dx,dy). Clips against BOTH surfaces (negative
  * offsets included) — the compositor's window-into-backbuffer blit. */
 void nw_blit(const struct nw_surface *dst, int dx, int dy,

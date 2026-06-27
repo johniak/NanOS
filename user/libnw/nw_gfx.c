@@ -12,17 +12,42 @@
 extern const unsigned char nx_font8x16[256][16];
 
 #include "nwfont.h"
-#define NW_UI_FONT_PATH "/disks/main/nanos/share/fonts/UISans-Regular.ttf"
+#include "nw_settings.h"
+#include <fcntl.h>
+#include <unistd.h>
 #define NW_UI_FONT_PX   15
 
-/* Lazily load the proportional UI font on first text use, so every process (compositor + apps)
- * gets it with no per-app init call. Settings can later re-load a different font via nwfont_set. */
+/* Load the UI font named in settings.yaml (ui_font key) from NW_FONTS_DIR; default UISans. Every
+ * process does this so the user's chosen font applies everywhere (apps at launch, nwm live). */
+static void load_ui_from_settings(void)
+{
+    struct nw_settings st;
+    nw_settings_defaults(&st);
+    int fd = open(NW_SETTINGS_PATH, O_RDONLY);
+    if (fd >= 0) {
+        char b[1024];
+        int n = (int) read(fd, b, sizeof b);
+        close(fd);
+        if (n > 0) nw_settings_parse(b, n, &st);
+    }
+    const char *nm = st.ui_font[0] ? st.ui_font : NW_UI_FONT_DEFAULT;
+    char path[160];
+    int i = 0;
+    for (const char *d = NW_FONTS_DIR; *d && i < 120; d++) path[i++] = *d;
+    path[i++] = '/';
+    for (int j = 0; nm[j] && i < 159; j++) path[i++] = nm[j];
+    path[i] = 0;
+    nwfont_set(NWFONT_UI, path, NW_UI_FONT_PX);
+}
+
+/* Lazily load the proportional UI font on first text use, so every process gets it with no
+ * per-app init call. */
 static int g_ui_font_tried;
 static void ui_font_autoinit(void)
 {
     if (g_ui_font_tried) return;
     g_ui_font_tried = 1;
-    nwfont_set(NWFONT_UI, NW_UI_FONT_PATH, NW_UI_FONT_PX);
+    load_ui_from_settings();
 }
 
 /* Reload the UI font (Settings font switch). px<=0 keeps the default size. */
@@ -30,6 +55,14 @@ void nw_font_set_ui(const char *path, int px)
 {
     g_ui_font_tried = 1;
     nwfont_set(NWFONT_UI, path, px > 0 ? px : NW_UI_FONT_PX);
+}
+
+/* Re-read settings.yaml and (re)load the UI font — the compositor calls this on a settings reload
+ * so a font change applies live to chrome. */
+void nw_font_reload_from_settings(void)
+{
+    g_ui_font_tried = 1;
+    load_ui_from_settings();
 }
 
 /* The fixed-cell monospace font (text inputs); sized to fit the 8x16 cell (advance ~= NW_FONT_W). */

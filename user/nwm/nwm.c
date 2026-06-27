@@ -731,6 +731,7 @@ int main(void)
 		if (S.want_reload) {                   /* Settings app changed a preference -> apply live */
 			S.want_reload = 0;
 			apply_settings();
+			nw_font_reload_from_settings();    /* UI font may have changed -> reload it live */
 			refresh_wallpaper();               /* wallpaper mode/colour may have changed */
 			for (int i = 0; i < NW_MAX_WINDOWS; i++)
 				if (S.win[i].used) S.win[i].frame_dirty = 1;   /* accent is baked into the focus dot */

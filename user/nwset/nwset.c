@@ -6,10 +6,12 @@
  * (nwui_reload_settings -> NW_REQ_RELOAD_SETTINGS).
  */
 #include "nwui.h"
+#include "nwui_fs.h"
 #include "nw_settings.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
 
 static nwui          *g_u;
 static struct nw_settings g_set;
@@ -18,6 +20,7 @@ static nwui_node     *g_blurlvl_lbl, *g_translvl_lbl;/* numeric level value labe
 static nwui_node     *g_accent_btn, *g_wall_btn;    /* accent / wallpaper cycle buttons */
 static nwui_node     *g_clk24_btn, *g_clksec_btn, *g_shadow_btn;  /* On/Off toggles */
 static nwui_node     *g_radius_lbl;                 /* corner-radius value label */
+static nwui_node     *g_font_btn;                   /* UI font cycle button */
 
 static const unsigned ACCENTS[]     = { 0x12a8f4, 0x7d3ff2, 0x6fd033, 0xff9d00, 0xe81123, 0x657184 };
 static const char *const ACC_NAMES[]= { "Blue", "Purple", "Green", "Orange", "Red", "Graphite" };
@@ -66,6 +69,7 @@ static void refresh_labels(void)
 	nwui_set_text(g_clksec_btn, g_set.clock_seconds ? "On" : "Off");
 	nwui_set_text(g_shadow_btn, g_set.shadow ? "On" : "Off");
 	snprintf(b, sizeof b, "%d", g_set.corner_radius);       nwui_set_text(g_radius_lbl, b);
+	nwui_set_text(g_font_btn, g_set.ui_font[0] ? g_set.ui_font : NW_UI_FONT_DEFAULT);
 }
 
 static int clampL(int v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
@@ -84,6 +88,27 @@ static void cb_clksec(nwui_node *s, void *u) { (void) s; (void) u; g_set.clock_s
 static void cb_shadow(nwui_node *s, void *u) { (void) s; (void) u; g_set.shadow = !g_set.shadow; refresh_labels(); save_and_apply(); }
 static void cb_radius_dn(nwui_node *s, void *u) { (void) s; (void) u; g_set.corner_radius = clampR(g_set.corner_radius - 2); refresh_labels(); save_and_apply(); }
 static void cb_radius_up(nwui_node *s, void *u) { (void) s; (void) u; g_set.corner_radius = clampR(g_set.corner_radius + 2); refresh_labels(); save_and_apply(); }
+static int is_font_file(const char *n) { int l = (int) strlen(n); return l > 4 && (!strcmp(n + l - 4, ".ttf") || !strcmp(n + l - 4, ".otf")); }
+/* Cycle the UI font through the .ttf/.otf files in /nanos/share/fonts. */
+static void cb_font(nwui_node *s, void *u)
+{
+	(void) s; (void) u;
+	char names[16][64];
+	int cnt = 0;
+	void *d = nwui_dir_open(NW_FONTS_DIR);
+	if (d) {
+		char nm[64]; int isd;
+		while (cnt < 16 && nwui_dir_next(d, nm, sizeof nm, &isd) == 1)
+			if (is_font_file(nm)) { strncpy(names[cnt], nm, 63); names[cnt][63] = 0; cnt++; }
+		nwui_dir_close(d);
+	}
+	if (cnt == 0) return;
+	int cur = 0;
+	for (int i = 0; i < cnt; i++) if (!strcmp(names[i], g_set.ui_font)) cur = i;
+	int nx = (cur + 1) % cnt;
+	strncpy(g_set.ui_font, names[nx], 63); g_set.ui_font[63] = 0;
+	refresh_labels(); save_and_apply();
+}
 
 static nwui_node *nav(nwui *u, const char *text, int sel)
 {
@@ -137,6 +162,7 @@ int main(void)
 	g_clk24_btn  = nwui_button(u, "24h", cb_clk24, 0);
 	g_clksec_btn = nwui_button(u, "Off", cb_clksec, 0);
 	g_shadow_btn = nwui_button(u, "On", cb_shadow, 0);
+	g_font_btn   = nwui_button(u, "UISans-Regular.ttf", cb_font, 0);
 	nwui_node *blur_step   = stepper(u, cb_blur_dn,   cb_blur_up,   &g_blurlvl_lbl);
 	nwui_node *trans_step  = stepper(u, cb_trans_dn,  cb_trans_up,  &g_translvl_lbl);
 	nwui_node *radius_step = stepper(u, cb_radius_dn, cb_radius_up, &g_radius_lbl);
@@ -152,6 +178,7 @@ int main(void)
 	nwui_add(card, ctrl_row(u, "Corner radius",      radius_step));
 	nwui_add(card, ctrl_row(u, "Clock format",       g_clk24_btn));
 	nwui_add(card, ctrl_row(u, "Clock seconds",      g_clksec_btn));
+	nwui_add(card, ctrl_row(u, "UI font",            g_font_btn));
 	nwui_colors(card, 0, 0x00ffffff);
 
 	nwui_node *main_col = nwui_gap(nwui_pad(nwui_vbox(u), 18), 10);

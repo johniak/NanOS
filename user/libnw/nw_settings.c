@@ -13,6 +13,7 @@ void nw_settings_defaults(struct nw_settings *s)
 	s->clock_seconds      = 0;
 	s->shadow             = 1;
 	s->corner_radius      = 11;
+	{ const char *d = NW_UI_FONT_DEFAULT; int i = 0; for (; d[i] && i < 63; i++) s->ui_font[i] = d[i]; s->ui_font[i] = 0; }
 }
 
 static int clamp100(int v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
@@ -120,6 +121,11 @@ void nw_settings_parse(const char *buf, int len, struct nw_settings *s)
 		else if (tok_eq(p, klen, "clock_seconds"))      s->clock_seconds = parse_bool(v, vn, s->clock_seconds);
 		else if (tok_eq(p, klen, "shadow"))             s->shadow = parse_bool(v, vn, s->shadow);
 		else if (tok_eq(p, klen, "corner_radius"))      s->corner_radius = clamp_radius(parse_int(v, vn));
+		else if (tok_eq(p, klen, "ui_font")) {
+			int m = vn < 63 ? vn : 63; if (m < 0) m = 0;
+			for (int i = 0; i < m; i++) s->ui_font[i] = v[i];
+			s->ui_font[m] = 0;
+		}
 	}
 }
 
@@ -193,6 +199,9 @@ int nw_settings_serialize(const struct nw_settings *s, char *out, int cap)
 	ok &= emit(out, &pos, cap, s->shadow ? "true\n" : "false\n");
 	ok &= emit(out, &pos, cap, "corner_radius: ");
 	ok &= emit_int(out, &pos, cap, clamp_radius(s->corner_radius));
+	ok &= emit(out, &pos, cap, "\n");
+	ok &= emit(out, &pos, cap, "ui_font: ");
+	ok &= emit(out, &pos, cap, s->ui_font[0] ? s->ui_font : NW_UI_FONT_DEFAULT);
 	ok &= emit(out, &pos, cap, "\n");
 	if (!ok) return 0;
 	out[pos] = 0;

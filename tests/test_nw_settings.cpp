@@ -42,6 +42,7 @@ TEST_CASE("serialize then parse round-trips all fields") {
 	a.blur = 1; a.blur_level = 40; a.transparency = 1; a.transparency_level = 25;
 	a.accent = 0x7d3ff2u; a.wallpaper = NW_WALL_SOLID; a.wallpaper_color = 0x101820u;
 	a.clock_24h = 0; a.clock_seconds = 1; a.shadow = 0; a.corner_radius = 6;
+	{ const char *f = "Mono-Regular.ttf"; int i = 0; for (; f[i]; i++) a.ui_font[i] = f[i]; a.ui_font[i] = 0; }
 	char buf[256];
 	int n = nw_settings_serialize(&a, buf, sizeof buf);
 	CHECK(n > 0);
@@ -58,6 +59,7 @@ TEST_CASE("serialize then parse round-trips all fields") {
 	CHECK(b.clock_seconds == a.clock_seconds);
 	CHECK(b.shadow == a.shadow);
 	CHECK(b.corner_radius == a.corner_radius);
+	CHECK(strcmp(b.ui_font, a.ui_font) == 0);
 }
 
 TEST_CASE("parse colours (0x/#/bare hex), wallpaper names, clamps radius") {
