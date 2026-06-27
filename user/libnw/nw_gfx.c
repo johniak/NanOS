@@ -32,6 +32,42 @@ void nw_font_set_ui(const char *path, int px)
     nwfont_set(NWFONT_UI, path, px > 0 ? px : NW_UI_FONT_PX);
 }
 
+/* The fixed-cell monospace font (text inputs); sized to fit the 8x16 cell (advance ~= NW_FONT_W). */
+#define NW_MONO_FONT_PATH "/disks/main/nanos/share/fonts/Mono-Regular.ttf"
+#define NW_MONO_FONT_PX   13
+static int g_mono_font_tried;
+static void mono_font_autoinit(void)
+{
+    if (g_mono_font_tried) return;
+    g_mono_font_tried = 1;
+    nwfont_set(NWFONT_MONO, NW_MONO_FONT_PATH, NW_MONO_FONT_PX);
+}
+
+/* Draw one char with a TRANSPARENT background in the monospace font (AA), in a fixed NW_FONT_W
+ * cell at (x,y); the caller advances by NW_FONT_W. Text inputs use this so their grid math
+ * (caret/selection by NW_FONT_W) stays exact while glyphs render smoothly. VGA 1-bit fallback. */
+void nw_draw_char_t(const struct nw_surface *s, int x, int y, unsigned char ch, uint32_t fg)
+{
+    mono_font_autoinit();
+    if (nwfont_loaded(NWFONT_MONO)) {
+        const struct nwfont_glyph *g = nwfont_get(NWFONT_MONO, ch);
+        if (g && g->cov) {
+            int baseline = y + nwfont_ascent(NWFONT_MONO);
+            for (int gy = 0; gy < g->h; gy++) {
+                const unsigned char *covrow = g->cov + (long) gy * g->w;
+                int py = baseline + g->top + gy;
+                for (int gx = 0; gx < g->w; gx++)
+                    if (covrow[gx]) nw_blend_pixel(s, x + g->bx + gx, py, fg, covrow[gx]);
+            }
+        }
+        return;
+    }
+    const unsigned char *glyph = nx_font8x16[ch];   /* VGA 1-bit fallback */
+    for (int row = 0; row < NW_FONT_H; row++)
+        for (int col = 0; col < NW_FONT_W; col++)
+            if (glyph[row] & (0x80u >> col)) nw_put_pixel(s, x + col, y + row, fg);
+}
+
 /* Pixel width of a string in the current UI font (proportional), or the 1-bit fallback width. */
 int nw_text_w(const char *str)
 {

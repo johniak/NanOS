@@ -45,6 +45,9 @@ int  nw_draw_text(const struct nw_surface *s, int x, int y, const char *str,
 int  nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t fg);
 /* Pixel width of a string in the current UI font (proportional). Use for measurement/centering. */
 int  nw_text_w(const char *str);
+/* Draw one char (transparent bg) in the fixed-cell monospace font (AA) — for text input widgets
+ * that keep NW_FONT_W grid math. Caller advances by NW_FONT_W. */
+void nw_draw_char_t(const struct nw_surface *s, int x, int y, unsigned char ch, uint32_t fg);
 /* Reload the proportional UI font (e.g. a Settings font switch). px<=0 keeps the default size. */
 void nw_font_set_ui(const char *path, int px);
 /* Copy a w*h block from src(sx,sy) to dst(dx,dy). Clips against BOTH surfaces (negative

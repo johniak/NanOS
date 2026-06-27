@@ -80,8 +80,8 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		for (int i = 0; i < n->tlen; i++) {
 			int sel = (n->anchor != n->caret && i >= lo && i < hi);
 			if (sel) nw_fill_rect(s, tx + i * NW_FONT_W, ty, NW_FONT_W, NW_FONT_H, COL_SEL);
-			nw_text(s, tx + i * NW_FONT_W, ty, (char[]){ n->tbuf[i], 0 },
-			        sel ? 0x00ffffff : COL_INK);
+			nw_draw_char_t(s, tx + i * NW_FONT_W, ty, (unsigned char) n->tbuf[i],
+			               sel ? 0x00ffffff : COL_INK);
 		}
 		if (n->focused)
 			nw_fill_rect(s, tx + n->caret * NW_FONT_W, ty, 2, NW_FONT_H, COL_TF_FOC);
@@ -109,8 +109,8 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 						int seld = (n->anchor != n->caret && i >= lo && i < hi);
 						int xx = tx0 + (i - seg) * NW_FONT_W;
 						if (seld) nw_fill_rect(s, xx, yy, NW_FONT_W, NW_FONT_H, COL_SEL);
-						char ch[2] = { n->tbuf[i], 0 };
-						nw_text(s, xx, yy, ch, seld ? 0x00ffffff : COL_INK);
+						nw_draw_char_t(s, xx, yy, (unsigned char) n->tbuf[i],
+						               seld ? 0x00ffffff : COL_INK);
 					}
 					if (n->focused && n->caret >= seg && n->caret <= segend) {
 						caret_px = tx0 + (n->caret - seg) * NW_FONT_W;
