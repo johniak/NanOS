@@ -23,7 +23,10 @@ enum {
 	NW_EV_CLOSE,
 	NW_EV_COPY,        /* cut: a==1      */
 	NW_EV_PASTE,       /* text,text_len  */
-	NW_EV_MENU         /* menu,item      */
+	NW_EV_MENU,        /* menu,item      */
+	NW_EV_DRAG_MOTION, /* x,y,mods — a drag is hovering this window (bit0 shift, bit1 ctrl) */
+	NW_EV_DRAG_LEAVE,  /* the drag left this window                                         */
+	NW_EV_DROP         /* x,y,mods + text/text_len — a drop landed on this window           */
 };
 
 struct nw_event {
@@ -64,6 +67,12 @@ void nw_set_clipboard(nw_display *d, const char *text, int len);
 
 /* Ask the compositor for the clipboard; it replies with an NW_EV_PASTE event. */
 void nw_get_clipboard(nw_display *d);
+
+/* Begin a drag with `text` as the payload (e.g. a file path). The compositor arbitrates the
+ * drag from here: it sends NW_EV_DRAG_MOTION/LEAVE to whatever window the cursor is over and an
+ * NW_EV_DROP (carrying this payload) to the target window when the button is released. Call this
+ * once, while the mouse button is held, after detecting a drag gesture. */
+void nw_drag_begin(nw_display *d, const char *text, int len);
 
 /* Ask the compositor to launch a program (by name or absolute path), the same path the Run
  * dialog uses. Fire-and-forget; the new program connects as its own client. */

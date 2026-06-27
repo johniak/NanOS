@@ -154,6 +154,14 @@ void nw_get_clipboard(nw_display *d)
 	send_hdr(d->reqfd, NW_REQ_GET_CLIPBOARD, 0, 0, 0, 0, 0, 0);   /* -> arrives as NW_EV_PASTE */
 }
 
+void nw_drag_begin(nw_display *d, const char *text, int len)
+{
+	if (len < 0) len = 0;
+	if (send_hdr(d->reqfd, NW_REQ_DRAG_BEGIN, 0, 0, 0, 0, 0, (uint32_t) len) < 0)
+		return;
+	if (len) write_all(d->reqfd, text, len);
+}
+
 void nw_spawn(nw_display *d, const char *cmd)
 {
 	int len = 0;
@@ -192,6 +200,10 @@ static int translate(nw_display *d, struct nw_event *ev)
 	case NW_EVT_COPY:      ev->type = NW_EV_COPY; ev->cut = m->a; break;
 	case NW_EVT_PASTE:     ev->type = NW_EV_PASTE; ev->text = (const char *) d->decpay; ev->text_len = (int) m->length; break;
 	case NW_EVT_MENU:      ev->type = NW_EV_MENU; ev->menu = m->a; ev->item = m->b; break;
+	case NW_EVT_DRAG_MOTION: ev->type = NW_EV_DRAG_MOTION; ev->x = m->a; ev->y = m->b; ev->mods = m->c; break;
+	case NW_EVT_DRAG_LEAVE:  ev->type = NW_EV_DRAG_LEAVE; break;
+	case NW_EVT_DROP:        ev->type = NW_EV_DROP; ev->x = m->a; ev->y = m->b; ev->mods = m->c;
+	                         ev->text = (const char *) d->decpay; ev->text_len = (int) m->length; break;
 	default:               ev->type = NW_EV_NONE; break;
 	}
 	return 1;

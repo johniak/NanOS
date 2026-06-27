@@ -32,6 +32,9 @@ enum {
 	NW_REQ_SET_MENU       = 8,   /* payload=menu spec: menus split 0x1e, fields split 0x1f  */
 	                             /*   field[0]=title, field[1..]=item labels ("-"=separator) */
 	NW_REQ_RELOAD_SETTINGS = 9,  /* no payload; server re-reads settings.yaml + recomposes   */
+	NW_REQ_DRAG_BEGIN     = 10,  /* payload=drag data (e.g. a file path); server arbitrates  */
+	                             /*   the drag: routes DRAG_MOTION/LEAVE to the window under  */
+	                             /*   the cursor and DROP (with this payload) on release.     */
 
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */
@@ -41,8 +44,14 @@ enum {
 	NW_EVT_CLOSE          = 68,  /* window; user asked to close (Super+Q / close box)       */
 	NW_EVT_COPY           = 69,  /* window; Super+C/X — client should reply SET_CLIPBOARD   */
 	NW_EVT_PASTE          = 70,  /* window; Super+V — payload=clipboard text to insert      */
-	NW_EVT_MENU           = 71   /* window; a=top-menu index b=item index (app menu chosen) */
+	NW_EVT_MENU           = 71,  /* window; a=top-menu index b=item index (app menu chosen) */
+	NW_EVT_DRAG_MOTION    = 72,  /* window under cursor; a=x b=y (rel) c=mods (bit0 shift,1 ctrl) */
+	NW_EVT_DRAG_LEAVE     = 73,  /* window the drag just left (clear any drop highlight)       */
+	NW_EVT_DROP           = 74   /* window; a=x b=y (rel) c=mods; payload=the dragged data     */
 };
+
+/* Drag modifier bits carried in NW_EVT_DRAG_MOTION/DROP `c`. */
+enum { NW_DND_SHIFT = 1, NW_DND_CTRL = 2 };
 
 /* Pointer button bitmask (matches evdev BTN ordering we care about). */
 enum { NW_BTN_LEFT = 1, NW_BTN_RIGHT = 2, NW_BTN_MIDDLE = 4 };

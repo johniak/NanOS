@@ -549,3 +549,78 @@ TEST_CASE("taskbar: Start button opens the Start menu anchored above the bar") {
 	int x, y, w, h; nw_menu_dropdown_rect(&s, &x, &y, &w, &h);
 	CHECK(y + h <= 300 - NW_TASK_H);                   // opens upward, above the taskbar
 }
+
+/* ---- drag-and-drop arbitration ----------------------------------------------------- */
+static void drag_begin(nw_server& s, int client, const char* payload) {
+	nw_msg m{}; m.type = NW_REQ_DRAG_BEGIN; m.length = (uint32_t) strlen(payload);
+	nw_client_msg(&s, client, &m, (const unsigned char*) payload);
+}
+
+TEST_CASE("drag-and-drop: BEGIN + motion routes DRAG_MOTION, release routes DROP with payload") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 300, 200, "w");
+	int wi = s.focus; s.win[wi].x = 100; s.win[wi].y = 100;
+	// press inside the content so the left button is held (a drag is in progress)
+	int px = 100 + NW_BORDER + 20, py = 100 + NW_TITLEBAR_H + 30;
+	nw_pointer(&s, px, py, NW_BTN_LEFT);
+	drain(s, 0);
+	const char* path = "/disks/main/users/jan/a.txt";
+	drag_begin(s, 0, path);
+	CHECK(s.dnd_active == 1);
+	// move while held -> a DRAG_MOTION to the window under the cursor (window-relative coords)
+	int mx = 100 + NW_BORDER + 40, my = 100 + NW_TITLEBAR_H + 50;
+	nw_pointer(&s, mx, my, NW_BTN_LEFT);
+	auto ev = drain(s, 0);
+	const Ev* mo = last(ev, NW_EVT_DRAG_MOTION);
+	REQUIRE(mo);
+	CHECK(mo->m.a == 40);
+	CHECK(mo->m.b == 50);
+	// release -> a DROP carrying the payload + relative coords; the drag ends
+	nw_pointer(&s, mx, my, 0);
+	auto ev2 = drain(s, 0);
+	const Ev* dr = last(ev2, NW_EVT_DROP);
+	REQUIRE(dr);
+	CHECK(dr->m.a == 40);
+	CHECK(dr->m.b == 50);
+	CHECK(dr->pay.size() == strlen(path));
+	CHECK(memcmp(dr->pay.data(), path, dr->pay.size()) == 0);
+	CHECK(s.dnd_active == 0);
+}
+
+TEST_CASE("drag-and-drop: Ctrl held marks the DROP as a copy") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 300, 200, "w");
+	int wi = s.focus; s.win[wi].x = 100; s.win[wi].y = 100;
+	int px = 100 + NW_BORDER + 20, py = 100 + NW_TITLEBAR_H + 30;
+	nw_pointer(&s, px, py, NW_BTN_LEFT);
+	drag_begin(s, 0, "/x");
+	drain(s, 0);
+	nw_key(&s, NW_SC_LCTRL, 1);                         // hold Ctrl -> copy
+	nw_pointer(&s, px, py, 0);                          // release -> DROP
+	auto ev = drain(s, 0);
+	const Ev* dr = last(ev, NW_EVT_DROP);
+	REQUIRE(dr);
+	CHECK((dr->m.c & NW_DND_CTRL) != 0);
+}
+
+TEST_CASE("drag-and-drop: crossing a window boundary emits DRAG_LEAVE to the old target") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> obA(8192); nw_client_connect(&s, 0, obA.data(), obA.size());
+	std::vector<unsigned char> obB(8192); nw_client_connect(&s, 1, obB.data(), obB.size());
+	create_win(s, 0, 200, 150, "A"); int a = s.focus; s.win[a].x = 50;  s.win[a].y = 100;
+	create_win(s, 1, 200, 150, "B"); int b = s.focus; s.win[b].x = 400; s.win[b].y = 100;
+	int ax = 50 + NW_BORDER + 10, ay = 100 + NW_TITLEBAR_H + 10;
+	nw_pointer(&s, ax, ay, NW_BTN_LEFT);                // press inside A (left held)
+	drag_begin(s, 0, "/p");                             // A is the drag source
+	drain(s, 0); drain(s, 1);
+	nw_pointer(&s, ax, ay, NW_BTN_LEFT);                // still over A -> A gets DRAG_MOTION
+	CHECK(count(drain(s, 0), NW_EVT_DRAG_MOTION) >= 1);
+	int bx = 400 + NW_BORDER + 10, by = 100 + NW_TITLEBAR_H + 10;
+	nw_pointer(&s, bx, by, NW_BTN_LEFT);                // move over B
+	CHECK(count(drain(s, 0), NW_EVT_DRAG_LEAVE) == 1);  // A is told the drag left
+	CHECK(count(drain(s, 1), NW_EVT_DRAG_MOTION) >= 1); // B now hovered
+	nw_pointer(&s, bx, by, 0);                          // release over B -> DROP to B
+	CHECK(count(drain(s, 1), NW_EVT_DROP) == 1);
+}

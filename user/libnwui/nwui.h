@@ -126,6 +126,18 @@ nwui_node *nwui_iconview(nwui *u, nwui_cb on_activate, nwui_cb on_change, void *
 void       nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count);
 int        nwui_iconview_selected(nwui_node *n);
 
+/* ---- drag-and-drop (between windows, arbitrated by the compositor) ----
+ * Make an iconview a drag source + drop target. `on_drag` fires once when a press on a cell
+ * turns into a drag — respond by calling nwui_begin_drag(u, payload). `on_drop` fires when a
+ * drop lands on the view — read nwui_iconview_drop_cell (the cell under the drop, or -1 for the
+ * empty area) and nwui_iconview_drop_text (the payload, valid only during the callback). */
+void        nwui_iconview_set_dnd(nwui_node *n, nwui_cb on_drag, nwui_cb on_drop);
+int         nwui_iconview_drop_cell(nwui_node *n);
+int         nwui_iconview_drop_mods(nwui_node *n);   /* modifier bits at the drop (bit1 = ctrl) */
+const char *nwui_iconview_drop_text(nwui_node *n);
+/* Start a drag carrying `text` as the payload (call from an on_drag handler). */
+void        nwui_begin_drag(nwui *u, const char *text);
+
 /* A titled panel (glass group-box) — the building block of a sidebar/task pane. Add children with
  * nwui_add(); they stack vertically beneath the title header. */
 nwui_node *nwui_panel(nwui *u, const char *title);

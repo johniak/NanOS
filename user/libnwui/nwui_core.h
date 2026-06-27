@@ -68,6 +68,14 @@ struct nwui_node {
 	nwui_cb    on_click, on_change;
 	void      *user;
 
+	/* drag-and-drop (iconview): gesture-started-a-drag / a-drop-landed callbacks, the cell
+	 * currently highlighted as a hovering drop target, and the landed drop's cell + payload. */
+	nwui_cb    on_drag, on_drop;
+	int        drop_hover;           /* cell under a hovering drag, or -1                  */
+	int        drop_cell;            /* cell a drop landed on, or -1 (= the empty area)     */
+	int        drop_mods;            /* modifier bits at the drop (bit0 shift, bit1 ctrl)   */
+	const char *drop_text;           /* dropped payload (valid only during on_drop)         */
+
 	int        focusable, focused, hover, pressed, dirty;
 };
 
@@ -90,6 +98,16 @@ struct nwui {
 	int        layout_dirty;      /* tree/sizes changed -> full relayout + repaint */
 	void      *io;                /* nwui.c stashes its nw_display + nw_win here; core ignores it */
 	int        closed;
+
+	/* drag-and-drop: the core flags a pending nw_drag_begin (I/O shell sends it), tracks the
+	 * iconview cell pressed (a candidate that becomes a drag once the cursor moves past a
+	 * threshold), and the iconview currently showing a drop-target highlight. */
+	int        drag_req;          /* set -> nwui.c does nw_drag_begin(drag_buf, drag_len)      */
+	char       drag_buf[256];
+	int        drag_len;
+	nwui_node *drag_cand;         /* iconview cell under a left-press (potential drag source)  */
+	int        drag_x0, drag_y0;  /* press point, for the move threshold                      */
+	nwui_node *drop_node;         /* iconview currently highlighted as a drop target          */
 
 	/* clipboard hand-off to the I/O shell (nwui.c performs the actual nw_* call) */
 	int        clip_set;          /* set -> nwui.c does nw_set_clipboard(clip_buf, clip_len)  */

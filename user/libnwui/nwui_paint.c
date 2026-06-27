@@ -180,6 +180,10 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			if (cy < n->y || cy + NWUI_ICON_CELL_H > n->y + n->h) continue;  /* whole rows only */
 			if (i == n->sel)        /* soft translucent rounded highlight (modern) */
 				nw_fill_round(s, cx + 6, cy + 4, NWUI_ICON_CELL_W - 12, NWUI_ICON_CELL_H - 8, 12, COL_ACCENT, 32);
+			if (i == n->drop_hover) {   /* drop target under a hovering drag: filled + outlined */
+				nw_fill_round(s, cx + 6, cy + 4, NWUI_ICON_CELL_W - 12, NWUI_ICON_CELL_H - 8, 12, COL_ACCENT, 64);
+				nw_stroke_round(s, cx + 5, cy + 3, NWUI_ICON_CELL_W - 10, NWUI_ICON_CELL_H - 6, 12, COL_ACCENT_DEEP, 220);
+			}
 			const nwui_icon_item *it = &n->icons[i];
 			if (it->icon && it->iw > 0 && it->ih > 0) {
 				int iw = it->iw, ih = it->ih;

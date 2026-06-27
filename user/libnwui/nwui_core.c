@@ -122,7 +122,32 @@ nwui_node *nwui_iconview(nwui *u, nwui_cb on_activate, nwui_cb on_change, void *
 	n->focusable = 1;
 	n->sel       = -1;
 	n->last_row  = -1;              /* no prior click -> first click is never a double */
+	n->drop_hover = -1;            /* no hovering drag yet */
+	n->drop_cell  = -1;
 	return n;
+}
+
+/* Make an iconview a drag source / drop target. on_drag fires once when a press on a cell turns
+ * into a drag (the app then calls nwui_begin_drag with the payload); on_drop fires when a drop
+ * lands on the view (the app reads nwui_iconview_drop_cell + nwui_iconview_drop_text). */
+void nwui_iconview_set_dnd(nwui_node *n, nwui_cb on_drag, nwui_cb on_drop)
+{
+	if (!n || n->kind != NWUI_ICONVIEW) return;
+	n->on_drag = on_drag;
+	n->on_drop = on_drop;
+}
+int         nwui_iconview_drop_cell(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->drop_cell : -1; }
+int         nwui_iconview_drop_mods(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->drop_mods : 0; }
+const char *nwui_iconview_drop_text(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->drop_text : 0; }
+
+/* Begin a drag with `text` as the payload; the I/O shell forwards it to nw_drag_begin. */
+void nwui_begin_drag(nwui *u, const char *text)
+{
+	int n = 0;
+	while (text && text[n] && n < (int) sizeof u->drag_buf - 1) { u->drag_buf[n] = text[n]; n++; }
+	u->drag_buf[n] = 0;
+	u->drag_len = n;
+	u->drag_req = 1;
 }
 
 void nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count)
@@ -831,6 +856,17 @@ static void list_activate(nwui_node *L)      /* fire on_click for the current se
 	if (L->sel >= 0 && L->on_click) L->on_click(L, L->user);
 }
 
+/* Cell under a window-relative point in an iconview, or -1 (empty area / outside the grid). */
+static int iv_cell_at(const nwui_node *V, int ex, int ey)
+{
+	int relx = ex - V->x;
+	int rely = ey - V->y + V->scroll * NWUI_ICON_CELL_H;
+	int col = relx / NWUI_ICON_CELL_W;
+	int row = rely / NWUI_ICON_CELL_H;
+	int idx = (relx >= 0 && V->cols > 0 && col < V->cols) ? row * V->cols + col : -1;
+	return (idx >= 0 && idx < V->count) ? idx : -1;
+}
+
 /* ---- iconview scrolling: like the list, but the unit is a ROW of `cols` cells ---- */
 static int iv_cols(const nwui_node *V) { return V->cols < 1 ? 1 : V->cols; }
 static int iv_rows(const nwui_node *V) { int c = iv_cols(V); return (V->count + c - 1) / c; }
@@ -1072,6 +1108,7 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 					int idx = (relx >= 0 && col < over->cols) ? row * over->cols + col : -1;
 					if (idx >= 0 && idx < over->count) {
 						over->sel = idx; over->dirty = 1;
+							if (over->on_drag) { u->drag_cand = over; u->drag_x0 = ev->x; u->drag_y0 = ev->y; }
 						int dbl = (idx == over->last_row &&
 						           u->now_ms - over->last_ms <= NWUI_DBL_MS);
 						over->last_row = idx;
@@ -1096,7 +1133,14 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_ICONVIEW && u->armed->sb_drag) {
 			iv_sb_set_from_y(u->armed, ev->y);                       /* drag the iconview scrollbar */
 			u->armed->dirty = 1;
+		} else if (left && pleft && u->drag_cand && u->drag_cand->on_drag &&
+		           ((ev->x - u->drag_x0) * (ev->x - u->drag_x0) +
+		            (ev->y - u->drag_y0) * (ev->y - u->drag_y0)) >= 25) {
+			nwui_node *src = u->drag_cand;       /* moved >5px past the press -> begin a drag */
+			u->drag_cand = 0;
+			src->on_drag(src, src->user);        /* app responds with nwui_begin_drag(u, payload) */
 		} else if (!left && pleft) {                  /* left release edge */
+			u->drag_cand = 0;                     /* a plain click, never a drag */
 			if (u->armed && u->armed->kind == NWUI_BUTTON) {
 				u->armed->pressed = 0; u->armed->dirty = 1;
 				if (over == u->armed && over->on_click) over->on_click(over, over->user);
@@ -1247,6 +1291,34 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		}
 		break;
 
+	case NW_EV_DRAG_MOTION: {                 /* a drag is hovering: highlight the cell under it */
+		nwui_node *t = nwui_hit(u->modal ? u->modal : u->root, ev->x, ev->y);
+		if (!(t && t->kind == NWUI_ICONVIEW && t->on_drop)) t = 0;
+		if (u->drop_node && u->drop_node != t) {           /* moved off the previous target */
+			u->drop_node->drop_hover = -1; u->drop_node->dirty = 1; u->drop_node = 0;
+		}
+		if (t) {
+			int cell = iv_cell_at(t, ev->x, ev->y);
+			if (cell != t->drop_hover) { t->drop_hover = cell; t->dirty = 1; }
+			u->drop_node = t;
+		}
+		break;
+	}
+	case NW_EV_DRAG_LEAVE:
+		if (u->drop_node) { u->drop_node->drop_hover = -1; u->drop_node->dirty = 1; u->drop_node = 0; }
+		break;
+	case NW_EV_DROP: {
+		nwui_node *t = nwui_hit(u->modal ? u->modal : u->root, ev->x, ev->y);
+		if (u->drop_node) { u->drop_node->drop_hover = -1; u->drop_node->dirty = 1; u->drop_node = 0; }
+		if (t && t->kind == NWUI_ICONVIEW && t->on_drop) {
+			t->drop_cell = iv_cell_at(t, ev->x, ev->y);
+			t->drop_mods = ev->mods;
+			t->drop_text = ev->text;                       /* valid only during this callback */
+			t->on_drop(t, t->user);
+			t->drop_text = 0;
+		}
+		break;
+	}
 	case NW_EV_CLOSE:
 		u->closed = 1;
 		return 0;

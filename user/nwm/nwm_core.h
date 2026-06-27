@@ -48,6 +48,7 @@ enum { NW_MENU_NONE = -2, NW_MENU_LOGO = -1 };
 enum {
 	NW_SC_LSUPER = 0xDB, NW_SC_RSUPER = 0xDC,   /* 0xE0 0x5B / 0x5C: the GUI (Super/Cmd) keys */
 	NW_SC_LSHIFT = 0x2A, NW_SC_RSHIFT = 0x36,
+	NW_SC_LCTRL  = 0x1D, NW_SC_RCTRL  = 0x9D,   /* Ctrl (right = 0xE0 0x1D normalized): drag copy */
 	NW_SC_C = 0x2E, NW_SC_X = 0x2D, NW_SC_V = 0x2F, NW_SC_Q = 0x10, NW_SC_TAB = 0x0F,
 	NW_SC_R = 0x13, NW_SC_ESC = 0x01, NW_SC_ENTER = 0x1C, NW_SC_BACKSP = 0x0E, NW_SC_M = 0x32
 };
@@ -112,7 +113,16 @@ struct nw_server {
 	int   resize_win;               /* window index being resized by the grip, or -1  */
 	int   resize_dx, resize_dy;     /* cursor - frame bottom-right at grab            */
 
-	int   super_down, shift_down;
+	int   super_down, shift_down, ctrl_down;
+
+	/* Drag-and-drop: a client started a drag (NW_REQ_DRAG_BEGIN); the compositor arbitrates it
+	 * (only it knows window geometry + z-order + cursor), routing DRAG_MOTION/LEAVE to the window
+	 * under the cursor and DROP — carrying the payload — to the target on button release. */
+	int   dnd_active;               /* a drag is in progress                                  */
+	int   dnd_src_client;           /* client that started it                                 */
+	int   dnd_target;               /* window index currently under the cursor (-1 = none)    */
+	char  dnd_payload[NW_CLIP_MAX]; /* the dragged data (e.g. a file path)                    */
+	int   dnd_len;
 
 	char  clip[NW_CLIP_MAX];
 	int   clip_len;

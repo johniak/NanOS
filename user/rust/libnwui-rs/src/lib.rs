@@ -67,6 +67,11 @@ extern "C" {
     fn nwui_iconview(u: *mut NwUi, act: RawCb, chg: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_iconview_set(n: *mut NwNode, items: *const IconItem, count: i32);
     fn nwui_iconview_selected(n: *mut NwNode) -> i32;
+    fn nwui_iconview_set_dnd(n: *mut NwNode, on_drag: RawCb, on_drop: RawCb);
+    fn nwui_iconview_drop_cell(n: *mut NwNode) -> i32;
+    fn nwui_iconview_drop_mods(n: *mut NwNode) -> i32;
+    fn nwui_iconview_drop_text(n: *mut NwNode) -> *const u8;
+    fn nwui_begin_drag(u: *mut NwUi, text: *const u8);
     fn nwui_vbox(u: *mut NwUi) -> *mut NwNode;
     fn nwui_hbox(u: *mut NwUi) -> *mut NwNode;
     fn nwui_add(parent: *mut NwNode, child: *mut NwNode) -> *mut NwNode;
@@ -145,6 +150,16 @@ impl Node {
         unsafe { nwui_iconview_set(self.0, items.as_ptr(), items.len() as i32) }
     }
     pub fn iconview_selected(self) -> i32 { unsafe { nwui_iconview_selected(self.0) } }
+    /// Make this iconview a drag source (on_drag) + drop target (on_drop), raw-callback ABI.
+    pub fn iconview_set_dnd(self, on_drag: RawCb, on_drop: RawCb) {
+        unsafe { nwui_iconview_set_dnd(self.0, on_drag, on_drop) }
+    }
+    /// During on_drop: the cell index the drop landed on, or -1 for the empty area.
+    pub fn iconview_drop_cell(self) -> i32 { unsafe { nwui_iconview_drop_cell(self.0) } }
+    /// During on_drop: modifier bits at the drop (bit1 = Ctrl held -> copy instead of move).
+    pub fn iconview_drop_mods(self) -> i32 { unsafe { nwui_iconview_drop_mods(self.0) } }
+    /// During on_drop: the dropped payload as a raw NUL-terminated C pointer (or null).
+    pub fn iconview_drop_text(self) -> *const u8 { unsafe { nwui_iconview_drop_text(self.0) } }
 }
 
 /// The closure trampoline: libnwui calls this C function with the boxed closure as `user`.
@@ -239,6 +254,9 @@ impl Ui {
         let (t, x, k) = (cstr(title), cstr(text), cstr(ok_label));
         unsafe { nwui_confirm(self.0, t.as_ptr(), x.as_ptr(), k.as_ptr(), on_yes, user) }
     }
+
+    /// Start a drag carrying `text` (NUL-terminated) as the payload; call from an on_drag handler.
+    pub fn begin_drag(&self, text: *const u8) { unsafe { nwui_begin_drag(self.0, text) } }
 
     /// Register a keyboard accelerator: Ctrl+<key> (ctrl=true, key=b'c', fkey=0) or a function/
     /// special key (ctrl=false, key=0, fkey=<scancode>). Fires cb and consumes the keystroke.

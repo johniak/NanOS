@@ -100,6 +100,7 @@ void nwui_run(nwui *u)
 				if (!nwui_dispatch(u, &ev)) { alive = 0; break; }   /* CLOSE */
 				if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }
 				if (u->clip_get) { nw_get_clipboard(io->d); u->clip_get = 0; }
+				if (u->drag_req) { nw_drag_begin(io->d, u->drag_buf, u->drag_len); u->drag_req = 0; }
 			}
 		} while (nw_next_event(io->d, &ev, 0) > 0);   /* drain the rest, non-blocking */
 		if (!alive)

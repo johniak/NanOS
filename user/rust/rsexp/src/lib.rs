@@ -650,6 +650,63 @@ impl App {
         }
     }
 
+    /* ---- drag and drop ---- */
+    /// A drag gesture began on the selected cell — hand its path to the compositor as the payload.
+    fn drag_start(&mut self) {
+        if let Some(p) = self.sel_path() {
+            Ui(self.ui).begin_drag(p.as_ptr());   // p is NUL-terminated
+        }
+    }
+
+    /// The destination directory for a drop on cell `cell` (or the empty area).
+    fn drop_dir(&self, cell: i32) -> Option<Vec<u8>> {
+        if cell >= 0 && (cell as usize) < self.item_idx.len() {
+            let i = self.item_idx[cell as usize];
+            match self.kinds[i] {
+                K_UP => {
+                    if self.my_computer { None }
+                    else { Some(parent_of(&self.cwd[..self.cwd.len() - 1]).to_vec()) }
+                }
+                k if is_dirish(k) => Some(self.paths[i][..self.paths[i].len() - 1].to_vec()),
+                _ => self.cur_dir(),                   // dropped on a file -> into the current dir
+            }
+        } else {
+            self.cur_dir()                             // empty area -> into the current dir
+        }
+    }
+
+    /// A drop landed on the grid: move (or copy, with Ctrl) the dragged item into the target dir.
+    fn do_drop(&mut self) {
+        let text = Node(self.view).iconview_drop_text();
+        if text.is_null() { return; }
+        let src = read_cstr_nul(text);                 // NUL-terminated copy of the payload
+        if src.len() <= 1 { return; }
+        let cell = Node(self.view).iconview_drop_cell();
+        let copy = (Node(self.view).iconview_drop_mods() & 2) != 0;   // Ctrl held -> copy
+        let dir = match self.drop_dir(cell) { Some(d) => d, None => return };
+        self.transfer(&src, &dir, copy);
+    }
+
+    /// Move (or copy) the item at NUL-terminated `src` into directory `dir` (no NUL), then refresh.
+    fn transfer(&mut self, src: &[u8], dir: &[u8], copy: bool) {
+        let ui = Ui(self.ui);
+        let src_noz = &src[..src.len() - 1];
+        if dir.len() >= src_noz.len() && &dir[..src_noz.len()] == src_noz
+            && (dir.len() == src_noz.len() || dir[src_noz.len()] == b'/') {
+            ui.message("Drop", "Cannot move a folder into itself.");
+            return;
+        }
+        let base = basename(src_noz).to_vec();
+        if !copy && join_path(dir, &base) == src { return; }   // already in this dir: no-op
+        let dest = self.unique_dest(dir, &base);
+        let ok = if copy { libnwui_rs::fs::copy(src, &dest) } else { libnwui_rs::fs::rename(src, &dest) };
+        if !ok {
+            ui.message(if copy { "Copy" } else { "Move" }, "The operation failed.");
+            return;
+        }
+        self.refresh();
+    }
+
     /* ---- status bar ---- */
     fn update_status(&self) {
         if self.status.is_null() { return; }
@@ -930,6 +987,20 @@ fn parent_of(path: &[u8]) -> &[u8] {
     &path[..i - 1]
 }
 
+/// Read a C string from a raw pointer into an owned, NUL-terminated byte vec.
+fn read_cstr_nul(p: *const u8) -> Vec<u8> {
+    let mut v = Vec::new();
+    if p.is_null() { v.push(0); return v; }
+    let mut i = 0isize;
+    loop {
+        let c = unsafe { *p.offset(i) };
+        v.push(c);
+        if c == 0 { break; }
+        i += 1;
+    }
+    v
+}
+
 /// The last path component (after the final '/'), without a NUL.
 fn basename(path: &[u8]) -> &[u8] {
     let mut i = path.len();
@@ -1057,6 +1128,12 @@ extern "C" fn cb_refresh(_n: *mut NwNode, user: *mut c_void) {
 extern "C" fn cb_changed(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).update_status() }
 }
+extern "C" fn cb_drag(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).drag_start() }
+}
+extern "C" fn cb_drop(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).do_drop() }
+}
 
 /// Case-insensitive substring test (ASCII).
 fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
@@ -1149,6 +1226,7 @@ pub extern "C" fn main() -> i32 {
     });
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
     let view = ui.iconview_raw(cb_activate, cb_changed, app_ptr);
+    view.iconview_set_dnd(cb_drag, cb_drop);   // drag files out / drop files in (between windows)
     unsafe { (&mut *(app_ptr as *mut App)).view = view.0; }
 
     // right-click context menu on the icon grid: open + file operations + sort (persisted per dir)

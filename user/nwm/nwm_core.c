@@ -574,6 +574,28 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons, int wheel)
 	int left_now = buttons & NW_BTN_LEFT;
 	int left_was = s->buttons & NW_BTN_LEFT;
 
+	if (s->dnd_active) {                             /* a drag owns the pointer until release */
+		int region, t = nw_hit(s, sx, sy, &region);
+		int target = (t >= 0 && region == NW_HIT_CONTENT) ? t : -1;
+		if (target != s->dnd_target) {               /* crossed a window boundary */
+			if (s->dnd_target >= 0) emit_win(s, s->dnd_target, NW_EVT_DRAG_LEAVE, 0, 0, 0, 0, 0, 0);
+			s->dnd_target = target;
+		}
+		int mods = (s->shift_down ? NW_DND_SHIFT : 0) | (s->ctrl_down ? NW_DND_CTRL : 0);
+		if (target >= 0) {
+			int rx = sx - (s->win[target].x + NW_BORDER);
+			int ry = sy - (s->win[target].y + NW_TITLEBAR_H);
+			if (left_now)
+				emit_win(s, target, NW_EVT_DRAG_MOTION, rx, ry, mods, 0, 0, 0);
+			else
+				emit_win(s, target, NW_EVT_DROP, rx, ry, mods, 0,
+				         (const unsigned char *) s->dnd_payload, (uint32_t) s->dnd_len);
+		}
+		if (!left_now) { s->dnd_active = 0; s->dnd_target = -1; }   /* released: drag ends */
+		s->cursor_x = sx; s->cursor_y = sy; s->buttons = buttons;
+		return;
+	}
+
 	if (s->menu_open) {                              /* an open dropdown eats input */
 		int oldh = s->menu_hover;
 		s->menu_hover = nw_menu_item_at(s, sx, sy);
@@ -682,6 +704,7 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 {
 	if (code == NW_SC_LSUPER || code == NW_SC_RSUPER) { s->super_down = down; return; }
 	if (code == NW_SC_LSHIFT || code == NW_SC_RSHIFT) { s->shift_down = down; return; }
+	if (code == NW_SC_LCTRL  || code == NW_SC_RCTRL)  { s->ctrl_down  = down; return; }
 
 	/* Super+R toggles the Run launcher (like Win+R). */
 	if (down && s->super_down && code == NW_SC_R) {
@@ -815,6 +838,22 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		s->want_reload = 1;            /* shell re-reads settings.yaml + recomposes */
 		s->dirty = 1;
 		break;
+	case NW_REQ_DRAG_BEGIN: {
+		/* The client started a drag (it saw a press + move on a draggable item). Take ownership
+		 * of the pointer: stash the payload and route DRAG_MOTION/LEAVE/DROP from nw_pointer.
+		 * Ignore a stale begin if no button is held (nothing to drag). */
+		if (!(s->buttons & NW_BTN_LEFT))
+			break;
+		int n = (int) m->length;
+		if (n > NW_CLIP_MAX - 1) n = NW_CLIP_MAX - 1;
+		if (payload && n > 0) memcpy(s->dnd_payload, payload, n);
+		s->dnd_payload[n > 0 ? n : 0] = 0;
+		s->dnd_len = n > 0 ? n : 0;
+		s->dnd_active = 1;
+		s->dnd_src_client = client;
+		s->dnd_target = -1;
+		break;
+	}
 	case NW_REQ_DESTROY_WINDOW: {
 		int idx = find_by_id(s, m->window);
 		if (idx < 0 || s->win[idx].client != client)
