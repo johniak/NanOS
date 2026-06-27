@@ -40,8 +40,13 @@ void nw_draw_char(const struct nw_surface *s, int x, int y, unsigned char ch,
 /* Draws str left-to-right at 8px advance; no wrapping. Returns the x past the last glyph. */
 int  nw_draw_text(const struct nw_surface *s, int x, int y, const char *str,
                   uint32_t fg, uint32_t bg);
-/* Transparent-background text: only the glyph's lit pixels are painted (fg), backdrop kept. */
+/* Transparent-background text: the glyph coverage is blended in fg over the backdrop. Uses the
+ * proportional anti-aliased UI font (TTF) when loaded, else the 1-bit VGA fallback. Returns end x. */
 int  nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t fg);
+/* Pixel width of a string in the current UI font (proportional). Use for measurement/centering. */
+int  nw_text_w(const char *str);
+/* Reload the proportional UI font (e.g. a Settings font switch). px<=0 keeps the default size. */
+void nw_font_set_ui(const char *path, int px);
 /* Copy a w*h block from src(sx,sy) to dst(dx,dy). Clips against BOTH surfaces (negative
  * offsets included) — the compositor's window-into-backbuffer blit. */
 void nw_blit(const struct nw_surface *dst, int dx, int dy,

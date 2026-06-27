@@ -63,7 +63,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			nw_blend_rect(s, n->x + 3, n->y + 2, n->w - 6, (n->h - 4) / 2,
 			              down ? COL_BTN_DTOP : COL_BTN_TOP, 120);
 		nw_stroke_round(s, n->x, n->y, n->w, n->h, 7, 0x00ffffff, 60);
-		int tx = n->x + (n->w - (int) strlen(n->text) * NW_FONT_W) / 2;
+		int tx = n->x + (n->w - nw_text_w(n->text)) / 2;
 		int ty = n->y + (n->h - NW_FONT_H) / 2;
 		nw_text(s, tx, ty, n->text, n->fg ? n->fg : 0x00ffffff);
 		break;
@@ -183,13 +183,19 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 					}
 			}
 			if (it->label) {
-				int maxc = (NWUI_ICON_CELL_W - 4) / NW_FONT_W; if (maxc < 1) maxc = 1;
-				char buf[40];
+				char buf[64];
 				int len = 0;
-				for (; it->label[len] && len < maxc && len < (int) sizeof buf - 1; len++)
+				for (; it->label[len] && len < (int) sizeof buf - 1; len++)
 					buf[len] = it->label[len];
 				buf[len] = 0;
-				int tx = cx + (NWUI_ICON_CELL_W - len * NW_FONT_W) / 2;
+				/* truncate to the cell width by pixel measure, appending an ellipsis */
+				if (nw_text_w(buf) > NWUI_ICON_CELL_W - 8) {
+					while (len > 1 && nw_text_w(buf) > NWUI_ICON_CELL_W - 8) {
+						buf[--len] = 0;
+					}
+					if (len > 1) { buf[len - 1] = '.'; if (len > 2) buf[len - 2] = '.'; }
+				}
+				int tx = cx + (NWUI_ICON_CELL_W - nw_text_w(buf)) / 2;
 				int ty = cy + 12 + NWUI_ICON_PX + 6;
 				nw_text(s, tx, ty, buf, (i == n->sel) ? COL_ACCENT_DEEP : COL_INK);
 			}

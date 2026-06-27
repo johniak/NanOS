@@ -261,15 +261,15 @@ void nwui_measure(nwui_node *n)
 	int i;
 	switch (n->kind) {
 	case NWUI_LABEL:
-		n->mw = (int) strlen(n->text) * NW_FONT_W;
+		n->mw = nw_text_w(n->text);
 		n->mh = NW_FONT_H;
 		break;
 	case NWUI_BUTTON:
 		if (n->flat) {                 /* sidebar link / nav-row */
-			n->mw = (int) strlen(n->text) * NW_FONT_W + 24;
+			n->mw = nw_text_w(n->text) + 24;
 			n->mh = NWUI_LINK_H;
 		} else {
-			n->mw = (int) strlen(n->text) * NW_FONT_W + 2 * NWUI_BTN_PADX;
+			n->mw = nw_text_w(n->text) + 2 * NWUI_BTN_PADX;
 			n->mh = NW_FONT_H + 2 * NWUI_BTN_PADY;
 		}
 		break;
@@ -281,7 +281,7 @@ void nwui_measure(nwui_node *n)
 		n->mw = 240; n->mh = 6 * NW_FONT_H;
 		break;
 	case NWUI_CHECKBOX:
-		n->mw = 16 + 6 + (int) strlen(n->text) * NW_FONT_W;
+		n->mw = 16 + 6 + nw_text_w(n->text);
 		n->mh = NW_FONT_H + 4;
 		break;
 	case NWUI_LIST:

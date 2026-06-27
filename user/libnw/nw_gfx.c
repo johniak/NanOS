@@ -7,8 +7,40 @@
 #include "nw_gfx.h"
 #include <string.h>   /* memcpy for the row blit */
 
-/* The shared userland console font: 256 glyphs, 16 bytes each, MSB = leftmost pixel. */
+/* The shared userland console font: 256 glyphs, 16 bytes each, MSB = leftmost pixel. Used as the
+ * fixed terminal font AND as the fallback when no TTF UI font is loaded. */
 extern const unsigned char nx_font8x16[256][16];
+
+#include "nwfont.h"
+#define NW_UI_FONT_PATH "/disks/main/nanos/share/fonts/UISans-Regular.ttf"
+#define NW_UI_FONT_PX   15
+
+/* Lazily load the proportional UI font on first text use, so every process (compositor + apps)
+ * gets it with no per-app init call. Settings can later re-load a different font via nwfont_set. */
+static int g_ui_font_tried;
+static void ui_font_autoinit(void)
+{
+    if (g_ui_font_tried) return;
+    g_ui_font_tried = 1;
+    nwfont_set(NWFONT_UI, NW_UI_FONT_PATH, NW_UI_FONT_PX);
+}
+
+/* Reload the UI font (Settings font switch). px<=0 keeps the default size. */
+void nw_font_set_ui(const char *path, int px)
+{
+    g_ui_font_tried = 1;
+    nwfont_set(NWFONT_UI, path, px > 0 ? px : NW_UI_FONT_PX);
+}
+
+/* Pixel width of a string in the current UI font (proportional), or the 1-bit fallback width. */
+int nw_text_w(const char *str)
+{
+    ui_font_autoinit();
+    if (nwfont_loaded(NWFONT_UI)) return nwfont_text_w(NWFONT_UI, str);
+    int w = 0;
+    for (; str && *str; str++) w += NW_FONT_W;
+    return w;
+}
 
 void nw_surface_clip(struct nw_surface *s, int x, int y, int w, int h)
 {
@@ -98,19 +130,42 @@ int nw_draw_text(const struct nw_surface *s, int x, int y, const char *str,
  * backdrop intact — for titles/labels over gradients or translucent material. Returns end x. */
 int nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t fg)
 {
+	ui_font_autoinit();
+	if (nwfont_loaded(NWFONT_UI)) {
+		/* proportional anti-aliased UI font: blend each glyph's coverage at its advance.
+		 * y is the line-box top; the baseline sits at y + ascent. */
+		int baseline = y + nwfont_ascent(NWFONT_UI);
+		for (; *str; str++) {
+			const struct nwfont_glyph *g = nwfont_get(NWFONT_UI, (unsigned char) *str);
+			if (!g) continue;
+			if (g->cov) {
+				for (int gy = 0; gy < g->h; gy++) {
+					const unsigned char *covrow = g->cov + (long) gy * g->w;
+					int py = baseline + g->top + gy;
+					for (int gx = 0; gx < g->w; gx++) {
+						unsigned char a = covrow[gx];
+						if (a) nw_blend_pixel(s, x + g->bx + gx, py, fg, a);
+					}
+				}
+			}
+			x += g->advance;
+		}
+		return x;
+	}
+	/* fallback: 1-bit VGA font (no TTF loaded) */
 	int bx0, by0, bx1, by1;
 	nw_bounds(s, &bx0, &by0, &bx1, &by1);
 	for (; *str; str++) {
 		const unsigned char *glyph = nx_font8x16[(unsigned char) *str];
 		if (x >= bx0 && y >= by0 && x + NW_FONT_W <= bx1 && y + NW_FONT_H <= by1) {
-			for (int row = 0; row < NW_FONT_H; row++) {   /* fast path: glyph wholly in bounds */
+			for (int row = 0; row < NW_FONT_H; row++) {
 				unsigned char bits = glyph[row];
 				uint32_t *p = s->px + (long) (y + row) * s->stride + x;
 				for (int col = 0; col < NW_FONT_W; col++)
 					if (bits & (0x80u >> col)) p[col] = fg;
 			}
 		} else {
-			for (int row = 0; row < NW_FONT_H; row++)     /* edge case: clip per pixel */
+			for (int row = 0; row < NW_FONT_H; row++)
 				for (int col = 0; col < NW_FONT_W; col++)
 					if (glyph[row] & (0x80u >> col)) nw_put_pixel(s, x + col, y + row, fg);
 		}

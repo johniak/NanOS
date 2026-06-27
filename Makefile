@@ -1222,6 +1222,13 @@ _image64: _all _userland64 _kext
 	    printf "rm /nanos/share/icons/$$ic.png\nwrite assets/icons/$$ic.png /nanos/share/icons/$$ic.png\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  fi; \
 	done
+	# UI/terminal fonts (TTF) -> /nanos/share/fonts; nw_gfx loads the UI font (proportional, AA).
+	-printf "mkdir /nanos/share/fonts\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	for ft in UISans-Regular Mono-Regular; do \
+	  if [ -f assets/fonts/$$ft.ttf ]; then \
+	    printf "rm /nanos/share/fonts/$$ft.ttf\nwrite assets/fonts/$$ft.ttf /nanos/share/fonts/$$ft.ttf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  fi; \
+	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	# passwd (x in field 2), shadow (hashes, 0600 root), group (with members), sudoers (%wheel).
 	# The kernel copies all four into the writable /etc tmpfs at boot (Kernel.cpp populateEtc).
