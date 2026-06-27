@@ -216,6 +216,27 @@ else
 endif
 	@echo "staged $(BINFOLDER)htop.nxe — run 'make image64' to install it into /nanos/bin"
 
+# SQLite 3.46.1 — the real `sqlite3` command-line shell + libsqlite.ndl shared library. x86_64-ONLY.
+# Built from the SQLite fork (amalgamation sqlite3.c + the CLI shell.c) via the reproducible
+# nx-port-build.sh driver: SQLite has no configure step, so the driver just cross-compiles + links
+# the .nxe. nanos/compat.c supplies the advisory-lock no-op fcntl (NanOS has no POSIX byte-range
+# locks); fsync/ftruncate are REAL, so a database on the read-write ext4 /disks/main is durable and
+# crash-consistent. Produces bin/sqlite3.nxe (-> /nanos/bin) and bin/libsqlite.ndl{,.a} (-> /nanos/lib,
+# for apps that want to import the SQL engine by name). `make image*` never depends on this.
+SQLITE_FORK ?= $(HOME)/Projects/sqlite-nanos
+sqlite:
+ifeq ($(ARCH),x86_64)
+	@test -f "$(SQLITE_FORK)/sqlite3.c" || { echo "sqlite fork not found at $(SQLITE_FORK) (set SQLITE_FORK=/path/to/sqlite-nanos)"; exit 1; }
+	$(NXPORT_PREREQ)
+	$(NXPORT_RUN) -v "$(SQLITE_FORK)":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh sqlite3
+	cp "$(SQLITE_FORK)/sqlite3.nxe" $(BINFOLDER)sqlite3.nxe
+	@cp "$(SQLITE_FORK)/libsqlite.ndl"   $(BINFOLDER)libsqlite.ndl   2>/dev/null || true
+	@cp "$(SQLITE_FORK)/libsqlite.ndl.a" $(BINFOLDER)libsqlite.ndl.a 2>/dev/null || true
+else
+	@echo "sqlite port is x86_64-only — run 'make ARCH=x86_64 sqlite'"; exit 1
+endif
+	@echo "staged $(BINFOLDER)sqlite3.nxe (+ libsqlite.ndl) — run 'make image64' to install into /nanos/bin (+ /nanos/lib)"
+
 bzip2:
 ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
@@ -845,6 +866,12 @@ smoke-usb-dmawindow:
 smoke-vt: image64
 	bash scripts/smoke-vt.sh
 
+# `smoke-sqlite` is the SQLite-port gate: it boots TWICE on the same image and proves the real
+# sqlite3 CLI creates a database on the read-write ext /disks/main AND that it survives a reboot
+# (3 rows persist; a second insert makes 6). Requires `make ARCH=x86_64 sqlite` + image64 first.
+smoke-sqlite:
+	bash scripts/smoke-sqlite.sh
+
 # `smoke-uefi` boots the GPT image under edk2/OVMF firmware (UEFI) so BOOTX64.EFI -> Limine -> kernel
 # is exercised — the other half of the dual-firmware boot (smoke-x86_64 covers BIOS/SeaBIOS).
 smoke-uefi: image64
@@ -1275,6 +1302,15 @@ _image64: _all _userland64 _kext
 	# nanos-sdk port), staged into bin/htop.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)htop.nxe ]; then \
 	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\nset_inode_field /nanos/bin/htop.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# SQLite (optional, external): the real sqlite3 CLI built by `make ARCH=x86_64 sqlite` (the SQLite
+	# fork). A system utility (flat in /nanos/bin); the libsqlite.ndl shared engine goes to /nanos/lib
+	# so other apps can import the SQL API by name. Skipped if absent.
+	if [ -f $(BINFOLDER)sqlite3.nxe ]; then \
+	  printf "rm /nanos/bin/sqlite3.nxe\nwrite $(BINFOLDER)sqlite3.nxe /nanos/bin/sqlite3.nxe\nset_inode_field /nanos/bin/sqlite3.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	if [ -f $(BINFOLDER)libsqlite.ndl ]; then \
+	  printf "rm /nanos/lib/libsqlite.ndl\nwrite $(BINFOLDER)libsqlite.ndl /nanos/lib/libsqlite.ndl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# toybox (optional, external): the user-identity multicall built by `make ARCH=x86_64 toybox`.
 	# Installed as ONE setuid-root binary (mode 04755) with a per-command symlink farm — toybox's

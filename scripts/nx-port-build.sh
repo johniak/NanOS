@@ -195,6 +195,57 @@ sudo)
 	make 2>&1 | tail -20
 	BIN="$STAGE/src/sudo"
 	;;
+sqlite3)
+	# SQLite ships as a single amalgamation (sqlite3.c) + the CLI front-end (shell.c) — there is
+	# NO configure step, so we compile directly with the cross gcc against picolibc + the NanOS
+	# libc-glue headers, then link the real `sqlite3` command-line shell as a NanOS .nxe program
+	# (crt0/nxhdr + the .nxe linker script + the libc import library). compat.c (in the fork)
+	# supplies the advisory-lock no-op fcntl; everything else (fsync/ftruncate/...) is the real
+	# RW-ext4 path. The mounted fork tree holds sqlite3.c/sqlite3.h/shell.c at its root and
+	# compat.c under nanos/ (this STAGE is a copy of it).
+	CFLAGS_SQ="-ffreestanding -isystem $PICO/include -D_DEFAULT_SOURCE -D_GNU_SOURCE \
+		-fno-pic -fno-stack-protector -fcommon -Os -w $NX_ARCHFLAGS \
+		-I$NANOS/user/libc-glue/include -iquote $NANOS/kernel \
+		-include $NANOS/user/libc-glue/compat-decls.h \
+		-include $NANOS/user/libc-glue/nx-dllimport.h"   # errno/stdin/stdout/stderr -> libc.ndl IAT slots
+	# Port config: the unix VFS, single-threaded, no extension loading (no dlopen), no WAL (needs
+	# shared-memory -shm mmap), no popen. DIRSYNC off (NanOS doesn't fsync a directory fd); TEMP
+	# tables in memory. fdatasync/fsync/ftruncate are REAL now, so the DB on /disks/main is durable.
+	SQLITE_FLAGS="-DSQLITE_OS_UNIX=1 -DSQLITE_THREADSAFE=0 -DSQLITE_OMIT_LOAD_EXTENSION \
+		-DSQLITE_MAX_MMAP_SIZE=0 -DSQLITE_DEFAULT_MMAP_SIZE=0 -DSQLITE_OMIT_WAL \
+		-DSQLITE_DISABLE_DIRSYNC=1 -DSQLITE_TEMP_STORE=3 -DSQLITE_OMIT_POPEN \
+		-DHAVE_FDATASYNC=1 -DHAVE_USLEEP=1 -DHAVE_READLINK=0 -DHAVE_LSTAT=1 \
+		-DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_ENABLE_LOCKING_STYLE=0"
+
+	echo "== compile sqlite3.c (amalgamation) =="
+	$NX_CC $CFLAGS_SQ $SQLITE_FLAGS -c "$STAGE/sqlite3.c" -o "$STAGE/sqlite3.o"
+	echo "== compile shell.c (CLI front-end) =="
+	$NX_CC $CFLAGS_SQ $SQLITE_FLAGS -I"$STAGE" -c "$STAGE/shell.c" -o "$STAGE/shell.o"
+	echo "== compile compat.c (advisory-lock fcntl no-op) =="
+	$NX_CC $CFLAGS_SQ -c "$STAGE/nanos/compat.c" -o "$STAGE/compat.o"
+
+	echo "== link the sqlite3 CLI (.nxe program: crt0 + nxhdr + libc import lib) =="
+	$NX_CC -nostdlib -Wl,--emit-relocs -T "$NX_LDSCRIPT" -o "$STAGE/sqlite3" \
+		"$NANOS/bin/crt0.o" "$NANOS/bin/nxhdr.o" \
+		"$STAGE/shell.o" "$STAGE/sqlite3.o" "$STAGE/compat.o" "$NANOS/bin/libc.ndl.a" -lgcc
+	BIN="$STAGE/sqlite3"
+
+	# Also carry the SQLite shared library forward (the original port's deliverable): libsqlite.ndl
+	# exports the public sqlite3_* C API so OTHER NanOS apps can import it by name (Windows-style),
+	# plus an import library to link against. Non-fatal: a failure here never blocks the CLI .nxe.
+	echo "== build libsqlite.ndl shared library (+ import lib) =="
+	if ( set -e
+		cd "$STAGE"
+		$NX_CC -nostdlib -Wl,--emit-relocs -T "$NANOS/user/dll.ld" -o libsqlite.elf \
+			"$NANOS/bin/nxhdr.o" sqlite3.o compat.o "$NANOS/bin/libc.ndl.a" -lgcc
+		"$MKNX" libsqlite.elf "$SRCDIR/libsqlite.ndl" --dll --export-all --need libc.ndl
+		rm -rf imp && mkdir -p imp
+		"$MKNX" libsqlite.elf imp --implib --export-all --soname libsqlite.ndl
+		for f in imp/*.s; do nasm -f elf64 "$f" -o "${f%.s}.o"; done
+		rm -f "$SRCDIR/libsqlite.ndl.a"; ar rcs "$SRCDIR/libsqlite.ndl.a" imp/*.o
+		ls -l "$SRCDIR/libsqlite.ndl" "$SRCDIR/libsqlite.ndl.a"
+	); then echo "== libsqlite.ndl built =="; else echo "WARN: libsqlite.ndl build skipped/failed (CLI still produced)"; fi
+	;;
 *)
 	echo "nx-port-build.sh: unknown app '$APP'" >&2
 	exit 2
