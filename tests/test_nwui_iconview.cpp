@@ -30,7 +30,7 @@ TEST_CASE("iconview computes columns from width and selects the clicked cell") {
     g_act = 0; g_chg = 0;
     static nwui_icon_item items[5];
     nwui_node *iv = make_view(u, items, 5);
-    u->win_w = 300; u->win_h = 300;     // 300 / 92 -> 3 columns
+    u->win_w = 380; u->win_h = 360;     // 380 / 120 -> 3 columns
     nwui_layout(u);
     CHECK(iv->cols == 3);
     CHECK(nwui_iconview_selected(iv) == -1);
@@ -64,7 +64,7 @@ TEST_CASE("iconview arrow keys move the selection by one (right) and by a row (d
     g_act = 0; g_chg = 0;
     static nwui_icon_item items[6];
     nwui_node *iv = make_view(u, items, 6);
-    u->win_w = 300; u->win_h = 300;          // 3 columns
+    u->win_w = 380; u->win_h = 360;          // 3 columns
     nwui_layout(u);
     nwui_focus(u, iv);
     // select index 0 by clicking it

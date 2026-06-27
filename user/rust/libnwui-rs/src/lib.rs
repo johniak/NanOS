@@ -60,6 +60,9 @@ extern "C" {
     fn nwui_run(u: *mut NwUi);
     fn nwui_label(u: *mut NwUi, text: *const u8) -> *mut NwNode;
     fn nwui_button(u: *mut NwUi, text: *const u8, cb: RawCb, user: *mut c_void) -> *mut NwNode;
+    fn nwui_link(u: *mut NwUi, text: *const u8, cb: RawCb, user: *mut c_void) -> *mut NwNode;
+    fn nwui_link_set_active(n: *mut NwNode, active: i32);
+    fn nwui_colors(n: *mut NwNode, fg: u32, bg: u32) -> *mut NwNode;
     fn nwui_panel(u: *mut NwUi, title: *const u8) -> *mut NwNode;
     fn nwui_iconview(u: *mut NwUi, act: RawCb, chg: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_iconview_set(n: *mut NwNode, items: *const IconItem, count: i32);
@@ -95,6 +98,8 @@ impl Node {
     pub fn size(self, w: i32, h: i32) -> Node { unsafe { Node(nwui_size(self.0, w, h)) } }
     pub fn add(self, c: Node) -> Node { unsafe { nwui_add(self.0, c.0); } self }
     pub fn set_text(self, s: &str) { let c = cstr(s); unsafe { nwui_set_text(self.0, c.as_ptr()) } }
+    pub fn colors(self, fg: u32, bg: u32) -> Node { unsafe { Node(nwui_colors(self.0, fg, bg)) } }
+    pub fn set_active(self, on: bool) { unsafe { nwui_link_set_active(self.0, on as i32) } }
     /// Set the iconview's items. The slice must outlive the view (libnwui keeps the pointer).
     pub fn iconview_set(self, items: &[IconItem]) {
         unsafe { nwui_iconview_set(self.0, items.as_ptr(), items.len() as i32) }
@@ -132,6 +137,12 @@ impl Ui {
     pub fn button_raw(&self, s: &str, cb: RawCb, user: *mut c_void) -> Node {
         let c = cstr(s);
         unsafe { Node(nwui_button(self.0, c.as_ptr(), cb, user)) }
+    }
+
+    /// A flat sidebar link/nav-row (raw callback ABI). Mark the current one with Node::set_active.
+    pub fn link_raw(&self, s: &str, cb: RawCb, user: *mut c_void) -> Node {
+        let c = cstr(s);
+        unsafe { Node(nwui_link(self.0, c.as_ptr(), cb, user)) }
     }
 
     /// An icon-grid view using the raw C callback ABI: `on_activate` (double-click/Enter) and

@@ -14,12 +14,15 @@
 #define COL_TF_BG   0x00ffffff
 #define COL_TF_BRD  0x00cdd7e5
 #define COL_TF_FOC  0x0012a8f4   /* accent: focus ring + selection */
-#define COL_INK     0x00172130
-#define COL_MUTED   0x00657184
-#define COL_SEL     0x0012a8f4
-#define COL_SB_THUMB 0x00b8c6d8
+#define COL_INK     0x001c1c1e
+#define COL_MUTED   0x008a8a8e
+#define COL_ACCENT      0x000a84ff   /* modern azure accent (selection, links, pill) */
+#define COL_ACCENT_DEEP 0x000060df
+#define COL_SEL     0x000a84ff
+#define COL_SB_THUMB 0x00c2c8d2
 #define COL_PANEL_BG  0x00eef4fb   /* task-pane panel body (light glass) */
-#define COL_PANEL_HDR 0x0039b4f7   /* task-pane panel title band (accent blue) */
+#define COL_PANEL_HDR 0x000a84ff   /* task-pane panel title band (accent) */
+#define COL_ICON_SHADOW 0x00102038 /* soft drop shadow under grid icons */
 #define NWUI_ICON_KEY 0x00ff00ff   /* icon transparency color-key (magenta); generator must match */
 
 static void paint_self(nwui_node *n, const struct nw_surface *s)
@@ -41,6 +44,18 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		}
 		break;
 	case NWUI_BUTTON: {
+		if (n->flat) {                         /* sidebar link / nav-row */
+			int ty = n->y + (n->h - NW_FONT_H) / 2;
+			if (n->active) {                   /* current location -> filled accent pill */
+				nw_fill_round(s, n->x, n->y + 2, n->w, n->h - 4, 8, COL_ACCENT, 255);
+				nw_text(s, n->x + 12, ty, n->text, 0x00ffffff);
+			} else {
+				if (n->pressed)
+					nw_fill_round(s, n->x, n->y + 2, n->w, n->h - 4, 8, COL_ACCENT, 30);
+				nw_text(s, n->x + 12, ty, n->text, n->fg ? n->fg : COL_INK);
+			}
+			break;
+		}
 		int down = n->pressed;
 		uint32_t base = n->has_bg ? n->bg : (down ? COL_BTN_DBOT : COL_BTN_BOT);
 		nw_fill_round(s, n->x, n->y, n->w, n->h, 7, base, 255);        /* rounded solid fill */
@@ -150,12 +165,14 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 			int cx = n->x + col * NWUI_ICON_CELL_W;
 			int cy = n->y + (row - n->scroll) * NWUI_ICON_CELL_H;
 			if (cy < n->y || cy + NWUI_ICON_CELL_H > n->y + n->h) continue;  /* whole rows only */
-			if (i == n->sel)
-				nw_fill_round(s, cx + 4, cy + 2, NWUI_ICON_CELL_W - 8, NWUI_ICON_CELL_H - 4, 6, COL_SEL, 200);
+			if (i == n->sel)        /* soft translucent rounded highlight (modern) */
+				nw_fill_round(s, cx + 6, cy + 4, NWUI_ICON_CELL_W - 12, NWUI_ICON_CELL_H - 8, 12, COL_ACCENT, 32);
 			const nwui_icon_item *it = &n->icons[i];
 			if (it->icon && it->iw > 0 && it->ih > 0) {
 				int iw = it->iw, ih = it->ih;
-				int ix = cx + (NWUI_ICON_CELL_W - iw) / 2, iy = cy + 8;
+				int ix = cx + (NWUI_ICON_CELL_W - iw) / 2, iy = cy + 12;
+				/* soft drop shadow under the icon for depth */
+				nw_fill_round(s, ix + 5, iy + ih - 8, iw - 10, 12, 8, COL_ICON_SHADOW, 34);
 				/* Color-keyed blit: the decoder drops alpha, so icons use a magenta key
 				 * (NWUI_ICON_KEY) for transparency — keyed pixels are skipped so the cell
 				 * background (and the selection highlight) shows through. Icons are 48x48. */
@@ -173,8 +190,8 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 					buf[len] = it->label[len];
 				buf[len] = 0;
 				int tx = cx + (NWUI_ICON_CELL_W - len * NW_FONT_W) / 2;
-				int ty = cy + 8 + NWUI_ICON_PX + 4;
-				nw_text(s, tx, ty, buf, (i == n->sel) ? 0x00ffffff : COL_INK);
+				int ty = cy + 12 + NWUI_ICON_PX + 6;
+				nw_text(s, tx, ty, buf, (i == n->sel) ? COL_ACCENT_DEEP : COL_INK);
 			}
 		}
 		nw_stroke_round(s, n->x, n->y, n->w, n->h, 8,

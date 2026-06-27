@@ -1,14 +1,14 @@
-//! rsexp — a Windows-XP-style file explorer for NanOS, written from scratch in Rust on the nwm
-//! desktop. A big-icon grid, an XP left task pane ("Other Places" + "Details"), and a virtual
-//! "My Computer" root listing each mounted disk under /disks plus the user's Home. A thin client
-//! over the C libnwui toolkit via the reusable libnwui-rs bindings (icon grid, panel, PNG icons).
+//! rsexp — a modern (macOS-Finder-style) file explorer for NanOS, written from scratch in Rust on
+//! the nwm desktop. Big colourful gradient icons, a translucent sidebar with Favorites/Locations
+//! and a blue "current location" pill, and a virtual "My Computer" listing each mounted disk under
+//! /disks plus Home. A thin client over the C libnwui toolkit via the reusable libnwui-rs bindings.
 #![no_std]
 
 extern crate alloc;
 
 use core::ffi::c_void;
 use alloc::vec::Vec;
-use libnwui_rs::{IconItem, Node, Ui};
+use libnwui_rs::{IconItem, Node, NwNode, Ui};
 
 extern "C" {
     fn getenv(name: *const u8) -> *const u8;
@@ -16,6 +16,9 @@ extern "C" {
     fn nwui_dir_next(d: *mut c_void, name: *mut u8, cap: i32, is_dir: *mut i32) -> i32;
     fn nwui_dir_close(d: *mut c_void);
 }
+
+const MUTED: u32 = 0x008a8a8e;
+const SIDE_BG: u32 = 0x00f4f5f8;
 
 /* entry kinds -> icon + behavior */
 const K_DIR: u8 = 0;
@@ -26,6 +29,11 @@ const K_FILE: u8 = 4;
 const K_DRIVE: u8 = 5;
 const K_HOME: u8 = 6;
 const K_UP: u8 = 7;
+
+/* sidebar place kinds */
+const P_HOME: u8 = 0;
+const P_COMPUTER: u8 = 1;
+const P_DISK: u8 = 2;
 
 type Icon = (*const u32, i32, i32);
 
@@ -41,24 +49,25 @@ struct Icons {
 
 struct App {
     ui: *mut libnwui_rs::NwUi,
-    view: *mut libnwui_rs::NwNode,   // the iconview
-    crumb: *mut libnwui_rs::NwNode,  // breadcrumb label
-    dname: *mut libnwui_rs::NwNode,  // Details: selected name
-    dkind: *mut libnwui_rs::NwNode,  // Details: selected kind
+    view: *mut NwNode,
+    crumb: *mut NwNode,
     icons: Icons,
     my_computer: bool,
-    cwd: Vec<u8>,                    // current dir (NUL-terminated) when !my_computer
-    names: Vec<Vec<u8>>,            // per-entry display label (NUL-terminated; items point in here)
-    paths: Vec<Vec<u8>>,            // per-entry absolute target (NUL-terminated)
+    cwd: Vec<u8>,                 // current dir (NUL-terminated) when !my_computer
+    names: Vec<Vec<u8>>,
+    paths: Vec<Vec<u8>>,
     kinds: Vec<u8>,
     items: Vec<IconItem>,
+    // sidebar places
+    place_nodes: Vec<*mut NwNode>,
+    place_paths: Vec<Vec<u8>>,    // NUL-terminated; empty for My Computer
+    place_kind: Vec<u8>,
 }
 
 fn ends_with(s: &[u8], suf: &[u8]) -> bool {
     s.len() >= suf.len() && &s[s.len() - suf.len()..] == suf
 }
 
-/// Classify a (non-directory) entry name by extension into a kind.
 fn classify(name: &[u8]) -> u8 {
     if ends_with(name, b".nxe") { return K_NXE; }
     if ends_with(name, b".png") { return K_IMAGE; }
@@ -66,6 +75,10 @@ fn classify(name: &[u8]) -> u8 {
         if ends_with(name, ext) { return K_TEXT; }
     }
     K_FILE
+}
+
+fn starts_with(s: &[u8], pre: &[u8]) -> bool {
+    s.len() >= pre.len() && &s[..pre.len()] == pre
 }
 
 impl App {
@@ -81,19 +94,6 @@ impl App {
         }
     }
 
-    fn kind_label(kind: u8) -> &'static str {
-        match kind {
-            K_DIR => "Folder",
-            K_UP => "Parent folder",
-            K_NXE => "Program",
-            K_TEXT => "Text document",
-            K_IMAGE => "Image",
-            K_DRIVE => "Local disk",
-            K_HOME => "Home folder",
-            _ => "File",
-        }
-    }
-
     fn clear(&mut self) {
         self.names.clear();
         self.paths.clear();
@@ -101,7 +101,6 @@ impl App {
         self.items.clear();
     }
 
-    /// Append one entry: `label` shown under the icon, `path` the nav/spawn target, `kind` its type.
     fn push(&mut self, label: &[u8], path: &[u8], kind: u8) {
         let mut nm = Vec::with_capacity(label.len() + 1);
         nm.extend_from_slice(label);
@@ -114,8 +113,6 @@ impl App {
         self.kinds.push(kind);
     }
 
-    /// Build the IconItem array (labels/icons) from the model and hand it to the iconview. Must run
-    /// after all push()es so the name pointers are stable.
     fn commit(&mut self) {
         self.items.clear();
         for i in 0..self.names.len() {
@@ -123,18 +120,51 @@ impl App {
             self.items.push(IconItem { label: self.names[i].as_ptr(), icon, iw, ih });
         }
         Node(self.view).iconview_set(&self.items);
-        Node(self.dname).set_text("");
-        Node(self.dkind).set_text("");
+        self.update_sidebar();
     }
 
     fn set_crumb(&self, s: &[u8]) {
         Node(self.crumb).set_text(unsafe { core::str::from_utf8_unchecked(s) });
     }
 
+    /// Highlight the sidebar row matching the current location (longest path-prefix match).
+    fn update_sidebar(&self) {
+        if self.place_nodes.is_empty() {
+            return;
+        }
+        let cwd = if self.my_computer { &b""[..] } else { &self.cwd[..self.cwd.len() - 1] };
+        let mut best = usize::MAX;
+        let mut best_len = 0usize;
+        for i in 0..self.place_nodes.len() {
+            let active = if self.my_computer {
+                self.place_kind[i] == P_COMPUTER
+            } else {
+                let pp = &self.place_paths[i];
+                if self.place_kind[i] != P_COMPUTER && !pp.is_empty() {
+                    let p = &pp[..pp.len() - 1];
+                    starts_with(cwd, p) && p.len() >= best_len
+                } else {
+                    false
+                }
+            };
+            if active {
+                if self.my_computer {
+                    best = i;
+                    break;
+                }
+                let pp = &self.place_paths[i];
+                best_len = pp.len() - 1;
+                best = i;
+            }
+        }
+        for i in 0..self.place_nodes.len() {
+            Node(self.place_nodes[i]).set_active(i == best);
+        }
+    }
+
     fn load_my_computer(&mut self) {
         self.my_computer = true;
         self.clear();
-        // each mounted volume under /disks -> a drive entry
         let d = unsafe { nwui_dir_open(b"/disks\0".as_ptr()) };
         if !d.is_null() {
             let mut name = [0u8; 256];
@@ -148,7 +178,6 @@ impl App {
             }
             unsafe { nwui_dir_close(d) }
         }
-        // Home
         let home = home_dir();
         self.push(b"Home", &home, K_HOME);
         self.set_crumb(b"My Computer");
@@ -158,12 +187,11 @@ impl App {
     fn load_dir(&mut self, path: &[u8]) {
         let d = unsafe { nwui_dir_open(nul(path).as_ptr()) };
         if d.is_null() {
-            return; // keep the previous listing on failure
+            return;
         }
         self.my_computer = false;
         self.cwd = nul(path);
         self.clear();
-        // ".." unless at the filesystem root
         if !(path.len() == 1 && path[0] == b'/') {
             self.push(b"..", path, K_UP);
         }
@@ -181,16 +209,16 @@ impl App {
             self.push(&name[..n], &full, kind);
         }
         unsafe { nwui_dir_close(d) }
-        self.set_crumb(&self.cwd[..self.cwd.len() - 1]); // drop NUL for display
+        let crumb = self.cwd[..self.cwd.len() - 1].to_vec();
+        self.set_crumb(&crumb);
         self.commit();
     }
 
-    /// Go up one level. From a disk mount root (parent is "/disks") return to My Computer.
     fn nav_up(&mut self) {
         if self.my_computer {
             return;
         }
-        let cwd = self.cwd[..self.cwd.len() - 1].to_vec(); // strip NUL
+        let cwd = self.cwd[..self.cwd.len() - 1].to_vec();
         let par = parent_of(&cwd);
         if par == b"/disks" || par.is_empty() {
             self.load_my_computer();
@@ -220,17 +248,23 @@ impl App {
         }
     }
 
-    fn selection_changed(&mut self) {
-        let sel = Node(self.view).iconview_selected();
-        if sel < 0 || sel as usize >= self.kinds.len() {
-            Node(self.dname).set_text("");
-            Node(self.dkind).set_text("");
+    fn go_place(&mut self, node: *mut NwNode) {
+        let mut idx = usize::MAX;
+        for i in 0..self.place_nodes.len() {
+            if self.place_nodes[i] == node {
+                idx = i;
+                break;
+            }
+        }
+        if idx == usize::MAX {
             return;
         }
-        let i = sel as usize;
-        let nm = &self.names[i];
-        Node(self.dname).set_text(unsafe { core::str::from_utf8_unchecked(&nm[..nm.len() - 1]) });
-        Node(self.dkind).set_text(Self::kind_label(self.kinds[i]));
+        if self.place_kind[idx] == P_COMPUTER {
+            self.load_my_computer();
+        } else {
+            let p = self.place_paths[idx][..self.place_paths[idx].len() - 1].to_vec();
+            self.load_dir(&p);
+        }
     }
 }
 
@@ -243,7 +277,6 @@ fn cstr_len(b: &[u8]) -> usize {
     i
 }
 
-/// NUL-terminate a byte slice into an owned buffer.
 fn nul(s: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(s.len() + 1);
     v.extend_from_slice(s);
@@ -253,7 +286,6 @@ fn nul(s: &[u8]) -> Vec<u8> {
     v
 }
 
-/// $HOME (NUL-terminated), falling back to /disks/main.
 fn home_dir() -> Vec<u8> {
     let p = unsafe { getenv(b"HOME\0".as_ptr()) };
     if !p.is_null() {
@@ -274,7 +306,6 @@ fn home_dir() -> Vec<u8> {
     b"/disks/main".to_vec()
 }
 
-/// The parent path (everything up to, not including, the last '/'). "/disks/main" -> "/disks".
 fn parent_of(path: &[u8]) -> &[u8] {
     let mut i = path.len();
     while i > 0 && path[i - 1] != b'/' {
@@ -287,24 +318,22 @@ fn parent_of(path: &[u8]) -> &[u8] {
 }
 
 /* ---- callbacks (raw C ABI; `user` is the leaked *mut App) ---- */
-extern "C" fn cb_activate(_n: *mut libnwui_rs::NwNode, user: *mut c_void) {
+extern "C" fn cb_activate(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).activate() }
 }
-extern "C" fn cb_change(_n: *mut libnwui_rs::NwNode, user: *mut c_void) {
-    unsafe { (&mut *(user as *mut App)).selection_changed() }
-}
-extern "C" fn cb_up(_n: *mut libnwui_rs::NwNode, user: *mut c_void) {
+extern "C" fn cb_noop(_n: *mut NwNode, _user: *mut c_void) {}
+extern "C" fn cb_up(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).nav_up() }
 }
-extern "C" fn cb_home(_n: *mut libnwui_rs::NwNode, user: *mut c_void) {
+extern "C" fn cb_homebtn(_n: *mut NwNode, user: *mut c_void) {
     unsafe {
         let app = &mut *(user as *mut App);
         let h = home_dir();
         app.load_dir(&h);
     }
 }
-extern "C" fn cb_mycomputer(_n: *mut libnwui_rs::NwNode, user: *mut c_void) {
-    unsafe { (&mut *(user as *mut App)).load_my_computer() }
+extern "C" fn cb_place(n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).go_place(n) }
 }
 
 fn load_icon(path: &str, fallback: Icon) -> Icon {
@@ -314,10 +343,9 @@ fn load_icon(path: &str, fallback: Icon) -> Icon {
     }
 }
 
-/// crt0 calls main (C ABI). No args -> open the My Computer view.
 #[no_mangle]
 pub extern "C" fn main() -> i32 {
-    let ui = match Ui::open("Files", 560, 380) {
+    let ui = match Ui::open("Files", 620, 420) {
         Some(u) => u,
         None => return 1,
     };
@@ -335,16 +363,11 @@ pub extern "C" fn main() -> i32 {
     };
 
     let crumb = ui.label("My Computer");
-    let dname = ui.label("");
-    let dkind = ui.label("");
 
-    // leak the app state for the program's lifetime; callbacks receive this pointer
     let app = alloc::boxed::Box::new(App {
         ui: ui.0,
-        view: core::ptr::null_mut(),   // filled in once the iconview exists
+        view: core::ptr::null_mut(),
         crumb: crumb.0,
-        dname: dname.0,
-        dkind: dkind.0,
         icons,
         my_computer: true,
         cwd: alloc::vec![b'/', 0],
@@ -352,42 +375,66 @@ pub extern "C" fn main() -> i32 {
         paths: Vec::new(),
         kinds: Vec::new(),
         items: Vec::new(),
+        place_nodes: Vec::new(),
+        place_paths: Vec::new(),
+        place_kind: Vec::new(),
     });
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
-
-    // create the iconview with the app pointer as `user`, then record it in the app
-    let view = ui.iconview_raw(cb_activate, cb_change, app_ptr);
+    let view = ui.iconview_raw(cb_activate, cb_noop, app_ptr);
     unsafe { (&mut *(app_ptr as *mut App)).view = view.0; }
 
-    // task pane: Other Places + Details
-    let other = ui.panel("Other Places")
-        .add(ui.button_raw("Home", cb_home, app_ptr))
-        .add(ui.button_raw("My Computer", cb_mycomputer, app_ptr))
-        .add(ui.button_raw("Up", cb_up, app_ptr));
-    let details = ui.panel("Details")
-        .add(dname)
-        .add(dkind);
-    let sidebar = ui.vbox().add(other).add(details).gap(8).size(150, 0);
+    // ---- sidebar: Favorites + Locations, place rows with a "current location" pill ----
+    let sidebar = ui.vbox();
+    sidebar.add(ui.label("FAVORITES").colors(MUTED, 0));
+    let home_row = ui.link_raw("Home", cb_place, app_ptr);
+    sidebar.add(home_row);
+    sidebar.add(ui.label("LOCATIONS").colors(MUTED, 0));
+    let comp_row = ui.link_raw("My Computer", cb_place, app_ptr);
+    sidebar.add(comp_row);
+
+    // register the fixed places (Home favorite + My Computer), then one row per mounted disk
+    unsafe {
+        let a = &mut *(app_ptr as *mut App);
+        a.place_nodes.push(home_row.0);
+        a.place_paths.push(nul(&home_dir()));
+        a.place_kind.push(P_HOME);
+        a.place_nodes.push(comp_row.0);
+        a.place_paths.push(alloc::vec![0u8]);
+        a.place_kind.push(P_COMPUTER);
+
+        let d = nwui_dir_open(b"/disks\0".as_ptr());
+        if !d.is_null() {
+            let mut name = [0u8; 256];
+            let mut is_dir = 0i32;
+            while nwui_dir_next(d, name.as_mut_ptr(), 256, &mut is_dir) == 1 {
+                let n = cstr_len(&name);
+                let row = ui.link_raw(core::str::from_utf8_unchecked(&name[..n]), cb_place, app_ptr);
+                sidebar.add(row);
+                let mut p = Vec::new();
+                p.extend_from_slice(b"/disks/");
+                p.extend_from_slice(&name[..n]);
+                p.push(0);
+                a.place_nodes.push(row.0);
+                a.place_paths.push(p);
+                a.place_kind.push(P_DISK);
+            }
+            nwui_dir_close(d);
+        }
+    }
+    let sidebar = sidebar.gap(4).pad(12).colors(0, SIDE_BG).size(200, 0);
 
     let toolbar = ui.hbox()
-        .add(ui.button_raw("Up", cb_up, app_ptr))
-        .add(ui.button_raw("Home", cb_home, app_ptr))
+        .add(ui.link_raw("Up", cb_up, app_ptr))
+        .add(ui.link_raw("Home", cb_homebtn, app_ptr))
         .add(crumb)
-        .gap(8);
+        .gap(8)
+        .pad(8);
 
-    let body = ui.hbox()
-        .add(sidebar)
-        .add(view.flex(1))
-        .gap(8);
-
-    let root = ui.vbox()
-        .add(toolbar)
-        .add(body.flex(1))
-        .pad(8)
-        .gap(8);
+    let body = ui.hbox().add(sidebar).add(view.flex(1));
+    let root = ui.vbox().add(toolbar).add(body.flex(1));
 
     unsafe { (&mut *(app_ptr as *mut App)).load_my_computer(); }
-    ui.focus(view);   // so arrow keys / Enter drive the icon grid immediately
+    ui.focus(view);
     ui.run(root);
     0
 }

@@ -17,9 +17,10 @@ enum { NWUI_ROW_H = 18 };   /* list item row height */
 enum { NWUI_SB_W = 12, NWUI_SB_MIN = 16 };   /* list scrollbar: width, min thumb height */
 enum { NWUI_DBL_MS = 400 };   /* two clicks on the same row within this -> a double-click */
 
-enum { NWUI_ICON_CELL_W = 92, NWUI_ICON_CELL_H = 84 };   /* icon-grid cell box */
-enum { NWUI_ICON_PX = 48 };                              /* nominal icon size (authored 48x48) */
-enum { NWUI_PANEL_TITLE_H = 22 };                        /* titled-panel header band height */
+enum { NWUI_ICON_CELL_W = 120, NWUI_ICON_CELL_H = 108 };  /* icon-grid cell box (modern, roomy) */
+enum { NWUI_ICON_PX = 64 };                               /* nominal icon size (authored 64x64) */
+enum { NWUI_PANEL_TITLE_H = 22 };                         /* titled-panel header band height */
+enum { NWUI_LINK_H = 30 };                                /* sidebar link/nav-row height */
 
 enum {
 	NWUI_MAX_NODES = 128,
@@ -61,6 +62,8 @@ struct nwui_node {
 
 	const nwui_icon_item *icons;     /* iconview: app-owned array of cells (reuses count/sel/scroll) */
 	int        cols;                 /* iconview: column count computed at arrange time */
+	int        flat;                 /* button: render as a flat sidebar link (no gradient fill) */
+	int        active;               /* flat link: render as a filled accent pill (current location) */
 
 	nwui_cb    on_click, on_change;
 	void      *user;

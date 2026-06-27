@@ -126,6 +126,12 @@ int        nwui_iconview_selected(nwui_node *n);
  * nwui_add(); they stack vertically beneath the title header. */
 nwui_node *nwui_panel(nwui *u, const char *title);
 
+/* A flat sidebar link/nav-row: no button gradient, click fires on_click. Mark the row for the
+ * CURRENT location with nwui_link_set_active(n, 1) and it renders as a filled accent pill. The
+ * macOS-style sidebar is a column of these under small section-header labels. */
+nwui_node *nwui_link(nwui *u, const char *text, nwui_cb on_click, void *user);
+void       nwui_link_set_active(nwui_node *n, int active);
+
 /* ---- containers: variadic, NULL-terminated children (this is the nesting) ---- */
 nwui_node *nwui_column(nwui *u, ...);   /* nwui_column(u, a, b, c, (nwui_node*)0)  */
 nwui_node *nwui_row(nwui *u, ...);

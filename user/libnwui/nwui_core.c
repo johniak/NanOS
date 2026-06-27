@@ -142,6 +142,26 @@ int nwui_iconview_selected(nwui_node *n)
 	return (n && n->kind == NWUI_ICONVIEW) ? n->sel : -1;
 }
 
+nwui_node *nwui_link(nwui *u, const char *text, nwui_cb on_click, void *user)
+{
+	nwui_node *n = nwui_alloc(u, NWUI_BUTTON);   /* a button under the hood -> reuse click handling */
+	int i = 0;
+	for (; text && text[i] && i < NWUI_TEXT_CAP - 1; i++) n->text[i] = text[i];
+	n->text[i] = 0;
+	n->on_click  = on_click;
+	n->user      = user;
+	n->focusable = 1;
+	n->flat      = 1;
+	return n;
+}
+
+void nwui_link_set_active(nwui_node *n, int active)
+{
+	if (!n) return;
+	n->active = active ? 1 : 0;
+	n->dirty  = 1;
+}
+
 nwui_node *nwui_panel(nwui *u, const char *title)
 {
 	nwui_node *n = nwui_alloc(u, NWUI_PANEL);
@@ -245,8 +265,13 @@ void nwui_measure(nwui_node *n)
 		n->mh = NW_FONT_H;
 		break;
 	case NWUI_BUTTON:
-		n->mw = (int) strlen(n->text) * NW_FONT_W + 2 * NWUI_BTN_PADX;
-		n->mh = NW_FONT_H + 2 * NWUI_BTN_PADY;
+		if (n->flat) {                 /* sidebar link / nav-row */
+			n->mw = (int) strlen(n->text) * NW_FONT_W + 24;
+			n->mh = NWUI_LINK_H;
+		} else {
+			n->mw = (int) strlen(n->text) * NW_FONT_W + 2 * NWUI_BTN_PADX;
+			n->mh = NW_FONT_H + 2 * NWUI_BTN_PADY;
+		}
 		break;
 	case NWUI_TEXTFIELD:
 		n->mw = NWUI_TF_DEFW;

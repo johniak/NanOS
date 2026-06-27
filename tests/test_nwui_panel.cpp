@@ -17,6 +17,23 @@ TEST_CASE("panel reserves a title header and stacks children beneath it") {
     delete u;
 }
 
+static void on_click(nwui_node *, void *) {}
+
+TEST_CASE("flat link is a button-kind row with link height; set_active toggles the pill flag") {
+    nwui *u = new nwui; nwui_init(u);
+    nwui_node *l = nwui_link(u, "Home", on_click, 0);
+    CHECK(l->kind == NWUI_BUTTON);
+    CHECK(l->flat == 1);
+    CHECK(l->active == 0);
+    nwui_measure(l);
+    CHECK(l->mh == NWUI_LINK_H);
+    nwui_link_set_active(l, 1);
+    CHECK(l->active == 1);
+    nwui_link_set_active(l, 0);
+    CHECK(l->active == 0);
+    delete u;
+}
+
 TEST_CASE("panel measures tall enough for its header plus children") {
     nwui *u = new nwui; nwui_init(u);
     nwui_node *p = nwui_panel(u, "Details");
