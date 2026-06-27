@@ -68,6 +68,12 @@ struct App {
     hpos: i32,
     // live search filter (NUL-terminated buffer the search field writes into)
     query: [u8; 64],
+    search: *mut NwNode,          // the search text field (so navigation can clear it)
+    // SQLite-backed recursive search: a :memory: index, (re)built per location on first search.
+    #[cfg(feature = "sqlite")]
+    db: *mut c_void,              // sqlite3* (lazily opened), null until the first search
+    #[cfg(feature = "sqlite")]
+    indexed_root: Vec<u8>,        // the path the in-memory index currently covers (no NUL)
 }
 
 fn ends_with(s: &[u8], suf: &[u8]) -> bool {
@@ -105,6 +111,15 @@ impl App {
         self.paths.clear();
         self.kinds.clear();
         self.items.clear();
+    }
+
+    /// Drop any active search text (model + the search field's contents) — called whenever we load
+    /// a real location, so navigating into a result (or anywhere) leaves the plain directory view.
+    fn clear_search(&mut self) {
+        self.query[0] = 0;
+        if !self.search.is_null() {
+            Node(self.search).set_text("");
+        }
     }
 
     fn push(&mut self, label: &[u8], path: &[u8], kind: u8) {
@@ -225,6 +240,7 @@ impl App {
 
     fn load_my_computer(&mut self) {
         self.my_computer = true;
+        self.clear_search();
         self.clear();
         let d = unsafe { nwui_dir_open(b"/disks\0".as_ptr()) };
         if !d.is_null() {
@@ -252,6 +268,7 @@ impl App {
         }
         self.my_computer = false;
         self.cwd = nul(path);
+        self.clear_search();
         self.clear();
         if !(path.len() == 1 && path[0] == b'/') {
             self.push(b"..", path, K_UP);
@@ -329,8 +346,154 @@ impl App {
         }
     }
 
+    /// Restore the current location (used when the search box is cleared).
+    fn reload_location(&mut self) {
+        let e = if self.hpos >= 0 { self.hist[self.hpos as usize].clone() } else { Vec::new() };
+        self.go(&e, false);
+    }
+
+    #[cfg(not(feature = "sqlite"))]
     fn do_search(&mut self) {
         self.refilter();
+    }
+
+    /// SQLite-backed recursive search: index the subtree under the current location (lazily, into
+    /// an in-memory DB) and show every file whose name matches, from anywhere in that subtree.
+    #[cfg(feature = "sqlite")]
+    fn do_search(&mut self) {
+        let qlen = cstr_len(&self.query);
+        if qlen == 0 {
+            self.reload_location();          // empty box -> back to the plain directory view
+            return;
+        }
+        let root = if self.my_computer {
+            b"/disks".to_vec()
+        } else {
+            self.cwd[..self.cwd.len() - 1].to_vec()
+        };
+        self.sql_index(&root);               // (re)build the index for this subtree if needed
+        let n = self.sql_search(qlen);       // replace the model with the SQL result rows
+        // crumb: "Search 'q' — N"
+        let mut c = Vec::new();
+        c.extend_from_slice(b"Search '");
+        c.extend_from_slice(&self.query[..qlen]);
+        c.extend_from_slice(b"' \xe2\x80\x94 ");      // em dash
+        push_int(&mut c, n);
+        self.set_crumb(&c);
+        self.apply_filter();                 // results already match the query -> all shown
+    }
+}
+
+/* ---- SQLite-backed recursive search (feature = "sqlite", links libsqlite.ndl) ---- */
+#[cfg(feature = "sqlite")]
+mod sqlite_ffi {
+    use core::ffi::c_void;
+    pub const SQLITE_ROW: i32 = 100;
+    // SQLITE_TRANSIENT: tell sqlite to COPY the bound text, so our temporary buffers can drop.
+    pub fn transient() -> *mut c_void { (!0usize) as *mut c_void }
+    extern "C" {
+        pub fn sqlite3_open(path: *const u8, db: *mut *mut c_void) -> i32;
+        pub fn sqlite3_exec(db: *mut c_void, sql: *const u8, cb: *mut c_void, arg: *mut c_void,
+                            err: *mut *mut u8) -> i32;
+        pub fn sqlite3_prepare_v2(db: *mut c_void, sql: *const u8, n: i32,
+                                  stmt: *mut *mut c_void, tail: *mut *const u8) -> i32;
+        pub fn sqlite3_bind_text(stmt: *mut c_void, idx: i32, text: *const u8, n: i32,
+                                 destructor: *mut c_void) -> i32;
+        pub fn sqlite3_bind_int(stmt: *mut c_void, idx: i32, v: i32) -> i32;
+        pub fn sqlite3_step(stmt: *mut c_void) -> i32;
+        pub fn sqlite3_column_text(stmt: *mut c_void, col: i32) -> *const u8;
+        pub fn sqlite3_column_int(stmt: *mut c_void, col: i32) -> i32;
+        pub fn sqlite3_reset(stmt: *mut c_void) -> i32;
+        pub fn sqlite3_finalize(stmt: *mut c_void) -> i32;
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl App {
+    /// Ensure the in-memory index covers `root` (the current location's subtree). Rebuilt only when
+    /// the location changes; a recursive walk (depth- and count-bounded) inserts one row per file.
+    fn sql_index(&mut self, root: &[u8]) {
+        use sqlite_ffi::*;
+        if self.db.is_null() {
+            let mut db: *mut c_void = core::ptr::null_mut();
+            if unsafe { sqlite3_open(b":memory:\0".as_ptr(), &mut db) } != 0 { return; }
+            self.db = db;
+        }
+        if self.indexed_root == root { return; }   // already indexed this subtree
+        unsafe {
+            sqlite3_exec(self.db,
+                b"DROP TABLE IF EXISTS files; CREATE TABLE files(name TEXT, path TEXT, kind INT);\0".as_ptr(),
+                core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
+        }
+        let mut ins: *mut c_void = core::ptr::null_mut();
+        if unsafe { sqlite3_prepare_v2(self.db,
+            b"INSERT INTO files(name,path,kind) VALUES(?,?,?);\0".as_ptr(), -1,
+            &mut ins, core::ptr::null_mut()) } != 0 { return; }
+        let mut count = 0i32;
+        self.walk_index(ins, root, 0, &mut count);
+        unsafe { sqlite3_finalize(ins); }
+        self.indexed_root = root.to_vec();
+    }
+
+    fn walk_index(&self, ins: *mut c_void, dir: &[u8], depth: i32, count: &mut i32) {
+        use sqlite_ffi::*;
+        if depth > 16 || *count > 8000 { return; }
+        let d = unsafe { nwui_dir_open(nul(dir).as_ptr()) };
+        if d.is_null() { return; }
+        let mut name = [0u8; 256];
+        let mut is_dir = 0i32;
+        while unsafe { nwui_dir_next(d, name.as_mut_ptr(), 256, &mut is_dir) } == 1 {
+            let n = cstr_len(&name);
+            if n == 0 { continue; }
+            let mut full = Vec::new();
+            full.extend_from_slice(dir);
+            if !(full.len() == 1 && full[0] == b'/') { full.push(b'/'); }
+            full.extend_from_slice(&name[..n]);
+            let kind = if is_dir != 0 { K_DIR } else { classify(&name[..n]) };
+            let nm = nul(&name[..n]);
+            let ft = nul(&full);
+            unsafe {
+                sqlite3_reset(ins);
+                sqlite3_bind_text(ins, 1, nm.as_ptr(), -1, transient());
+                sqlite3_bind_text(ins, 2, ft.as_ptr(), -1, transient());
+                sqlite3_bind_int(ins, 3, kind as i32);
+                sqlite3_step(ins);
+            }
+            *count += 1;
+            if is_dir != 0 { self.walk_index(ins, &full, depth + 1, count); }
+            if *count > 8000 { break; }
+        }
+        unsafe { nwui_dir_close(d) }
+    }
+
+    /// Run the LIKE query and replace the model with the matching rows. Returns the row count.
+    fn sql_search(&mut self, qlen: usize) -> i32 {
+        use sqlite_ffi::*;
+        self.clear();
+        if self.db.is_null() { return 0; }
+        let mut st: *mut c_void = core::ptr::null_mut();
+        if unsafe { sqlite3_prepare_v2(self.db,
+            b"SELECT name,path,kind FROM files WHERE name LIKE ? ORDER BY kind, name LIMIT 2000;\0".as_ptr(),
+            -1, &mut st, core::ptr::null_mut()) } != 0 { return 0; }
+        let mut pat = Vec::with_capacity(qlen + 3);
+        pat.push(b'%');
+        pat.extend_from_slice(&self.query[..qlen]);
+        pat.push(b'%');
+        pat.push(0);
+        unsafe { sqlite3_bind_text(st, 1, pat.as_ptr(), -1, transient()); }
+        let mut count = 0i32;
+        loop {
+            if unsafe { sqlite3_step(st) } != SQLITE_ROW { break; }
+            let nm = unsafe { sqlite3_column_text(st, 0) };
+            let pt = unsafe { sqlite3_column_text(st, 1) };
+            let kind = unsafe { sqlite3_column_int(st, 2) } as u8;
+            let nmv = cstr_from(nm);
+            let ptv = cstr_from(pt);
+            self.push(&nmv, &ptv, kind);
+            count += 1;
+        }
+        unsafe { sqlite3_finalize(st) };
+        count
     }
 }
 
@@ -348,6 +511,31 @@ fn nul(s: &[u8]) -> Vec<u8> {
     v.extend_from_slice(s);
     if v.last() != Some(&0) {
         v.push(0);
+    }
+    v
+}
+
+/// Append the decimal digits of a non-negative integer to `out`.
+#[cfg(feature = "sqlite")]
+fn push_int(out: &mut Vec<u8>, mut v: i32) {
+    if v <= 0 { out.push(b'0'); return; }
+    let mut tmp = [0u8; 12];
+    let mut i = 0;
+    while v > 0 { tmp[i] = b'0' + (v % 10) as u8; v /= 10; i += 1; }
+    while i > 0 { i -= 1; out.push(tmp[i]); }
+}
+
+/// Read a C (NUL-terminated) string from a raw pointer into an owned, NUL-free byte vec.
+#[cfg(feature = "sqlite")]
+fn cstr_from(p: *const u8) -> Vec<u8> {
+    let mut v = Vec::new();
+    if p.is_null() { return v; }
+    let mut i = 0isize;
+    loop {
+        let c = unsafe { *p.offset(i) };
+        if c == 0 { break; }
+        v.push(c);
+        i += 1;
     }
     v
 }
@@ -491,6 +679,11 @@ pub extern "C" fn main() -> i32 {
         hist: Vec::new(),
         hpos: -1,
         query: [0u8; 64],
+        search: core::ptr::null_mut(),
+        #[cfg(feature = "sqlite")]
+        db: core::ptr::null_mut(),
+        #[cfg(feature = "sqlite")]
+        indexed_root: Vec::new(),
     });
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
     let view = ui.iconview_raw(cb_activate, cb_noop, app_ptr);
@@ -547,6 +740,7 @@ pub extern "C" fn main() -> i32 {
     // search field over the app's query buffer (stable address: App is leaked)
     let qbuf = unsafe { (*(app_ptr as *mut App)).query.as_mut_ptr() };
     let search = ui.textfield(qbuf, 64, cb_search, app_ptr);
+    unsafe { (&mut *(app_ptr as *mut App)).search = search.0; }   // so navigation can clear it
 
     let toolbar = ui.hbox()
         .add(ui.iconbtn(ic_back, cb_back, app_ptr))
@@ -563,6 +757,17 @@ pub extern "C" fn main() -> i32 {
     let root = ui.vbox().add(toolbar).add(body.flex(1));
 
     unsafe { (&mut *(app_ptr as *mut App)).go(b"", true); }   // initial view + history entry
+
+    // Pre-warm the SQLite index for the opening location (/disks) so the first search is instant
+    // — and, since this exercises sqlite3_open/exec/prepare/bind/step at startup, a clean launch
+    // doubles as proof the libsqlite.ndl FFI works end to end.
+    #[cfg(feature = "sqlite")]
+    unsafe {
+        let a = &mut *(app_ptr as *mut App);
+        let root = if a.my_computer { b"/disks".to_vec() } else { a.cwd[..a.cwd.len() - 1].to_vec() };
+        a.sql_index(&root);
+    }
+
     ui.focus(view);
     ui.run(root);
     0

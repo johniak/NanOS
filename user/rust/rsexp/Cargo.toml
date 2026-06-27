@@ -13,6 +13,12 @@ crate-type = ["staticlib"]
 [dependencies]
 libnwui-rs = { path = "../libnwui-rs" }
 
+# `sqlite` lights up the SQLite-backed recursive search (links libsqlite.ndl). The Makefile
+# enables it when bin/libsqlite.ndl.a is present (i.e. `make ARCH=x86_64 sqlite` was run);
+# without it the explorer falls back to the in-memory substring filter over the current folder.
+[features]
+sqlite = []
+
 [profile.release]
 panic = "abort"
 opt-level = "z"

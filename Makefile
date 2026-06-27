@@ -1973,13 +1973,27 @@ $(BINFOLDER)rustform.nxe: $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BI
 # rsexp: the x86_64 Rust file explorer (the desktop's Files app). Same scheme as rustform but for
 # the x86_64-nanos target, depending on the reusable libnwui-rs bindings crate. Linked with the
 # x64 glue + USER_NX_LD + MKNX_TOOL; --need libnwui.ndl pulls the toolkit + PNG/fs helpers.
+#
+# SQLite-backed recursive search lights up when bin/libsqlite.ndl.a exists (i.e. `make ARCH=x86_64
+# sqlite` was run): the crate is built with --features sqlite and linked against libsqlite.ndl, so
+# the search box queries an in-memory SQLite index of the whole subtree. Without the lib the
+# explorer still builds (in-memory substring filter), so a stock image never depends on the port.
+# Both the cargo feature and the link are decided at recipe time, so re-running after `make sqlite`
+# picks SQLite up (the lib.rs edit also forces the cargo rebuild).
 RSEXP_TARGET=user/rust/x86_64-nanos.json
 RSEXP_LIB=user/rust/rsexp/target/x86_64-nanos/release/librsexp.a
-$(RSEXP_LIB): user/rust/rsexp/src/lib.rs user/rust/libnwui-rs/src/lib.rs user/rust/rsexp/Cargo.toml user/rust/libnwui-rs/Cargo.toml $(RSEXP_TARGET)
-	cd user/rust/rsexp && cargo build -Z build-std=core,alloc -Z json-target-spec --target ../x86_64-nanos.json --release
-$(BINFOLDER)rsexp.nxe: $(DYN_GLUE) $(RSEXP_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)rsexp.elf $(DYN_GLUE) $(RSEXP_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)rsexp.elf $@ --need libnwui.ndl
+$(BINFOLDER)rsexp.nxe: user/rust/rsexp/src/lib.rs user/rust/libnwui-rs/src/lib.rs user/rust/rsexp/Cargo.toml user/rust/libnwui-rs/Cargo.toml $(RSEXP_TARGET) $(DYN_GLUE) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	@if [ -f $(BINFOLDER)libsqlite.ndl.a ]; then \
+	   echo "rsexp: SQLite-backed search ENABLED (linking libsqlite.ndl)"; \
+	   ( cd user/rust/rsexp && cargo build --features sqlite -Z build-std=core,alloc -Z json-target-spec --target ../x86_64-nanos.json --release ); \
+	   $(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)rsexp.elf $(DYN_GLUE) $(RSEXP_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libsqlite.ndl.a $(BINFOLDER)libc.ndl.a -lgcc; \
+	   $(MKNX_TOOL) $(BINFOLDER)rsexp.elf $@ --need libnwui.ndl --need libsqlite.ndl; \
+	 else \
+	   echo "rsexp: libsqlite.ndl.a absent -> in-memory filter (run 'make ARCH=x86_64 sqlite' to enable SQLite search)"; \
+	   ( cd user/rust/rsexp && cargo build -Z build-std=core,alloc -Z json-target-spec --target ../x86_64-nanos.json --release ); \
+	   $(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)rsexp.elf $(DYN_GLUE) $(RSEXP_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc; \
+	   $(MKNX_TOOL) $(BINFOLDER)rsexp.elf $@ --need libnwui.ndl; \
+	 fi
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
 
