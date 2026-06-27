@@ -70,6 +70,13 @@ struct App {
     query: [u8; 64],
     search: *mut NwNode,          // the search text field (so navigation can clear it)
     sort_key: i32,                // SORT_* applied to the current view
+    // file-management state
+    clip_path: Vec<u8>,           // copy/cut source (NUL-terminated); empty = clipboard empty
+    clip_cut: bool,               // true = cut (move on paste), false = copy
+    rename_from: Vec<u8>,         // rename source path (NUL) while the rename dialog is open
+    pending: Vec<u8>,             // delete target (NUL) while the confirm dialog is open
+    dlg_buf: [u8; 256],           // text-input buffer for the rename / new-folder dialogs
+    status: *mut NwNode,          // the status-bar label
     // SQLite-backed recursive search: a :memory: index, (re)built per location on first search.
     #[cfg(feature = "sqlite")]
     db: *mut c_void,              // sqlite3* (lazily opened), null until the first search
@@ -83,6 +90,11 @@ struct App {
 const SORT_NAME: i32 = 0;         // A -> Z (case-insensitive)
 const SORT_NAME_DESC: i32 = 1;    // Z -> A
 const SORT_TYPE: i32 = 2;         // folders first, then by name
+
+/* normalized scancodes for keyboard accelerators (see nwui_core.h) */
+const SC_F2: i32 = 0x3C;          // Rename
+const SC_F5: i32 = 0x3F;          // Refresh
+const SC_DEL: i32 = 0xD3;         // Delete (extended; bit7 set)
 
 fn is_dirish(kind: u8) -> bool { matches!(kind, K_DIR | K_DRIVE | K_HOME | K_UP) }
 
@@ -177,9 +189,12 @@ impl App {
     fn commit(&mut self) {
         self.apply_filter();
         self.update_sidebar();
+        self.update_status();
     }
 
-    /// Re-filter when the search text changes (model unchanged).
+    /// Re-filter when the search text changes (model unchanged). Used by the non-SQLite search
+    /// path; with the `sqlite` feature, search replaces the model instead, so this goes unused.
+    #[allow(dead_code)]
     fn refilter(&mut self) {
         self.apply_filter();
     }
@@ -465,6 +480,211 @@ impl App {
     }
 }
 
+/* ---- file management (New Folder / Rename / Delete / Copy / Cut / Paste / Refresh) -------- */
+impl App {
+    /// The writable directory currently being browsed (None in the My Computer / search views,
+    /// where there is no single target directory for New Folder / Paste).
+    fn cur_dir(&self) -> Option<Vec<u8>> {
+        if self.my_computer || cstr_len(&self.query) != 0 {
+            return None;
+        }
+        Some(self.cwd[..self.cwd.len() - 1].to_vec())   // drop the NUL
+    }
+
+    /// Model index of the current selection (None for nothing selected or the ".." row).
+    fn sel_model(&self) -> Option<usize> {
+        let sel = Node(self.view).iconview_selected();
+        if sel < 0 || sel as usize >= self.item_idx.len() {
+            return None;
+        }
+        let i = self.item_idx[sel as usize];
+        if self.kinds[i] == K_UP { None } else { Some(i) }
+    }
+
+    /// Absolute NUL-terminated path of the selected item (None if nothing / "..").
+    fn sel_path(&self) -> Option<Vec<u8>> {
+        self.sel_model().map(|i| self.paths[i].clone())
+    }
+
+    /// Re-read the current location (F5 / after a mutating operation).
+    fn refresh(&mut self) {
+        self.reload_location();
+    }
+
+    /* ---- New Folder ---- */
+    fn new_folder(&mut self) {
+        let ui = Ui(self.ui);
+        if self.cur_dir().is_none() {
+            ui.message("New Folder", "Not available here.");
+            return;
+        }
+        self.dlg_buf = [0u8; 256];
+        let def = b"New Folder";
+        self.dlg_buf[..def.len()].copy_from_slice(def);
+        let me = self as *mut App as *mut c_void;
+        ui.prompt("New folder name:", self.dlg_buf.as_mut_ptr(), 256, cb_mk_folder, me);
+    }
+    fn do_new_folder(&mut self) {
+        let ui = Ui(self.ui);
+        let dir = match self.cur_dir() { Some(d) => d, None => return };
+        let nlen = cstr_len(&self.dlg_buf);
+        if nlen == 0 { return; }
+        let path = join_path(&dir, &self.dlg_buf[..nlen]);
+        if libnwui_rs::fs::exists(&path) {
+            ui.message("New Folder", "A file with that name already exists.");
+            return;
+        }
+        if !libnwui_rs::fs::mkdir(&path) {
+            ui.message("New Folder", "Could not create the folder.");
+            return;
+        }
+        self.refresh();
+    }
+
+    /* ---- Rename ---- */
+    fn rename_selected(&mut self) {
+        let path = match self.sel_path() { Some(p) => p, None => return };
+        self.rename_from = path.clone();
+        let base = basename(&path[..path.len() - 1]);
+        self.dlg_buf = [0u8; 256];
+        let m = base.len().min(255);
+        self.dlg_buf[..m].copy_from_slice(&base[..m]);
+        let me = self as *mut App as *mut c_void;
+        Ui(self.ui).prompt("Rename to:", self.dlg_buf.as_mut_ptr(), 256, cb_do_rename, me);
+    }
+    fn do_rename(&mut self) {
+        let ui = Ui(self.ui);
+        if self.rename_from.is_empty() { return; }
+        let nlen = cstr_len(&self.dlg_buf);
+        if nlen == 0 { return; }
+        let from = core::mem::take(&mut self.rename_from);          // NUL-terminated
+        let parent = parent_of(&from[..from.len() - 1]).to_vec();
+        let to = join_path(&parent, &self.dlg_buf[..nlen]);
+        if to == from { return; }                                  // unchanged
+        if libnwui_rs::fs::exists(&to) {
+            ui.message("Rename", "A file with that name already exists.");
+            return;
+        }
+        if !libnwui_rs::fs::rename(&from, &to) {
+            ui.message("Rename", "Could not rename the item.");
+            return;
+        }
+        self.refresh();
+    }
+
+    /* ---- Delete ---- */
+    fn delete_selected(&mut self) {
+        let path = match self.sel_path() { Some(p) => p, None => return };
+        self.pending = path.clone();
+        let base = basename(&path[..path.len() - 1]);
+        let mut msg = Vec::new();
+        msg.extend_from_slice(b"Delete '");
+        msg.extend_from_slice(base);
+        msg.extend_from_slice(b"'? This cannot be undone.");
+        let s = unsafe { core::str::from_utf8_unchecked(&msg) };
+        let me = self as *mut App as *mut c_void;
+        Ui(self.ui).confirm("Delete", s, "Delete", cb_do_delete, me);
+    }
+    fn do_delete(&mut self) {
+        if self.pending.is_empty() { return; }
+        let p = core::mem::take(&mut self.pending);
+        if !libnwui_rs::fs::remove(&p) {
+            Ui(self.ui).message("Delete", "Could not delete the item.");
+        }
+        self.refresh();
+    }
+
+    /* ---- Copy / Cut / Paste ---- */
+    fn copy_selected(&mut self, cut: bool) {
+        if let Some(p) = self.sel_path() {
+            self.clip_path = p;
+            self.clip_cut = cut;
+            self.update_status();
+        }
+    }
+    fn paste(&mut self) {
+        let ui = Ui(self.ui);
+        if self.clip_path.is_empty() { return; }
+        let dir = match self.cur_dir() {
+            Some(d) => d,
+            None => { ui.message("Paste", "Not available here."); return; }
+        };
+        let src = self.clip_path.clone();              // NUL-terminated
+        let src_noz = &src[..src.len() - 1];
+        // refuse to paste a directory into itself or one of its descendants
+        if dir.len() >= src_noz.len() && &dir[..src_noz.len()] == src_noz
+            && (dir.len() == src_noz.len() || dir[src_noz.len()] == b'/') {
+            ui.message("Paste", "Cannot copy a folder into itself.");
+            return;
+        }
+        let base = basename(src_noz).to_vec();
+        if self.clip_cut {
+            if join_path(&dir, &base) == src { return; }            // already here: no-op
+            let dest = self.unique_dest(&dir, &base);
+            if !libnwui_rs::fs::rename(&src, &dest) {
+                ui.message("Move", "Could not move the item.");
+                return;
+            }
+            self.clip_path.clear();
+        } else {
+            let dest = self.unique_dest(&dir, &base);
+            if !libnwui_rs::fs::copy(&src, &dest) {
+                ui.message("Copy", "Could not copy the item.");
+                return;
+            }
+        }
+        self.refresh();
+    }
+    /// A destination path in `dir` for `base` that does not collide ("name", "name copy", …).
+    fn unique_dest(&self, dir: &[u8], base: &[u8]) -> Vec<u8> {
+        let first = join_path(dir, base);
+        if !libnwui_rs::fs::exists(&first) { return first; }
+        let mut n = 1u32;
+        loop {
+            let mut nm = base.to_vec();
+            nm.extend_from_slice(b" copy");
+            if n > 1 { nm.push(b' '); push_uint(&mut nm, n); }
+            let cand = join_path(dir, &nm);
+            if !libnwui_rs::fs::exists(&cand) || n > 9999 { return cand; }
+            n += 1;
+        }
+    }
+
+    /* ---- status bar ---- */
+    fn update_status(&self) {
+        if self.status.is_null() { return; }
+        let mut s = Vec::new();
+        if self.my_computer {
+            push_uint(&mut s, self.names.len() as u32);
+            s.extend_from_slice(b" locations");
+        } else if let Some(i) = self.sel_model() {
+            let nm = &self.names[i];
+            s.extend_from_slice(&nm[..nm.len() - 1]);
+            s.extend_from_slice(b"  \xe2\x80\x94  ");      // em dash
+            if is_dirish(self.kinds[i]) {
+                s.extend_from_slice(b"Folder");
+            } else {
+                let sz = libnwui_rs::fs::size(&self.paths[i]);
+                push_size(&mut s, if sz < 0 { 0 } else { sz as u64 });
+            }
+        } else {
+            let mut count = 0u32;
+            for &i in &self.item_idx {
+                if self.kinds[i] != K_UP { count += 1; }
+            }
+            push_uint(&mut s, count);
+            s.extend_from_slice(if count == 1 { b" item" } else { b" items" });
+            let dir = nul(&self.cwd[..self.cwd.len() - 1]);
+            if let Some((avail, _total)) = libnwui_rs::fs::space(&dir) {
+                s.extend_from_slice(b"      ");
+                push_size(&mut s, avail);
+                s.extend_from_slice(b" free");
+            }
+        }
+        Node(self.status).set_text(unsafe { core::str::from_utf8_unchecked(&s) });
+    }
+}
+
 /* ---- SQLite-backed recursive search (feature = "sqlite", links libsqlite.ndl) ---- */
 #[cfg(feature = "sqlite")]
 mod sqlite_ffi {
@@ -710,11 +930,63 @@ fn parent_of(path: &[u8]) -> &[u8] {
     &path[..i - 1]
 }
 
+/// The last path component (after the final '/'), without a NUL.
+fn basename(path: &[u8]) -> &[u8] {
+    let mut i = path.len();
+    while i > 0 && path[i - 1] != b'/' {
+        i -= 1;
+    }
+    &path[i..]
+}
+
+/// Join `dir` + "/" + `name` into a fresh NUL-terminated path. Handles dir == "/".
+fn join_path(dir: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(dir.len() + name.len() + 2);
+    v.extend_from_slice(dir);
+    if !(dir.len() == 1 && dir[0] == b'/') {
+        v.push(b'/');
+    }
+    v.extend_from_slice(name);
+    v.push(0);
+    v
+}
+
+/// Append a non-negative integer's decimal digits to `out`.
+fn push_uint(out: &mut Vec<u8>, mut v: u32) {
+    if v == 0 { out.push(b'0'); return; }
+    let mut tmp = [0u8; 10];
+    let mut i = 0;
+    while v > 0 { tmp[i] = b'0' + (v % 10) as u8; v /= 10; i += 1; }
+    while i > 0 { i -= 1; out.push(tmp[i]); }
+}
+
+/// Append a human-readable byte size ("512 B", "3.4 KB", "1.2 GB") to `out`.
+fn push_size(out: &mut Vec<u8>, b: u64) {
+    let units: [(u64, &[u8]); 4] =
+        [(1, b"B"), (1024, b"KB"), (1024 * 1024, b"MB"), (1024 * 1024 * 1024, b"GB")];
+    let mut idx = 0;
+    let mut k = 0;
+    while k < units.len() && b >= units[k].0 { idx = k; k += 1; }
+    let (div, unit) = units[idx];
+    if div == 1 {
+        push_uint(out, b as u32);
+    } else {
+        let whole = b / div;
+        push_uint(out, whole as u32);
+        if whole < 100 {                                   // one decimal place for small magnitudes
+            let frac = (b % div) * 10 / div;
+            out.push(b'.');
+            out.push(b'0' + frac as u8);
+        }
+    }
+    out.push(b' ');
+    out.extend_from_slice(unit);
+}
+
 /* ---- callbacks (raw C ABI; `user` is the leaked *mut App) ---- */
 extern "C" fn cb_activate(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).activate() }
 }
-extern "C" fn cb_noop(_n: *mut NwNode, _user: *mut c_void) {}
 extern "C" fn cb_up(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).nav_up() }
 }
@@ -751,6 +1023,39 @@ extern "C" fn cb_sort_name_desc(_n: *mut NwNode, user: *mut c_void) {
 }
 extern "C" fn cb_sort_type(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).set_sort(SORT_TYPE) }
+}
+extern "C" fn cb_new_folder(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).new_folder() }
+}
+extern "C" fn cb_mk_folder(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).do_new_folder() }
+}
+extern "C" fn cb_rename(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).rename_selected() }
+}
+extern "C" fn cb_do_rename(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).do_rename() }
+}
+extern "C" fn cb_delete(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).delete_selected() }
+}
+extern "C" fn cb_do_delete(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).do_delete() }
+}
+extern "C" fn cb_copy(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).copy_selected(false) }
+}
+extern "C" fn cb_cut(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).copy_selected(true) }
+}
+extern "C" fn cb_paste(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).paste() }
+}
+extern "C" fn cb_refresh(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).refresh() }
+}
+extern "C" fn cb_changed(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).update_status() }
 }
 
 /// Case-insensitive substring test (ASCII).
@@ -829,6 +1134,12 @@ pub extern "C" fn main() -> i32 {
         query: [0u8; 64],
         search: core::ptr::null_mut(),
         sort_key: SORT_NAME,
+        clip_path: Vec::new(),
+        clip_cut: false,
+        rename_from: Vec::new(),
+        pending: Vec::new(),
+        dlg_buf: [0u8; 256],
+        status: core::ptr::null_mut(),
         #[cfg(feature = "sqlite")]
         db: core::ptr::null_mut(),
         #[cfg(feature = "sqlite")]
@@ -837,17 +1148,42 @@ pub extern "C" fn main() -> i32 {
         prefs_db: core::ptr::null_mut(),
     });
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
-    let view = ui.iconview_raw(cb_activate, cb_noop, app_ptr);
+    let view = ui.iconview_raw(cb_activate, cb_changed, app_ptr);
     unsafe { (&mut *(app_ptr as *mut App)).view = view.0; }
 
-    // right-click context menu on the icon grid: sort options (persisted per directory)
+    // right-click context menu on the icon grid: open + file operations + sort (persisted per dir)
+    ui.context_add("Open", cb_activate, app_ptr);
+    ui.context_add("New Folder", cb_new_folder, app_ptr);
+    ui.context_add("Rename", cb_rename, app_ptr);
+    ui.context_add("Delete", cb_delete, app_ptr);
+    ui.context_add("Cut", cb_cut, app_ptr);
+    ui.context_add("Copy", cb_copy, app_ptr);
+    ui.context_add("Paste", cb_paste, app_ptr);
     ui.context_add("Sort by Name", cb_sort_name, app_ptr);
     ui.context_add("Name (Z-A)", cb_sort_name_desc, app_ptr);
     ui.context_add("Sort by Type", cb_sort_type, app_ptr);
+    ui.context_add("Refresh", cb_refresh, app_ptr);
+
+    // keyboard accelerators: F2 rename, Del delete, F5 refresh, Ctrl+N/C/X/V file ops
+    ui.accel(false, 0, SC_F2, cb_rename, app_ptr);
+    ui.accel(false, 0, SC_DEL, cb_delete, app_ptr);
+    ui.accel(false, 0, SC_F5, cb_refresh, app_ptr);
+    ui.accel(true, b'n', 0, cb_new_folder, app_ptr);
+    ui.accel(true, b'c', 0, cb_copy, app_ptr);
+    ui.accel(true, b'x', 0, cb_cut, app_ptr);
+    ui.accel(true, b'v', 0, cb_paste, app_ptr);
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");
+    ui.menu_item(mfile, "New Folder", cb_new_folder, app_ptr);
     ui.menu_item(mfile, "Close", cb_close, app_ptr);
+    let medit = ui.menu("Edit");
+    ui.menu_item(medit, "Rename", cb_rename, app_ptr);
+    ui.menu_item(medit, "Delete", cb_delete, app_ptr);
+    ui.menu_item(medit, "Cut", cb_cut, app_ptr);
+    ui.menu_item(medit, "Copy", cb_copy, app_ptr);
+    ui.menu_item(medit, "Paste", cb_paste, app_ptr);
+    ui.menu_item(medit, "Refresh", cb_refresh, app_ptr);
     let mgo = ui.menu("Go");
     ui.menu_item(mgo, "My Computer", cb_mycomputer, app_ptr);
     ui.menu_item(mgo, "Home", cb_homebtn, app_ptr);
@@ -909,8 +1245,12 @@ pub extern "C" fn main() -> i32 {
         .pad(6)
         .colors(0x001d2733, 0x00eef2f8);   /* a defined toolbar strip */
 
+    // status bar: a thin strip along the bottom (item count / selection size / free space)
+    let status = ui.label("").colors(0x004a4a4f, 0x00eef2f8).pad(5);
+    unsafe { (&mut *(app_ptr as *mut App)).status = status.0; }
+
     let body = ui.hbox().add(sidebar).add(view.flex(1));
-    let root = ui.vbox().add(toolbar).add(body.flex(1));
+    let root = ui.vbox().add(toolbar).add(body.flex(1)).add(status);
 
     unsafe { (&mut *(app_ptr as *mut App)).go(b"", true); }   // initial view + history entry
 

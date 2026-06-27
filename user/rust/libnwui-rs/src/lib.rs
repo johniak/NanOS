@@ -83,6 +83,40 @@ extern "C" {
     fn nwui_context_add(u: *mut NwUi, label: *const u8, cb: RawCb, user: *mut c_void);
     fn nwui_iconbtn(u: *mut NwUi, icon: *const u32, iw: i32, ih: i32, cb: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_textfield(u: *mut NwUi, buf: *mut u8, cap: i32, on_change: RawCb, user: *mut c_void) -> *mut NwNode;
+    fn nwui_message(u: *mut NwUi, title: *const u8, text: *const u8);
+    fn nwui_prompt(u: *mut NwUi, title: *const u8, buf: *mut u8, cap: i32, on_ok: RawCb, user: *mut c_void);
+    fn nwui_confirm(u: *mut NwUi, title: *const u8, text: *const u8, ok_label: *const u8,
+                    on_yes: RawCb, user: *mut c_void);
+    fn nwui_accel(u: *mut NwUi, ctrl: i32, key: i8, fkey: i32, cb: RawCb, user: *mut c_void);
+}
+
+/* ---- filesystem operations (nwui_fs.c; flat ABI, no Ui handle) ---- */
+extern "C" {
+    fn nwui_fs_mkdir(path: *const u8) -> i32;
+    fn nwui_fs_rename(from: *const u8, to: *const u8) -> i32;
+    fn nwui_fs_exists(path: *const u8) -> i32;
+    fn nwui_fs_isdir(path: *const u8) -> i32;
+    fn nwui_fs_size(path: *const u8) -> i64;
+    fn nwui_fs_remove(path: *const u8) -> i32;
+    fn nwui_fs_copy(from: *const u8, to: *const u8) -> i32;
+    fn nwui_fs_space(path: *const u8, avail: *mut u64, total: *mut u64) -> i32;
+}
+
+/// Thin safe-ish wrappers over the C filesystem ops. Paths are caller-supplied NUL-terminated
+/// byte slices (the explorer already stores every path that way).
+pub mod fs {
+    pub fn mkdir(path: &[u8]) -> bool { unsafe { super::nwui_fs_mkdir(path.as_ptr()) == 0 } }
+    pub fn rename(from: &[u8], to: &[u8]) -> bool { unsafe { super::nwui_fs_rename(from.as_ptr(), to.as_ptr()) == 0 } }
+    pub fn exists(path: &[u8]) -> bool { unsafe { super::nwui_fs_exists(path.as_ptr()) == 1 } }
+    pub fn is_dir(path: &[u8]) -> bool { unsafe { super::nwui_fs_isdir(path.as_ptr()) == 1 } }
+    pub fn size(path: &[u8]) -> i64 { unsafe { super::nwui_fs_size(path.as_ptr()) } }
+    pub fn remove(path: &[u8]) -> bool { unsafe { super::nwui_fs_remove(path.as_ptr()) == 0 } }
+    pub fn copy(from: &[u8], to: &[u8]) -> bool { unsafe { super::nwui_fs_copy(from.as_ptr(), to.as_ptr()) == 0 } }
+    /// (avail_bytes, total_bytes) for the volume holding `path`, or None on error.
+    pub fn space(path: &[u8]) -> Option<(u64, u64)> {
+        let (mut a, mut t) = (0u64, 0u64);
+        if unsafe { super::nwui_fs_space(path.as_ptr(), &mut a, &mut t) } == 0 { Some((a, t)) } else { None }
+    }
 }
 
 /// NUL-terminate a `&str` for a C call. libnwui copies captions immediately, so the buffer only
@@ -188,6 +222,30 @@ impl Ui {
         core::mem::forget(v);
         unsafe { nwui_context_add(self.0, p, cb, user) }
     }
+    /// An info/alert dialog (title + one line + OK).
+    pub fn message(&self, title: &str, text: &str) {
+        let (t, x) = (cstr(title), cstr(text));
+        unsafe { nwui_message(self.0, t.as_ptr(), x.as_ptr()) }
+    }
+
+    /// A text-input dialog over an app-owned buffer (stable address required); OK fires on_ok.
+    pub fn prompt(&self, title: &str, buf: *mut u8, cap: i32, on_ok: RawCb, user: *mut c_void) {
+        let t = cstr(title);
+        unsafe { nwui_prompt(self.0, t.as_ptr(), buf, cap, on_ok, user) }
+    }
+
+    /// A confirmation dialog; the affirmative button reads `ok_label` and fires on_yes.
+    pub fn confirm(&self, title: &str, text: &str, ok_label: &str, on_yes: RawCb, user: *mut c_void) {
+        let (t, x, k) = (cstr(title), cstr(text), cstr(ok_label));
+        unsafe { nwui_confirm(self.0, t.as_ptr(), x.as_ptr(), k.as_ptr(), on_yes, user) }
+    }
+
+    /// Register a keyboard accelerator: Ctrl+<key> (ctrl=true, key=b'c', fkey=0) or a function/
+    /// special key (ctrl=false, key=0, fkey=<scancode>). Fires cb and consumes the keystroke.
+    pub fn accel(&self, ctrl: bool, key: u8, fkey: i32, cb: RawCb, user: *mut c_void) {
+        unsafe { nwui_accel(self.0, ctrl as i32, key as i8, fkey, cb, user) }
+    }
+
     pub fn focus(&self, n: Node) { unsafe { nwui_focus(self.0, n.0) } }
     pub fn spawn(&self, cmd: &str) { let c = cstr(cmd); unsafe { nwui_spawn(self.0, c.as_ptr()) } }
     pub fn run(&self, root: Node) { unsafe { nwui_set_root(self.0, root.0); nwui_run(self.0) } }
