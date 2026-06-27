@@ -1600,7 +1600,7 @@ SBASE=user/third_party/sbase
 # kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
 # new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
 # bind mount (kernel/Signal.h == <signal.h> under -I, which broke the userland build).
-USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
+USER_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue/include -Iuser/third_party/stb -I$(SBASE) -D_DEFAULT_SOURCE -include user/libc-glue/compat-decls.h -Wall -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
 USER_LIBS=-L$(PICOLIBC)/lib -lc -lgcc
 # Shared per-program objects: startup, .nxe header, the picolibc syscall glue, and
 # the userland cwd layer (syscalls.o's path resolver lives in cwd.o).
@@ -1889,7 +1889,7 @@ $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
 # NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
-$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)nwui_png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
+$(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)nwfont.o $(BINFOLDER)stb_impl.o $(BINFOLDER)nwui_png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
 # nwnote (the Notepad) is now a pure toolkit client like nwform/nwexp: --need libnwui.ndl pulls
 # the whole chain libnwui->libnw->libc via the recursive loader.
 $(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
@@ -2038,7 +2038,7 @@ $(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX_TOOL)
 # ONE relocatable module, exporting the nw_* API. It USES libc (malloc/read/write/poll), so
 # it links the libc import library and declares `--need libc.ndl`; the recursive loader
 # (kernel/DynLoader.cpp) pulls libc.ndl in automatically when a client loads libnw.ndl.
-LIBNW_OBJS=$(BINFOLDER)libnw.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o
+LIBNW_OBJS=$(BINFOLDER)libnw.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)nwfont.o $(BINFOLDER)stb_impl.o
 $(BINFOLDER)libnw.elf: $(BINFOLDER)nxhdr.o $(LIBNW_OBJS) $(BINFOLDER)libc.ndl.a
 	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $@ $(BINFOLDER)nxhdr.o $(LIBNW_OBJS) $(BINFOLDER)libc.ndl.a -lgcc
 $(BINFOLDER)libnw.ndl: $(BINFOLDER)libnw.elf $(MKNX_TOOL)
@@ -2237,7 +2237,7 @@ ARCH_PAGING_TESTS_EXCL=tests/test_addressspace64.cpp tests/test_paging64.cpp
 endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/libc-glue
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue
 # The host is LP64 (arm64/x86_64) but does not define __x86_64__, so force the v4 64-bit
 # .nx format (nxaddr_t = uint64_t) across the whole host test build. This exercises the
 # x86_64 loader path (R_X86_64_64 fixups, 8-byte IAT slots) and keeps every TU's view of
@@ -2256,6 +2256,7 @@ TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 de
 # NanWM (window server) pure cores — userland C, host-tested as C++ (g++ treats .c as C++).
 # vtfont.c supplies the shared nx_font8x16 the gfx rasterizer draws with.
 TEST_MODULES+= user/libnw/nwproto.c user/libnw/nw_gfx.c user/term/vtfont.c
+TEST_MODULES+= user/libnw/nwfont.c user/libnw/stb_impl.c   # TTF font engine (3rd-party stb; not gated)
 TEST_MODULES+= user/libnw/nw_settings.c   # pure desktop-preferences model (parse/serialize/derive)
 TEST_MODULES+= user/nwm/nwm_core.c user/nwm/nw_compose.c
 TEST_MODULES+= user/nwm/nw_backdrop.c   # pure backdrop-blur math (rect helpers, downsample, upsample)
