@@ -812,7 +812,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-vt smoke-smp verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-smp verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -833,6 +833,12 @@ smoke-usb: image64
 # Logs in at the tty7 greeter and requires the nwm desktop to render (a clean read path).
 smoke-usb-smp: image64
 	bash scripts/smoke-usb-smp.sh
+
+# Regression gate for the xHCI-DMA-under-user-CR3 fault: rebuilds the kernel with the endpoint ring
+# forced into the user-window VA range and asserts root-on-USB boots with no kernel exception (the
+# KernelCr3 guard). The script rebuilds a clean image on exit.
+smoke-usb-dmawindow:
+	bash scripts/smoke-usb-dmawindow.sh
 
 # `smoke-vt` is the virtual-terminal gate: boot, log in on tty1, and drive Ctrl+Alt+Fn via the QEMU
 # monitor — switching to tty2 must change the screen, switching back must restore it (byte-exact).
@@ -879,7 +885,7 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-vt smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
 	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
@@ -1018,7 +1024,7 @@ UOPTFLAGS=-O2 -fno-strict-aliasing -fno-delete-null-pointer-checks
 # layer before the kernel can take -O2; it is independent of the GUI work, where no kernel code is hot.
 KOPTFLAGS=
 
-CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KARCHFLAGS) $(KWFLAGS) $(KOPTFLAGS)
+CXXFLAGS=-ffreestanding -nostdlib -nostdinc++ $(KINCLUDES) -Wall --no-exceptions --no-rtti -fno-sized-deallocation -fno-leading-underscore $(KARCHFLAGS) $(KWFLAGS) $(KOPTFLAGS) $(KEXTRA)
 LDFLAGS=-T$(ARCH_LINKER) -nostdlib -nostartfiles -lgcc
 ASFLAGS=
 
