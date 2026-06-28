@@ -131,7 +131,7 @@ TEST_CASE("krealloc preserves") {
 - [ ] **Step 4: run, expect PASS.**
 - [ ] **Step 5: commit** — `linuxkpi: idr/ida + host tests`.
 
-### Task P0.4: Host-test scatterlist + sort/bsearch
+### Task P0.4: Host-test scatterlist + sort/bsearch  ✅ DONE
 
 **Files:** Create `linuxkpi/include/linux/{scatterlist,sort}.h`, `linuxkpi/kpi_sg.c`, `linuxkpi/kpi_sort.c`; Test `tests/test_linuxkpi_sg.cpp`, `tests/test_linuxkpi_sort.cpp`
 **Interfaces:** Produces `sg_init_table/sg_set_buf/sg_next/for_each_sg/sg_dma_address/sg_dma_len`; `void sort(void*,size_t,size_t,int(*)(const void*,const void*),void(*)(void*,void*,int))`, `bsearch`.
@@ -139,7 +139,7 @@ TEST_CASE("krealloc preserves") {
 - [ ] **Step 1–5 (sg):** test build a 3-entry table, iterate, last has `sg_is_last`; implement; pass; commit.
 - [ ] **Step 1–5 (sort):** test sort an int array desc/asc + bsearch hit/miss; implement (simple qsort/bsearch); pass; commit `linuxkpi: scatterlist + sort/bsearch + host tests`.
 
-### Task P0.5: Host-test jiffies/time math
+### Task P0.5: Host-test jiffies/time math  ✅ DONE
 
 **Files:** Create `linuxkpi/include/linux/{jiffies,delay,timer}.h`, `linuxkpi/kpi_time.c`; Test `tests/test_linuxkpi_time.cpp`
 **Interfaces:** Produces `jiffies` (global), `msecs_to_jiffies/jiffies_to_msecs`, `time_after/time_before`, `mod_timer/del_timer/timer_setup` (logic-testable parts). HZ=1000. `knx_uptime_us` drives `jiffies` at runtime; tests check the pure conversions + `time_after` wraparound.
