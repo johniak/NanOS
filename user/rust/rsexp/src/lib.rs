@@ -1175,6 +1175,14 @@ extern "C" fn cb_addr_go(_n: *mut NwNode, user: *mut c_void) {
 extern "C" fn cb_focus_addr(_n: *mut NwNode, user: *mut c_void) {
     unsafe { (&mut *(user as *mut App)).focus_addr() }
 }
+/// Cmd+C / Cmd+X on the grid (clipboard COPY event): copy or cut the selected file.
+extern "C" fn cb_copy_evt(_n: *mut NwNode, user: *mut c_void) {
+    unsafe {
+        let app = &mut *(user as *mut App);
+        let cut = Node(app.view).iconview_copy_cut() != 0;
+        app.copy_selected(cut);
+    }
+}
 
 /// Case-insensitive substring test (ASCII).
 fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
@@ -1267,6 +1275,7 @@ pub extern "C" fn main() -> i32 {
     let app_ptr = alloc::boxed::Box::into_raw(app) as *mut c_void;
     let view = ui.iconview_raw(cb_activate, cb_changed, app_ptr);
     view.iconview_set_dnd(cb_drag, cb_drop);   // drag files out / drop files in (between windows)
+    view.iconview_set_clipboard(cb_copy_evt, cb_paste);   // Cmd+C/X copy/cut, Cmd+V paste (files)
     unsafe { (&mut *(app_ptr as *mut App)).view = view.0; }
 
     // right-click context menu on the icon grid: open + file operations + sort (persisted per dir)
@@ -1282,15 +1291,15 @@ pub extern "C" fn main() -> i32 {
     ui.context_add("Sort by Type", cb_sort_type, app_ptr);
     ui.context_add("Refresh", cb_refresh, app_ptr);
 
-    // keyboard accelerators: F2 rename, Del delete, F5 refresh, Ctrl+N/C/X/V file ops
+    // keyboard accelerators — macOS-style Cmd (Super/⌘) everywhere. F2 rename, Del delete,
+    // F5 refresh; Cmd+N new folder, Cmd+L focus the address bar. Cmd+C/X/V are NOT accelerators:
+    // the compositor delivers them as clipboard COPY/CUT/PASTE events (wired below), so the same
+    // Cmd shortcuts do file copy/cut/paste on the grid and text copy/paste in a focused field.
     ui.accel(false, 0, SC_F2, cb_rename, app_ptr);
     ui.accel(false, 0, SC_DEL, cb_delete, app_ptr);
     ui.accel(false, 0, SC_F5, cb_refresh, app_ptr);
     ui.accel(true, b'n', 0, cb_new_folder, app_ptr);
-    ui.accel(true, b'c', 0, cb_copy, app_ptr);
-    ui.accel(true, b'x', 0, cb_cut, app_ptr);
-    ui.accel(true, b'v', 0, cb_paste, app_ptr);
-    ui.accel(true, b'l', 0, cb_focus_addr, app_ptr);   // Ctrl+L: focus the address bar
+    ui.accel(true, b'l', 0, cb_focus_addr, app_ptr);
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");

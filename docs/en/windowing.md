@@ -193,9 +193,20 @@ nwui_run(u);                                            /* event loop until clos
   focused widget.
 - **App menu**: `nwui_menu` / `nwui_menu_item` / `nwui_menu_separator` populate the global
   macOS-style menu bar (the first menu's title is the app name); a pick fires the item callback.
-- **Keyboard accelerators**: `nwui_accel(u, ctrl, key, fkey, cb, user)` — Ctrl+&lt;letter&gt; or a
-  function key (`NWUI_KEY_F3`/`F5`). The core tracks Ctrl itself from raw scancodes (no compositor
-  change) and accelerators share the menu callbacks.
+- **Keyboard accelerators**: `nwui_accel(u, cmd, key, fkey, cb, user)` — **Cmd+&lt;letter&gt;** (the
+  macOS-style ⌘/Super key; `cmd=1`) or a function key (`NWUI_KEY_F3`/`F5`). The compositor forwards
+  Cmd+&lt;key&gt; to the focused window with the **Cmd mod bit** (`mods` bit1) set; the toolkit matches
+  on it and accelerators share the menu callbacks. See §5.1 — **NanOS uses Cmd for ALL shortcuts**.
+- **Iconview clipboard**: `nwui_iconview_set_clipboard(n, on_copy, on_paste)` lets a grid (e.g. a
+  file manager) handle **Cmd+C / Cmd+X / Cmd+V** as *file* copy/cut/paste — the same shortcuts that
+  copy/paste *text* in a focused field — because the compositor delivers them as COPY/PASTE events
+  to whatever widget is focused (`nwui_iconview_copy_cut` tells copy vs cut).
+- **Drag and drop** (between windows): the compositor arbitrates it (only it knows geometry/z-order/
+  cursor). `nwui_iconview_set_dnd(n, on_drag, on_drop)` — a press that moves past a threshold fires
+  `on_drag` (call `nwui_begin_drag(u, payload)`); a drop fires `on_drop` (read `nwui_iconview_drop_cell`
+  + `_drop_text` + `_drop_mods`). The grid highlights the hovered drop-target cell.
+- **Textfield extras**: `nwui_textfield_set` (set the value), `nwui_textfield_set_submit` (Enter
+  callback, vs per-keystroke `on_change`), `nwui_textfield_select_all` (e.g. on Cmd+L address-bar).
 - **Modal dialogs**: `nwui_open_modal`/`nwui_close_modal`/`nwui_modal_open` show a centered,
   input-capturing sub-tree over a dimmed backdrop. Built on it: `nwui_message` (alert/About),
   `nwui_prompt` (label + field + OK/Cancel), and `nwui_file_dialog` (Open/Save — a directory list +
@@ -219,8 +230,26 @@ The compositor decodes keyboard scancodes to ASCII (US layout, modifiers) and co
 deltas/buttons, then **hit-tests** the topmost window at the cursor and classifies the region
 (content, titlebar, close/min box). Titlebar press starts a window **drag**; a click **raises +
 focuses** the window (Super+Tab cycles focus). Events for the focused/hit window are queued on that
-client's output ring and delivered as `NW_EVT_*`. Compositor-level shortcuts: **Super+C/X/V**
-clipboard (round-trips through the focused client), **Super+R** Run, **Super+Q** close.
+client's output ring and delivered as `NW_EVT_*`.
+
+### 5.1 Keyboard shortcuts are macOS-style **Cmd (⌘)** — everywhere
+
+NanOS uses the **Cmd key (the ⌘/Super/"GUI" key, `meta` in QEMU) for ALL keyboard shortcuts**, like
+macOS — never Ctrl. There are two layers, both keyed on Cmd:
+
+- **System (compositor-owned) shortcuts** — handled by `nwm`, work in any app:
+  - **Cmd+C / Cmd+X / Cmd+V** — copy / cut / paste (delivered to the focused window as `COPY`/`PASTE`
+    events; a text field copies text, a file grid copies files — same keys, context-sensitive).
+  - **Cmd+Q** close window · **Cmd+Tab** cycle windows · **Cmd+M** maximize/restore · **Cmd+R** Run.
+- **App (per-window) shortcuts** — every *other* Cmd+&lt;key&gt; is forwarded to the focused window with
+  the **Cmd mod bit** (`NW_EVT_KEY` `mods` bit1); the app matches it via `nwui_accel(u, cmd=1, …)`.
+  Examples: Files — **Cmd+N** New Folder, **Cmd+L** focus the address bar; Notepad — **Cmd+S** Save,
+  **Cmd+O** Open, **Cmd+F** Find, **Cmd+A** Select All, **Cmd+Z** Undo. Function keys (F2 rename,
+  F5 refresh, F3 find-next) are modifier-less.
+
+Rule of thumb when writing an app: register shortcuts with `nwui_accel(u, /*cmd=*/1, key, …)`; do NOT
+register Cmd+C/X/V (the compositor owns them — handle the COPY/PASTE events instead). The compositor
+decodes scancodes to ASCII (US layout) and tracks Shift (mods bit0) and Cmd (mods bit1).
 
 ---
 

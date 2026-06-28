@@ -72,6 +72,8 @@ struct nwui_node {
 	 * currently highlighted as a hovering drop target, and the landed drop's cell + payload. */
 	nwui_cb    on_drag, on_drop;
 	nwui_cb    on_submit;            /* textfield: fired on Enter (distinct from on_change)  */
+	nwui_cb    on_copy, on_paste;    /* iconview: Cmd+C/X (copy/cut) and Cmd+V (paste) events */
+	int        copy_cut;             /* iconview: 1 if the last on_copy was a cut (Cmd+X)    */
 	int        drop_hover;           /* cell under a hovering drag, or -1                  */
 	int        drop_cell;            /* cell a drop landed on, or -1 (= the empty area)     */
 	int        drop_mods;            /* modifier bits at the drop (bit0 shift, bit1 ctrl)   */

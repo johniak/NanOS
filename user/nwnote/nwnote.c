@@ -197,13 +197,13 @@ int main(int argc, char **argv)
 	int mh = nwui_menu(u, "Help");
 	nwui_menu_item(u, mh, "About Notepad", m_about, 0);
 
-	/* accelerators reuse the menu callbacks (Ctrl tracked client-side by the toolkit) */
+	/* Accelerators reuse the menu callbacks. NanOS uses macOS-style Cmd (⌘) shortcuts: the first
+	 * arg = "Cmd required". Cmd+C/X/V are NOT registered here — the compositor owns them and sends
+	 * the editor clipboard COPY/CUT/PASTE events directly, so they work without an app accelerator. */
 	nwui_accel(u, 1, 'n', 0, m_new, 0);     nwui_accel(u, 1, 'o', 0, m_open, 0);
 	nwui_accel(u, 1, 's', 0, m_save, 0);    nwui_accel(u, 1, 'f', 0, m_find, 0);
 	nwui_accel(u, 1, 'h', 0, m_replace, 0); nwui_accel(u, 1, 'g', 0, m_goto, 0);
 	nwui_accel(u, 1, 'a', 0, m_selall, 0);  nwui_accel(u, 1, 'z', 0, m_undo, 0);
-	nwui_accel(u, 1, 'x', 0, m_cut, 0);     nwui_accel(u, 1, 'c', 0, m_copy, 0);
-	nwui_accel(u, 1, 'v', 0, m_paste, 0);
 	nwui_accel(u, 0, 0, NWUI_KEY_F3, m_findnext, 0);
 	nwui_accel(u, 0, 0, NWUI_KEY_F5, m_timedate, 0);
 

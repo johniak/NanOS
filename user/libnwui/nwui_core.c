@@ -160,6 +160,15 @@ void nwui_iconview_set_dnd(nwui_node *n, nwui_cb on_drag, nwui_cb on_drop)
 	n->on_drag = on_drag;
 	n->on_drop = on_drop;
 }
+/* Make an iconview respond to the system clipboard shortcuts: on_copy fires on Cmd+C / Cmd+X
+ * (read nwui_iconview_copy_cut to tell which), on_paste fires on Cmd+V. */
+void nwui_iconview_set_clipboard(nwui_node *n, nwui_cb on_copy, nwui_cb on_paste)
+{
+	if (!n || n->kind != NWUI_ICONVIEW) return;
+	n->on_copy = on_copy;
+	n->on_paste = on_paste;
+}
+int         nwui_iconview_copy_cut(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->copy_cut : 0; }
 int         nwui_iconview_drop_cell(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->drop_cell : -1; }
 int         nwui_iconview_drop_mods(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->drop_mods : 0; }
 const char *nwui_iconview_drop_text(nwui_node *n) { return (n && n->kind == NWUI_ICONVIEW) ? n->drop_text : 0; }
@@ -998,11 +1007,15 @@ static void cb_toggle(nwui_node *n)
 	if (n->on_click) n->on_click(n, n->user);
 }
 
-void nwui_accel(nwui *u, int ctrl, char key, int fkey, nwui_cb cb, void *user)
+/* Register an accelerator. `cmd` = require the Cmd (Super) modifier — NanWM/NanOS uses macOS-style
+ * Cmd+<key> shortcuts everywhere (the compositor forwards Cmd+<key> with mods bit1 set). `fkey` !=0
+ * matches a function/special key regardless of modifiers. (The struct field is historically named
+ * `ctrl`; it now means "Cmd required".) */
+void nwui_accel(nwui *u, int cmd, char key, int fkey, nwui_cb cb, void *user)
 {
 	if (u->naccel >= 24) return;
 	int i = u->naccel++;
-	u->accel[i].ctrl = ctrl ? 1 : 0;
+	u->accel[i].ctrl = cmd ? 1 : 0;
 	u->accel[i].key  = (key >= 'A' && key <= 'Z') ? key + 32 : key;
 	u->accel[i].fkey = fkey;
 	u->accel[i].cb = cb;
@@ -1012,10 +1025,11 @@ static int accel_fire(nwui *u, const struct nw_event *ev)
 {
 	char ch = ev->ch;
 	if (ch >= 'A' && ch <= 'Z') ch += 32;
+	int cmd = (ev->mods & 2) ? 1 : 0;          /* mods bit1 = Cmd (Super) held */
 	for (int i = 0; i < u->naccel; i++) {
 		int hit = u->accel[i].fkey
 		              ? (ev->code == u->accel[i].fkey)
-		              : (u->accel[i].ctrl == u->ctrl_down && u->accel[i].key && u->accel[i].key == ch);
+		              : (u->accel[i].ctrl == cmd && u->accel[i].key && u->accel[i].key == ch);
 		if (hit && u->accel[i].cb) { u->accel[i].cb(0, u->accel[i].user); return 1; }
 	}
 	return 0;
@@ -1190,11 +1204,11 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 				break;
 			}
 			if (ev->code == NWUI_SC_ESC) { nwui_close_modal(u); break; }            /* Esc = Cancel */
-			if (u->ctrl_down) break;             /* don't fire app accelerators under a modal */
+			if (ev->mods & 2) break;             /* Cmd held: don't insert into the modal's field */
 			/* otherwise fall through to in-field editing (the modal's textfield) below */
 		} else {
-			if (accel_fire(u, ev)) break;        /* a shortcut consumed the key */
-			if (u->ctrl_down) break;             /* suppress Ctrl+<key> from inserting/navigating */
+			if (accel_fire(u, ev)) break;        /* a Cmd+<key> shortcut consumed the key */
+			if (ev->mods & 2) break;             /* suppress Cmd+<key> from inserting/navigating */
 		}
 		if (u->menu_open) { if (ev->code == NWUI_SC_ESC) menu_close(u); break; }
 		if (u->focus && u->focus->kind == NWUI_LIST) {
@@ -1286,7 +1300,10 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 	}
 
 	case NW_EV_COPY:
-		if (u->focus && u->focus->kind == NWUI_TEXTFIELD) {
+		if (u->focus && u->focus->kind == NWUI_ICONVIEW && u->focus->on_copy) {
+			u->focus->copy_cut = ev->cut;            /* Cmd+C (copy) vs Cmd+X (cut) on an iconview */
+			u->focus->on_copy(u->focus, u->focus->user);
+		} else if (u->focus && u->focus->kind == NWUI_TEXTFIELD) {
 			tf_copy(u, u->focus);                    /* nwui.c forwards clip_buf to the server */
 			if (ev->cut) { tf_del_sel(u->focus); tf_changed(u->focus); }
 		} else if (u->focus && u->focus->kind == NWUI_TEXTAREA) {
@@ -1300,7 +1317,9 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		break;
 
 	case NW_EV_PASTE:
-		if (u->focus && u->focus->kind == NWUI_TEXTFIELD && ev->text) {
+		if (u->focus && u->focus->kind == NWUI_ICONVIEW && u->focus->on_paste) {
+			u->focus->on_paste(u->focus, u->focus->user);   /* Cmd+V on an iconview (e.g. paste file) */
+		} else if (u->focus && u->focus->kind == NWUI_TEXTFIELD && ev->text) {
 			int changed = 0;
 			for (int i = 0; i < ev->text_len; i++)
 				changed |= tf_insert(u->focus, ev->text[i]);

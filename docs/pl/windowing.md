@@ -204,8 +204,26 @@ Kompozytor dekoduje scancode klawiatury do ASCII (układ US, modyfikatory) i sca
 myszy, potem robi **hit-test** najwyższego okna pod kursorem i klasyfikuje region
 (content, titlebar, boks close/min). Wciśnięcie titlebara zaczyna **drag** okna; kliknięcie **podnosi +
 fokusuje** okno (Super+Tab cykluje fokus). Zdarzenia dla fokusowanego/trafionego okna są kolejkowane na ringu
-wyjściowym tego klienta i dostarczane jako `NW_EVT_*`. Skróty na poziomie kompozytora: **Super+C/X/V**
-schowek (round-trip przez fokusowanego klienta), **Super+R** Run, **Super+Q** zamknij.
+wyjściowym tego klienta i dostarczane jako `NW_EVT_*`.
+
+### 5.1 Skróty klawiszowe są w stylu macOS — **Cmd (⌘)** — wszędzie
+
+NanOS używa **klawisza Cmd (⌘/Super/"GUI", `meta` w QEMU) do WSZYSTKICH skrótów**, jak macOS — nigdy
+Ctrl. Dwie warstwy, obie na Cmd:
+
+- **Skróty systemowe (kompozytora)** — obsługiwane przez `nwm`, działają w każdej apce:
+  - **Cmd+C / Cmd+X / Cmd+V** — kopiuj / wytnij / wklej (dostarczane do fokusowanego okna jako zdarzenia
+    `COPY`/`PASTE`; pole tekstowe kopiuje tekst, siatka plików kopiuje pliki — te same klawisze,
+    zależnie od kontekstu).
+  - **Cmd+Q** zamknij · **Cmd+Tab** cykluj okna · **Cmd+M** maksymalizuj · **Cmd+R** Uruchom.
+- **Skróty aplikacji (per-okno)** — każde *inne* Cmd+&lt;klawisz&gt; jest przekazywane do fokusowanego okna
+  z **bitem modyfikatora Cmd** (`NW_EVT_KEY` `mods` bit1); apka dopasowuje przez `nwui_accel(u, cmd=1, …)`.
+  Np. Files — **Cmd+N** Nowy folder, **Cmd+L** pasek adresu; Notatnik — **Cmd+S** Zapisz, **Cmd+O** Otwórz,
+  **Cmd+F** Znajdź. Klawisze funkcyjne (F2 zmień nazwę, F5 odśwież) są bez modyfikatora.
+
+Zasada przy pisaniu apki: rejestruj skróty przez `nwui_accel(u, /*cmd=*/1, key, …)`; NIE rejestruj
+Cmd+C/X/V (należą do kompozytora — obsłuż zdarzenia COPY/PASTE). Kompozytor śledzi Shift (mods bit0)
+i Cmd (mods bit1).
 
 ---
 

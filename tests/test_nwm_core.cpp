@@ -651,3 +651,23 @@ TEST_CASE("SPAWN request without an argument carries no argv[1]") {
 	CHECK(strcmp(s.run_cmd, "rsexp") == 0);
 	CHECK(s.spawn_has_arg == 0);
 }
+
+/* ---- macOS-style Cmd: unclaimed Cmd+<key> is forwarded to the app with the Cmd mod bit ---- */
+TEST_CASE("Cmd+<key> the compositor does not claim is forwarded with the Cmd mod (bit1)") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	create_win(s, 0, 200, 100, "w");
+	drain(s, 0);
+	nw_key(&s, NW_SC_LSUPER, 1);                    // Cmd down
+	nw_key(&s, 0x31, 1);                            // 'n' (scancode) — not a system Cmd shortcut
+	auto ev = drain(s, 0);
+	const Ev* k = last(ev, NW_EVT_KEY);
+	REQUIRE(k);
+	CHECK(k->m.a == 'n');
+	CHECK((k->m.d & 2) != 0);                       // mods bit1 = Cmd held
+	// Cmd+C is still CLAIMED by the compositor (clipboard), not forwarded as a key.
+	nw_key(&s, NW_SC_C, 1);
+	auto ev2 = drain(s, 0);
+	CHECK(count(ev2, NW_EVT_KEY) == 0);
+	CHECK(count(ev2, NW_EVT_COPY) == 1);
+}

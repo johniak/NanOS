@@ -147,3 +147,30 @@ TEST_CASE("iconview drop: NW_EV_DROP fires on_drop with the target cell + payloa
     CHECK(strcmp(g_drop_text, "/disks/main/x.txt") == 0);
     delete u;
 }
+
+/* ---- iconview clipboard (Cmd+C/X/V delivered as COPY/PASTE events) ---- */
+static int g_cv_copy, g_cv_paste, g_cv_cut;
+static void on_copy_cb(nwui_node *n, void *) { g_cv_copy++; g_cv_cut = nwui_iconview_copy_cut(n); }
+static void on_paste_cb(nwui_node *, void *) { g_cv_paste++; }
+
+TEST_CASE("iconview clipboard: COPY/CUT/PASTE events fire on_copy/on_paste") {
+    nwui *u = new nwui; nwui_init(u);
+    static nwui_icon_item items[3];
+    nwui_node *iv = make_view(u, items, 3);
+    nwui_iconview_set_clipboard(iv, on_copy_cb, on_paste_cb);
+    u->win_w = 400; u->win_h = 300; nwui_layout(u);
+    u->focus = iv; iv->focused = 1;
+    g_cv_copy = g_cv_paste = 0; g_cv_cut = -1;
+    nw_event c; memset(&c, 0, sizeof c); c.type = NW_EV_COPY; c.cut = 0;   // Cmd+C
+    nwui_dispatch(u, &c);
+    CHECK(g_cv_copy == 1);
+    CHECK(g_cv_cut == 0);
+    nw_event x; memset(&x, 0, sizeof x); x.type = NW_EV_COPY; x.cut = 1;   // Cmd+X
+    nwui_dispatch(u, &x);
+    CHECK(g_cv_copy == 2);
+    CHECK(g_cv_cut == 1);
+    nw_event v; memset(&v, 0, sizeof v); v.type = NW_EV_PASTE;            // Cmd+V
+    nwui_dispatch(u, &v);
+    CHECK(g_cv_paste == 1);
+    delete u;
+}

@@ -745,14 +745,16 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 				         (const unsigned char *) s->clip, (uint32_t) s->clip_len);
 			return;
 		default:
-			return;                         /* other Super+key: consumed, no-op */
+			break;            /* other Cmd+<key>: forwarded to the app (with the Cmd mod bit) so
+			                   * apps get their own macOS-style Cmd+<key> menu shortcuts */
 		}
 	}
 
 	if (s->focus >= 0) {
 		char ascii = nw_scancode_ascii(code, s->shift_down);
-		emit_win(s, s->focus, NW_EVT_KEY, (unsigned char) ascii, down, code,
-		         s->shift_down ? 1 : 0, 0, 0);     /* d = mods (bit0 = shift) */
+		/* mods: bit0 = Shift, bit1 = Cmd (Super) held — apps match Cmd+<key> accelerators on it */
+		int mods = (s->shift_down ? 1 : 0) | (s->super_down ? 2 : 0);
+		emit_win(s, s->focus, NW_EVT_KEY, (unsigned char) ascii, down, code, mods, 0, 0);
 	}
 }
 

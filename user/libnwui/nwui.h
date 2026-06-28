@@ -81,9 +81,12 @@ void       nwui_post_copy(nwui *u, int cut);
 void       nwui_post_paste(nwui *u);
 
 /* ---- keyboard accelerators (menu shortcuts) ----
- * Register Ctrl+<letter> (ctrl=1, key='s') or a function key (key=0, fkey=NWUI_SC_F3). On a
- * matching key the callback fires and the keystroke is consumed; share the menu callbacks. */
-void       nwui_accel(nwui *u, int ctrl, char key, int fkey, nwui_cb cb, void *user);
+ * NanOS uses macOS-style Cmd (the Super/⌘ key) for ALL shortcuts. Register Cmd+<letter>
+ * (cmd=1, key='s') or a function key (key=0, fkey=NWUI_KEY_F3). On a match the callback fires
+ * and the keystroke is consumed; share the menu callbacks. The compositor owns the system-wide
+ * Cmd shortcuts (Cmd+C/X/V clipboard, Cmd+Q quit, Cmd+Tab, Cmd+M, Cmd+R run) and forwards every
+ * other Cmd+<key> to the focused window for the app to match here. */
+void       nwui_accel(nwui *u, int cmd, char key, int fkey, nwui_cb cb, void *user);
 
 /* ---- modal overlay ----
  * Show `subtree` centered over the window; it captures ALL input until dismissed. Focus moves
@@ -138,6 +141,11 @@ int        nwui_iconview_selected(nwui_node *n);
  * drop lands on the view — read nwui_iconview_drop_cell (the cell under the drop, or -1 for the
  * empty area) and nwui_iconview_drop_text (the payload, valid only during the callback). */
 void        nwui_iconview_set_dnd(nwui_node *n, nwui_cb on_drag, nwui_cb on_drop);
+/* Make an iconview handle the clipboard shortcuts: on_copy (Cmd+C / Cmd+X — read
+ * nwui_iconview_copy_cut for which) and on_paste (Cmd+V). Lets a file manager do file
+ * copy/cut/paste with the same macOS-style Cmd shortcuts as text. */
+void        nwui_iconview_set_clipboard(nwui_node *n, nwui_cb on_copy, nwui_cb on_paste);
+int         nwui_iconview_copy_cut(nwui_node *n);   /* during on_copy: 1 = cut (Cmd+X), 0 = copy */
 int         nwui_iconview_drop_cell(nwui_node *n);
 int         nwui_iconview_drop_mods(nwui_node *n);   /* modifier bits at the drop (bit1 = ctrl) */
 const char *nwui_iconview_drop_text(nwui_node *n);

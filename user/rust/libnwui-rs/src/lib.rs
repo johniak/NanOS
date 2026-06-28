@@ -68,6 +68,8 @@ extern "C" {
     fn nwui_iconview_set(n: *mut NwNode, items: *const IconItem, count: i32);
     fn nwui_iconview_selected(n: *mut NwNode) -> i32;
     fn nwui_iconview_set_dnd(n: *mut NwNode, on_drag: RawCb, on_drop: RawCb);
+    fn nwui_iconview_set_clipboard(n: *mut NwNode, on_copy: RawCb, on_paste: RawCb);
+    fn nwui_iconview_copy_cut(n: *mut NwNode) -> i32;
     fn nwui_iconview_drop_cell(n: *mut NwNode) -> i32;
     fn nwui_iconview_drop_mods(n: *mut NwNode) -> i32;
     fn nwui_iconview_drop_text(n: *mut NwNode) -> *const u8;
@@ -164,6 +166,12 @@ impl Node {
     pub fn iconview_set_dnd(self, on_drag: RawCb, on_drop: RawCb) {
         unsafe { nwui_iconview_set_dnd(self.0, on_drag, on_drop) }
     }
+    /// Make this iconview handle Cmd+C/X (on_copy) + Cmd+V (on_paste) — file clipboard ops.
+    pub fn iconview_set_clipboard(self, on_copy: RawCb, on_paste: RawCb) {
+        unsafe { nwui_iconview_set_clipboard(self.0, on_copy, on_paste) }
+    }
+    /// During on_copy: 1 if it was a cut (Cmd+X), 0 if a copy (Cmd+C).
+    pub fn iconview_copy_cut(self) -> i32 { unsafe { nwui_iconview_copy_cut(self.0) } }
     /// During on_drop: the cell index the drop landed on, or -1 for the empty area.
     pub fn iconview_drop_cell(self) -> i32 { unsafe { nwui_iconview_drop_cell(self.0) } }
     /// During on_drop: modifier bits at the drop (bit1 = Ctrl held -> copy instead of move).
