@@ -2227,6 +2227,20 @@ $(BINFOLDER)%.o: kext/i219/%.cpp
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(KEXT_CFLAGS) -Ikext/e1000 -MMD -MP -c $< -o $@   # -Ikext/e1000: i219_phy.cpp needs e1000_core.h
 
+# LinuxKPI shim (C) + the virtio_gpu module (x86_64 only). Same ring-0 codegen as a kext
+# ($(KEXT_CFLAGS)) PLUS the Linux compat include tree (-Ilinuxkpi/include so <linux/...>
+# resolves to the shim), __KERNEL__, and force-included autoconf.h + compat.h. Compiled as
+# C (gnu11) by $(CXX)=$(CROSS)gcc (extension-driven).
+LINUXKPI_CFLAGS=$(KEXT_CFLAGS) -std=gnu11 -D__KERNEL__ -Ilinuxkpi -Ilinuxkpi/include \
+  -include linuxkpi/autoconf.h -include linuxkpi/compat.h \
+  -Wno-unused -Wno-unused-parameter -Wno-implicit-fallthrough
+$(BINFOLDER)%.o: linuxkpi/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(LINUXKPI_CFLAGS) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: kext/virtio_gpu/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(LINUXKPI_CFLAGS) -MMD -MP -c $< -o $@
+
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
 KEXT_GLUE=$(BINFOLDER)nxhdr.o $(BINFOLDER)kimports.o $(BINFOLDER)kext_rt.o
@@ -2251,7 +2265,20 @@ $(BINFOLDER)i219.nkext: $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $
 	  $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $(BINFOLDER)e1000_core.o -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
+# virtio_gpu module: LinuxKPI shim primitives + the module entry. (P0: hello_kpi.o proves
+# the build/load path; P1+ swaps in the real virtio_gpu probe and vendored Linux core.)
+LINUXKPI_OBJS=$(BINFOLDER)kpi_slab.o $(BINFOLDER)kpi_print.o $(BINFOLDER)kpi_idr.o \
+  $(BINFOLDER)kpi_sort.o $(BINFOLDER)kpi_time.o $(BINFOLDER)kpi_string.o
+$(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(BINFOLDER)hello_kpi.o $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(BINFOLDER)hello_kpi.o $(LINUXKPI_OBJS) -lgcc
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
+
 KEXTS=kbd mouse e1000 e1000e i219
+# The LinuxKPI virtio_gpu module is x86_64-only (vendored Linux source assumes 64-bit).
+ifeq ($(ARCH),x86_64)
+KEXTS+= virtio_gpu
+endif
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which

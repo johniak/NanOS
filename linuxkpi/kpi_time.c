@@ -9,9 +9,8 @@
 #include <linux/delay.h>
 #include "lkpi_knx.h"
 
-#ifndef NANOS_HOST_TEST
-extern void knx_yield(void) __attribute__((weak));
-#endif
+/* msleep currently busy-waits on the monotonic clock; a cooperative knx_yield export is
+ * added in P1 (threads/workqueue) and wired in here then. */
 
 unsigned long lkpi_jiffies(void) {
 	/* us -> ms (HZ=1000) */
@@ -35,12 +34,8 @@ void mdelay(unsigned long msecs) {
 void msleep(unsigned int msecs) {
 	unsigned long long start = knx_uptime_us();
 	unsigned long long end = start + (unsigned long long)msecs * 1000ull;
-	while (knx_uptime_us() < end) {
-#ifndef NANOS_HOST_TEST
-		if (knx_yield)
-			knx_yield();
-#endif
-	}
+	while (knx_uptime_us() < end)
+		;
 }
 
 unsigned long msleep_interruptible(unsigned int msecs) {
