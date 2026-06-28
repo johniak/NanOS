@@ -187,6 +187,19 @@ nwui_run(u);                                            /* event loop until clos
 - **Menu aplikacji**: `nwui_menu` / `nwui_menu_item` / `nwui_menu_separator` wypełniają globalny
   pasek menu w stylu macOS (tytuł pierwszego menu to nazwa aplikacji); wybór odpala callback pozycji.
 - **`nwui_spawn`** uruchamia inny program (np. menedżer plików otwierający aplikację).
+- **`nwui_open_file(u, path)`** — **open** w stylu macOS: otwiera plik w skojarzonej aplikacji
+  (`.nxe` się uruchamia; inne pliki otwiera apka przypisana do rozszerzenia w
+  `/disks/main/nanos/config/associations.conf`, edytowalne w Ustawienia → Default Apps). Resolver
+  jest współdzielony: `user/open/launch.h`.
+
+### 5.2 `open` z terminala (gniazdo uruchamiające)
+
+To **samo** open działa z linii poleceń. Kompozytor nasłuchuje na gnieździe AF_UNIX
+(`/tmp/.nwm-spawn`): proces nie-okienkowy łączy się i wysyła `"cmd\0arg"`, a nwm uruchamia apkę
+jako nowego klienta okna. Komenda **`open`** (`/nanos/bin/open`) rozwiązuje skojarzoną aplikację
+(ta sama logika `launch.h` co UI) i prosi nwm przez to gniazdo — więc `open photo.png` z Terminala
+w pulpicie odpala właściwą apkę GUI, dokładnie jak macOS `open`. (Terminal musi działać *wewnątrz*
+sesji nwm — proces nie-okienkowy nie rysuje, tylko prosi pulpit o uruchomienie.)
 
 ---
 

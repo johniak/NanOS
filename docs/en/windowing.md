@@ -213,6 +213,20 @@ nwui_run(u);                                            /* event loop until clos
   editable path field; pure path helpers `nwui_path_join`/`nwui_path_up`). `nwui_post_copy`/
   `nwui_post_paste` drive the focused field's clipboard from a menu item.
 - **`nwui_spawn`** launches another program (e.g. the file manager opening an app).
+- **`nwui_open_file(u, path)`** — macOS-style **open**: launch a file in its associated app (a
+  `.nxe` runs; other files open in the app mapped to their extension in
+  `/disks/main/nanos/config/associations.conf`, edited in Settings → Default Apps). The resolver
+  lives in the shared `user/open/launch.h`.
+
+### 5.2 `open` from a terminal (the launch socket)
+
+The **same** open works from the command line. The compositor listens on an AF_UNIX **launch
+socket** (`/tmp/.nwm-spawn`): a non-window process connects and sends `"cmd\0arg"`, and nwm spawns
+the app as a new window client (resolved like the Run dialog). The **`open`** command
+(`/nanos/bin/open`) resolves a file's associated app (the same `launch.h` logic the UI uses) and
+asks nwm over that socket — so `open report.txt` / `open photo.png` from a Terminal running in the
+desktop launches the right GUI app, exactly like macOS `open`. (A terminal must be *inside* the
+nwm session — a non-window process can't draw, only ask the desktop to launch.)
 
 ---
 
