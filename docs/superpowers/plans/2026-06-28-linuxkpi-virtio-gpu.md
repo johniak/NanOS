@@ -70,7 +70,7 @@
 
 Goal: a `virtio_gpu.nkext` build path that compiles C-with-Linux-headers, links via `kext64.ld`, packs with `mknx64`, and loads under `loadAllKexts`; plus the first host-tested pure shim primitives. No vendored Linux yet — a trivial in-tree `.c` proves the toolchain.
 
-### Task P0.1: Host-test the slab shim (kmalloc family)
+### Task P0.1: Host-test the slab shim (kmalloc family)  ✅ DONE
 
 **Files:**
 - Create: `linuxkpi/include/linux/slab.h`, `linuxkpi/include/linux/gfp.h`, `linuxkpi/include/linux/types.h`, `linuxkpi/kpi_slab.c`
@@ -109,7 +109,7 @@ TEST_CASE("krealloc preserves") {
 
 - [ ] **Step 5: Commit** — `git add linuxkpi/include/linux/{slab,gfp,types}.h linuxkpi/kpi_slab.c tests/test_linuxkpi_slab.cpp && git commit -m "linuxkpi: slab (kmalloc family) over knx heap + host tests"`
 
-### Task P0.2: Host-test the print shim (vsnprintf subset)
+### Task P0.2: Host-test the print shim (vsnprintf subset)  ✅ DONE
 
 **Files:** Create `linuxkpi/include/linux/printk.h`, `linuxkpi/kpi_print.c`; Test `tests/test_linuxkpi_print.cpp`
 **Interfaces:** Produces `int vscnprintf(char*,size_t,const char*,va_list)`, `int snprintf(...)`, `printk`, `pr_info/pr_err/dev_*` macros.
@@ -120,7 +120,7 @@ TEST_CASE("krealloc preserves") {
 - [ ] **Step 4: run, expect PASS.**
 - [ ] **Step 5: commit** — `linuxkpi: printk/vsnprintf subset + host tests`.
 
-### Task P0.3: Host-test idr/ida
+### Task P0.3: Host-test idr/ida  ✅ DONE
 
 **Files:** Create `linuxkpi/include/linux/idr.h`, `linuxkpi/kpi_idr.c`; Test `tests/test_linuxkpi_idr.cpp`
 **Interfaces:** Produces `int ida_alloc(struct ida*,gfp_t)`, `void ida_free(struct ida*,int)`, `int idr_alloc(struct idr*,void*,int,int,gfp_t)`, `void *idr_find(struct idr*,int)`, `void idr_remove(struct idr*,int)`.
