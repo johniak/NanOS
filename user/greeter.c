@@ -66,8 +66,18 @@ static int check_password(struct passwd* pw, const char* pass) {
 	return got && strcmp(got, hash) == 0;
 }
 
-/* Build the login environment (like login(1)/nanologin): inherit the boot env, then append/override
- * HOME/USER/LOGNAME/SHELL + a default PATH. Returns a NULL-terminated argv-style array in `out`. */
+/* True if env entry `e` is "<key>=...". */
+static int env_is(const char* e, const char* key) {
+	size_t k = strlen(key);
+	return strncmp(e, key, k) == 0 && e[k] == '=';
+}
+
+/* Build the login environment (like login(1)/nanologin): inherit the boot env, then override
+ * HOME/USER/LOGNAME/SHELL/PATH for this user. The inherited env (from init) already carries
+ * HOME/SHELL/etc. for whoever launched us (init runs as root -> HOME=/disks/main/root); getenv()
+ * returns the FIRST match, so we must DROP those inherited copies, not merely append ours after
+ * them — otherwise the desktop's getenv("HOME") would resolve to root's home and per-user files
+ * (settings, the open-with store) would never be found. Returns a NULL-terminated array in `out`. */
 static void build_env(struct passwd* pw, char** out, int cap,
 		char* shellv, char* homev, char* userv, char* logv) {
 	const char* home  = (pw->pw_dir   && pw->pw_dir[0])   ? pw->pw_dir   : "/disks/main";
@@ -77,8 +87,12 @@ static void build_env(struct passwd* pw, char** out, int cap,
 	strcpy(userv,  "USER=");    strncat(userv,  pw->pw_name, 56);
 	strcpy(logv,   "LOGNAME="); strncat(logv,   pw->pw_name, 56);
 	int n = 0;
-	for (char** e = environ; *e && n < cap - 7; e++)
+	for (char** e = environ; *e && n < cap - 7; e++) {
+		if (env_is(*e, "HOME") || env_is(*e, "USER") || env_is(*e, "LOGNAME") ||
+		    env_is(*e, "SHELL") || env_is(*e, "PATH"))
+			continue;                  /* drop inherited copies; we set our own below */
 		out[n++] = *e;
+	}
 	out[n++] = shellv;
 	out[n++] = homev;
 	out[n++] = userv;
