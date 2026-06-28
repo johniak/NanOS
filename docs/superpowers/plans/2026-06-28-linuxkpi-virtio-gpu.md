@@ -163,7 +163,7 @@ TEST_CASE("krealloc preserves") {
 
 ---
 
-## Phase P1 — virtio core: probe + virtqueue + GET_DISPLAY_INFO
+## Phase P1 — virtio core: probe + virtqueue + GET_DISPLAY_INFO  ✅ COMPLETE
 
 Goal: vendor virtio core, shim PCI/MMIO/DMA/IRQ/sync, hand-build a `virtio_device` for the virtio-gpu PCI function, drive negotiation + one virtqueue + a control-queue round-trip.
 
