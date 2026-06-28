@@ -27,7 +27,19 @@ int main(int argc, char **argv)
 		fprintf(stderr, "usage: open <file|app.nxe>\n");
 		return 2;
 	}
+	/* Canonicalize a relative path against the SHELL's cwd before handing it to the desktop. The
+	 * launched app runs with the compositor's cwd (the user's home), NOT this terminal's cwd — so a
+	 * bare "open report.txt" must become an absolute path here, or the app would look for it in the
+	 * wrong directory and fail to open it (macOS `open` resolves relative to the caller's cwd too). */
+	char abuf[512];
 	const char *path = argv[1];
+	if (path[0] != '/') {
+		char cwd[384];
+		if (getcwd(cwd, sizeof cwd)) {
+			int n = snprintf(abuf, sizeof abuf, "%s/%s", cwd, path);
+			if (n > 0 && n < (int) sizeof abuf) path = abuf;
+		}
+	}
 	int l = (int) strlen(path);
 	int is_nxe = (l > 4 && !strcmp(path + l - 4, ".nxe"));
 
