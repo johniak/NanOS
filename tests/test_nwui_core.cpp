@@ -610,6 +610,21 @@ TEST_CASE("Cmd and function-key accelerators fire and suppress typing") {
 	delete u;
 }
 
+TEST_CASE("function-key accelerators honour the Cmd modifier (Cmd+Up != plain Up)") {
+	nwui *u = new nwui; nwui_init(u);
+	char tb[64] = "";
+	nwui_node *ta = nwui_textarea(u, tb, sizeof tb, 0, 0);
+	nwui_set_root(u, ta); u->win_w = 300; u->win_h = 200; nwui_layout(u);
+	u->focus = ta; ta->focused = 1;
+	g_accel_hits = 0;
+	nwui_accel(u, 1, 0, NWUI_SC_UP, on_accel, &g_accel_hits);  // Cmd+Up (a Cmd'd function key)
+	keyc(u, NWUI_SC_UP, 0, 0);                // plain Up: must NOT fire the Cmd+Up accel
+	CHECK(g_accel_hits == 0);
+	keyc(u, NWUI_SC_UP, 0, 2);                // Cmd+Up: fires
+	CHECK(g_accel_hits == 1);
+	delete u;
+}
+
 TEST_CASE("checkbox toggles its bound value on click and Space") {
 	nwui *u = new nwui; nwui_init(u);
 	int v = 0;

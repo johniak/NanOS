@@ -1119,9 +1119,11 @@ static int accel_fire(nwui *u, const struct nw_event *ev)
 	if (ch >= 'A' && ch <= 'Z') ch += 32;
 	int cmd = (ev->mods & 2) ? 1 : 0;          /* mods bit1 = Cmd (Super) held */
 	for (int i = 0; i < u->naccel; i++) {
-		int hit = u->accel[i].fkey
+		/* Both kinds require the Cmd modifier to match what was registered, so a plain arrow
+		 * (Cmd up) never fires a Cmd+arrow accel — and a Cmd+Fn never fires a plain-Fn accel. */
+		int hit = u->accel[i].ctrl == cmd && (u->accel[i].fkey
 		              ? (ev->code == u->accel[i].fkey)
-		              : (u->accel[i].ctrl == cmd && u->accel[i].key && u->accel[i].key == ch);
+		              : (u->accel[i].key && u->accel[i].key == ch));
 		if (hit && u->accel[i].cb) { u->accel[i].cb(0, u->accel[i].user); return 1; }
 	}
 	return 0;

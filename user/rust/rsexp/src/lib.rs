@@ -96,6 +96,7 @@ const SORT_TYPE: i32 = 2;         // folders first, then by name
 const SC_F2: i32 = 0x3C;          // Rename
 const SC_F5: i32 = 0x3F;          // Refresh
 const SC_DEL: i32 = 0xD3;         // Delete (extended; bit7 set)
+const SC_UP: i32 = 0xC8;          // Up arrow (NWUI_SC_UP) — for Cmd+Up "enclosing folder"
 
 fn is_dirish(kind: u8) -> bool { matches!(kind, K_DIR | K_DRIVE | K_HOME | K_UP) }
 
@@ -417,18 +418,19 @@ impl App {
         true
     }
 
+    /// Up = climb the real filesystem ONE level toward "/". Never jumps to the synthetic My
+    /// Computer (that view is reached via Back / the sidebar) — so /disks goes to "/", not back.
     fn nav_up(&mut self) {
         if self.my_computer {
-            return;
+            return;                          // already at the synthetic top
         }
         let cwd = self.cwd[..self.cwd.len() - 1].to_vec();
-        let par = parent_of(&cwd);
-        if par == b"/disks" || par.is_empty() {
-            self.go(b"", true);
-        } else {
-            let p = par.to_vec();
-            self.go(&p, true);
+        if cwd == b"/" {
+            return;                          // already at the filesystem root — go no higher
         }
+        let par = parent_of(&cwd);
+        let p = if par.is_empty() { b"/".to_vec() } else { par.to_vec() };
+        self.go(&p, true);
     }
 
     fn activate(&mut self) {
@@ -1328,6 +1330,7 @@ pub extern "C" fn main() -> i32 {
     ui.accel(true, b'n', 0, cb_new_folder, app_ptr);
     ui.accel(true, b'l', 0, cb_focus_addr, app_ptr);
     ui.accel(true, b'a', 0, cb_select_all, app_ptr);   // Cmd+A: select all
+    ui.accel(true, 0, SC_UP, cb_up, app_ptr);          // Cmd+Up: enclosing folder (macOS ⌘↑)
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");
