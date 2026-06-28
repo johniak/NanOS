@@ -2234,12 +2234,20 @@ $(BINFOLDER)%.o: kext/i219/%.cpp
 LINUXKPI_CFLAGS=$(KEXT_CFLAGS) -std=gnu11 -D__KERNEL__ -Ilinuxkpi -Ilinuxkpi/include \
   -include linuxkpi/autoconf.h -include linuxkpi/compat.h \
   -Wno-unused -Wno-unused-parameter -Wno-implicit-fallthrough
+# Vendored-Linux include tree (virtio/DRM subsystem headers) + the module dir. The shim's
+# -Ilinuxkpi/include comes FIRST so <linux/foo.h> kernel-API headers resolve to the shim;
+# virtio/drm-specific headers fall through to the vendored tree.
+LINUXKPI_VINC=-Iexternal/linux-6.12/include -Iexternal/linux-6.12/include/uapi -Ikext/virtio_gpu
 $(BINFOLDER)%.o: linuxkpi/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(LINUXKPI_CFLAGS) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: kext/virtio_gpu/%.c
 	@mkdir -p $(BINFOLDER)
-	$(CXX) $(LINUXKPI_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
+# Vendored Linux virtio core (compiled UNMODIFIED against the shim).
+$(BINFOLDER)%.o: external/linux-6.12/drivers/virtio/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
 
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
@@ -2268,10 +2276,15 @@ $(BINFOLDER)i219.nkext: $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $
 # virtio_gpu module: LinuxKPI shim primitives + the module entry. (P0: hello_kpi.o proves
 # the build/load path; P1+ swaps in the real virtio_gpu probe and vendored Linux core.)
 LINUXKPI_OBJS=$(BINFOLDER)kpi_slab.o $(BINFOLDER)kpi_print.o $(BINFOLDER)kpi_idr.o \
-  $(BINFOLDER)kpi_sort.o $(BINFOLDER)kpi_time.o $(BINFOLDER)kpi_string.o
-$(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(BINFOLDER)hello_kpi.o $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
+  $(BINFOLDER)kpi_sort.o $(BINFOLDER)kpi_time.o $(BINFOLDER)kpi_string.o \
+  $(BINFOLDER)kpi_mm.o $(BINFOLDER)kpi_dma.o $(BINFOLDER)kpi_pci.o
+# Vendored Linux virtio core objects (built from external/linux-6.12 via the rule above).
+VIRTIO_CORE_OBJS=$(BINFOLDER)virtio_ring.o $(BINFOLDER)virtio_pci_modern_dev.o
+# The module: hand-built transport + entry, the lifted virtio core, and the shim.
+VIRTIO_GPU_OBJS=$(BINFOLDER)virtio_gpu_kext.o $(BINFOLDER)virtio_transport.o
+$(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
-	  $(KEXT_GLUE) $(BINFOLDER)hello_kpi.o $(LINUXKPI_OBJS) -lgcc
+	  $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
 KEXTS=kbd mouse e1000 e1000e i219

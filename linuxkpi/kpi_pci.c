@@ -62,14 +62,16 @@ int pci_find_capability(struct pci_dev *d, int cap) {
 
 void *pci_iomap_range(struct pci_dev *d, int bar, unsigned long offset, unsigned long maxlen) {
 	unsigned long start = pci_resource_start(d, bar);
-	unsigned long len = pci_resource_len(d, bar);
-	if (!start || !len)
+	unsigned long rlen = pci_resource_len(d, bar);
+	if (!start || !rlen)
 		return 0;
-	if (maxlen && maxlen < len)
-		len = maxlen;
-	if (offset >= len)
+	if (offset > rlen)
 		return 0;
-	return knx_map_mmio((unsigned)(start + offset), (unsigned)(len - offset));
+	/* maxlen is the maximum number of bytes to map STARTING AT offset (0 == to end). */
+	unsigned long maplen = rlen - offset;
+	if (maxlen && maxlen < maplen)
+		maplen = maxlen;
+	return knx_map_mmio((unsigned)(start + offset), (unsigned)maplen);
 }
 
 void pci_iounmap(struct pci_dev *d, void *addr) {
