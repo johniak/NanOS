@@ -486,7 +486,7 @@ void nw_menubar_top_x(const struct nw_server *s, int i, int *x, int *w)
 int nw_menubar_hit(const struct nw_server *s, int px, int py)
 {
 	if (py < 0 || py >= NW_PANEL_H) return NW_MENU_NONE;
-	if (px >= 4 && px < 28) return NW_MENU_LOGO;       /* the NanoOS mark */
+	if (px >= 4 && px < 28) return NW_MENU_LOGO;       /* the Nano OS mark */
 	int n = nw_menu_top_count(focus_spec(s));
 	for (int i = 0; i < n; i++) { int x, w; nw_menubar_top_x(s, i, &x, &w); if (px >= x && px < x + w) return i; }
 	return NW_MENU_NONE;

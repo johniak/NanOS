@@ -1,5 +1,5 @@
 /*
- * nw_settings.h — NanWM desktop preferences: a tiny key/value model shared by the compositor
+ * nw_settings.h — nanowm desktop preferences: a tiny key/value model shared by the compositor
  * (nwm, which reads + applies them) and the Settings app (settings, which edits + persists them).
  *
  * Persisted as a simple YAML-ish `key: value` text file at /disks/main/nanos/config/settings.yaml.

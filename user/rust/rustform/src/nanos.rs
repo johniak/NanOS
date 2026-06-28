@@ -1,4 +1,4 @@
-//! nanos — a tiny Rust SDK for NanWM apps. A `no_std` runtime (allocator over the C malloc,
+//! nanos — a tiny Rust SDK for nanowm apps. A `no_std` runtime (allocator over the C malloc,
 //! panic = abort) plus safe, idiomatic wrappers over the C `libnwui` toolkit: buttons take
 //! Rust CLOSURES, containers compose with method chaining. The window server, wire protocol
 //! and rendering are all the same C stack — only the app language changes (this is what a

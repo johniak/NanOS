@@ -1,5 +1,5 @@
 /*
- * libnw.c — NanWM client library (see libnw.h). Talks to the compositor over the inherited
+ * libnw.c — nanowm client library (see libnw.h). Talks to the compositor over the inherited
  * pipe pair: fd 3 = requests (client -> server), fd 4 = events (server -> client). Uses the
  * client's libc for I/O; statically linked into each GUI client.
  */

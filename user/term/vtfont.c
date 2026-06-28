@@ -1,5 +1,5 @@
 /* 8x16 VGA console font — copied from drivers/Font8x16.cpp (public-domain IBM VGA).
- * Used by the nterm terminal emulator AND the NanWM gfx rasterizer (user/libnw). */
+ * Used by the nterm terminal emulator AND the nanowm gfx rasterizer (user/libnw). */
 /* Forward `extern` declaration so the array keeps EXTERNAL linkage when this file is
  * compiled as C++ (the host test build): a bare file-scope `const` would otherwise have
  * internal linkage in C++ and be invisible to nw_gfx. Harmless in C. */

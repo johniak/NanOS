@@ -1,8 +1,8 @@
 /*
- * terminal — the real NanoOS Terminal: a NanWM window running `nsh` on a pty.
+ * terminal — the real Nano OS Terminal: a nanowm window running `nsh` on a pty.
  *
  * Unlike the framebuffer terminal (nterm), this is a libnw client: it draws the VT grid into its
- * window buffer and gets keystrokes as NanWM KEY events. The shared VT engine (vt.c) parses the
+ * window buffer and gets keystrokes as nanowm KEY events. The shared VT engine (vt.c) parses the
  * shell's output (xterm subset, ANSI colours). The event loop polls TWO fds — the compositor's
  * event pipe (via nw_event_fd) and the pty master — so window input and shell output interleave.
  * Resizing the window reflows the grid (vt_resize).
@@ -76,7 +76,7 @@ static void render(void)
 	if (y0 >= 0) nw_commit(g_win, 0, y0 * CH, s.w, (y1 - y0 + 1) * CH);
 }
 
-/* ---- NanWM KEY event -> bytes to the pty ---- */
+/* ---- nanowm KEY event -> bytes to the pty ---- */
 static void key(const struct nw_event *ev)
 {
 	int sc = ev->code & 0x7f, ext = ev->code & 0x80;

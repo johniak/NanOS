@@ -1,5 +1,5 @@
 /*
- * nwm.c — the NanWM compositor I/O shell. The ONLY part that touches hardware: it owns
+ * nwm.c — the nanowm compositor I/O shell. The ONLY part that touches hardware: it owns
  * /dev/fb0 (mmap), /dev/input0 (keyboard) and /dev/input1 (mouse), spawns GUI clients over
  * an inherited request/event pipe pair (fds 3/4), runs a poll() loop that COALESCES all
  * pending input/requests then composites + blits ONCE, and drains each client's event ring
@@ -670,7 +670,7 @@ static void start_desktop(void)
 {
 	if (g_started) return;
 	g_started = 1;
-	spawn_client(0, NWTERM_PATH, 0);          /* the NanoOS demo desktop: Terminal + Settings */
+	spawn_client(0, NWTERM_PATH, 0);          /* the Nano OS demo desktop: Terminal + Settings */
 	spawn_client(1, NWSET_PATH, 0);
 	spawn_client(2, NWEXP_PATH, 0);           /* Files spawned last -> on top + focused */
 	S.dirty = 1;

@@ -1,4 +1,4 @@
-//! libnwui-rs — safe Rust bindings over the C-ABI libnwui toolkit, for NanWM apps. A `no_std`
+//! libnwui-rs — safe Rust bindings over the C-ABI libnwui toolkit, for nanowm apps. A `no_std`
 //! crate: the runtime (heap over the C malloc, panic = abort) plus idiomatic wrappers over
 //! windows, the icon-grid (`iconview`) and titled-panel (`panel`) widgets, image loading, menus
 //! and spawn. The window server, wire protocol and rendering are all the same C stack — only the

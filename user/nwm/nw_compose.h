@@ -49,7 +49,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 void nw_render_dirty_frames(struct nw_server *s);
 
 /* Set the runtime theme used by the scene + frame-cache rendering: UI accent colour (0 = the
- * built-in NanoOS blue), window corner radius (0..20, else the default), and whether windows
+ * built-in Nano OS blue), window corner radius (0..20, else the default), and whether windows
  * cast a drop shadow. The shell calls this from settings.yaml at boot and on every reload. */
 void nw_compose_set_theme(uint32_t accent, int radius, int shadow);
 

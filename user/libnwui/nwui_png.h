@@ -2,7 +2,7 @@
  * nwui_png.h — a tiny self-contained PNG decoder for the toolkit (no libpng/zlib).
  *
  * Decodes a non-interlaced 8-bit PNG (greyscale / RGB / RGBA / palette) from a memory buffer to a
- * flat 32bpp 0x00RRGGBB surface (the nw_surface pixel format), so NanWM can load the branded
+ * flat 32bpp 0x00RRGGBB surface (the nw_surface pixel format), so nanowm can load the branded
  * wallpaper.png at runtime and apps can load icon PNGs. Returns a malloc'd pixel buffer (caller
  * frees) and the dimensions, or NULL on any error.
  */

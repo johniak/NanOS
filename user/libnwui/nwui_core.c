@@ -1099,7 +1099,7 @@ static void cb_toggle(nwui_node *n)
 	if (n->on_click) n->on_click(n, n->user);
 }
 
-/* Register an accelerator. `cmd` = require the Cmd (Super) modifier — NanWM/NanOS uses macOS-style
+/* Register an accelerator. `cmd` = require the Cmd (Super) modifier — nanowm/NanOS uses macOS-style
  * Cmd+<key> shortcuts everywhere (the compositor forwards Cmd+<key> with mods bit1 set). `fkey` !=0
  * matches a function/special key regardless of modifiers. (The struct field is historically named
  * `ctrl`; it now means "Cmd required".) */

@@ -1,5 +1,5 @@
 /*
- * nwui.h — NanWM UI toolkit (the "comctl32" of NanWM): a modern, composable widget library.
+ * nwui.h — nanowm UI toolkit (the "comctl32" of nanowm): a modern, composable widget library.
  *
  * Client-side (like Qt/GTK/Flutter): widgets render into the app's window buffer and route
  * events; the compositor stays a dumb pixel server. The model is a COMPOSABLE TREE (containers
@@ -8,7 +8,7 @@
  * damage path.
  *
  * The ABI is plain C (opaque handles, POD, function-pointer callbacks) on purpose, so any
- * language with C FFI — including Rust — can build NanWM apps, exactly like Windows apps bind
+ * language with C FFI — including Rust — can build nanowm apps, exactly like Windows apps bind
  * to user32. Shipped as the shared library libnwui.ndl.
  */
 #ifndef NWUI_H

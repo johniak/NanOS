@@ -1,5 +1,5 @@
 /*
- * nwproto.c — encoder + streaming decoder for the NanWM wire protocol (see nwproto.h).
+ * nwproto.c — encoder + streaming decoder for the nanowm wire protocol (see nwproto.h).
  * No I/O, no allocation: the caller owns all buffers. Pure logic, host-tested.
  */
 #include "nwproto.h"

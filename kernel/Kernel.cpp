@@ -316,7 +316,7 @@ static void pciScanReport() {
 
 void Kernel::start() {
 	Console::clearScreen();
-	Console::writeLine("NanoOS initialize...");
+	Console::writeLine("Nano OS initialize...");
 
 	// Bring up the CPU descriptor tables, interrupt vectors and legacy input (arch).
 	arch::cpuInit();
@@ -517,7 +517,7 @@ void Kernel::start() {
 	Console::writeLine("       eth0 10.0.2.15/24 gw 10.0.2.2 (static; udhcpc refines it at init)");
 
 	// USB-HID input: if a USB keyboard/mouse enumerated, start the poll thread feeding the
-	// existing evdev devices (keyboard -> /dev/input0, mouse -> /dev/input<N>). NanWM unchanged.
+	// existing evdev devices (keyboard -> /dev/input0, mouse -> /dev/input<N>). nanowm unchanged.
 	okBegin("USB-HID input (keyboard/mouse)");
 	usbHidInit();
 	okEnd();

@@ -1,5 +1,5 @@
 /*
- * nwproto.h — the NanWM wire protocol, shared by the compositor (nwm) and clients (libnw).
+ * nwproto.h — the nanowm wire protocol, shared by the compositor (nwm) and clients (libnw).
  *
  * One fixed 28-byte header (`nw_msg`) optionally followed by `length` payload bytes. The
  * transport is a byte stream over a pipe whose kernel ring is only 4096 B, so a single

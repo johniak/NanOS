@@ -6,7 +6,7 @@ void nw_settings_defaults(struct nw_settings *s)
 	s->blur_level         = 60;
 	s->transparency       = 1;    /* glass on */
 	s->transparency_level = 50;
-	s->accent             = 0x12a8f4u;   /* NanoOS blue */
+	s->accent             = 0x12a8f4u;   /* Nano OS blue */
 	s->wallpaper          = NW_WALL_BRANDED;
 	s->wallpaper_color    = 0x1e2a3au;   /* slate, for solid mode */
 	s->clock_24h          = 1;

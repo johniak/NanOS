@@ -1,5 +1,5 @@
 /*
- * nwexp.c — a simple file explorer for NanWM, built on libnwui's list widget.
+ * nwexp.c — a simple file explorer for nanowm, built on libnwui's list widget.
  *
  * Lists a directory (opendir/readdir over the kernel's getdents64), one row per entry with a
  * trailing "/" on sub-directories. A single click selects; a double-click (or Enter) opens:

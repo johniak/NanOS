@@ -711,12 +711,12 @@ libjpeg: bin/libc.ndl bin/libc.ndl.a
 	@echo "installed libjpeg.a + libturbojpeg.a + headers into the $(LIBJPEG_TRIPLE) sysroot ($(SDK_TC)/$(LIBJPEG_TRIPLE)) — link downstream ports with -ljpeg"
 
 # NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
-# libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke NanWM
+# libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke nanowm
 # libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
 # sysroot from this checkout, then runs that repo's ordered build-all (each port cross-builds in the
 # nanos-sdk-dev container — build-all runs on the HOST and shells into Docker per port, so it is NOT
 # run inside a container here), and stages netsurf.nxe + its res/ tree into bin/. `make image`
-# installs the /apps/netsurf bundle. Launch it inside NanWM with `-f nanwm`.
+# installs the /apps/netsurf bundle. Launch it inside nanowm with `-f nanwm`.
 NETSURF_REPO ?= $(HOME)/Projects/netsurf-nanos
 netsurf: bin/libc.ndl bin/libc.ndl.a bin/libnw.ndl bin/libnw.ndl.a
 	@test -f "$(NETSURF_REPO)/scripts/build-all.sh" || { echo "netsurf-nanos repo not found at $(NETSURF_REPO)"; exit 1; }
@@ -1220,7 +1220,7 @@ _image64: _all _userland64 _kext
 	# nanosu is the "authenticate to open" privileged helper: it verifies root's password and runs the
 	# target as root, so it must be setuid-root (owner root, mode 04755).
 	printf "set_inode_field /nanos/bin/nanosu.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# NanWM compositor (a system GUI program) -> /nanos/bin, and the NanWM client shared libs
+	# nanowm compositor (a system GUI program) -> /nanos/bin, and the nanowm client shared libs
 	# (libnw.ndl / libnwui.ndl) -> /nanos/lib (the NetSurf libnsfb backend binds libnw.ndl at load).
 	for p in $(X64_GUI_PROGS); do \
 	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
@@ -1228,7 +1228,7 @@ _image64: _all _userland64 _kext
 	for l in $(X64_GUI_LIBS); do \
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
-	# NanWM desktop apps -> /apps/<name>/<name>.nxe bundles + /bin/<name>.nxe symlink (the link farm),
+	# nanowm desktop apps -> /apps/<name>/<name>.nxe bundles + /bin/<name>.nxe symlink (the link farm),
 	# the layout nwm spawns them from. Mirrors the i686 APP_PROGS loop.
 	for p in $(X64_GUI_APPS); do \
 	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
@@ -1236,7 +1236,7 @@ _image64: _all _userland64 _kext
 	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
 	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	done
-	# Desktop artwork. The wallpaper ships as the source PNG; NanWM decodes it and cover-fits it to
+	# Desktop artwork. The wallpaper ships as the source PNG; nanowm decodes it and cover-fits it to
 	# the live resolution at runtime (so it fills ANY panel). The logo stays a fixed 96x96 raw (About
 	# blits it directly, no scaling). Mirrors the i686 _image artwork block.
 	if [ -f assets/wallpaper.png ]; then \
@@ -1397,7 +1397,7 @@ _image64: _all _userland64 _kext
 	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
 	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
 	# res/ is installed recursively (dirs first top-down, then files). Built by `make ARCH=x86_64
-	# netsurf` (the netsurf-nanos port stack); launch inside NanWM. Skipped if bin/netsurf.nxe absent.
+	# netsurf` (the netsurf-nanos port stack); launch inside nanowm. Skipped if bin/netsurf.nxe absent.
 	# Mirrors the i686 _image netsurf population.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
 	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
@@ -1538,7 +1538,7 @@ _image: _all _userland _kext _grub2-image
 	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
 	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
 	# res/ is installed recursively (dirs first top-down, then files) so arbitrary nesting works.
-	# Launch inside NanWM with `-f nanwm` (selects the NanWM libnsfb surface). Skipped if absent.
+	# Launch inside nanowm with `-f nanwm` (selects the nanowm libnsfb surface). Skipped if absent.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
 	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
@@ -1586,7 +1586,7 @@ _image: _all _userland _kext _grub2-image
 	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
 	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
 	fi
-	# Desktop artwork. The wallpaper ships as the source PNG; NanWM decodes it and cover-fits it to
+	# Desktop artwork. The wallpaper ships as the source PNG; nanowm decodes it and cover-fits it to
 	# the live resolution at runtime. The logo stays a fixed 96x96 raw (About blits it directly).
 	if [ -f assets/wallpaper.png ]; then \
 	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
@@ -1738,7 +1738,7 @@ $(BINFOLDER)%.o: user/libc-glue/pthread/%.s
 $(BINFOLDER)%.o: user/term/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-# NanWM compositor (user/nwm) + client demos (user/notepad). DYNHDR (libc.ndl import shim) —
+# nanowm compositor (user/nwm) + client demos (user/notepad). DYNHDR (libc.ndl import shim) —
 # these are dynamically-linked programs like the rest of userland.
 $(BINFOLDER)%.o: user/nwm/%.c
 	@mkdir -p $(BINFOLDER)
@@ -1944,7 +1944,7 @@ $(BINFOLDER)smptorture.nxe: $(DYN_DEPS) $(BINFOLDER)smptorture.o
 $(BINFOLDER)nettorture.nxe: $(DYN_DEPS) $(BINFOLDER)nettorture.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
-# NanWM: the compositor (statically links the pure cores + gfx) and the notepad demo client
+# nanowm: the compositor (statically links the pure cores + gfx) and the notepad demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
 $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)nwfont.o $(BINFOLDER)stb_impl.o $(BINFOLDER)nwui_png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
 # notepad (the Notepad) is now a pure toolkit client like form/nwexp: --need libnwui.ndl pulls
@@ -2112,7 +2112,7 @@ $(BINFOLDER)libc.ndl.a: $(BINFOLDER)libc.elf $(MKNX_TOOL)
 	for f in $(BINFOLDER)libimp/*.s; do nasm -f $(ASM_FMT) "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libimp/*.o
 
-# ---- libnw.ndl: the shared window-client library (the user32/gdi32 of NanWM) ----
+# ---- libnw.ndl: the shared window-client library (the user32/gdi32 of nanowm) ----
 # A real shared library (like greet.ndl/libc.ndl): the protocol codec + gfx + client API in
 # ONE relocatable module, exporting the nw_* API. It USES libc (malloc/read/write/poll), so
 # it links the libc import library and declares `--need libc.ndl`; the recursive loader
@@ -2129,7 +2129,7 @@ $(BINFOLDER)libnw.ndl.a: $(BINFOLDER)libnw.elf $(MKNX_TOOL)
 	for f in $(BINFOLDER)libnwimp/*.s; do nasm -f $(ASM_FMT) "$$f" -o "$${f%.s}.o"; done
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwimp/*.o
 
-# ---- libnwui.ndl: the UI toolkit (the comctl32 of NanWM) ----
+# ---- libnwui.ndl: the UI toolkit (the comctl32 of nanowm) ----
 # Composable widget tree + flex layout + paint, exporting the nwui_* API. Uses libnw (gfx) AND
 # libc (malloc); links both import libraries and declares both needs. A client that --need
 # libnwui.ndl gets the whole chain app->libnwui->libnw->libc via the recursive loader.
@@ -2149,15 +2149,15 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 
 # x86_64 in-tree userland subset (Plan 10 Task 7): the shell + the sbase coreutils + init,
 # all dynamically linked against the 64-bit libc.ndl (the same dynamic path as i686, via the
-# arch-selected MKNX_TOOL/USER_NX_LD). The full USER_PROGS set (NanWM, Rust demo, Doom, the
+# arch-selected MKNX_TOOL/USER_NX_LD). The full USER_PROGS set (nanowm, Rust demo, Doom, the
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
 X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
-# NanWM compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
+# nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter
-# NanWM desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
+# nanowm desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
 # (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
 X64_GUI_APPS=rsexp settings about notepad viewer properties form terminal
@@ -2332,7 +2332,7 @@ TEST_MODULES+= arch/x86_64/cpu/lapic_x86_64.cpp   # pure-logic half: MSI vector 
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
 TEST_MODULES+= kernel/vt/VtConsole.cpp kernel/vt/VtManager.cpp drivers/VtTty.cpp   # virtual terminals: per-VT console + switching manager + /dev/ttyN
 TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
-# NanWM (window server) pure cores — userland C, host-tested as C++ (g++ treats .c as C++).
+# nanowm (window server) pure cores — userland C, host-tested as C++ (g++ treats .c as C++).
 # vtfont.c supplies the shared nx_font8x16 the gfx rasterizer draws with.
 TEST_MODULES+= user/libnw/nwproto.c user/libnw/nw_gfx.c user/term/vtfont.c
 TEST_MODULES+= user/libnw/nwfont.c user/libnw/stb_impl.c   # TTF font engine (3rd-party stb; not gated)

@@ -1,5 +1,5 @@
 /*
- * nw_backdrop.h — pure backdrop-blur math for the NanWM compositor's "glass" windows.
+ * nw_backdrop.h — pure backdrop-blur math for the nanowm compositor's "glass" windows.
  * Rect helpers + box downsample + bilinear upsample, all on 0x00RRGGBB buffers. No I/O,
  * no allocation (every buffer is caller-owned), so the whole module is host-tested.
  *

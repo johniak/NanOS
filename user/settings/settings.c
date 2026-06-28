@@ -1,5 +1,5 @@
 /*
- * settings.c — NanoOS "Settings" app (libnwui). An Appearance panel that edits the desktop
+ * settings.c — Nano OS "Settings" app (libnwui). An Appearance panel that edits the desktop
  * preferences in /disks/main/nanos/config/settings.yaml: two toggles (backdrop blur, glass
  * transparency) and two 0..100 levels (blur strength, transparency level). Every change is
  * persisted to the YAML file and applied live by asking the compositor to reload it
@@ -254,7 +254,7 @@ int main(void)
 
 	g_title = nwui_colors(nwui_label(u, CAT_NAME[CAT_APPEARANCE]), 0x657184, 0);
 	nwui_node *main_col = nwui_gap(nwui_pad(nwui_vbox(u), 18), 10);
-	nwui_add(main_col, nwui_label(u, "NanoOS"));
+	nwui_add(main_col, nwui_label(u, "Nano OS"));
 	nwui_add(main_col, g_title);
 	for (int i = 0; i < NCAT; i++)
 		nwui_add(main_col, g_panel[i]);

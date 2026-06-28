@@ -55,7 +55,7 @@ static const char *const CURSOR[16] = {
 };
 
 /* ---- wallpaper (rendered once) --------------------------------------------------- */
-/* Colourful radial blobs over a soft diagonal gradient — the NanoOS desktop. */
+/* Colourful radial blobs over a soft diagonal gradient — the Nano OS desktop. */
 void nw_render_wallpaper(const struct nw_surface *dst)
 {
 	int W = dst->w, H = dst->h;
@@ -199,7 +199,7 @@ void nw_draw_cursor(const struct nw_surface *dst, int x, int y)
 }
 
 /* ---- top bar + dock -------------------------------------------------------------- */
-/* The NanoOS "N" mark: two vertical bars + a diagonal, gradient-tinted, in a w*h box. */
+/* The Nano OS "N" mark: two vertical bars + a diagonal, gradient-tinted, in a w*h box. */
 static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 {
 	int bw = sz / 3;
@@ -211,7 +211,7 @@ static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 	}
 }
 
-/* macOS-style global menu bar: NanoOS logo (system menu) + the focused app's menu titles, and
+/* macOS-style global menu bar: Nano OS logo (system menu) + the focused app's menu titles, and
  * a clock at the right. The open dropdown is drawn by draw_menu_dropdown (above everything). */
 static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
 {
@@ -228,8 +228,8 @@ static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
 	if (n == 0) {                                                    /* no app menu: just a name */
 		const char *app = (s->focus >= 0 && s->win[s->focus].used)
 		                ? (s->win[s->focus].title[0] == '\x01' ? s->win[s->focus].title + 1
-		                                                       : s->win[s->focus].title) : "NanoOS";
-		nw_text(back, NW_MENU_X0, y, app && app[0] ? app : "NanoOS", COL_PANEL_FG);
+		                                                       : s->win[s->focus].title) : "Nano OS";
+		nw_text(back, NW_MENU_X0, y, app && app[0] ? app : "Nano OS", COL_PANEL_FG);
 	}
 	for (int i = 0; i < n; i++) {
 		int x, w; nw_menubar_top_x(s, i, &x, &w);
@@ -263,7 +263,7 @@ static void draw_menu_dropdown(const struct nw_server *s, const struct nw_surfac
 	}
 }
 
-/* The taskbar: a full-width bar at the bottom with a Start button (NanoOS mark) and one button
+/* The taskbar: a full-width bar at the bottom with a Start button (Nano OS mark) and one button
  * per open window — Windows-style. The focused window's button is highlighted; a minimized
  * window's button is dimmed. Clicking is handled in nw_pointer (Start menu / minimize-restore). */
 static void draw_taskbar(const struct nw_server *s, const struct nw_surface *back)
@@ -272,7 +272,7 @@ static void draw_taskbar(const struct nw_server *s, const struct nw_surface *bac
 	nw_blend_rect(back, 0, y0, W, NW_TASK_H, COL_DOCK, 235);          /* the bar */
 	nw_blend_rect(back, 0, y0, W, 1, 0x9fb2cc, 170);                  /* top hairline */
 
-	/* Start button: the NanoOS "N" mark + "Start", highlighted while the Start menu is open. */
+	/* Start button: the Nano OS "N" mark + "Start", highlighted while the Start menu is open. */
 	int bx, by, bw, bh;
 	nw_start_rect(s, &bx, &by, &bw, &bh);
 	if (s->menu_open && s->menu_from_start) nw_blend_rect(back, bx, by, bw, bh, s_accent, 130);

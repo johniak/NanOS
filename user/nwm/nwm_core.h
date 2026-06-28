@@ -1,5 +1,5 @@
 /*
- * nwm_core.h — the PURE heart of the NanWM compositor: window list, z-order, focus,
+ * nwm_core.h — the PURE heart of the nanowm compositor: window list, z-order, focus,
  * hit-testing, title-bar dragging, the macOS-style Super shortcut + clipboard, the US
  * scancode keymap, and a per-client output byte-ring. No I/O, no allocation, no libc state
  * — every buffer is caller-owned, so the whole thing is host-tested by feeding synthetic
@@ -41,7 +41,7 @@ enum {
 	NW_MENU_ITEM_H = 24,    /* dropdown item row height                                   */
 	NW_MENU_DROP_W = 200,   /* dropdown width                                             */
 	NW_TASK_H      = 40,    /* bottom taskbar height (full width: Start + one button/window) */
-	NW_START_W     = 92,    /* Start button width (NanoOS logo + "Start")                  */
+	NW_START_W     = 92,    /* Start button width (Nano OS logo + "Start")                  */
 	NW_TASK_W      = 168    /* per-window task-button width                                */
 };
 
