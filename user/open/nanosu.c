@@ -21,8 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <grp.h>
 
-/* Verify `pass` against root's stored hash (shadow first, then passwd). Mirrors login/login. */
+/* Verify `pass` against a user's stored hash (shadow first, then passwd). Mirrors login/login. */
 static int check_password(struct passwd *pw, const char *pass)
 {
 	const char *hash = pw->pw_passwd;
@@ -34,6 +35,16 @@ static int check_password(struct passwd *pw, const char *pass)
 	return got && strcmp(got, hash) == 0;
 }
 
+/* True if `user` is a member of group `grp` (admins are the "wheel" group, which sudoers grants). */
+static int user_in_group(const char *user, const char *grp)
+{
+	struct group *g = getgrnam(grp);
+	if (!g || !g->gr_mem) return 0;
+	for (char **m = g->gr_mem; *m; m++)
+		if (!strcmp(*m, user)) return 1;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2 || !argv[1] || !argv[1][0]) {
@@ -43,13 +54,30 @@ int main(int argc, char **argv)
 	const char *pass = getenv("NW_AUTH_PASS");
 	if (!pass) pass = "";
 
-	struct passwd *pw = getpwnam("root");
-	if (!pw || !check_password(pw, pass)) {
+	/* Authorize the macOS / sudo way: the invoking user (our REAL uid — we are setuid-root, so
+	 * euid is already 0 and can read /etc/shadow) proves it with THEIR OWN password, provided they
+	 * are an administrator (a member of the "wheel" group, which this system's sudoers grants ALL).
+	 * That is what the auth dialog means by "an administrator password" — your own, as on macOS.
+	 * root's password is also accepted (covers a root caller and the classic behaviour). */
+	char user[64] = "";
+	struct passwd *who = getpwuid(getuid());
+	if (who && who->pw_name) { strncpy(user, who->pw_name, sizeof user - 1); user[sizeof user - 1] = 0; }
+
+	int ok = 0;
+	if (user[0] && user_in_group(user, "wheel")) {
+		struct passwd *up = getpwnam(user);
+		if (up && check_password(up, pass)) ok = 1;
+	}
+	if (!ok) {
+		struct passwd *rp = getpwnam("root");
+		if (rp && check_password(rp, pass)) ok = 1;
+	}
+	if (!ok) {
 		fprintf(stderr, "nanosu: authentication failed\n");
 		return 1;
 	}
 
-	/* Authenticated as root. Become fully root, scrub the secret, then run the target as root. */
+	/* Authenticated. Become fully root, scrub the secret, then run the target as root. */
 	unsetenv("NW_AUTH_PASS");
 	setgid(0);
 	setuid(0);
