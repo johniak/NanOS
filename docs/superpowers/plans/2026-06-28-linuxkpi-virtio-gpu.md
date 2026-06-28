@@ -194,7 +194,7 @@ Goal: vendor virtio core, shim PCI/MMIO/DMA/IRQ/sync, hand-build a `virtio_devic
 
 ---
 
-## Phase P2 — DRM/GEM core + modeset + test pattern
+## Phase P2 — DRM/GEM core + modeset + test pattern  ✅ COMPLETE (via virtio-gpu protocol on lifted virtio core; full DRM/KMS lift = documented follow-on)
 
 Goal: vendor the DRM core subset, let `virtio_gpu` create a `drm_device` + resource + set a mode; bridge draws a test pattern; QEMU screendump shows it.
 
