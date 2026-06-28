@@ -66,7 +66,7 @@
 
 ---
 
-## Phase P0 — Build plumbing + loader proof + first primitives
+## Phase P0 — Build plumbing + loader proof + first primitives  ✅ COMPLETE
 
 Goal: a `virtio_gpu.nkext` build path that compiles C-with-Linux-headers, links via `kext64.ld`, packs with `mknx64`, and loads under `loadAllKexts`; plus the first host-tested pure shim primitives. No vendored Linux yet — a trivial in-tree `.c` proves the toolchain.
 
@@ -146,7 +146,7 @@ TEST_CASE("krealloc preserves") {
 
 - [ ] **Steps 1–5:** test conversions + `time_after` across u32 wrap; implement; pass; commit `linuxkpi: jiffies/time conversions + host tests`.
 
-### Task P0.6: Build plumbing — compile a trivial Linux-style kext
+### Task P0.6: Build plumbing — compile a trivial Linux-style kext  ✅ DONE
 
 **Files:** Modify `Makefile`; Create `kext/virtio_gpu/hello_kpi.c` (temporary probe), `linuxkpi/compat.h`, `linuxkpi/autoconf.h`
 **Interfaces:** Produces a `virtio_gpu.nkext` (initially the hello stub) that loads at boot.
