@@ -110,12 +110,65 @@ static void cb_font(nwui_node *s, void *u)
 	refresh_labels(); save_and_apply();
 }
 
-static nwui_node *nav(nwui *u, const char *text, int sel)
+/* ---- file associations ("Default Apps" category): edit /nanos/config/associations.conf ---- */
+#define ASSOC_PATH "/disks/main/nanos/config/associations.conf"
+static const char *const TEXT_EXTS[] = { "txt","c","h","md","cfg","conf","rs","sh","log","yaml","ini","json" };
+static const char *const IMG_EXTS[]  = { "png" };
+static const char *const APP_CHOICES[] = { "nwnote", "nwview" };
+enum { NTEXT_EXTS = 12, NIMG_EXTS = 1, NAPP_CHOICES = 2 };
+static char g_text_app[32] = "nwnote";   /* app that opens text files  */
+static char g_img_app[32]  = "nwview";   /* app that opens images      */
+static nwui_node *g_textapp_btn, *g_imgapp_btn;
+
+static void assoc_load(void)
 {
-	nwui_node *l = nwui_label(u, text);
-	if (sel) nwui_colors(l, 0x075da0, 0);
-	return nwui_pad(l, 4);
+	char a[32];
+	if (nwui_assoc_lookup("txt", a, sizeof a)) { strncpy(g_text_app, a, 31); g_text_app[31] = 0; }
+	if (nwui_assoc_lookup("png", a, sizeof a)) { strncpy(g_img_app,  a, 31); g_img_app[31]  = 0; }
 }
+static void assoc_save(void)
+{
+	char buf[1024];
+	int n = snprintf(buf, sizeof buf, "# file associations (ext: app) - edited by Settings\n");
+	for (int i = 0; i < NTEXT_EXTS && n < (int) sizeof buf - 64; i++)
+		n += snprintf(buf + n, sizeof buf - n, "%s: %s\n", TEXT_EXTS[i], g_text_app);
+	for (int i = 0; i < NIMG_EXTS && n < (int) sizeof buf - 64; i++)
+		n += snprintf(buf + n, sizeof buf - n, "%s: %s\n", IMG_EXTS[i], g_img_app);
+	int fd = open(ASSOC_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd >= 0) { write(fd, buf, n); close(fd); }
+}
+static const char *cycle_app(const char *cur)
+{
+	for (int i = 0; i < NAPP_CHOICES; i++)
+		if (!strcmp(cur, APP_CHOICES[i])) return APP_CHOICES[(i + 1) % NAPP_CHOICES];
+	return APP_CHOICES[0];
+}
+static void refresh_apps(void)
+{
+	nwui_set_text(g_textapp_btn, g_text_app);
+	nwui_set_text(g_imgapp_btn,  g_img_app);
+}
+static void cb_textapp(nwui_node *s, void *u) { (void) s; (void) u; strncpy(g_text_app, cycle_app(g_text_app), 31); g_text_app[31] = 0; refresh_apps(); assoc_save(); }
+static void cb_imgapp(nwui_node *s, void *u)  { (void) s; (void) u; strncpy(g_img_app,  cycle_app(g_img_app),  31); g_img_app[31]  = 0; refresh_apps(); assoc_save(); }
+
+/* ---- category switching (Appearance / Desktop / Default Apps) ---- */
+enum { CAT_APPEARANCE, CAT_DESKTOP, CAT_APPS, NCAT };
+static const char *const CAT_NAME[NCAT] = { "Appearance", "Desktop", "Default Apps" };
+static nwui_node *g_panel[NCAT];     /* per-category content cards (only one visible) */
+static nwui_node *g_nav[NCAT];       /* sidebar nav rows */
+static nwui_node *g_title;           /* big title above the active panel */
+
+static void show_cat(int c)
+{
+	for (int i = 0; i < NCAT; i++) {
+		nwui_set_visible(g_panel[i], i == c);
+		nwui_link_set_active(g_nav[i], i == c);
+	}
+	nwui_set_text(g_title, CAT_NAME[c]);
+}
+static void cb_cat0(nwui_node *s, void *u) { (void) s; (void) u; show_cat(CAT_APPEARANCE); }
+static void cb_cat1(nwui_node *s, void *u) { (void) s; (void) u; show_cat(CAT_DESKTOP); }
+static void cb_cat2(nwui_node *s, void *u) { (void) s; (void) u; show_cat(CAT_APPS); }
 
 /* "Label . . . . <control>" — the key grows (flex) so the control sits at the right. */
 static nwui_node *ctrl_row(nwui *u, const char *key, nwui_node *control)
@@ -141,50 +194,70 @@ static nwui_node *stepper(nwui *u, nwui_cb dn, nwui_cb up, nwui_node **out_lbl)
 int main(void)
 {
 	load_settings();
-	nwui *u = nwui_open("Settings", 500, 460);
+	assoc_load();
+	nwui *u = nwui_open("Settings", 520, 480);
 	if (!u)
 		return 1;
 	g_u = u;
 	int ms = nwui_menu(u, "Settings"); nwui_menu_item(u, ms, "Close", m_close, 0);
 
-	nwui_node *side = nwui_gap(nwui_pad(nwui_vbox(u), 12), 6);
-	nwui_add(side, nav(u, "Appearance", 1));
-	nwui_add(side, nav(u, "Network", 0));
-	nwui_add(side, nav(u, "Display", 0));
-	nwui_add(side, nav(u, "Privacy", 0));
-	nwui_add(side, nav(u, "Accounts", 0));
-	nwui_colors(side, 0, 0x00eef3f9); nwui_size(side, 132, 0);
+	/* sidebar: one clickable nav row per category (the active one renders as an accent pill) */
+	nwui_node *side = nwui_gap(nwui_pad(nwui_vbox(u), 12), 4);
+	nwui_cb navcb[NCAT] = { cb_cat0, cb_cat1, cb_cat2 };
+	for (int i = 0; i < NCAT; i++) {
+		g_nav[i] = nwui_link(u, CAT_NAME[i], navcb[i], 0);
+		nwui_add(side, g_nav[i]);
+	}
+	nwui_colors(side, 0, 0x00eef3f9); nwui_size(side, 140, 0);
 
+	/* ---- Appearance panel (visual look of the desktop) ---- */
 	g_blur_btn   = nwui_button(u, "Off", cb_blur, 0);
 	g_trans_btn  = nwui_button(u, "Off", cb_trans, 0);
 	g_accent_btn = nwui_button(u, "Blue", cb_accent, 0);
 	g_wall_btn   = nwui_button(u, "Branded", cb_wall, 0);
-	g_clk24_btn  = nwui_button(u, "24h", cb_clk24, 0);
-	g_clksec_btn = nwui_button(u, "Off", cb_clksec, 0);
 	g_shadow_btn = nwui_button(u, "On", cb_shadow, 0);
 	g_font_btn   = nwui_button(u, "UISans-Regular.ttf", cb_font, 0);
 	nwui_node *blur_step   = stepper(u, cb_blur_dn,   cb_blur_up,   &g_blurlvl_lbl);
 	nwui_node *trans_step  = stepper(u, cb_trans_dn,  cb_trans_up,  &g_translvl_lbl);
 	nwui_node *radius_step = stepper(u, cb_radius_dn, cb_radius_up, &g_radius_lbl);
+	nwui_node *appear = nwui_gap(nwui_pad(nwui_vbox(u), 14), 9);
+	nwui_add(appear, ctrl_row(u, "Backdrop blur",      g_blur_btn));
+	nwui_add(appear, ctrl_row(u, "Blur strength",      blur_step));
+	nwui_add(appear, ctrl_row(u, "Transparency",       g_trans_btn));
+	nwui_add(appear, ctrl_row(u, "Transparency level", trans_step));
+	nwui_add(appear, ctrl_row(u, "Accent colour",      g_accent_btn));
+	nwui_add(appear, ctrl_row(u, "Wallpaper",          g_wall_btn));
+	nwui_add(appear, ctrl_row(u, "Window shadow",      g_shadow_btn));
+	nwui_add(appear, ctrl_row(u, "Corner radius",      radius_step));
+	nwui_add(appear, ctrl_row(u, "UI font",            g_font_btn));
+	nwui_colors(appear, 0, 0x00ffffff);
+	g_panel[CAT_APPEARANCE] = appear;
 
-	nwui_node *card = nwui_gap(nwui_pad(nwui_vbox(u), 14), 9);
-	nwui_add(card, ctrl_row(u, "Backdrop blur",      g_blur_btn));
-	nwui_add(card, ctrl_row(u, "Blur strength",      blur_step));
-	nwui_add(card, ctrl_row(u, "Transparency",       g_trans_btn));
-	nwui_add(card, ctrl_row(u, "Transparency level", trans_step));
-	nwui_add(card, ctrl_row(u, "Accent colour",      g_accent_btn));
-	nwui_add(card, ctrl_row(u, "Wallpaper",          g_wall_btn));
-	nwui_add(card, ctrl_row(u, "Window shadow",      g_shadow_btn));
-	nwui_add(card, ctrl_row(u, "Corner radius",      radius_step));
-	nwui_add(card, ctrl_row(u, "Clock format",       g_clk24_btn));
-	nwui_add(card, ctrl_row(u, "Clock seconds",      g_clksec_btn));
-	nwui_add(card, ctrl_row(u, "UI font",            g_font_btn));
-	nwui_colors(card, 0, 0x00ffffff);
+	/* ---- Desktop panel (clock + menu bar — moved out of Appearance) ---- */
+	g_clk24_btn  = nwui_button(u, "24h", cb_clk24, 0);
+	g_clksec_btn = nwui_button(u, "Off", cb_clksec, 0);
+	nwui_node *desktop = nwui_gap(nwui_pad(nwui_vbox(u), 14), 9);
+	nwui_add(desktop, ctrl_row(u, "Clock format",  g_clk24_btn));
+	nwui_add(desktop, ctrl_row(u, "Clock seconds", g_clksec_btn));
+	nwui_colors(desktop, 0, 0x00ffffff);
+	g_panel[CAT_DESKTOP] = desktop;
 
+	/* ---- Default Apps panel (file associations -> nwui_open_file / `open`) ---- */
+	g_textapp_btn = nwui_button(u, g_text_app, cb_textapp, 0);
+	g_imgapp_btn  = nwui_button(u, g_img_app,  cb_imgapp, 0);
+	nwui_node *apps = nwui_gap(nwui_pad(nwui_vbox(u), 14), 9);
+	nwui_add(apps, ctrl_row(u, "Text files (.txt .md .c .sh …)", g_textapp_btn));
+	nwui_add(apps, ctrl_row(u, "Images (.png)",                  g_imgapp_btn));
+	nwui_add(apps, nwui_colors(nwui_label(u, "Opens with — used by the file manager's Open."), 0x8a8a8e, 0));
+	nwui_colors(apps, 0, 0x00ffffff);
+	g_panel[CAT_APPS] = apps;
+
+	g_title = nwui_colors(nwui_label(u, CAT_NAME[CAT_APPEARANCE]), 0x657184, 0);
 	nwui_node *main_col = nwui_gap(nwui_pad(nwui_vbox(u), 18), 10);
 	nwui_add(main_col, nwui_label(u, "NanoOS"));
-	nwui_add(main_col, nwui_colors(nwui_label(u, "Appearance"), 0x657184, 0));
-	nwui_add(main_col, card);
+	nwui_add(main_col, g_title);
+	for (int i = 0; i < NCAT; i++)
+		nwui_add(main_col, g_panel[i]);
 
 	nwui_node *root = nwui_hbox(u);
 	nwui_add(root, side);
@@ -192,6 +265,8 @@ int main(void)
 	nwui_set_root(u, root);
 
 	refresh_labels();          /* reflect the loaded settings on the controls */
+	refresh_apps();
+	show_cat(CAT_APPEARANCE);  /* start on Appearance; hides the other panels */
 	nwui_run(u);
 	return 0;
 }

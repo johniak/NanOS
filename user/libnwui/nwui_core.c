@@ -302,6 +302,17 @@ nwui_node *nwui_colors(nwui_node *n, uint32_t fg, uint32_t bg)
 	n->fg = fg; n->bg = bg; n->has_bg = 1; return n;
 }
 
+/* Show/hide a node (and its whole subtree): hidden nodes take no layout space and are not painted
+ * or hit-tested. The reusable basis for tabs / category panels (e.g. Settings). */
+void nwui_set_visible(nwui_node *n, int visible)
+{
+	if (!n) return;
+	int hid = visible ? 0 : 1;
+	if (n->hidden == hid) return;
+	n->hidden = hid;
+	if (n->owner) n->owner->layout_dirty = 1;
+}
+
 void nwui_set_text(nwui_node *n, const char *text)
 {
 	if (n->kind == NWUI_TEXTFIELD || n->kind == NWUI_TEXTAREA) {   /* set value + reset caret/scroll */
@@ -332,6 +343,7 @@ void nwui_set_root(nwui *u, nwui_node *root) { u->root = root; u->layout_dirty =
 void nwui_measure(nwui_node *n)
 {
 	int i;
+	if (n->hidden) { n->mw = 0; n->mh = 0; return; }   /* hidden: takes no space */
 	switch (n->kind) {
 	case NWUI_LABEL:
 		n->mw = nw_text_w(n->text);
@@ -419,6 +431,7 @@ void nwui_measure(nwui_node *n)
 
 void nwui_arrange(nwui_node *n, int x, int y, int w, int h)
 {
+	if (n->hidden) { n->x = x; n->y = y; n->w = 0; n->h = 0; return; }   /* hidden: no area, no children */
 	n->x = x; n->y = y; n->w = w; n->h = h;
 	int ix = x + n->pad, iy = y + n->pad;
 	int iw = w - 2 * n->pad, ih = h - 2 * n->pad;

@@ -80,6 +80,7 @@ struct nwui_node {
 	const char *drop_text;           /* dropped payload (valid only during on_drop)         */
 
 	int        focusable, focused, hover, pressed, dirty;
+	int        hidden;               /* nwui_set_visible(n,0): skipped in layout/paint/hit (tabs) */
 };
 
 /* A top menu in the application menu bar (file-scope so C++ host tests see the tag). */

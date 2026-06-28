@@ -734,3 +734,23 @@ TEST_CASE("textfield: Enter fires on_submit; nwui_textfield_set updates the valu
     CHECK(tf->caret == 11);
     delete u;
 }
+
+TEST_CASE("nwui_set_visible hides a node: zero size + not hit-tested, restored on show") {
+    nwui *u = new nwui; nwui_init(u);
+    char tb[8] = "";
+    nwui_node *a = nwui_label(u, "A");
+    nwui_node *tf = nwui_textfield(u, tb, sizeof tb, 0, 0);
+    nwui_node *col = nwui_column(u, a, tf, (nwui_node *) 0);
+    nwui_set_root(u, col); u->win_w = 200; u->win_h = 200; nwui_layout(u);
+    int tf_y = tf->y;
+    CHECK(tf->h > 0);
+    nwui_set_visible(a, 0);                 // hide the label
+    nwui_layout(u);
+    CHECK(a->w == 0); CHECK(a->h == 0);     // takes no space
+    CHECK(nwui_hit(col, a->x, a->y) != a);  // not hit-tested (zero area)
+    CHECK(tf->y < tf_y);                    // the field moved up into the freed space
+    nwui_set_visible(a, 1);                 // show again
+    nwui_layout(u);
+    CHECK(a->h > 0);
+    delete u;
+}

@@ -187,6 +187,9 @@ nwui_node *nwui_colors(nwui_node *n, uint32_t fg, uint32_t bg);
 /* ---- state mutation (marks the node dirty -> repaint) ---- */
 void        nwui_set_text(nwui_node *n, const char *text);
 const char *nwui_get_text(nwui_node *n);
+/* Show/hide a node + its subtree (no layout space, not painted/hit when hidden). Basis for
+ * tabbed / multi-panel UIs (e.g. switching Settings categories). */
+void        nwui_set_visible(nwui_node *n, int visible);
 
 /* Ask the compositor to launch a program (by name or absolute path), the same way the Super+R
  * Run dialog does — used e.g. by a file manager to open/run an app. Fire-and-forget. */

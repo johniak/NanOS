@@ -260,6 +260,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 /* pre-order so parents paint before children (children on top) */
 static void paint_all(nwui_node *n, const struct nw_surface *s)
 {
+	if (n->hidden) return;                 /* hidden subtree: don't paint it or its children */
 	paint_self(n, s);
 	for (int i = 0; i < n->nchild; i++)
 		paint_all(n->child[i], s);
@@ -274,6 +275,7 @@ static void clear_dirty(nwui_node *n)
 struct dmg { int have, x0, y0, x1, y1; };
 static void repaint_dirty(nwui_node *n, const struct nw_surface *s, struct dmg *d)
 {
+	if (n->hidden) return;                 /* hidden subtree: skip */
 	if (n->dirty) {
 		paint_self(n, s);
 		if (!d->have) { d->x0 = n->x; d->y0 = n->y; d->x1 = n->x + n->w; d->y1 = n->y + n->h; d->have = 1; }
