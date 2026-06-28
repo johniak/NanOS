@@ -67,6 +67,10 @@ extern "C" {
     fn nwui_iconview(u: *mut NwUi, act: RawCb, chg: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_iconview_set(n: *mut NwNode, items: *const IconItem, count: i32);
     fn nwui_iconview_selected(n: *mut NwNode) -> i32;
+    fn nwui_iconview_is_selected(n: *mut NwNode, i: i32) -> i32;
+    fn nwui_iconview_selection_count(n: *mut NwNode) -> i32;
+    fn nwui_iconview_select_all(n: *mut NwNode);
+    fn nwui_iconview_clear_selection(n: *mut NwNode);
     fn nwui_iconview_set_dnd(n: *mut NwNode, on_drag: RawCb, on_drop: RawCb);
     fn nwui_iconview_set_clipboard(n: *mut NwNode, on_copy: RawCb, on_paste: RawCb);
     fn nwui_iconview_copy_cut(n: *mut NwNode) -> i32;
@@ -157,6 +161,11 @@ impl Node {
         unsafe { nwui_iconview_set(self.0, items.as_ptr(), items.len() as i32) }
     }
     pub fn iconview_selected(self) -> i32 { unsafe { nwui_iconview_selected(self.0) } }
+    /// Whole multi-selection (Shift/Cmd-click): test a cell, count, select-all, clear.
+    pub fn iconview_is_selected(self, i: i32) -> bool { unsafe { nwui_iconview_is_selected(self.0, i) != 0 } }
+    pub fn iconview_selection_count(self) -> i32 { unsafe { nwui_iconview_selection_count(self.0) } }
+    pub fn iconview_select_all(self) { unsafe { nwui_iconview_select_all(self.0) } }
+    pub fn iconview_clear_selection(self) { unsafe { nwui_iconview_clear_selection(self.0) } }
     /// Set a textfield's displayed value (NUL-terminated ptr); does not fire on_change.
     pub fn textfield_set(self, s: *const u8) { unsafe { nwui_textfield_set(self.0, s) } }
     /// Fire `cb` when Enter is pressed in this textfield (submit, vs per-keystroke on_change).

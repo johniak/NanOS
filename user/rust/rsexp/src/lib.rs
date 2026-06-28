@@ -71,10 +71,10 @@ struct App {
     search: *mut NwNode,          // the search text field (so navigation can clear it)
     sort_key: i32,                // SORT_* applied to the current view
     // file-management state
-    clip_path: Vec<u8>,           // copy/cut source (NUL-terminated); empty = clipboard empty
+    clip_paths: Vec<Vec<u8>>,     // copy/cut sources (each NUL-terminated); empty = clipboard empty
     clip_cut: bool,               // true = cut (move on paste), false = copy
     rename_from: Vec<u8>,         // rename source path (NUL) while the rename dialog is open
-    pending: Vec<u8>,             // delete target (NUL) while the confirm dialog is open
+    pending: Vec<Vec<u8>>,        // delete targets (each NUL) while the confirm dialog is open
     dlg_buf: [u8; 256],           // text-input buffer for the rename / new-folder dialogs
     addr: [u8; 512],              // editable address-bar buffer (reflects the current path)
     status: *mut NwNode,          // the status-bar label
@@ -394,9 +394,7 @@ impl App {
         self.cwd = nul(path);
         self.clear_search();
         self.clear();
-        if !(path.len() == 1 && path[0] == b'/') {
-            self.push(b"..", path, K_UP);
-        }
+        // No ".." pseudo-entry: navigate up with the toolbar Up button or the address bar.
         let mut name = [0u8; 256];
         let mut is_dir = 0i32;
         while unsafe { nwui_dir_next(d, name.as_mut_ptr(), 256, &mut is_dir) } == 1 {
@@ -537,6 +535,22 @@ impl App {
         self.sel_model().map(|i| self.paths[i].clone())
     }
 
+    /// Model indices of EVERY selected cell (multi-select); falls back to the lead cell.
+    fn selected_models(&self) -> Vec<usize> {
+        let v = Node(self.view);
+        let mut out = Vec::new();
+        for pos in 0..self.item_idx.len() {
+            if v.iconview_is_selected(pos as i32) {
+                let i = self.item_idx[pos];
+                if self.kinds[i] != K_UP { out.push(i); }
+            }
+        }
+        if out.is_empty() {
+            if let Some(i) = self.sel_model() { out.push(i); }
+        }
+        out
+    }
+
     /// Re-read the current location (F5 / after a mutating operation).
     fn refresh(&mut self) {
         self.reload_location();
@@ -603,67 +617,73 @@ impl App {
         self.refresh();
     }
 
-    /* ---- Delete ---- */
+    /* ---- Delete (one or many) ---- */
     fn delete_selected(&mut self) {
-        let path = match self.sel_path() { Some(p) => p, None => return };
-        self.pending = path.clone();
-        let base = basename(&path[..path.len() - 1]);
+        let models = self.selected_models();
+        if models.is_empty() { return; }
+        self.pending = models.iter().map(|&i| self.paths[i].clone()).collect();
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"Delete '");
-        msg.extend_from_slice(base);
-        msg.extend_from_slice(b"'? This cannot be undone.");
+        if self.pending.len() == 1 {
+            let p = &self.pending[0];
+            msg.extend_from_slice(b"Delete '");
+            msg.extend_from_slice(basename(&p[..p.len() - 1]));
+            msg.extend_from_slice(b"'? This cannot be undone.");
+        } else {
+            msg.extend_from_slice(b"Delete ");
+            push_uint(&mut msg, self.pending.len() as u32);
+            msg.extend_from_slice(b" items? This cannot be undone.");
+        }
         let s = unsafe { core::str::from_utf8_unchecked(&msg) };
         let me = self as *mut App as *mut c_void;
         Ui(self.ui).confirm("Delete", s, "Delete", cb_do_delete, me);
     }
     fn do_delete(&mut self) {
         if self.pending.is_empty() { return; }
-        let p = core::mem::take(&mut self.pending);
-        if !libnwui_rs::fs::remove(&p) {
-            Ui(self.ui).message("Delete", "Could not delete the item.");
+        let items = core::mem::take(&mut self.pending);
+        let mut failed = false;
+        for p in &items {
+            if !libnwui_rs::fs::remove(p) { failed = true; }
         }
+        if failed { Ui(self.ui).message("Delete", "Could not delete some items."); }
         self.refresh();
     }
 
-    /* ---- Copy / Cut / Paste ---- */
+    /* ---- Copy / Cut / Paste (one or many) ---- */
     fn copy_selected(&mut self, cut: bool) {
-        if let Some(p) = self.sel_path() {
-            self.clip_path = p;
-            self.clip_cut = cut;
-            self.update_status();
-        }
+        let models = self.selected_models();
+        if models.is_empty() { return; }
+        self.clip_paths = models.iter().map(|&i| self.paths[i].clone()).collect();
+        self.clip_cut = cut;
+        self.update_status();
     }
     fn paste(&mut self) {
         let ui = Ui(self.ui);
-        if self.clip_path.is_empty() { return; }
+        if self.clip_paths.is_empty() { return; }
         let dir = match self.cur_dir() {
             Some(d) => d,
             None => { ui.message("Paste", "Not available here."); return; }
         };
-        let src = self.clip_path.clone();              // NUL-terminated
-        let src_noz = &src[..src.len() - 1];
-        // refuse to paste a directory into itself or one of its descendants
-        if dir.len() >= src_noz.len() && &dir[..src_noz.len()] == src_noz
-            && (dir.len() == src_noz.len() || dir[src_noz.len()] == b'/') {
-            ui.message("Paste", "Cannot copy a folder into itself.");
-            return;
-        }
-        let base = basename(src_noz).to_vec();
-        if self.clip_cut {
-            if join_path(&dir, &base) == src { return; }            // already here: no-op
-            let dest = self.unique_dest(&dir, &base);
-            if !libnwui_rs::fs::rename(&src, &dest) {
-                ui.message("Move", "Could not move the item.");
-                return;
+        let srcs = self.clip_paths.clone();            // each NUL-terminated
+        let mut err = false;
+        for src in &srcs {
+            let src_noz = &src[..src.len() - 1];
+            // refuse to paste a directory into itself or one of its descendants
+            if dir.len() >= src_noz.len() && &dir[..src_noz.len()] == src_noz
+                && (dir.len() == src_noz.len() || dir[src_noz.len()] == b'/') {
+                err = true; continue;
             }
-            self.clip_path.clear();
-        } else {
-            let dest = self.unique_dest(&dir, &base);
-            if !libnwui_rs::fs::copy(&src, &dest) {
-                ui.message("Copy", "Could not copy the item.");
-                return;
+            let base = basename(src_noz).to_vec();
+            if self.clip_cut {
+                if join_path(&dir, &base) == *src { continue; }     // already here: no-op
+                let dest = self.unique_dest(&dir, &base);
+                if !libnwui_rs::fs::rename(src, &dest) { err = true; }
+            } else {
+                let dest = self.unique_dest(&dir, &base);
+                if !libnwui_rs::fs::copy(src, &dest) { err = true; }
             }
         }
+        if self.clip_cut { self.clip_paths.clear(); }               // a cut is one-shot
+        if err { ui.message("Paste", "Some items could not be pasted."); }
         self.refresh();
     }
     /// A destination path in `dir` for `base` that does not collide ("name", "name copy", …).
@@ -745,6 +765,9 @@ impl App {
         if self.my_computer {
             push_uint(&mut s, self.names.len() as u32);
             s.extend_from_slice(b" locations");
+        } else if Node(self.view).iconview_selection_count() > 1 {
+            push_uint(&mut s, Node(self.view).iconview_selection_count() as u32);
+            s.extend_from_slice(b" selected");
         } else if let Some(i) = self.sel_model() {
             let nm = &self.names[i];
             s.extend_from_slice(&nm[..nm.len() - 1]);
@@ -1180,6 +1203,13 @@ extern "C" fn cb_copy_evt(_n: *mut NwNode, user: *mut c_void) {
         app.copy_selected(cut);
     }
 }
+extern "C" fn cb_select_all(_n: *mut NwNode, user: *mut c_void) {
+    unsafe {
+        let app = &mut *(user as *mut App);
+        Node(app.view).iconview_select_all();
+        app.update_status();
+    }
+}
 
 /// Case-insensitive substring test (ASCII).
 fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
@@ -1255,7 +1285,7 @@ pub extern "C" fn main() -> i32 {
         query: [0u8; 64],
         search: core::ptr::null_mut(),
         sort_key: SORT_NAME,
-        clip_path: Vec::new(),
+        clip_paths: Vec::new(),
         clip_cut: false,
         rename_from: Vec::new(),
         pending: Vec::new(),
@@ -1297,6 +1327,7 @@ pub extern "C" fn main() -> i32 {
     ui.accel(false, 0, SC_F5, cb_refresh, app_ptr);
     ui.accel(true, b'n', 0, cb_new_folder, app_ptr);
     ui.accel(true, b'l', 0, cb_focus_addr, app_ptr);
+    ui.accel(true, b'a', 0, cb_select_all, app_ptr);   // Cmd+A: select all
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");
