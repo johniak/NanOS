@@ -317,6 +317,7 @@ impl App {
         while path.len() > 1 && *path.last().unwrap() == b'/' { path.pop(); }   // strip trailing '/'
         if self.load_dir(&path) {
             self.record(path);                 // success: record history (load_dir set the crumb)
+            if !self.view.is_null() { Ui(self.ui).focus(Node(self.view)); }   // focus back to the grid
         } else {
             Ui(self.ui).message("Go", "Path not found.");
             if self.my_computer { let m = b"My Computer".to_vec(); self.set_crumb(&m); }
@@ -444,16 +445,12 @@ impl App {
                 let p = self.paths[i][..self.paths[i].len() - 1].to_vec();
                 self.go(&p, true);
             }
-            K_NXE => {
-                let p = self.paths[i].clone();
-                Ui(self.ui).spawn(unsafe { core::str::from_utf8_unchecked(&p[..p.len() - 1]) });
+            _ => {
+                // any file: hand it to the system "open" (macOS-style) — a .nxe runs, other
+                // types launch in their associated app (text -> Notepad, .png -> image viewer, …).
+                let p = self.paths[i].clone();   // NUL-terminated absolute path
+                Ui(self.ui).open_file(p.as_ptr());
             }
-            K_TEXT => {
-                // open-with: launch the Notepad (nwnote) with this file as argv[1]
-                let p = self.paths[i].clone();   // NUL-terminated
-                Ui(self.ui).spawn_arg("nwnote", p.as_ptr());
-            }
-            _ => {}
         }
     }
 

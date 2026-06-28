@@ -1755,6 +1755,9 @@ $(BINFOLDER)%.o: user/nwset/%.c
 $(BINFOLDER)%.o: user/nwabout/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/nwview/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/nwterm/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
@@ -1955,6 +1958,10 @@ $(BINFOLDER)nwset.nxe: $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)nw_settings.o
 $(BINFOLDER)nwabout.nxe: $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwabout.elf $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX_TOOL) $(BINFOLDER)nwabout.elf $@ --need libnwui.ndl
+# nwview: the image viewer — toolkit-only chain (reuses the libnwui PNG decoder + image widget).
+$(BINFOLDER)nwview.nxe: $(DYN_GLUE) $(BINFOLDER)nwview.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwview.elf $(DYN_GLUE) $(BINFOLDER)nwview.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwview.elf $@ --need libnwui.ndl
 # nwterm: the real windowed Terminal — a raw libnw client running nsh on a pty, with the shared
 # VT engine (vt.o). --need libnw.ndl.
 $(BINFOLDER)nwterm.nxe: $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
@@ -2138,7 +2145,7 @@ X64_GUI_PROGS=nwm nwlogin
 # NanWM desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
 # (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
-X64_GUI_APPS=rsexp nwset nwabout nwnote nwform nwterm
+X64_GUI_APPS=rsexp nwset nwabout nwnote nwview nwform nwterm
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
 X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
 _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))

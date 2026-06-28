@@ -195,6 +195,14 @@ void        nwui_spawn(nwui *u, const char *cmd);
 /* Launch `cmd` passing `arg` as its argv[1] (open-with: e.g. open a file in an editor). */
 void        nwui_spawn_arg(nwui *u, const char *cmd, const char *arg);
 
+/* macOS-style "open": launch `path` in its associated application (a .nxe runs directly; other
+ * files open in the app mapped to their extension). Associations come from
+ * /disks/main/nanos/config/associations.conf (editable in Settings), with built-in defaults.
+ * Reusable by any toolkit app — the NanOS equivalent of `open(1)` / LaunchServices. */
+void        nwui_open_file(nwui *u, const char *path);
+/* Resolve a (lowercase, no-dot) extension to an app name (config overrides built-ins). 1/0. */
+int         nwui_assoc_lookup(const char *ext, char *out, int cap);
+
 /* Ask the compositor to re-read its settings file and recompose (used by the Settings app,
  * right after it writes settings.yaml, so preference changes apply live). */
 void        nwui_reload_settings(nwui *u);

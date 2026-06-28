@@ -10,6 +10,8 @@
 #include <time.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 struct nwui_io { nw_display *d; nw_win *win; };
 
@@ -32,6 +34,91 @@ void nwui_spawn_arg(nwui *u, const char *cmd, const char *arg)
 {
 	struct nwui_io *io = (struct nwui_io *) u->io;
 	nw_spawn_arg(io->d, cmd, arg);
+}
+
+/* ---- "open" (macOS-style): launch a file in its associated app -------------------------------
+ * The reusable LaunchServices of NanOS: any libnwui app calls nwui_open_file(u, path) and the
+ * right app opens. Associations are extension -> app, configurable in Settings via a plain-text
+ * table at /disks/main/nanos/config/associations.conf ("ext: app" per line; '#' comments), with
+ * built-in defaults as a fallback. A standalone `open` program is a thin wrapper over this. */
+#define NW_ASSOC_PATH "/disks/main/nanos/config/associations.conf"
+
+/* Lowercased extension (without the dot) of `path` into ext[cap]; "" if none. */
+static void nwui_file_ext(const char *path, char *ext, int cap)
+{
+	const char *dot = 0;
+	for (const char *p = path; *p; p++) {
+		if (*p == '/') dot = 0;
+		else if (*p == '.') dot = p;
+	}
+	ext[0] = 0;
+	if (!dot) return;
+	int i = 0;
+	for (const char *p = dot + 1; *p && i < cap - 1; p++)
+		ext[i++] = (*p >= 'A' && *p <= 'Z') ? (char) (*p + 32) : *p;
+	ext[i] = 0;
+}
+
+/* The built-in default associations (used when the config has no entry for an extension). */
+static const struct { const char *ext, *app; } NWUI_DEFAULT_ASSOC[] = {
+	{ "txt", "nwnote" }, { "c", "nwnote" }, { "h", "nwnote" }, { "md", "nwnote" },
+	{ "cfg", "nwnote" }, { "conf", "nwnote" }, { "rs", "nwnote" }, { "sh", "nwnote" },
+	{ "log", "nwnote" }, { "yaml", "nwnote" }, { "ini", "nwnote" }, { "json", "nwnote" },
+	{ "png", "nwview" },
+};
+enum { NWUI_NDEFAULT_ASSOC = (int) (sizeof NWUI_DEFAULT_ASSOC / sizeof NWUI_DEFAULT_ASSOC[0]) };
+
+/* Resolve `ext` -> app name into out[cap]. The config file overrides the built-ins. 1/0. */
+int nwui_assoc_lookup(const char *ext, char *out, int cap)
+{
+	if (!ext || !ext[0]) return 0;
+	int fd = open(NW_ASSOC_PATH, O_RDONLY);
+	if (fd >= 0) {
+		char buf[2048];
+		int n = (int) read(fd, buf, sizeof buf - 1);
+		close(fd);
+		if (n > 0) {
+			buf[n] = 0;
+			for (char *line = buf; line && *line; ) {
+				char *nl = strchr(line, '\n');
+				if (nl) *nl = 0;
+				while (*line == ' ' || *line == '\t') line++;
+				if (*line && *line != '#') {
+					char *sep = strpbrk(line, ":= \t");
+					if (sep) {
+						*sep = 0;
+						char *app = sep + 1;
+						while (*app == ':' || *app == '=' || *app == ' ' || *app == '\t') app++;
+						if (!strcmp(line, ext) && *app) {
+							int i = 0; for (; app[i] && i < cap - 1; i++) out[i] = app[i];
+							out[i] = 0;
+							return 1;
+						}
+					}
+				}
+				line = nl ? nl + 1 : 0;
+			}
+		}
+	}
+	for (int i = 0; i < NWUI_NDEFAULT_ASSOC; i++)
+		if (!strcmp(ext, NWUI_DEFAULT_ASSOC[i].ext)) {
+			int k = 0; for (; NWUI_DEFAULT_ASSOC[i].app[k] && k < cap - 1; k++) out[k] = NWUI_DEFAULT_ASSOC[i].app[k];
+			out[k] = 0;
+			return 1;
+		}
+	return 0;
+}
+
+void nwui_open_file(nwui *u, const char *path)
+{
+	int l = (int) strlen(path);
+	if (l > 4 && !strcmp(path + l - 4, ".nxe")) { nwui_spawn(u, path); return; }   /* a program: run it */
+	char ext[16]; nwui_file_ext(path, ext, sizeof ext);
+	char app[64];
+	if (nwui_assoc_lookup(ext, app, sizeof app))
+		nwui_spawn_arg(u, app, path);
+	else
+		nwui_message(u, "Open", "No application is associated with this file type.");
 }
 
 void nwui_reload_settings(nwui *u)
