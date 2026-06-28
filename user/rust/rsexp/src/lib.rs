@@ -15,7 +15,54 @@ extern "C" {
     fn nwui_dir_open(path: *const u8) -> *mut c_void;
     fn nwui_dir_next(d: *mut c_void, name: *mut u8, cap: i32, is_dir: *mut i32) -> i32;
     fn nwui_dir_close(d: *mut c_void);
+    fn open(path: *const u8, flags: i32, mode: i32) -> i32;
+    fn read(fd: i32, buf: *mut u8, n: usize) -> isize;
+    fn write(fd: i32, buf: *const u8, n: usize) -> isize;
+    fn close(fd: i32) -> i32;
 }
+
+const O_RDONLY: i32 = 0;
+const O_WRONLY: i32 = 1;
+const O_CREAT: i32 = 0o100;
+const O_TRUNC: i32 = 0o1000;
+
+/// Read a whole file into a byte vec (empty on any error).
+fn read_file(path_noz: &[u8]) -> Vec<u8> {
+    let p = nul(path_noz);
+    let fd = unsafe { open(p.as_ptr(), O_RDONLY, 0) };
+    let mut out = Vec::new();
+    if fd < 0 { return out; }
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = unsafe { read(fd, buf.as_mut_ptr(), buf.len()) };
+        if n <= 0 { break; }
+        out.extend_from_slice(&buf[..n as usize]);
+    }
+    unsafe { close(fd); }
+    out
+}
+
+/// Write a byte buffer to a file (create/truncate, 0644). Returns true on success.
+fn write_file(path_noz: &[u8], data: &[u8]) -> bool {
+    let p = nul(path_noz);
+    let fd = unsafe { open(p.as_ptr(), O_WRONLY | O_CREAT | O_TRUNC, 0o644) };
+    if fd < 0 { return false; }
+    let mut off = 0;
+    while off < data.len() {
+        let n = unsafe { write(fd, data[off..].as_ptr(), data.len() - off) };
+        if n <= 0 { break; }
+        off += n as usize;
+    }
+    unsafe { close(fd); }
+    off == data.len()
+}
+
+/// The known "open with" applications offered by the per-file / per-type pickers.
+const OPENERS: &[(&[u8], &[u8])] = &[
+    (b"Text Editor", b"nwnote"),
+    (b"Image Viewer", b"nwview"),
+];
+const ASSOC_PATH: &[u8] = b"/disks/main/nanos/config/associations.conf";
 
 const MUTED: u32 = 0x008a8a8e;
 const SIDE_BG: u32 = 0x00f4f5f8;
@@ -78,6 +125,11 @@ struct App {
     dlg_buf: [u8; 256],           // text-input buffer for the rename / new-folder dialogs
     addr: [u8; 512],              // editable address-bar buffer (reflects the current path)
     status: *mut NwNode,          // the status-bar label
+    // per-FILE "open with" overrides (path -> app name), persisted in ~/.rsexp-open. Distinct from
+    // the per-extension associations.conf (the "Change for type" button edits that).
+    file_apps: Vec<(Vec<u8>, Vec<u8>)>,
+    prop_path: Vec<u8>,           // file the Properties / open-with dialog currently acts on (no NUL)
+    prop_ext: Vec<u8>,            // its extension (lowercase, no dot) for "Change for type"
     // SQLite-backed recursive search: a :memory: index, (re)built per location on first search.
     #[cfg(feature = "sqlite")]
     db: *mut c_void,              // sqlite3* (lazily opened), null until the first search
@@ -447,9 +499,14 @@ impl App {
             }
             _ => {
                 // any file: hand it to the system "open" (macOS-style) — a .nxe runs, other
-                // types launch in their associated app (text -> Notepad, .png -> image viewer, …).
+                // types launch in their app. A per-FILE override (Properties > Change…) wins over
+                // the per-extension association.
                 let p = self.paths[i].clone();   // NUL-terminated absolute path
-                Ui(self.ui).open_file(p.as_ptr());
+                match self.file_app(&p[..p.len() - 1]) {
+                    Some(app) => Ui(self.ui).open_file_with(p.as_ptr(),
+                                     unsafe { core::str::from_utf8_unchecked(&app) }),
+                    None => Ui(self.ui).open_file(p.as_ptr()),
+                }
             }
         }
     }
@@ -701,6 +758,175 @@ impl App {
             if !libnwui_rs::fs::exists(&cand) || n > 9999 { return cand; }
             n += 1;
         }
+    }
+
+    /* ---- per-file "open with" overrides + Properties ---- */
+    fn file_store_path(&self) -> Vec<u8> {
+        let mut p = home_dir();
+        p.extend_from_slice(b"/.rsexp-open");
+        p
+    }
+    fn load_file_apps(&mut self) {
+        self.file_apps.clear();
+        let data = read_file(&self.file_store_path());
+        for line in data.split(|&c| c == b'\n') {
+            if line.is_empty() { continue; }
+            let mut it = line.splitn(2, |&c| c == b'\t');     // "path\tapp"
+            let path = it.next().unwrap_or(&[]);
+            let app = it.next().unwrap_or(&[]);
+            if !path.is_empty() && !app.is_empty() {
+                self.file_apps.push((path.to_vec(), app.to_vec()));
+            }
+        }
+    }
+    fn save_file_apps(&self) {
+        let mut out = Vec::new();
+        for (path, app) in &self.file_apps {
+            out.extend_from_slice(path); out.push(b'\t');
+            out.extend_from_slice(app); out.push(b'\n');
+        }
+        write_file(&self.file_store_path(), &out);
+    }
+    fn file_app(&self, path_noz: &[u8]) -> Option<Vec<u8>> {
+        for (p, a) in &self.file_apps {
+            if p.as_slice() == path_noz { return Some(a.clone()); }
+        }
+        None
+    }
+    fn set_file_app(&mut self, path_noz: &[u8], app: &[u8]) {
+        for e in self.file_apps.iter_mut() {
+            if e.0.as_slice() == path_noz { e.1 = app.to_vec(); self.save_file_apps(); return; }
+        }
+        self.file_apps.push((path_noz.to_vec(), app.to_vec()));
+        self.save_file_apps();
+    }
+    /// Upsert "ext: app" in associations.conf (the per-EXTENSION default). Preserves other lines.
+    fn set_type_app(&self, ext: &[u8], app: &[u8]) {
+        let data = read_file(ASSOC_PATH);
+        let mut out = Vec::new();
+        let mut replaced = false;
+        for line in data.split(|&c| c == b'\n') {
+            if line.is_empty() { continue; }
+            let key_end = line.iter()
+                .position(|&c| c == b':' || c == b'=' || c == b' ' || c == b'\t')
+                .unwrap_or(line.len());
+            if &line[..key_end] == ext {
+                out.extend_from_slice(ext); out.extend_from_slice(b": ");
+                out.extend_from_slice(app); out.push(b'\n');
+                replaced = true;
+            } else {
+                out.extend_from_slice(line); out.push(b'\n');
+            }
+        }
+        if !replaced {
+            out.extend_from_slice(ext); out.extend_from_slice(b": ");
+            out.extend_from_slice(app); out.push(b'\n');
+        }
+        write_file(ASSOC_PATH, &out);
+    }
+    /// Current opener for a regular file: per-file override, else per-ext assoc, else "(none)".
+    fn current_opener(&self, path_noz: &[u8], ext: &[u8]) -> Vec<u8> {
+        if let Some(a) = self.file_app(path_noz) { return a; }
+        if let Some(a) = Ui(self.ui).assoc_lookup(ext) { return a; }
+        b"(none)".to_vec()
+    }
+    fn kind_label(kind: u8) -> &'static [u8] {
+        match kind {
+            K_DIR | K_UP => b"Folder",
+            K_DRIVE => b"Disk",
+            K_HOME => b"Home",
+            K_NXE => b"Program",
+            K_TEXT => b"Text file",
+            K_IMAGE => b"PNG image",
+            _ => b"File",
+        }
+    }
+    fn dir_count(&self, path_noz: &[u8]) -> u32 {
+        let d = unsafe { nwui_dir_open(nul(path_noz).as_ptr()) };
+        if d.is_null() { return 0; }
+        let mut name = [0u8; 256]; let mut is_dir = 0i32; let mut n = 0u32;
+        while unsafe { nwui_dir_next(d, name.as_mut_ptr(), 256, &mut is_dir) } == 1 { n += 1; }
+        unsafe { nwui_dir_close(d); }
+        n
+    }
+    fn ext_of(name: &[u8]) -> Vec<u8> {
+        let mut e = Vec::new();
+        if let Some(dot) = name.iter().rposition(|&c| c == b'.') {
+            for &c in &name[dot + 1..] { e.push(if (b'A'..=b'Z').contains(&c) { c + 32 } else { c }); }
+        }
+        e
+    }
+    fn show_properties(&mut self) {
+        let i = match self.sel_model() { Some(i) => i, None => return };
+        let ui = Ui(self.ui);
+        let kind = self.kinds[i];
+        let path = self.paths[i].clone();                 // NUL-terminated
+        let pnoz = path[..path.len() - 1].to_vec();
+        let name = self.names[i][..self.names[i].len() - 1].to_vec();
+        let parent = parent_of(&pnoz).to_vec();
+        let ext = App::ext_of(&name);
+        self.prop_path = pnoz.clone();
+        self.prop_ext = ext.clone();
+
+        let col = ui.vbox().pad(16).gap(8).colors(0, 0x00ffffff);
+        col.add(ui.label("Properties").colors(0x172130, 0));
+        let line = |pre: &[u8], val: &[u8]| -> Vec<u8> { let mut l = pre.to_vec(); l.extend_from_slice(val); l };
+        let l = line(b"Name:  ", &name);    col.add(ui.label(unsafe { core::str::from_utf8_unchecked(&l) }));
+        let l = line(b"Kind:  ", App::kind_label(kind)); col.add(ui.label(unsafe { core::str::from_utf8_unchecked(&l) }));
+        let l = line(b"Where: ", &parent);  col.add(ui.label(unsafe { core::str::from_utf8_unchecked(&l) }));
+        let mut sl = Vec::new();
+        if is_dirish(kind) {
+            sl.extend_from_slice(b"Items: "); push_uint(&mut sl, self.dir_count(&pnoz));
+        } else {
+            sl.extend_from_slice(b"Size:  ");
+            let sz = libnwui_rs::fs::size(&path);
+            push_size(&mut sl, if sz < 0 { 0 } else { sz as u64 });
+        }
+        col.add(ui.label(unsafe { core::str::from_utf8_unchecked(&sl) }));
+
+        // "Opens with" is only meaningful for a regular data file (not a folder, not a program).
+        if !is_dirish(kind) && kind != K_NXE {
+            let opener = self.current_opener(&pnoz, &ext);
+            let l = line(b"Opens with:  ", &opener);
+            col.add(ui.label(unsafe { core::str::from_utf8_unchecked(&l) }));
+            let row = ui.hbox().gap(8);
+            let a1 = self as *mut App as usize;
+            row.add(ui.button("Change...", move || unsafe { (&mut *(a1 as *mut App)).pick_app(true) }));
+            let a2 = self as *mut App as usize;
+            row.add(ui.button("Change for type", move || unsafe { (&mut *(a2 as *mut App)).pick_app(false) }));
+            col.add(row);
+        }
+        let a3 = self as *const App as usize;
+        col.add(ui.button("Close", move || Ui(unsafe { (*(a3 as *const App)).ui }).close_modal()));
+        ui.open_modal(col);
+    }
+    /// The app chooser: a button per known opener; sets the per-file (per_file=true) or per-type
+    /// default and re-opens Properties so the change is visible.
+    fn pick_app(&mut self, per_file: bool) {
+        let ui = Ui(self.ui);
+        ui.close_modal();
+        let col = ui.vbox().pad(16).gap(8).colors(0, 0x00ffffff);
+        col.add(ui.label(if per_file { "Open this file with:" } else { "Open this type with:" }).colors(0x172130, 0));
+        for &(label, app) in OPENERS {
+            let a = self as *mut App as usize;
+            let appname = app.to_vec();
+            col.add(ui.button(unsafe { core::str::from_utf8_unchecked(label) },
+                              move || unsafe { (&mut *(a as *mut App)).choose_app(per_file, &appname) }));
+        }
+        let a = self as *const App as usize;
+        col.add(ui.button("Cancel", move || Ui(unsafe { (*(a as *const App)).ui }).close_modal()));
+        ui.open_modal(col);
+    }
+    fn choose_app(&mut self, per_file: bool, app: &[u8]) {
+        if per_file {
+            let p = self.prop_path.clone();
+            self.set_file_app(&p, app);
+        } else {
+            let e = self.prop_ext.clone();
+            if !e.is_empty() { self.set_type_app(&e, app); }
+        }
+        Ui(self.ui).close_modal();
+        self.show_properties();   // reopen Properties showing the new opener
     }
 
     /* ---- drag and drop ---- */
@@ -1212,6 +1438,9 @@ extern "C" fn cb_select_all(_n: *mut NwNode, user: *mut c_void) {
         app.update_status();
     }
 }
+extern "C" fn cb_properties(_n: *mut NwNode, user: *mut c_void) {
+    unsafe { (&mut *(user as *mut App)).show_properties(); }
+}
 
 /// Case-insensitive substring test (ASCII).
 fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
@@ -1294,6 +1523,9 @@ pub extern "C" fn main() -> i32 {
         dlg_buf: [0u8; 256],
         addr: [0u8; 512],
         status: core::ptr::null_mut(),
+        file_apps: Vec::new(),
+        prop_path: Vec::new(),
+        prop_ext: Vec::new(),
         #[cfg(feature = "sqlite")]
         db: core::ptr::null_mut(),
         #[cfg(feature = "sqlite")]
@@ -1319,6 +1551,7 @@ pub extern "C" fn main() -> i32 {
     ui.context_add("Name (Z-A)", cb_sort_name_desc, app_ptr);
     ui.context_add("Sort by Type", cb_sort_type, app_ptr);
     ui.context_add("Refresh", cb_refresh, app_ptr);
+    ui.context_add("Properties", cb_properties, app_ptr);
 
     // keyboard accelerators — macOS-style Cmd (Super/⌘) everywhere. F2 rename, Del delete,
     // F5 refresh; Cmd+N new folder, Cmd+L focus the address bar. Cmd+C/X/V are NOT accelerators:
@@ -1331,6 +1564,7 @@ pub extern "C" fn main() -> i32 {
     ui.accel(true, b'l', 0, cb_focus_addr, app_ptr);
     ui.accel(true, b'a', 0, cb_select_all, app_ptr);   // Cmd+A: select all
     ui.accel(true, 0, SC_UP, cb_up, app_ptr);          // Cmd+Up: enclosing folder (macOS ⌘↑)
+    ui.accel(true, b'i', 0, cb_properties, app_ptr);   // Cmd+I: properties / get info (macOS ⌘I)
 
     // global menu (shown in the system menu bar when Files is focused)
     let mfile = ui.menu("File");
@@ -1417,6 +1651,7 @@ pub extern "C" fn main() -> i32 {
     let body = ui.hbox().add(sidebar).add(view.flex(1));
     let root = ui.vbox().add(toolbar).add(body.flex(1)).add(status);
 
+    unsafe { (&mut *(app_ptr as *mut App)).load_file_apps(); }   // per-file "open with" overrides
     unsafe { (&mut *(app_ptr as *mut App)).go(b"", true); }   // initial view + history entry
 
     // Pre-warm the SQLite index for the opening location (/disks) so the first search is instant

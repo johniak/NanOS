@@ -46,21 +46,14 @@ void nwui_spawn_arg(nwui *u, const char *cmd, const char *arg)
 /* Resolve `ext` -> app name (config overrides built-ins). Exposed for Settings' Default Apps. */
 int nwui_assoc_lookup(const char *ext, char *out, int cap) { return nw_assoc_lookup(ext, out, cap); }
 
-void nwui_open_file(nwui *u, const char *path)
+/* Open `path` with a SPECIFIC application (skips the extension lookup) — the explorer uses this
+ * for a per-file "default program" override. The opened app runs as the current user and reads the
+ * file with that identity; probe real readability with open() (NOT access(), whose NanOS impl
+ * optimistically assumes root). If the user can't read it, ask the COMPOSITOR for an elevated
+ * launch — nwm shows its own modal system auth dialog, collects the admin password, and runs the
+ * app as root. The app never draws the password prompt or sees the password. */
+void nwui_open_file_with(nwui *u, const char *path, const char *app)
 {
-	int l = (int) strlen(path);
-	if (l > 4 && !strcmp(path + l - 4, ".nxe")) { nwui_spawn(u, path); return; }   /* a program: run it */
-	char ext[16]; nw_file_ext(path, ext, sizeof ext);
-	char app[64];
-	if (!nwui_assoc_lookup(ext, app, sizeof app)) {
-		nwui_message(u, "Open", "No application is associated with this file type.");
-		return;
-	}
-	/* The opened app runs as the current user and reads the file with that identity. Probe real
-	 * readability with open() (NOT access(), whose NanOS impl optimistically assumes root): if the
-	 * user can't read the file, ask the COMPOSITOR for an elevated launch — nwm shows its own modal
-	 * system auth dialog, collects the admin password, and runs the app as root. The app never
-	 * draws the password prompt or sees the password (macOS-authorization style). */
 	int probe = open(path, O_RDONLY);
 	if (probe < 0) {
 		if (errno == EACCES || errno == EPERM)
@@ -71,6 +64,19 @@ void nwui_open_file(nwui *u, const char *path)
 	}
 	close(probe);
 	nwui_spawn_arg(u, app, path);
+}
+
+void nwui_open_file(nwui *u, const char *path)
+{
+	int l = (int) strlen(path);
+	if (l > 4 && !strcmp(path + l - 4, ".nxe")) { nwui_spawn(u, path); return; }   /* a program: run it */
+	char ext[16]; nw_file_ext(path, ext, sizeof ext);
+	char app[64];
+	if (!nwui_assoc_lookup(ext, app, sizeof app)) {
+		nwui_message(u, "Open", "No application is associated with this file type.");
+		return;
+	}
+	nwui_open_file_with(u, path, app);
 }
 
 void nwui_reload_settings(nwui *u)

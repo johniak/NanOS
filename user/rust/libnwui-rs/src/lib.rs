@@ -89,6 +89,10 @@ extern "C" {
     fn nwui_spawn(u: *mut NwUi, cmd: *const u8);
     fn nwui_spawn_arg(u: *mut NwUi, cmd: *const u8, arg: *const u8);
     fn nwui_open_file(u: *mut NwUi, path: *const u8);
+    fn nwui_open_file_with(u: *mut NwUi, path: *const u8, app: *const u8);
+    fn nwui_assoc_lookup(ext: *const u8, out: *mut u8, cap: i32) -> i32;
+    fn nwui_open_modal(u: *mut NwUi, subtree: *mut NwNode, on_close: Option<RawCb>, user: *mut c_void);
+    fn nwui_close_modal(u: *mut NwUi);
     fn nwui_image_load_png(path: *const u8, w: *mut i32, h: *mut i32) -> *mut u32;
     fn nwui_menu(u: *mut NwUi, title: *const u8) -> i32;
     fn nwui_menu_item(u: *mut NwUi, menu: i32, label: *const u8, cb: RawCb, user: *mut c_void);
@@ -296,6 +300,26 @@ impl Ui {
     pub fn spawn(&self, cmd: &str) { let c = cstr(cmd); unsafe { nwui_spawn(self.0, c.as_ptr()) } }
     /// macOS-style "open": launch a file (NUL-terminated ptr) in its associated app.
     pub fn open_file(&self, path: *const u8) { unsafe { nwui_open_file(self.0, path) } }
+    /// Open a file with a SPECIFIC app (a per-file default-program override).
+    pub fn open_file_with(&self, path: *const u8, app: &str) {
+        let c = cstr(app);
+        unsafe { nwui_open_file_with(self.0, path, c.as_ptr()) }
+    }
+    /// Resolve an extension (lowercase, no dot) to its associated app name, or None.
+    pub fn assoc_lookup(&self, ext: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+        let mut e = alloc::vec::Vec::with_capacity(ext.len() + 1);
+        e.extend_from_slice(ext); e.push(0);
+        let mut out = [0u8; 64];
+        let ok = unsafe { nwui_assoc_lookup(e.as_ptr(), out.as_mut_ptr(), 64) };
+        if ok == 0 { return None; }
+        let mut n = 0; while n < out.len() && out[n] != 0 { n += 1; }
+        Some(out[..n].to_vec())
+    }
+    /// Open `subtree` as a modal overlay (blocks the window until close_modal).
+    pub fn open_modal(&self, subtree: Node) {
+        unsafe { nwui_open_modal(self.0, subtree.0, None, core::ptr::null_mut()) }
+    }
+    pub fn close_modal(&self) { unsafe { nwui_close_modal(self.0) } }
     /// Launch `cmd` with `arg` (a NUL-terminated C pointer) as its argv[1] — "open with".
     pub fn spawn_arg(&self, cmd: &str, arg: *const u8) {
         let c = cstr(cmd);

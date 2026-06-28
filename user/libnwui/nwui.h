@@ -215,6 +215,9 @@ void        nwui_spawn_arg(nwui *u, const char *cmd, const char *arg);
  * /disks/main/nanos/config/associations.conf (editable in Settings), with built-in defaults.
  * Reusable by any toolkit app — the NanOS equivalent of `open(1)` / LaunchServices. */
 void        nwui_open_file(nwui *u, const char *path);
+/* Open `path` with a SPECIFIC app (skips the extension lookup) — e.g. a per-file "default program"
+ * override. Same readability probe + elevate-on-EACCES behaviour as nwui_open_file. */
+void        nwui_open_file_with(nwui *u, const char *path, const char *app);
 /* Resolve a (lowercase, no-dot) extension to an app name (config overrides built-ins). 1/0. */
 int         nwui_assoc_lookup(const char *ext, char *out, int cap);
 
