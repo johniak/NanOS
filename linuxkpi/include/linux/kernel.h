@@ -15,6 +15,8 @@
 #ifndef offsetof
 #define offsetof(TYPE, MEMBER) __builtin_offsetof(TYPE, MEMBER)
 #endif
+#define offsetofend(TYPE, MEMBER) (offsetof(TYPE, MEMBER) + sizeof(((TYPE *)0)->MEMBER))
+#define sizeof_field(TYPE, MEMBER) (sizeof(((TYPE *)0)->MEMBER))
 
 #define container_of(ptr, type, member) ({                          \
 	void *__mptr = (void *)(ptr);                               \
