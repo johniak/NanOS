@@ -42,31 +42,10 @@ int main(int argc, char **argv)
 		}
 	}
 
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (fd < 0) { perror("open: socket"); return 1; }
-	struct sockaddr_un sa;
-	memset(&sa, 0, sizeof sa);
-	sa.sun_family = AF_UNIX;
-	strncpy(sa.sun_path, NW_SPAWN_SOCK, sizeof sa.sun_path - 1);
-	if (connect(fd, (struct sockaddr *) &sa, sizeof sa) < 0) {
+	/* hand the launch to the desktop (no password -> a normal, unprivileged launch) */
+	if (nw_launch_send(app, is_nxe ? "" : path, "") != 0) {
 		fprintf(stderr, "open: no desktop session to open into (is nwm running?)\n");
-		close(fd);
 		return 1;
 	}
-
-	/* request = "cmd\0arg" (arg = the file to pass as argv[1]; omitted for a bare .nxe run) */
-	char msg[640];
-	int n = 0;
-	for (const char *p = app; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
-	msg[n++] = 0;
-	if (!is_nxe)
-		for (const char *p = path; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
-	int off = 0;
-	while (off < n) {
-		int w = (int) write(fd, msg + off, n - off);
-		if (w <= 0) break;
-		off += w;
-	}
-	close(fd);
-	return off == n ? 0 : 1;
+	return 0;
 }

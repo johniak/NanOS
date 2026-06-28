@@ -56,6 +56,8 @@ void       nwui_textfield_set(nwui_node *n, const char *s);
 void       nwui_textfield_set_submit(nwui_node *n, nwui_cb cb);
 /* Select the whole field so the next keystroke replaces it (e.g. focusing an address bar). */
 void       nwui_textfield_select_all(nwui_node *n);
+/* Render the field's value as dots (password entry). */
+void       nwui_textfield_set_secret(nwui_node *n, int on);
 
 /* A multiline text editor over an APP-OWNED buffer: caret + selection + scroll + optional
  * word-wrap. The reusable heart of any text app (Notepad, log viewer, code box). */

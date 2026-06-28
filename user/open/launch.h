@@ -16,6 +16,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include "nwspawn.h"   /* NW_SPAWN_SOCK — the compositor's launch socket */
 
 /* Where the editable associations live (the "Default Apps" Settings panel writes this). */
@@ -84,6 +86,32 @@ static int nw_assoc_lookup(const char *ext, char *out, int cap)
 			return 1;
 		}
 	return 0;
+}
+
+/* Ask the desktop (nwm) to launch `cmd` with `arg` as argv[1]. If `password` is non-empty, the
+ * launch is ELEVATED: nwm runs it through the setuid-root nwsu helper, which verifies the password
+ * (root's) and runs the app as root — the "authenticate to open" path. Sends "cmd\0arg\0password"
+ * over the launch socket. Returns 0 on success, -1 if the desktop isn't reachable. */
+static int nw_launch_send(const char *cmd, const char *arg, const char *password)
+{
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) return -1;
+	struct sockaddr_un sa;
+	memset(&sa, 0, sizeof sa);
+	sa.sun_family = AF_UNIX;
+	strncpy(sa.sun_path, NW_SPAWN_SOCK, sizeof sa.sun_path - 1);
+	if (connect(fd, (struct sockaddr *) &sa, sizeof sa) < 0) { close(fd); return -1; }
+	char msg[768];
+	int n = 0;
+	for (const char *p = cmd; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
+	msg[n++] = 0;
+	if (arg) for (const char *p = arg; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
+	msg[n++] = 0;
+	if (password) for (const char *p = password; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
+	int off = 0, w;
+	while (off < n && (w = (int) write(fd, msg + off, n - off)) > 0) off += w;
+	close(fd);
+	return off == n ? 0 : -1;
 }
 
 #endif /* NW_LAUNCH_H */

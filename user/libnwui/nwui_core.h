@@ -81,6 +81,7 @@ struct nwui_node {
 
 	int        focusable, focused, hover, pressed, dirty;
 	int        hidden;               /* nwui_set_visible(n,0): skipped in layout/paint/hit (tabs) */
+	int        secret;               /* textfield: render the value as dots (password entry) */
 };
 
 /* A top menu in the application menu bar (file-scope so C++ host tests see the tag). */

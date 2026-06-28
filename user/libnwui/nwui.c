@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 
 struct nwui_io { nw_display *d; nw_win *win; };
 
@@ -45,6 +46,45 @@ void nwui_spawn_arg(nwui *u, const char *cmd, const char *arg)
 /* Resolve `ext` -> app name (config overrides built-ins). Exposed for Settings' Default Apps. */
 int nwui_assoc_lookup(const char *ext, char *out, int cap) { return nw_assoc_lookup(ext, out, cap); }
 
+/* ---- "authenticate to open" (macOS-authorization style) ----
+ * When the file is not readable by the user, pop a password dialog; on the correct root password
+ * the launch is sent ELEVATED (nwm -> setuid-root nwsu runs the app as root). The launch goes over
+ * the launch socket so the same path serves the UI and the terminal `open`. */
+static struct { char app[64]; char path[256]; char pass[128]; } g_auth;
+static void auth_ok(nwui_node *self, void *u)
+{
+	(void) self;
+	nwui_close_modal((nwui *) u);
+	nw_launch_send(g_auth.app, g_auth.path, g_auth.pass);   /* non-empty pass -> elevated via nwsu */
+	memset(g_auth.pass, 0, sizeof g_auth.pass);             /* scrub the secret */
+}
+static void auth_cancel(nwui_node *self, void *u)
+{
+	(void) self;
+	nwui_close_modal((nwui *) u);
+	memset(g_auth.pass, 0, sizeof g_auth.pass);
+}
+static void nwui_auth_dialog(nwui *u, const char *app, const char *path)
+{
+	int i;
+	for (i = 0; app[i]  && i < (int) sizeof g_auth.app  - 1; i++) g_auth.app[i]  = app[i];  g_auth.app[i] = 0;
+	for (i = 0; path[i] && i < (int) sizeof g_auth.path - 1; i++) g_auth.path[i] = path[i]; g_auth.path[i] = 0;
+	g_auth.pass[0] = 0;
+	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(u), 14), 10);
+	nwui_add(col, nwui_colors(nwui_label(u, "Authenticate"), 0x172130, 0));
+	nwui_add(col, nwui_label(u, "Enter the administrator (root) password to open this item:"));
+	nwui_node *tf = nwui_textfield(u, g_auth.pass, sizeof g_auth.pass, 0, 0);
+	nwui_textfield_set_secret(tf, 1);
+	nwui_add(col, tf);
+	nwui_node *btns = nwui_gap(nwui_hbox(u), 8);
+	nwui_add(btns, nwui_button(u, "OK", auth_ok, u));
+	nwui_add(btns, nwui_button(u, "Cancel", auth_cancel, u));
+	nwui_add(col, btns);
+	nwui_colors(col, 0, 0x00ffffff);
+	nwui_open_modal(u, col, 0, 0);
+	u->modal_default = auth_ok; u->modal_default_user = u;   /* Enter submits */
+}
+
 void nwui_open_file(nwui *u, const char *path)
 {
 	int l = (int) strlen(path);
@@ -55,13 +95,18 @@ void nwui_open_file(nwui *u, const char *path)
 		nwui_message(u, "Open", "No application is associated with this file type.");
 		return;
 	}
-	/* Permissions: the opened app runs as the current user (uid inherited from the session) and
-	 * reads the file with that identity. Check readability up front so a permission problem is a
-	 * clear message here rather than a cryptic failure inside the launched app. */
-	if (access(path, R_OK) != 0) {
-		nwui_message(u, "Open", "Permission denied - you do not have access to this file.");
+	/* The opened app runs as the current user and reads the file with that identity. Probe real
+	 * readability with open() (NOT access(), whose NanOS impl optimistically assumes root): if the
+	 * user can't read the file, offer to authenticate as root (macOS-style) and launch elevated. */
+	int probe = open(path, O_RDONLY);
+	if (probe < 0) {
+		if (errno == EACCES || errno == EPERM)
+			nwui_auth_dialog(u, app, path);
+		else
+			nwui_message(u, "Open", "The file could not be opened.");
 		return;
 	}
+	close(probe);
 	nwui_spawn_arg(u, app, path);
 }
 

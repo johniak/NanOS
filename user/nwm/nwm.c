@@ -154,8 +154,10 @@ static struct nw_server S;
 static void set_cloexec(int fd) { fcntl(fd, F_SETFD, FD_CLOEXEC); }
 static void set_nonblock(int fd) { fcntl(fd, F_SETFL, O_NONBLOCK); }
 
-/* Spawn a GUI client with an inherited request(3)/event(4) pipe pair into nw_server slot. */
-static int spawn_client(int slot, const char *path, const char *arg)
+/* Spawn a GUI client with an inherited request(3)/event(4) pipe pair into nw_server slot. If
+ * `password` is non-empty, launch ELEVATED: exec the setuid-root nwsu helper, which verifies the
+ * password (root's) and runs the app as root ("authenticate to open"). */
+static int spawn_client_priv(int slot, const char *path, const char *arg, const char *password)
 {
 	int reqp[2], evtp[2];
 	if (pipe(reqp) < 0 || pipe(evtp) < 0)
@@ -173,6 +175,16 @@ static int spawn_client(int slot, const char *path, const char *arg)
 		fcntl(4, F_SETFD, 0);
 		const char *base = path;                     /* argv[0] = the binary's basename */
 		for (const char *p = path; *p; p++) if (*p == '/') base = p + 1;
+		if (password && password[0]) {               /* elevated launch via setuid-root nwsu */
+			static char passenv[272];
+			snprintf(passenv, sizeof passenv, "NW_AUTH_PASS=%s", password);
+			char *eenv[] = { (char *) "NW_DISPLAY=1", passenv, 0 };
+			char *eav[4];
+			eav[0] = (char *) "nwsu"; eav[1] = (char *) path;
+			if (arg && arg[0]) { eav[2] = (char *) arg; eav[3] = 0; } else eav[2] = 0;
+			execve("/disks/main/nanos/bin/nwsu.nxe", eav, eenv);
+			_exit(127);
+		}
 		char *argv[3];
 		argv[0] = (char *) base;
 		if (arg && arg[0]) { argv[1] = (char *) arg; argv[2] = 0; }  /* open-with: argv[1] = a file */
@@ -195,6 +207,12 @@ static int spawn_client(int slot, const char *path, const char *arg)
 	nw_decoder_init(&cl_dec[slot], cl_pay[slot], CLIENT_COMMITCAP);
 	nw_client_connect(&S, slot, cl_out[slot], CLIENT_OUTCAP);
 	return 0;
+}
+
+/* Ordinary (unprivileged) launch — the common case. */
+static int spawn_client(int slot, const char *path, const char *arg)
+{
+	return spawn_client_priv(slot, path, arg, 0);
 }
 
 /* Resolve a Run command to a launchable path, the way the shell looks up apps. */
@@ -243,13 +261,17 @@ static void handle_spawn_conns(void)
 		close(c);
 		if (got <= 0) continue;
 		buf[got] = 0;
+		/* request = "cmd\0arg\0password": cmd resolved like Run; arg = argv[1]; a non-empty
+		 * password means an ELEVATED launch (run as root via nwsu after verifying it). */
 		const char *cmd = buf;
-		int cl = (int) strlen(cmd);                            /* cmd ends at the first NUL */
-		const char *arg = (cl + 1 < got) ? buf + cl + 1 : 0;   /* the rest (if any) = argv[1] */
+		int cl = (int) strlen(cmd);
+		const char *arg  = (cl + 1 <= got) ? buf + cl + 1 : "";
+		int al = (int) strlen(arg);
+		const char *pass = (cl + 1 + al + 1 <= got) ? buf + cl + 1 + al + 1 : "";
 		char path[256];
 		int slot = free_slot();
 		if (slot >= 0 && resolve_cmd(cmd, path, sizeof path))
-			spawn_client(slot, path, (arg && arg[0]) ? arg : 0);
+			spawn_client_priv(slot, path, arg[0] ? arg : 0, pass[0] ? pass : 0);
 	}
 }
 

@@ -1217,6 +1217,9 @@ _image64: _all _userland64 _kext
 	done
 	# chsh edits the account DB, so it runs setuid-root (a non-root user changing their own shell).
 	printf "set_inode_field /nanos/bin/chsh.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	# nwsu is the "authenticate to open" privileged helper: it verifies root's password and runs the
+	# target as root, so it must be setuid-root (owner root, mode 04755).
+	printf "set_inode_field /nanos/bin/nwsu.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# NanWM compositor (a system GUI program) -> /nanos/bin, and the NanWM client shared libs
 	# (libnw.ndl / libnwui.ndl) -> /nanos/lib (the NetSurf libnsfb backend binds libnw.ndl at load).
 	for p in $(X64_GUI_PROGS); do \
@@ -1885,6 +1888,7 @@ DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl
 $(BINFOLDER)init.nxe:      $(DYN_DEPS) $(BINFOLDER)init.o
 $(BINFOLDER)nsh.nxe:       $(DYN_DEPS) $(BINFOLDER)nsh.o
 $(BINFOLDER)open.nxe:      $(DYN_DEPS) $(BINFOLDER)open.o
+$(BINFOLDER)nwsu.nxe:      $(DYN_DEPS) $(BINFOLDER)nwsu.o
 $(BINFOLDER)free.nxe:      $(DYN_DEPS) $(BINFOLDER)free.o
 $(BINFOLDER)chsh.nxe:      $(DYN_DEPS) $(BINFOLDER)chsh.o
 $(BINFOLDER)cat.nxe:       $(DYN_DEPS) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
@@ -2142,7 +2146,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
+X64_SYS_PROGS=nsh open nwsu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
 # NanWM compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm nwlogin

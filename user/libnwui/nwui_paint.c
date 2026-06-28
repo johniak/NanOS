@@ -93,7 +93,8 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 		for (int i = 0; i < n->tlen; i++) {
 			int sel = (n->anchor != n->caret && i >= lo && i < hi);
 			if (sel) nw_fill_rect(s, tx + i * NW_FONT_W, ty, NW_FONT_W, NW_FONT_H, COL_SEL);
-			nw_draw_char_t(s, tx + i * NW_FONT_W, ty, (unsigned char) n->tbuf[i],
+			unsigned char glyph = n->secret ? (unsigned char) '*' : (unsigned char) n->tbuf[i];
+			nw_draw_char_t(s, tx + i * NW_FONT_W, ty, glyph,
 			               sel ? 0x00ffffff : COL_INK);
 		}
 		if (n->focused)

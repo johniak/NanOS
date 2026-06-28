@@ -90,6 +90,12 @@ void nwui_textfield_select_all(nwui_node *n)
 	if (n && n->kind == NWUI_TEXTFIELD) { n->anchor = 0; n->caret = n->tlen; n->dirty = 1; }
 }
 
+/* Render a textfield's value as dots (password entry). */
+void nwui_textfield_set_secret(nwui_node *n, int on)
+{
+	if (n && n->kind == NWUI_TEXTFIELD) n->secret = on ? 1 : 0;
+}
+
 nwui_node *nwui_textarea(nwui *u, char *buf, int cap, nwui_cb on_change, void *user)
 {
 	nwui_node *n = nwui_alloc(u, NWUI_TEXTAREA);
