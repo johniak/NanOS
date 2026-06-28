@@ -168,6 +168,24 @@ static void set_nonblock(int fd) { fcntl(fd, F_SETFL, O_NONBLOCK); }
 /* Spawn a GUI client with an inherited request(3)/event(4) pipe pair into nw_server slot. If
  * `password` is non-empty, launch ELEVATED: exec the setuid-root nanosu helper, which verifies the
  * password (root's) and runs the app as root ("authenticate to open"). */
+extern char **environ;   /* nwm's login environment (HOME/USER/PATH/... from the greeter) */
+
+/* Build a child's environment: inherit nwm's own env (so HOME/USER/PATH propagate — children need
+ * HOME to resolve per-user files like settings and the open-with store) and append NW_DISPLAY=1
+ * plus, for an elevated launch, NW_AUTH_PASS. Returns a NULL-terminated array (static; built in the
+ * forked child just before execve, so the single-use static buffer is safe). */
+static char **build_child_env(const char *passenv)
+{
+	static char *env[64];
+	int n = 0;
+	for (char **e = environ; e && *e && n < 61; e++)
+		env[n++] = *e;
+	env[n++] = (char *) "NW_DISPLAY=1";
+	if (passenv && passenv[0]) env[n++] = (char *) passenv;
+	env[n] = 0;
+	return env;
+}
+
 static int spawn_client_priv(int slot, const char *path, const char *arg, const char *password)
 {
 	int reqp[2], evtp[2];
@@ -189,7 +207,7 @@ static int spawn_client_priv(int slot, const char *path, const char *arg, const 
 		if (password && password[0]) {               /* elevated launch via setuid-root nanosu */
 			static char passenv[272];
 			snprintf(passenv, sizeof passenv, "NW_AUTH_PASS=%s", password);
-			char *eenv[] = { (char *) "NW_DISPLAY=1", passenv, 0 };
+			char **eenv = build_child_env(passenv);
 			char *eav[4];
 			eav[0] = (char *) "nanosu"; eav[1] = (char *) path;
 			if (arg && arg[0]) { eav[2] = (char *) arg; eav[3] = 0; } else eav[2] = 0;
@@ -200,8 +218,7 @@ static int spawn_client_priv(int slot, const char *path, const char *arg, const 
 		argv[0] = (char *) base;
 		if (arg && arg[0]) { argv[1] = (char *) arg; argv[2] = 0; }  /* open-with: argv[1] = a file */
 		else argv[1] = 0;
-		char *envp[] = { (char *) "NW_DISPLAY=1", 0 };
-		execve(path, argv, envp);
+		execve(path, argv, build_child_env(0));
 		_exit(127);
 	}
 	cl_req[slot] = reqp[0];               /* parent reads requests   */
