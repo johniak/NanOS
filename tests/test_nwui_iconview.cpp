@@ -14,6 +14,13 @@ static void pointer(nwui *u, int x, int y, int b) {
     nwui_dispatch(u, &e);
 }
 static void click(nwui *u, int x, int y) { pointer(u, x, y, 1); pointer(u, x, y, 0); }
+static void click_mod(nwui *u, int x, int y, int mods) {
+    nw_event e; memset(&e, 0, sizeof e);
+    e.type = NW_EV_POINTER; e.x = x; e.y = y; e.buttons = 1; e.mods = mods; nwui_dispatch(u, &e);
+    e.buttons = 0; nwui_dispatch(u, &e);
+}
+static int cell_x(nwui_node *iv, int idx) { return iv->x + (idx % iv->cols) * NWUI_ICON_CELL_W + NWUI_ICON_CELL_W / 2; }
+static int cell_y(nwui_node *iv, int idx) { return iv->y + (idx / iv->cols) * NWUI_ICON_CELL_H - iv->scroll + NWUI_ICON_CELL_H / 2; }
 
 static uint32_t dummy[4] = { 0, 0, 0, 0 };
 
@@ -80,6 +87,94 @@ TEST_CASE("iconview arrow keys move the selection by one (right) and by a row (d
     e.type = NW_EV_KEY; e.down = 1; e.code = NWUI_SC_DOWN;   // down a full row (cols=3)
     nwui_dispatch(u, &e);
     CHECK(nwui_iconview_selected(iv) == 4);
+    delete u;
+}
+
+/* ---- multi-selection (Shift / Cmd click, keyboard extend, select-all) ---- */
+TEST_CASE("iconview Cmd+click toggles cells into/out of the selection") {
+    nwui *u = new nwui; nwui_init(u);
+    static nwui_icon_item items[6];
+    nwui_node *iv = make_view(u, items, 6);
+    u->win_w = 380; u->win_h = 360; nwui_layout(u);      // 3 cols
+    click(u, cell_x(iv, 0), cell_y(iv, 0));               // plain click -> just cell 0
+    CHECK(nwui_iconview_selection_count(iv) == 1);
+    CHECK(nwui_iconview_is_selected(iv, 0));
+    click_mod(u, cell_x(iv, 2), cell_y(iv, 2), 2);        // Cmd+click cell 2 -> {0,2}
+    CHECK(nwui_iconview_selection_count(iv) == 2);
+    CHECK(nwui_iconview_is_selected(iv, 0));
+    CHECK(nwui_iconview_is_selected(iv, 2));
+    CHECK(nwui_iconview_selected(iv) == 2);              // lead is the last-clicked
+    click_mod(u, cell_x(iv, 0), cell_y(iv, 0), 2);        // Cmd+click cell 0 again -> toggles off
+    CHECK(nwui_iconview_selection_count(iv) == 1);
+    CHECK(!nwui_iconview_is_selected(iv, 0));
+    delete u;
+}
+
+TEST_CASE("iconview Shift+click selects the contiguous range from the anchor") {
+    nwui *u = new nwui; nwui_init(u);
+    static nwui_icon_item items[6];
+    nwui_node *iv = make_view(u, items, 6);
+    u->win_w = 380; u->win_h = 360; nwui_layout(u);
+    click(u, cell_x(iv, 1), cell_y(iv, 1));               // anchor at 1
+    click_mod(u, cell_x(iv, 4), cell_y(iv, 4), 1);        // Shift+click 4 -> {1,2,3,4}
+    CHECK(nwui_iconview_selection_count(iv) == 4);
+    for (int i = 1; i <= 4; i++) CHECK(nwui_iconview_is_selected(iv, i));
+    CHECK(!nwui_iconview_is_selected(iv, 0));
+    CHECK(!nwui_iconview_is_selected(iv, 5));
+    // a plain click collapses back to one
+    click(u, cell_x(iv, 5), cell_y(iv, 5));
+    CHECK(nwui_iconview_selection_count(iv) == 1);
+    CHECK(nwui_iconview_is_selected(iv, 5));
+    delete u;
+}
+
+TEST_CASE("iconview Shift+arrow extends the selection; select-all / clear") {
+    nwui *u = new nwui; nwui_init(u);
+    static nwui_icon_item items[6];
+    nwui_node *iv = make_view(u, items, 6);
+    u->win_w = 380; u->win_h = 360; nwui_layout(u);
+    nwui_focus(u, iv);
+    click(u, cell_x(iv, 0), cell_y(iv, 0));
+    nw_event e; memset(&e, 0, sizeof e); e.type = NW_EV_KEY; e.down = 1; e.code = NWUI_SC_RIGHT; e.mods = 1;
+    nwui_dispatch(u, &e);                                 // Shift+Right -> {0,1}
+    CHECK(nwui_iconview_selection_count(iv) == 2);
+    CHECK(nwui_iconview_is_selected(iv, 1));
+    nwui_iconview_select_all(iv);
+    CHECK(nwui_iconview_selection_count(iv) == 6);
+    nwui_iconview_clear_selection(iv);
+    CHECK(nwui_iconview_selection_count(iv) == 0);
+    CHECK(nwui_iconview_selected(iv) == -1);
+    delete u;
+}
+
+TEST_CASE("iconview click on the empty area clears the selection") {
+    nwui *u = new nwui; nwui_init(u);
+    static nwui_icon_item items[5];
+    nwui_node *iv = make_view(u, items, 5);
+    u->win_w = 380; u->win_h = 360; nwui_layout(u);      // 3 cols, so index 5 (row1 col2) is empty
+    click(u, cell_x(iv, 0), cell_y(iv, 0));
+    CHECK(nwui_iconview_selection_count(iv) == 1);
+    click(u, cell_x(iv, 5), cell_y(iv, 5));              // empty cell slot -> clears
+    CHECK(nwui_iconview_selection_count(iv) == 0);
+    CHECK(nwui_iconview_selected(iv) == -1);
+    delete u;
+}
+
+/* ---- smooth (pixel) scrolling ---- */
+TEST_CASE("iconview scrolls by pixels (smooth), not whole rows, and clamps") {
+    nwui *u = new nwui; nwui_init(u);
+    static nwui_icon_item items[12];
+    nwui_node *iv = make_view(u, items, 12);
+    u->win_w = 380; u->win_h = 150; nwui_layout(u);      // 3 cols -> 4 rows, content 432 > 150
+    CHECK(iv->scroll == 0);
+    nw_event e; memset(&e, 0, sizeof e);
+    e.type = NW_EV_POINTER; e.x = iv->x + 10; e.y = iv->y + 10; e.wheel = -1;   // wheel down
+    nwui_dispatch(u, &e);
+    CHECK(iv->scroll == NWUI_ICON_CELL_H / 3);           // a fraction of a row, not a full row
+    // a big scroll clamps to (content_h - h) = 4*108 - 150 = 282
+    memset(&e, 0, sizeof e); e.type = NW_EV_POINTER; e.x = iv->x + 10; e.y = iv->y + 10; e.wheel = -100;
+    nwui_dispatch(u, &e);
+    CHECK(iv->scroll == 4 * NWUI_ICON_CELL_H - 150);
     delete u;
 }
 

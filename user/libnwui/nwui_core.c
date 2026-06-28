@@ -4,10 +4,18 @@
 #include "nwui_core.h"
 #include <string.h>
 #include <stdarg.h>
+#include <stdlib.h>   /* realloc/free for the iconview multi-selection mask */
 
 /* mouse buttons (NW_BTN_* in the wire protocol). */
 #define MOUSE_LEFT  1
 #define MOUSE_RIGHT 2
+
+/* iconview multi-selection helpers (defined with the scrolling code further down) */
+static void iv_sel_ensure(nwui_node *V);
+static void iv_sel_clear(nwui_node *V);
+static void iv_sel_only(nwui_node *V, int i);
+static void iv_sel_toggle(nwui_node *V, int i);
+static void iv_sel_range(nwui_node *V, int a, int b);
 
 /* ---- arena + builders ------------------------------------------------------------- */
 void nwui_init(nwui *u)
@@ -196,6 +204,8 @@ void nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count)
 	n->count    = count;
 	n->scroll   = 0;
 	if (n->sel >= count) n->sel = -1;
+	n->sel_anchor = -1;
+	iv_sel_ensure(n); iv_sel_clear(n);    /* a fresh model carries no selection */
 	n->last_row = -1;
 	n->dirty    = 1;
 	if (n->owner) n->owner->layout_dirty = 1;
@@ -204,6 +214,34 @@ void nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count)
 int nwui_iconview_selected(nwui_node *n)
 {
 	return (n && n->kind == NWUI_ICONVIEW) ? n->sel : -1;
+}
+
+/* The whole multi-selection (Shift/Cmd-click). nwui_iconview_selected() returns just the lead. */
+int nwui_iconview_is_selected(nwui_node *n, int i)
+{
+	if (!n || n->kind != NWUI_ICONVIEW || i < 0 || i >= n->count) return 0;
+	return n->selmask ? n->selmask[i] : (i == n->sel);
+}
+int nwui_iconview_selection_count(nwui_node *n)
+{
+	if (!n || n->kind != NWUI_ICONVIEW) return 0;
+	if (!n->selmask) return n->sel >= 0 ? 1 : 0;
+	int c = 0;
+	for (int i = 0; i < n->count; i++) if (n->selmask[i]) c++;
+	return c;
+}
+void nwui_iconview_select_all(nwui_node *n)
+{
+	if (!n || n->kind != NWUI_ICONVIEW) return;
+	iv_sel_ensure(n);
+	if (n->selmask) for (int i = 0; i < n->count; i++) n->selmask[i] = 1;
+	if (n->sel < 0 && n->count > 0) n->sel = 0;
+	n->dirty = 1;
+}
+void nwui_iconview_clear_selection(nwui_node *n)
+{
+	if (!n || n->kind != NWUI_ICONVIEW) return;
+	iv_sel_clear(n); n->sel = -1; n->sel_anchor = -1; n->dirty = 1;
 }
 
 nwui_node *nwui_link(nwui *u, const char *text, nwui_cb on_click, void *user)
@@ -908,22 +946,24 @@ static void list_activate(nwui_node *L)      /* fire on_click for the current se
 	if (L->sel >= 0 && L->on_click) L->on_click(L, L->user);
 }
 
-/* Cell under a window-relative point in an iconview, or -1 (empty area / outside the grid). */
+/* Cell under a window-relative point in an iconview, or -1 (empty area / outside the grid).
+ * V->scroll is a PIXEL offset into the content (smooth scrolling). */
 static int iv_cell_at(const nwui_node *V, int ex, int ey)
 {
 	int relx = ex - V->x;
-	int rely = ey - V->y + V->scroll * NWUI_ICON_CELL_H;
+	int rely = ey - V->y + V->scroll;
 	int col = relx / NWUI_ICON_CELL_W;
 	int row = rely / NWUI_ICON_CELL_H;
-	int idx = (relx >= 0 && V->cols > 0 && col < V->cols) ? row * V->cols + col : -1;
+	int idx = (relx >= 0 && rely >= 0 && V->cols > 0 && col < V->cols) ? row * V->cols + col : -1;
 	return (idx >= 0 && idx < V->count) ? idx : -1;
 }
 
-/* ---- iconview scrolling: like the list, but the unit is a ROW of `cols` cells ---- */
+/* ---- iconview scrolling: SMOOTH — the scroll position is measured in PIXELS, not rows, and
+ * partial rows are drawn (clipped) so the grid glides instead of jumping a whole row at a time. */
 static int iv_cols(const nwui_node *V) { return V->cols < 1 ? 1 : V->cols; }
 static int iv_rows(const nwui_node *V) { int c = iv_cols(V); return (V->count + c - 1) / c; }
-static int iv_vis_rows(const nwui_node *V) { int r = V->h / NWUI_ICON_CELL_H; return r < 1 ? 1 : r; }
-static int iv_max_scroll(const nwui_node *V) { int m = iv_rows(V) - iv_vis_rows(V); return m > 0 ? m : 0; }
+static int iv_content_h(const nwui_node *V) { return iv_rows(V) * NWUI_ICON_CELL_H; }
+static int iv_max_scroll(const nwui_node *V) { int m = iv_content_h(V) - V->h; return m > 0 ? m : 0; }
 static int iv_has_sb(const nwui_node *V) { return iv_max_scroll(V) > 0; }
 static void iv_clamp_scroll(nwui_node *V)
 {
@@ -934,8 +974,8 @@ static void iv_clamp_scroll(nwui_node *V)
 static void iv_thumb(const nwui_node *V, int *ty, int *th)   /* thumb top + height, screen px */
 {
 	int track = V->h - 6;                          /* must match the paint formula (nwui_paint.c) */
-	int rows = iv_rows(V);
-	int t = rows > 0 ? track * iv_vis_rows(V) / rows : track;
+	int content = iv_content_h(V);
+	int t = content > 0 ? track * V->h / content : track;
 	if (t < NWUI_SB_MIN) t = NWUI_SB_MIN;
 	if (t > track)       t = track;
 	int maxs = iv_max_scroll(V);
@@ -943,6 +983,39 @@ static void iv_thumb(const nwui_node *V, int *ty, int *th)   /* thumb top + heig
 	int pos  = maxs > 0 ? span * V->scroll / maxs : 0;
 	*ty = V->y + 3 + pos;
 	*th = t;
+}
+
+/* ---- iconview multi-selection: a byte per cell (1 = selected); the LEAD cell is V->sel ---- */
+static void iv_sel_ensure(nwui_node *V)
+{
+	if (V->selmask && V->count <= V->selcap) return;
+	int cap = V->count > 0 ? V->count : 1;
+	unsigned char *m = (unsigned char *) realloc(V->selmask, (size_t) cap);
+	if (!m) return;
+	if (cap > V->selcap) memset(m + V->selcap, 0, (size_t) (cap - V->selcap));
+	V->selmask = m; V->selcap = cap;
+}
+static void iv_sel_clear(nwui_node *V) { if (V->selmask) memset(V->selmask, 0, (size_t) V->selcap); }
+static void iv_sel_only(nwui_node *V, int i)       /* exclusive: just cell i */
+{
+	iv_sel_ensure(V); iv_sel_clear(V);
+	if (V->selmask && i >= 0 && i < V->count) V->selmask[i] = 1;
+	V->sel = i; V->sel_anchor = i;
+}
+static void iv_sel_toggle(nwui_node *V, int i)     /* Cmd+click: flip cell i, keep the rest */
+{
+	iv_sel_ensure(V);
+	if (V->selmask && i >= 0 && i < V->count) V->selmask[i] ^= 1;
+	V->sel = i; V->sel_anchor = i;
+}
+static void iv_sel_range(nwui_node *V, int a, int b)   /* Shift: the contiguous run [a..b] */
+{
+	iv_sel_ensure(V); iv_sel_clear(V);
+	if (a < 0) a = b;
+	int lo = a < b ? a : b, hi = a < b ? b : a;
+	if (V->selmask)
+		for (int i = lo; i <= hi && i < V->count; i++) if (i >= 0) V->selmask[i] = 1;
+	V->sel = b;                                        /* lead moves; the anchor (a) stays put */
 }
 static void iv_sb_set_from_y(nwui_node *V, int mouse_y)      /* drag: map thumb-top to scroll row */
 {
@@ -1090,7 +1163,7 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			nwui_node *t = (over && (over->kind == NWUI_ICONVIEW || over->kind == NWUI_LIST)) ? over
 			    : (u->focus && (u->focus->kind == NWUI_ICONVIEW || u->focus->kind == NWUI_LIST)) ? u->focus : 0;
 			if (t && t->kind == NWUI_ICONVIEW) {
-				t->scroll -= ev->wheel;              /* +wheel = forward = scroll up */
+				t->scroll -= ev->wheel * NWUI_ICON_CELL_H / 3;   /* ~1/3 cell per tick = smooth */
 				iv_clamp_scroll(t); t->dirty = 1;
 			} else if (t && t->kind == NWUI_LIST) {
 				t->scroll -= ev->wheel * 3;          /* 3 lines per tick, like most toolkits */
@@ -1158,15 +1231,16 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 						u->prev_buttons = ev->buttons;
 						break;
 					}
-					int relx = ev->x - over->x;
-					int rely = ev->y - over->y + over->scroll * NWUI_ICON_CELL_H;
-					int col = relx / NWUI_ICON_CELL_W;
-					int row = rely / NWUI_ICON_CELL_H;
-					int idx = (relx >= 0 && col < over->cols) ? row * over->cols + col : -1;
-					if (idx >= 0 && idx < over->count) {
-						over->sel = idx; over->dirty = 1;
-							if (over->on_drag) { u->drag_cand = over; u->drag_x0 = ev->x; u->drag_y0 = ev->y; }
-						int dbl = (idx == over->last_row &&
+					int idx = iv_cell_at(over, ev->x, ev->y);
+					int shift = ev->mods & 1, cmd = ev->mods & 2;
+					if (idx >= 0) {
+						if (cmd)        iv_sel_toggle(over, idx);   /* Cmd+click: toggle this cell  */
+						else if (shift) iv_sel_range(over, over->sel_anchor, idx); /* Shift: a range */
+						else            iv_sel_only(over, idx);     /* plain click: just this cell   */
+						over->dirty = 1;
+						/* a plain click on a cell can begin a drag (Shift/Cmd extend, never drag) */
+						if (!shift && !cmd && over->on_drag) { u->drag_cand = over; u->drag_x0 = ev->x; u->drag_y0 = ev->y; }
+						int dbl = (idx == over->last_row && !shift && !cmd &&
 						           u->now_ms - over->last_ms <= NWUI_DBL_MS);
 						over->last_row = idx;
 						over->last_ms  = u->now_ms;
@@ -1176,6 +1250,9 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 						} else if (over->on_change) {    /* single click -> selection changed */
 							over->on_change(over, over->user);
 						}
+					} else if (!shift && !cmd) {         /* click on the empty area clears the selection */
+						iv_sel_clear(over); over->sel = -1; over->dirty = 1;
+						if (over->on_change) over->on_change(over, over->user);
 					}
 				}
 		} else if (left && pleft && u->armed && u->armed->kind == NWUI_TEXTFIELD) {
@@ -1244,6 +1321,7 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 		if (u->focus && u->focus->kind == NWUI_ICONVIEW) {
 			nwui_node *V = u->focus;
 			int cols = V->cols < 1 ? 1 : V->cols;
+			int shift = ev->mods & 1;
 			int s = V->sel < 0 ? 0 : V->sel;
 			if (ev->code == NWUI_SC_LEFT  && s > 0)              s -= 1;
 			else if (ev->code == NWUI_SC_RIGHT && s < V->count - 1) s += 1;
@@ -1251,12 +1329,14 @@ int nwui_dispatch(nwui *u, const struct nw_event *ev)
 			else if (ev->code == NWUI_SC_DOWN  && s + cols < V->count) s += cols;
 			else if (ev->ch == '\n' || ev->ch == '\r') { if (V->sel >= 0 && V->on_click) V->on_click(V, V->user); break; }
 			else break;
-			V->sel = s; V->dirty = 1;
-			int vis_rows = V->h / NWUI_ICON_CELL_H; if (vis_rows < 1) vis_rows = 1;
-			int srow = s / cols;
-			if (srow < V->scroll) V->scroll = srow;
-			else if (srow >= V->scroll + vis_rows) V->scroll = srow - vis_rows + 1;
-			if (V->scroll < 0) V->scroll = 0;
+			if (shift) iv_sel_range(V, V->sel_anchor, s);   /* Shift+arrow extends the range */
+			else       iv_sel_only(V, s);                   /* plain arrow moves the lead     */
+			V->dirty = 1;
+			/* keep the lead cell fully visible (smooth/pixel scroll) */
+			int celltop = (s / cols) * NWUI_ICON_CELL_H;
+			if (celltop < V->scroll) V->scroll = celltop;
+			else if (celltop + NWUI_ICON_CELL_H > V->scroll + V->h) V->scroll = celltop + NWUI_ICON_CELL_H - V->h;
+			iv_clamp_scroll(V);
 			if (V->on_change) V->on_change(V, V->user);
 			break;
 		}

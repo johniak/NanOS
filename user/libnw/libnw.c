@@ -206,7 +206,10 @@ static int translate(nw_display *d, struct nw_event *ev)
 	switch (m->type) {
 	case NW_EVT_CONFIGURE: ev->type = NW_EV_CONFIGURE; ev->x = m->a; ev->y = m->b; break;
 	case NW_EVT_KEY:       ev->type = NW_EV_KEY; ev->ch = (char) m->a; ev->down = m->b; ev->code = m->c; ev->mods = m->d; break;
-	case NW_EVT_POINTER:   ev->type = NW_EV_POINTER; ev->x = m->a; ev->y = m->b; ev->buttons = m->c; ev->wheel = m->d; break;
+	case NW_EVT_POINTER:   ev->type = NW_EV_POINTER; ev->x = m->a; ev->y = m->b;
+	                       ev->buttons = m->c & 0xff;          /* low byte = mouse-button bitmask    */
+	                       ev->mods = (m->c >> 8) & 0xff;      /* high byte = mods (bit0 shift, bit1 cmd) */
+	                       ev->wheel = m->d; break;
 	case NW_EVT_FOCUS:     ev->type = NW_EV_FOCUS; ev->focus = m->a; break;
 	case NW_EVT_CLOSE:     ev->type = NW_EV_CLOSE; break;
 	case NW_EVT_COPY:      ev->type = NW_EV_COPY; ev->cut = m->a; break;

@@ -679,20 +679,25 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons, int wheel)
 		}
 	}
 
+	/* Keyboard modifiers held at this pointer report, packed into the high bits of the buttons
+	 * field (bit8 = Shift, bit9 = Cmd/Super) so a click carries them — Shift/Cmd-click selection.
+	 * Backward compatible: the low bits stay the mouse-button bitmask. */
+	int pbtn = (buttons & 0xff) | (s->shift_down ? 0x100 : 0) | (s->super_down ? 0x200 : 0);
+
 	/* deliver pointer to the window under the cursor's content area (never for the bars) */
 	int region2;
 	int widx2 = (sy < NW_PANEL_H || sy >= s->screen_h - NW_TASK_H) ? -1 : nw_hit(s, sx, sy, &region2);
 	if (widx2 >= 0 && region2 == NW_HIT_CONTENT) {
 		int rx = sx - (s->win[widx2].x + NW_BORDER);
 		int ry = sy - (s->win[widx2].y + NW_TITLEBAR_H);
-		emit_win(s, widx2, NW_EVT_POINTER, rx, ry, buttons, 0, 0, 0);   /* motion/buttons */
+		emit_win(s, widx2, NW_EVT_POINTER, rx, ry, pbtn, 0, 0, 0);   /* motion/buttons + mods */
 	}
 	/* The scroll wheel drives the FOCUSED (active) window, like most desktops — independent of
 	 * exactly which window the pointer floats over. Delivered as a POINTER carrying d=wheel. */
 	if (wheel != 0 && s->focus >= 0 && s->win[s->focus].used) {
 		int fx = sx - (s->win[s->focus].x + NW_BORDER);
 		int fy = sy - (s->win[s->focus].y + NW_TITLEBAR_H);
-		emit_win(s, s->focus, NW_EVT_POINTER, fx, fy, buttons, wheel, 0, 0);
+		emit_win(s, s->focus, NW_EVT_POINTER, fx, fy, pbtn, wheel, 0, 0);
 	}
 
 	s->cursor_x = sx;

@@ -137,6 +137,16 @@ nwui_node *nwui_iconview(nwui *u, nwui_cb on_activate, nwui_cb on_change, void *
 void       nwui_iconview_set(nwui_node *n, const nwui_icon_item *items, int count);
 int        nwui_iconview_selected(nwui_node *n);
 
+/* ---- multi-selection ----
+ * Plain click selects one cell; Cmd+click toggles a cell; Shift+click selects the range from the
+ * anchor (the last plain/Cmd click) to the clicked cell. Arrow keys move the lead; Shift+arrow
+ * extends the range. nwui_iconview_selected() still returns the LEAD cell (back-compatible); use
+ * these to read the whole set (e.g. a file manager operating on several files at once). */
+int        nwui_iconview_is_selected(nwui_node *n, int i);
+int        nwui_iconview_selection_count(nwui_node *n);
+void       nwui_iconview_select_all(nwui_node *n);
+void       nwui_iconview_clear_selection(nwui_node *n);
+
 /* ---- drag-and-drop (between windows, arbitrated by the compositor) ----
  * Make an iconview a drag source + drop target. `on_drag` fires once when a press on a cell
  * turns into a drag — respond by calling nwui_begin_drag(u, payload). `on_drop` fires when a

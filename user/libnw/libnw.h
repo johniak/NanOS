@@ -36,7 +36,7 @@ struct nw_event {
 	int       wheel;           /* POINTER: scroll-wheel delta this report (+ = forward/up) */
 	int       code, down;      /* KEY: raw scancode + press/release */
 	char      ch;              /* KEY: decoded ASCII (0 if none)    */
-	int       mods;            /* KEY: modifier bitmask (bit0 = shift) */
+	int       mods;            /* KEY/POINTER/DROP: modifier bitmask (bit0 = shift, bit1 = cmd) */
 	int       focus;           /* FOCUS */
 	int       cut;             /* COPY: 1 = cut, 0 = copy */
 	const char *text;          /* PASTE: clipboard text (valid until next nw_next_event) */

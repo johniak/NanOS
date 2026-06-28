@@ -39,7 +39,7 @@ enum {
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */
 	NW_EVT_KEY            = 65,  /* window; a=ascii b=down c=scancode d=mods (bit0 = shift) */
-	NW_EVT_POINTER        = 66,  /* window; a=x b=y (window-relative) c=buttons bitmask     */
+	NW_EVT_POINTER        = 66,  /* window; a=x b=y (rel) c=buttons|mods<<8 (bit8 shift,bit9 cmd) d=wheel */
 	NW_EVT_FOCUS          = 67,  /* window; a=1 gained / 0 lost                             */
 	NW_EVT_CLOSE          = 68,  /* window; user asked to close (Super+Q / close box)       */
 	NW_EVT_COPY           = 69,  /* window; Super+C/X — client should reply SET_CLIPBOARD   */

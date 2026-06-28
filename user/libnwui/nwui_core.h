@@ -62,6 +62,9 @@ struct nwui_node {
 
 	const nwui_icon_item *icons;     /* iconview: app-owned array of cells (reuses count/sel/scroll) */
 	int        cols;                 /* iconview: column count computed at arrange time */
+	unsigned char *selmask;          /* iconview: 1 byte/cell, 1 = in the multi-selection (NULL = none) */
+	int        selcap;               /* iconview: allocated capacity of selmask, in cells */
+	int        sel_anchor;           /* iconview: Shift-range anchor cell (the last plain/Cmd click) */
 	int        flat;                 /* button: render as a flat sidebar link (no gradient fill) */
 	int        active;               /* flat link: render as a filled accent pill (current location) */
 

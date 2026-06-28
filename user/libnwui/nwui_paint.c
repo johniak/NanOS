@@ -174,13 +174,24 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 	case NWUI_ICONVIEW: {
 		nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
 		int cols = n->cols < 1 ? 1 : n->cols;
+		int rows = (n->count + cols - 1) / cols;
+		int content_h = rows * NWUI_ICON_CELL_H;
+		int has_sb = content_h > n->h;
+		int cw = n->w - (has_sb ? NWUI_SB_W : 0);
+		/* Clip cell drawing to the content area so PARTIAL rows scroll smoothly under the top/bottom
+		 * edges (the scroll offset is in pixels). Restored to no-scissor after the cells. */
+		struct nw_surface *ms = (struct nw_surface *) s;
+		nw_surface_clip(ms, n->x, n->y, cw, n->h);
 		for (int i = 0; i < n->count; i++) {
 			int row = i / cols, col = i % cols;
 			int cx = n->x + col * NWUI_ICON_CELL_W;
-			int cy = n->y + (row - n->scroll) * NWUI_ICON_CELL_H;
-			if (cy < n->y || cy + NWUI_ICON_CELL_H > n->y + n->h) continue;  /* whole rows only */
-			if (i == n->sel)        /* soft translucent rounded highlight (modern) */
+			int cy = n->y + row * NWUI_ICON_CELL_H - n->scroll;
+			if (cy + NWUI_ICON_CELL_H <= n->y || cy >= n->y + n->h) continue;  /* fully off-view */
+			int seld = n->selmask ? n->selmask[i] : (i == n->sel);
+			if (seld)               /* soft translucent rounded highlight (modern) */
 				nw_fill_round(s, cx + 6, cy + 4, NWUI_ICON_CELL_W - 12, NWUI_ICON_CELL_H - 8, 12, COL_ACCENT, 32);
+			if (i == n->sel)        /* the LEAD cell: a thin ring so it stands out in a multi-selection */
+				nw_stroke_round(s, cx + 6, cy + 4, NWUI_ICON_CELL_W - 12, NWUI_ICON_CELL_H - 8, 12, COL_ACCENT_DEEP, 110);
 			if (i == n->drop_hover) {   /* drop target under a hovering drag: filled + outlined */
 				nw_fill_round(s, cx + 6, cy + 4, NWUI_ICON_CELL_W - 12, NWUI_ICON_CELL_H - 8, 12, COL_ACCENT, 64);
 				nw_stroke_round(s, cx + 5, cy + 3, NWUI_ICON_CELL_W - 10, NWUI_ICON_CELL_H - 6, 12, COL_ACCENT_DEEP, 220);
@@ -216,19 +227,18 @@ static void paint_self(nwui_node *n, const struct nw_surface *s)
 				}
 				int tx = cx + (NWUI_ICON_CELL_W - nw_text_w(buf)) / 2;
 				int ty = cy + 12 + NWUI_ICON_PX + 6;
-				nw_text(s, tx, ty, buf, (i == n->sel) ? COL_ACCENT_DEEP : COL_INK);
+				nw_text(s, tx, ty, buf, seld ? COL_ACCENT_DEEP : COL_INK);
 			}
 		}
-		/* vertical scrollbar when the grid overflows the visible rows (row = `cols` cells) */
-		int rows = (n->count + cols - 1) / cols;
-		int vis_rows = n->h / NWUI_ICON_CELL_H; if (vis_rows < 1) vis_rows = 1;
-		int ivmaxs = rows - vis_rows;
-		if (ivmaxs > 0) {
+		nw_surface_noclip(ms);
+		/* vertical scrollbar (thumb sized + positioned in PIXELS) when the grid overflows */
+		if (has_sb) {
 			int sbx = n->x + n->w - NWUI_SB_W;
 			int track = n->h - 6;
-			int th = track * vis_rows / rows; if (th < NWUI_SB_MIN) th = NWUI_SB_MIN;
+			int th = track * n->h / content_h; if (th < NWUI_SB_MIN) th = NWUI_SB_MIN;
 			if (th > track) th = track;
-			int ty = n->y + 3 + (track - th) * n->scroll / ivmaxs;
+			int maxs = content_h - n->h;
+			int ty = n->y + 3 + (track - th) * n->scroll / (maxs > 0 ? maxs : 1);
 			nw_fill_round(s, sbx + 2, ty, NWUI_SB_W - 5, th, (NWUI_SB_W - 5) / 2, COL_SB_THUMB, 255);
 		}
 		nw_stroke_round(s, n->x, n->y, n->w, n->h, 8,
