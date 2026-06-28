@@ -88,11 +88,14 @@ static int nw_assoc_lookup(const char *ext, char *out, int cap)
 	return 0;
 }
 
-/* Ask the desktop (nwm) to launch `cmd` with `arg` as argv[1]. If `password` is non-empty, the
- * launch is ELEVATED: nwm runs it through the setuid-root nwsu helper, which verifies the password
- * (root's) and runs the app as root — the "authenticate to open" path. Sends "cmd\0arg\0password"
- * over the launch socket. Returns 0 on success, -1 if the desktop isn't reachable. */
-static int nw_launch_send(const char *cmd, const char *arg, const char *password)
+/* Ask the desktop (nwm) to launch `cmd` with `arg` as argv[1]. If `mode` is "elevate", the launch
+ * is run as administrator: the COMPOSITOR pops its modal system auth dialog, collects the admin
+ * password itself, and (on success) runs the app as root via nwsu — the client never handles the
+ * password. Sends "cmd\0arg\0mode" over the launch socket. Returns 0 on success, -1 if the desktop
+ * isn't reachable. */
+#define NW_LAUNCH_NORMAL  ""
+#define NW_LAUNCH_ELEVATE "elevate"
+static int nw_launch_send(const char *cmd, const char *arg, const char *mode)
 {
 	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0) return -1;
@@ -107,7 +110,7 @@ static int nw_launch_send(const char *cmd, const char *arg, const char *password
 	msg[n++] = 0;
 	if (arg) for (const char *p = arg; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
 	msg[n++] = 0;
-	if (password) for (const char *p = password; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
+	if (mode) for (const char *p = mode; *p && n < (int) sizeof msg - 1; p++) msg[n++] = *p;
 	int off = 0, w;
 	while (off < n && (w = (int) write(fd, msg + off, n - off)) > 0) off += w;
 	close(fd);

@@ -449,6 +449,46 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 		tx = nw_text(back, tx, ty, buf, 0xffffff);
 		nw_blend_rect(back, tx, ty, 2, NW_FONT_H, 0xc0c0c0, 255);
 	}
+
+	if (s->auth_open) {                           /* the system authentication dialog, above all */
+		nw_blend_rect(back, 0, 0, s->screen_w, s->screen_h, 0x000000, 130);   /* dim the desktop */
+		int x, y, w, h; nw_auth_rect(s, &x, &y, &w, &h);
+		nw_fill_round(back, x + 6, y + 8, w, h, 16, 0x000000, 70);            /* drop shadow */
+		nw_fill_round(back, x, y, w, h, 16, 0xf4f6fa, 255);                   /* panel body */
+		nw_stroke_round(back, x, y, w, h, 16, 0xffffff, 50);
+		/* a small accent lock badge + title */
+		nw_fill_round(back, x + 20, y + 18, 26, 26, 8, 0x0a84ff, 255);
+		nw_fill_round(back, x + 28, y + 26, 10, 12, 3, 0xffffff, 255);
+		nw_text(back, x + 58, y + 20, "Authentication Required", 0x172130);
+		/* message: which command wants to run as administrator */
+		const char *cmd = s->auth_cmd, *base = cmd;
+		for (const char *p = cmd; *p; p++) if (*p == '/') base = p + 1;
+		char msg[NW_RUN_MAX + 48]; int m = 0;
+		for (const char *p = "\""; *p && m < (int) sizeof msg - 1; p++) msg[m++] = *p;
+		for (const char *p = base; *p && m < (int) sizeof msg - 1; p++) msg[m++] = *p;
+		for (const char *p = "\" wants to make changes."; *p && m < (int) sizeof msg - 1; p++) msg[m++] = *p;
+		msg[m] = 0;
+		nw_text(back, x + 20, y + 56, msg, 0x3a3a45);
+		nw_text(back, x + 20, y + 76, "Enter an administrator password to allow this:", 0x6a6a75);
+		/* password field: a white box of dots + a caret */
+		int fx = x + 20, fy = y + 98, fw = w - 40, fh = 28;
+		nw_fill_round(back, fx, fy, fw, fh, 7, 0xffffff, 255);
+		nw_stroke_round(back, fx, fy, fw, fh, 7, 0x0a84ff, 220);
+		int dx = fx + 10, dcy = fy + fh / 2;
+		for (int i = 0; i < s->auth_passlen; i++) { nw_fill_round(back, dx, dcy - 3, 7, 7, 4, 0x33333a, 255); dx += 13; }
+		nw_blend_rect(back, dx + 1, fy + 6, 2, fh - 12, 0x808088, 255);
+		/* buttons: Authenticate (default, accent) + Cancel */
+		for (int b = 0; b < 2; b++) {
+			int bx, by, bw, bh; nw_auth_btn_rect(s, b, &bx, &by, &bw, &bh);
+			int hov = (s->auth_hover == b);
+			uint32_t fill = (b == 0) ? (hov ? 0x0060df : 0x0a84ff) : (hov ? 0xdbe1ea : 0xeef2f8);
+			uint32_t ink  = (b == 0) ? 0xffffff : 0x1c1c1e;
+			nw_fill_round(back, bx, by, bw, bh, 8, fill, 255);
+			const char *lbl = (b == 0) ? "Authenticate" : "Cancel";
+			int lw = nw_text_w(lbl);
+			nw_text(back, bx + (bw - lw) / 2, by + (bh - NW_FONT_H) / 2, lbl, ink);
+		}
+	}
 }
 
 void nw_compose(const struct nw_server *s, const struct nw_surface *back)

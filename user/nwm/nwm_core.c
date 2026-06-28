@@ -332,6 +332,88 @@ int nw_run_take_spawn(struct nw_server *s, char *out, int cap)
 	return 1;
 }
 
+/* ---- system authentication ("sudo") dialog — compositor-owned, modal -------------- */
+static void cpystr(char *dst, const char *src, int cap)
+{
+	int i = 0;
+	for (; src && src[i] && i < cap - 1; i++) dst[i] = src[i];
+	dst[i] = 0;
+}
+void nw_auth_rect(const struct nw_server *s, int *x, int *y, int *w, int *h)
+{
+	*w = NW_AUTH_W; *h = NW_AUTH_H;
+	*x = (s->screen_w - NW_AUTH_W) / 2;
+	*y = (s->screen_h - NW_AUTH_H) / 2;
+}
+void nw_auth_btn_rect(const struct nw_server *s, int which, int *x, int *y, int *w, int *h)
+{
+	int px, py, pw, ph; nw_auth_rect(s, &px, &py, &pw, &ph);
+	*w = NW_AUTH_BTN_W; *h = NW_AUTH_BTN_H;
+	*y = py + ph - NW_AUTH_BTN_H - 16;
+	/* Authenticate (default) on the right, Cancel to its left — macOS order. */
+	*x = (which == 0) ? px + pw - NW_AUTH_BTN_W - 16
+	                  : px + pw - 2 * NW_AUTH_BTN_W - 16 - 10;
+}
+int nw_auth_hit(const struct nw_server *s, int px, int py)
+{
+	if (!s->auth_open) return -1;
+	for (int b = 0; b < 2; b++) {
+		int x, y, w, h; nw_auth_btn_rect(s, b, &x, &y, &w, &h);
+		if (px >= x && px < x + w && py >= y && py < y + h) return b;
+	}
+	return -1;
+}
+static void damage_auth(struct nw_server *s)
+{
+	/* the dim covers everything, so a full-screen damage is the simplest correct refresh */
+	damage(s, 0, 0, s->screen_w, s->screen_h);
+}
+void nw_auth_begin(struct nw_server *s, const char *cmd, const char *arg)
+{
+	cpystr(s->auth_cmd, cmd, NW_RUN_MAX);
+	cpystr(s->auth_arg, arg, NW_RUN_MAX);
+	s->auth_pass[0] = 0; s->auth_passlen = 0;
+	s->auth_hover = -1;
+	s->auth_open = 1;
+	damage_auth(s);
+}
+void nw_auth_cancel(struct nw_server *s)
+{
+	s->auth_open = 0;
+	for (int i = 0; i < NW_AUTH_MAX; i++) s->auth_pass[i] = 0;   /* scrub */
+	s->auth_passlen = 0;
+	damage_auth(s);
+}
+void nw_auth_submit(struct nw_server *s)
+{
+	s->want_elevate = 1;       /* the password stays until nw_auth_take copies + scrubs it */
+	s->auth_open = 0;
+	damage_auth(s);
+}
+void nw_auth_key(struct nw_server *s, unsigned char code)
+{
+	if (code == NW_SC_ESC)    { nw_auth_cancel(s); return; }
+	if (code == NW_SC_ENTER)  { nw_auth_submit(s); return; }
+	if (code == NW_SC_BACKSP) { if (s->auth_passlen > 0) s->auth_pass[--s->auth_passlen] = 0; damage_auth(s); return; }
+	char ch = nw_scancode_ascii(code, s->shift_down);
+	if (ch >= 32 && ch < 127 && s->auth_passlen < NW_AUTH_MAX - 1) {
+		s->auth_pass[s->auth_passlen++] = ch;
+		s->auth_pass[s->auth_passlen] = 0;
+		damage_auth(s);
+	}
+}
+int nw_auth_take(struct nw_server *s, char *cmd, char *arg, char *pass, int cap)
+{
+	if (!s->want_elevate) return 0;
+	cpystr(cmd, s->auth_cmd, cap);
+	cpystr(arg, s->auth_arg, cap);
+	cpystr(pass, s->auth_pass, cap);
+	for (int i = 0; i < NW_AUTH_MAX; i++) s->auth_pass[i] = 0;   /* scrub after handing off */
+	s->auth_passlen = 0;
+	s->want_elevate = 0;
+	return 1;
+}
+
 /* ---- global menu bar -------------------------------------------------------------- */
 #define MENU_SEP_REC ((char) 0x1e)   /* between top menus */
 #define MENU_SEP_FLD ((char) 0x1f)   /* between a menu's title + item labels */
@@ -575,6 +657,19 @@ void nw_pointer(struct nw_server *s, int sx, int sy, int buttons, int wheel)
 	int left_now = buttons & NW_BTN_LEFT;
 	int left_was = s->buttons & NW_BTN_LEFT;
 
+	if (s->auth_open) {                              /* the auth dialog is modal: it eats all input */
+		int oldh = s->auth_hover;
+		s->auth_hover = nw_auth_hit(s, sx, sy);
+		if (s->auth_hover != oldh) damage_auth(s);
+		if (left_now && !left_was) {
+			int hit = nw_auth_hit(s, sx, sy);
+			if (hit == 0) nw_auth_submit(s);
+			else if (hit == 1) nw_auth_cancel(s);
+		}
+		s->cursor_x = sx; s->cursor_y = sy; s->buttons = buttons;
+		return;
+	}
+
 	if (s->dnd_active) {                             /* a drag owns the pointer until release */
 		int region, t = nw_hit(s, sx, sy, &region);
 		int target = (t >= 0 && region == NW_HIT_CONTENT) ? t : -1;
@@ -713,6 +808,13 @@ void nw_key(struct nw_server *s, unsigned char code, int down)
 	/* Track Ctrl for drag-copy, but DO NOT consume it: the key is still forwarded to the focused
 	 * window so client toolkits can see Ctrl held (their Ctrl+<key> accelerators depend on it). */
 	if (code == NW_SC_LCTRL  || code == NW_SC_RCTRL)    s->ctrl_down  = down;
+
+	/* The system authentication dialog is modal: it captures ALL keys while open (so not even
+	 * Super+R can open the Run box over it). Modifier state above is still tracked for Shift. */
+	if (s->auth_open) {
+		if (down) nw_auth_key(s, code);
+		return;
+	}
 
 	/* Super+R toggles the Run launcher (like Win+R). */
 	if (down && s->super_down && code == NW_SC_R) {

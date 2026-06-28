@@ -671,3 +671,66 @@ TEST_CASE("Cmd+<key> the compositor does not claim is forwarded with the Cmd mod
 	CHECK(count(ev2, NW_EVT_KEY) == 0);
 	CHECK(count(ev2, NW_EVT_COPY) == 1);
 }
+
+/* ---- the compositor-owned system authentication ("sudo") dialog ---- */
+TEST_CASE("system auth dialog: modal keyboard, masked password, submit hands off cmd/arg/pass") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	CHECK(s.auth_open == 0);
+	nw_auth_begin(&s, "/disks/main/nanos/bin/nwnote.nxe", "/etc/secret");
+	CHECK(s.auth_open == 1);
+	nw_key(&s, 0x1E, 1);                            // 'a'
+	nw_key(&s, 0x1F, 1);                            // 's'
+	CHECK(s.auth_passlen == 2);
+	nw_key(&s, NW_SC_BACKSP, 1);
+	CHECK(s.auth_passlen == 1);
+	nw_key(&s, NW_SC_ENTER, 1);                     // submit
+	CHECK(s.auth_open == 0);
+	char cmd[120], arg[120], pass[120];
+	REQUIRE(nw_auth_take(&s, cmd, arg, pass, 120) == 1);
+	CHECK(strcmp(cmd, "/disks/main/nanos/bin/nwnote.nxe") == 0);
+	CHECK(strcmp(arg, "/etc/secret") == 0);
+	CHECK(strcmp(pass, "a") == 0);
+	CHECK(nw_auth_take(&s, cmd, arg, pass, 120) == 0);   // one-shot
+	CHECK(s.auth_pass[0] == 0);                          // scrubbed
+}
+
+TEST_CASE("system auth dialog: Esc cancels, scrubs the password, no launch pending") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	nw_auth_begin(&s, "x", "");
+	nw_key(&s, 0x1E, 1);                            // 'a'
+	CHECK(s.auth_passlen == 1);
+	nw_key(&s, NW_SC_ESC, 1);
+	CHECK(s.auth_open == 0);
+	CHECK(s.auth_pass[0] == 0);
+	char c[8], a[8], p[8];
+	CHECK(nw_auth_take(&s, c, a, p, 8) == 0);
+}
+
+TEST_CASE("system auth dialog is modal: captures keys; even Super+R can't open Run over it") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	nw_auth_begin(&s, "x", "");
+	nw_key(&s, NW_SC_LSUPER, 1);
+	nw_key(&s, NW_SC_R, 1);                         // would normally toggle the Run launcher
+	CHECK(s.run_open == 0);                         // blocked — the dialog captured the key
+	CHECK(s.auth_open == 1);
+}
+
+TEST_CASE("system auth dialog: clicking Authenticate submits, Cancel dismisses") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	nw_auth_begin(&s, "x", "y");
+	int bx, by, bw, bh;
+	nw_auth_btn_rect(&s, 0, &bx, &by, &bw, &bh);    // Authenticate
+	CHECK(nw_auth_hit(&s, bx + bw / 2, by + bh / 2) == 0);
+	nw_pointer(&s, bx + bw / 2, by + bh / 2, NW_BTN_LEFT);
+	CHECK(s.auth_open == 0);
+	char c[8], a[8], p[8];
+	CHECK(nw_auth_take(&s, c, a, p, 8) == 1);
+
+	nw_server s2; nw_server_init(&s2, 800, 600);
+	nw_auth_begin(&s2, "x", "y");
+	nw_auth_btn_rect(&s2, 1, &bx, &by, &bw, &bh);   // Cancel
+	CHECK(nw_auth_hit(&s2, bx + bw / 2, by + bh / 2) == 1);
+	nw_pointer(&s2, bx + bw / 2, by + bh / 2, NW_BTN_LEFT);
+	CHECK(s2.auth_open == 0);
+	CHECK(nw_auth_take(&s2, c, a, p, 8) == 0);
+}

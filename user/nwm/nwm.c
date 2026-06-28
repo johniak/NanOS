@@ -261,17 +261,22 @@ static void handle_spawn_conns(void)
 		close(c);
 		if (got <= 0) continue;
 		buf[got] = 0;
-		/* request = "cmd\0arg\0password": cmd resolved like Run; arg = argv[1]; a non-empty
-		 * password means an ELEVATED launch (run as root via nwsu after verifying it). */
+		/* request = "cmd\0arg\0mode": cmd resolved like Run; arg = argv[1]; mode = "elevate"
+		 * means run as root — the COMPOSITOR pops its modal auth dialog, collects the admin
+		 * password itself, and (on success) launches via nwsu. The client never sees the password. */
 		const char *cmd = buf;
 		int cl = (int) strlen(cmd);
 		const char *arg  = (cl + 1 <= got) ? buf + cl + 1 : "";
 		int al = (int) strlen(arg);
-		const char *pass = (cl + 1 + al + 1 <= got) ? buf + cl + 1 + al + 1 : "";
+		const char *mode = (cl + 1 + al + 1 <= got) ? buf + cl + 1 + al + 1 : "";
+		if (mode[0] == 'e') {                              /* "elevate" -> system auth dialog */
+			nw_auth_begin(&S, cmd, arg);
+			continue;
+		}
 		char path[256];
 		int slot = free_slot();
 		if (slot >= 0 && resolve_cmd(cmd, path, sizeof path))
-			spawn_client_priv(slot, path, arg[0] ? arg : 0, pass[0] ? pass : 0);
+			spawn_client(slot, path, arg[0] ? arg : 0);
 	}
 }
 
@@ -826,6 +831,17 @@ int main(void)
 			const char *arg = S.spawn_has_arg ? S.run_arg : 0;   /* open-with: argv[1] */
 			if (slot >= 0 && resolve_cmd(cmd, path, sizeof path))
 				spawn_client(slot, path, arg);
+		}
+
+		/* The system auth dialog was submitted: launch the target as root (nwsu verifies the
+		 * password the compositor collected). On a wrong password nwsu just exits — nothing runs. */
+		char acmd[NW_RUN_MAX], aarg[NW_RUN_MAX], apass[NW_AUTH_MAX];
+		if (nw_auth_take(&S, acmd, aarg, apass, NW_RUN_MAX)) {
+			char path[256];
+			int slot = free_slot();
+			if (slot >= 0 && resolve_cmd(acmd, path, sizeof path))
+				spawn_client_priv(slot, path, aarg[0] ? aarg : 0, apass[0] ? apass : 0);
+			for (int i = 0; i < (int) sizeof apass; i++) apass[i] = 0;   /* scrub the local copy */
 		}
 
 		update_clock();   /* refresh the menu-bar clock; damages the bar when the minute ticks */

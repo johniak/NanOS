@@ -31,6 +31,11 @@ enum {
 	NW_RUN_W       = 460,   /* the Super+R "Run" dialog box */
 	NW_RUN_H       = 60,
 	NW_RUN_MAX     = 120,   /* max command length typed into it */
+	NW_AUTH_W      = 440,   /* the system authentication (sudo) dialog */
+	NW_AUTH_H      = 188,
+	NW_AUTH_MAX    = 128,   /* max password length */
+	NW_AUTH_BTN_W  = 124,   /* its Authenticate / Cancel buttons */
+	NW_AUTH_BTN_H  = 30,
 	NW_MENU_MAX    = 512,   /* per-window menu spec bytes (NW_REQ_SET_MENU payload)        */
 	NW_MENU_X0     = 30,    /* where the app menu titles start (after the logo mark)       */
 	NW_MENU_ITEM_H = 24,    /* dropdown item row height                                   */
@@ -143,6 +148,18 @@ struct nw_server {
 	char  run_arg[NW_RUN_MAX];      /* optional argv[1] for the spawn (e.g. a file to open) */
 	int   spawn_has_arg;            /* 1 => run_arg is set (open-with); 0 => no argument     */
 
+	/* System authentication ("sudo") dialog — compositor-owned, modal: ANY client can request an
+	 * elevated launch (NW_REQ_ELEVATE / the spawn socket); nwm presents this, captures the keyboard,
+	 * collects the admin password ITSELF (the client never sees it), and on success the shell runs
+	 * the target as root via nwsu. Blocks all other input while open. */
+	int   auth_open;
+	char  auth_cmd[NW_RUN_MAX];     /* command to launch elevated on success                */
+	char  auth_arg[NW_RUN_MAX];     /* its optional argv[1]                                 */
+	char  auth_pass[NW_AUTH_MAX];   /* the typed password (masked on screen, scrubbed after) */
+	int   auth_passlen;
+	int   auth_hover;               /* hovered button: 0 = Authenticate, 1 = Cancel, -1 none */
+	int   want_elevate;             /* submit -> shell runs auth_cmd as root, then clears    */
+
 	/* global menu bar: an open dropdown (logo or the focused app's), + hovered item */
 	int   menu_open, menu_which, menu_hover;
 	int   menu_from_start;          /* the open menu is the Start menu -> anchor it above the taskbar */
@@ -192,6 +209,19 @@ int  nw_take_damage(struct nw_server *s, int *x, int *y, int *w, int *h);
  * (Enter was pressed), clearing the request; else 0. */
 void nw_run_rect(const struct nw_server *s, int *x, int *y, int *w, int *h);
 int  nw_run_take_spawn(struct nw_server *s, char *out, int cap);
+
+/* ---- system authentication ("sudo") dialog — compositor-owned, modal ---- */
+/* Open it: show the password prompt to run `cmd` (with optional argv[1] `arg`) as root. */
+void nw_auth_begin(struct nw_server *s, const char *cmd, const char *arg);
+void nw_auth_rect(const struct nw_server *s, int *x, int *y, int *w, int *h);  /* panel box */
+void nw_auth_btn_rect(const struct nw_server *s, int which, int *x, int *y, int *w, int *h); /* 0=OK 1=Cancel */
+int  nw_auth_hit(const struct nw_server *s, int px, int py);  /* button under (px,py): 0/1, else -1 */
+void nw_auth_key(struct nw_server *s, unsigned char code);    /* type/Backspace/Enter(submit)/Esc(cancel) */
+void nw_auth_cancel(struct nw_server *s);                     /* dismiss + scrub the password */
+void nw_auth_submit(struct nw_server *s);                     /* arm the elevated launch + close */
+/* When a submit is pending, copy out the command/arg/password (each into a cap-sized buffer),
+ * scrub the stored password, and return 1; else 0. The shell then runs cmd as root via nwsu. */
+int  nw_auth_take(struct nw_server *s, char *cmd, char *arg, char *pass, int cap);
 
 /* ---- global menu (pure helpers, shared by compositing + hit-testing + tests) ---- */
 /* Parse a menu spec (0x1e between menus, 0x1f between a menu's title + item labels). */

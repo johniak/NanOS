@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 
 int main(int argc, char **argv)
@@ -42,8 +43,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* hand the launch to the desktop (no password -> a normal, unprivileged launch) */
-	if (nw_launch_send(app, is_nxe ? "" : path, "") != 0) {
+	/* If we're opening a data file the user can't read, ask the compositor for an ELEVATED launch:
+	 * nwm shows its modal system auth dialog and (on the right admin password) runs the app as root
+	 * — the same authorization path the GUI uses, just driven from the command line. Probe with
+	 * open() (NanOS access() optimistically assumes root, so it never reports EACCES). */
+	const char *mode = NW_LAUNCH_NORMAL;
+	if (!is_nxe) {
+		int probe = open(path, O_RDONLY);
+		if (probe < 0 && (errno == EACCES || errno == EPERM)) mode = NW_LAUNCH_ELEVATE;
+		else if (probe >= 0) close(probe);
+	}
+	if (nw_launch_send(app, is_nxe ? "" : path, mode) != 0) {
 		fprintf(stderr, "open: no desktop session to open into (is nwm running?)\n");
 		return 1;
 	}
