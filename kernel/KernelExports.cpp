@@ -7,8 +7,15 @@
 #include "MsiRouter.h"   // MSI/MSI-X capability walk + programming (host-tested)
 #include "knx_net.h"   // knx_map_mmio / knx_dma_alloc / knx_add_net_dev / knx_netif_rx (NetCore.cpp)
 #include "memory_manager.h"
+#include "Fbdev.h"          // FbInfo
+#include "Fb0Device.h"      // /dev/fb0 over a kext framebuffer
+#include "Framebuffer.h"    // FbSurface
+#include "vt/VtManager.h"   // VtManager + g_vtmgr + kVtCount (graphics console over a kext fb)
+#include "VtTty.h"          // /dev/ttyN
+#include "SignalDispatch.h" // signalSend (VT_SETMODE handshake)
 #include <arch/irq.h>
 #include <arch/input.h>
+#include <arch/console.h>   // consoleSerialOut
 #include <stdint.h>
 #include <string.h>
 
@@ -124,6 +131,51 @@ int knx_register_msi(uint8_t bus, uint8_t dev, uint8_t func, void (*h)(void*), v
 	g_msiCtx = ctx;
 	arch::registerTrapHandler((unsigned) r.vector, msiTrampoline);
 	return 0;
+}
+
+// ---- knx_fb_set_backing: adopt a kext-provided framebuffer ----
+// A display kext (e.g. virtio_gpu) that owns its own scanout buffer calls this to make that
+// buffer the system framebuffer. If the bootloader gave no framebuffer (so the kernel skipped
+// its graphics bring-up), we build the VT console + /dev/tty1..7 + /dev/fb0 over the kext
+// buffer here — this runs during loadAllKexts, BEFORE the scheduler starts init, so init's
+// spawn_nwm finds /dev/fb0 + /dev/tty7 and brings up the desktop. A periodic kernel thread
+// calls the kext's flush callback so whatever the console/nwm draw is presented to the device.
+static void (*g_fbFlush)(void) = 0;
+static void fbFlushBody() {
+	for (;;) {
+		unsigned t = Scheduler::ticks();
+		if (g_fbFlush)
+			g_fbFlush();
+		Scheduler::sleepUntil(t + 2);   // ~present cadence (a few ticks)
+	}
+}
+
+void knx_fb_set_backing(uint64_t phys, uint32_t pitch, uint32_t w, uint32_t h,
+                        uint8_t bpp, void (*flush)(void)) {
+	if (!g_root)
+		return;
+
+	// Bring up the VT graphics stack over the kext fb if the bootloader gave us none.
+	if (!g_vtmgr) {
+		FbSurface s = { (uint8_t*) (uintptr_t) phys, pitch, w, h, bpp };
+		VtManager* vtmgr = new VtManager();
+		vtmgr->init(s, [](int pid, int sig) { signalSend(pid, sig); }, arch::consoleSerialOut);
+		g_vtmgr = vtmgr;
+		for (int i = 1; i <= kVtCount; i++) {
+			char nm[6] = { 't', 't', 'y', (char) ('0' + i), 0, 0 };
+			g_root->addChar(g_root->dev(), nm, new VtTty(i), 0666);
+		}
+		g_root->addChar(g_root->dev(), "tty0", new VtTty(0), 0666);
+		g_root->addChar(g_root->dev(), "console", new VtTty(1), 0600);
+	}
+
+	// Expose /dev/fb0 over the kext buffer (nwm mmaps this).
+	FbInfo info = { phys, pitch, w, h, bpp };
+	g_root->addChar(g_root->dev(), "fb0", new Fb0Device(info), 0666);
+
+	// Periodic present thread (task id 5).
+	g_fbFlush = flush;
+	Scheduler::create(fbFlushBody, 5);
 }
 
 }  // extern "C"

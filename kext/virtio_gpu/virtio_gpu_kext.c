@@ -94,6 +94,12 @@ int virtio_gpu_flush(u32 x, u32 y, u32 w, u32 h) {
 	return 0;
 }
 
+/* present the whole framebuffer (called periodically by the kernel present thread) */
+void virtio_gpu_present(void) {
+	if (g_fb)
+		virtio_gpu_flush(0, 0, g_w, g_h);
+}
+
 static int gpu_setup_scanout(void) {
 	struct virtio_gpu_ctrl_hdr *resp = kzalloc(sizeof(*resp), GFP_KERNEL);
 	if (!resp) return -1;
@@ -137,6 +143,12 @@ static int gpu_setup_scanout(void) {
 
 	kfree(c2d); kfree(att); kfree(ss); kfree(resp);
 	knx_log("virtio_gpu: scanout configured, test pattern flushed (P2 checkpoint)\n");
+
+	/* 5) hand the framebuffer to the kernel as /dev/fb0 + a present thread, so fbcon/nwm
+	 *    render through virtio-gpu (P3 — desktop on the Linux GPU driver). */
+	knx_fb_set_backing((unsigned long long)(unsigned long)g_fb, g_w * 4, g_w, g_h, 32,
+	                   virtio_gpu_present);
+	knx_log("virtio_gpu: /dev/fb0 backed by virtio-gpu; present thread up (P3 checkpoint)\n");
 	return 0;
 }
 

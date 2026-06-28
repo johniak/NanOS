@@ -32,6 +32,10 @@ void          *knx_map_mmio(unsigned int phys, unsigned int len);
 void          *knx_dma_alloc(unsigned int len, unsigned int *phys_out);
 void           knx_register_irq(int irq, void (*h)(void *));
 int            knx_register_msi(unsigned char bus, unsigned char dev, unsigned char func, void (*h)(void *), void *ctx);
+/* adopt a kext-owned framebuffer as the system fb: builds /dev/fb0 (+ VT console if the
+ * bootloader gave none) and runs a present thread calling `flush` periodically. */
+void           knx_fb_set_backing(unsigned long long phys, unsigned int pitch, unsigned int w,
+                                  unsigned int h, unsigned char bpp, void (*flush)(void));
 
 #ifdef __cplusplus
 }
