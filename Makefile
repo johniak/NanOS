@@ -1110,7 +1110,7 @@ $(KOBJ)%.o: %.cpp
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
 # The shared VT engine (user/term/vt.c) compiled with KERNEL flags for FbConsole. A distinct
-# object name (vtk.o) keeps it separate from the userland bin/vt.o that nterm/nwterm link.
+# object name (vtk.o) keeps it separate from the userland bin/vt.o that nterm/terminal link.
 $(KOBJ)vtk.o: user/term/vt.c
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
@@ -1217,9 +1217,9 @@ _image64: _all _userland64 _kext
 	done
 	# chsh edits the account DB, so it runs setuid-root (a non-root user changing their own shell).
 	printf "set_inode_field /nanos/bin/chsh.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	# nwsu is the "authenticate to open" privileged helper: it verifies root's password and runs the
+	# nanosu is the "authenticate to open" privileged helper: it verifies root's password and runs the
 	# target as root, so it must be setuid-root (owner root, mode 04755).
-	printf "set_inode_field /nanos/bin/nwsu.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "set_inode_field /nanos/bin/nanosu.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
 	# NanWM compositor (a system GUI program) -> /nanos/bin, and the NanWM client shared libs
 	# (libnw.ndl / libnwui.ndl) -> /nanos/lib (the NetSurf libnsfb backend binds libnw.ndl at load).
 	for p in $(X64_GUI_PROGS); do \
@@ -1675,9 +1675,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm nwnote nwform rustform nwexp nwset nwterm nwabout crashtest socktest pingtest nettest unixtest tcpsrv nanologin nwlogin dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture
-SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm nwlogin socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwnote nwform rustform nwexp nwset nwterm nwabout crashtest pthrtest pthrstress pfract smptorture nettorture
+USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm notepad form rustform nwexp settings terminal about crashtest socktest pingtest nettest unixtest tcpsrv nanologin greeter dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture
+SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm greeter socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom notepad form rustform nwexp settings terminal about crashtest pthrtest pthrstress pfract smptorture nettorture
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -1738,36 +1738,36 @@ $(BINFOLDER)%.o: user/libc-glue/pthread/%.s
 $(BINFOLDER)%.o: user/term/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-# NanWM compositor (user/nwm) + client demos (user/nwnote). DYNHDR (libc.ndl import shim) —
+# NanWM compositor (user/nwm) + client demos (user/notepad). DYNHDR (libc.ndl import shim) —
 # these are dynamically-linked programs like the rest of userland.
 $(BINFOLDER)%.o: user/nwm/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwnote/%.c
+$(BINFOLDER)%.o: user/notepad/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwform/%.c
+$(BINFOLDER)%.o: user/form/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/nwexp/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwset/%.c
+$(BINFOLDER)%.o: user/settings/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwabout/%.c
+$(BINFOLDER)%.o: user/about/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwview/%.c
+$(BINFOLDER)%.o: user/viewer/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwprops/%.c
+$(BINFOLDER)%.o: user/properties/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/open/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
-$(BINFOLDER)%.o: user/nwterm/%.c
+$(BINFOLDER)%.o: user/terminal/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 # libnw (user/libnw): the client API + protocol codec + gfx, STATICALLY linked into the
@@ -1891,7 +1891,7 @@ DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl
 $(BINFOLDER)init.nxe:      $(DYN_DEPS) $(BINFOLDER)init.o
 $(BINFOLDER)nsh.nxe:       $(DYN_DEPS) $(BINFOLDER)nsh.o
 $(BINFOLDER)open.nxe:      $(DYN_DEPS) $(BINFOLDER)open.o
-$(BINFOLDER)nwsu.nxe:      $(DYN_DEPS) $(BINFOLDER)nwsu.o
+$(BINFOLDER)nanosu.nxe:      $(DYN_DEPS) $(BINFOLDER)nanosu.o
 $(BINFOLDER)free.nxe:      $(DYN_DEPS) $(BINFOLDER)free.o
 $(BINFOLDER)chsh.nxe:      $(DYN_DEPS) $(BINFOLDER)chsh.o
 $(BINFOLDER)cat.nxe:       $(DYN_DEPS) $(BINFOLDER)cat.o $(SBASE_UTIL_CAT)
@@ -1921,7 +1921,7 @@ $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
 $(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
-$(BINFOLDER)nwlogin.nxe:   $(DYN_DEPS) $(BINFOLDER)nwlogin.o
+$(BINFOLDER)greeter.nxe:   $(DYN_DEPS) $(BINFOLDER)greeter.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
 $(BINFOLDER)randhex.nxe:   $(DYN_DEPS) $(BINFOLDER)randhex.o
 $(BINFOLDER)fbtest.nxe:    $(DYN_DEPS) $(BINFOLDER)fbtest.o
@@ -1944,44 +1944,44 @@ $(BINFOLDER)smptorture.nxe: $(DYN_DEPS) $(BINFOLDER)smptorture.o
 $(BINFOLDER)nettorture.nxe: $(DYN_DEPS) $(BINFOLDER)nettorture.o
 $(BINFOLDER)ptytest.nxe:   $(DYN_DEPS) $(BINFOLDER)ptytest.o
 $(BINFOLDER)nterm.nxe:     $(DYN_DEPS) $(BINFOLDER)nterm.o $(BINFOLDER)vt.o $(BINFOLDER)vtfont.o
-# NanWM: the compositor (statically links the pure cores + gfx) and the nwnote demo client
+# NanWM: the compositor (statically links the pure cores + gfx) and the notepad demo client
 # (statically links libnw + the shared codec/gfx). Both dynamic-link libc.ndl via DYN_DEPS.
 $(BINFOLDER)nwm.nxe:       $(DYN_DEPS) $(BINFOLDER)nwm.o $(BINFOLDER)nwm_core.o $(BINFOLDER)nw_compose.o $(BINFOLDER)nwproto.o $(BINFOLDER)nw_gfx.o $(BINFOLDER)vtfont.o $(BINFOLDER)nwfont.o $(BINFOLDER)stb_impl.o $(BINFOLDER)nwui_png.o $(BINFOLDER)nw_backdrop.o $(BINFOLDER)nw_settings.o
-# nwnote (the Notepad) is now a pure toolkit client like nwform/nwexp: --need libnwui.ndl pulls
+# notepad (the Notepad) is now a pure toolkit client like form/nwexp: --need libnwui.ndl pulls
 # the whole chain libnwui->libnw->libc via the recursive loader.
-$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwnote.elf $@ --need libnwui.ndl
-# nwform uses ONLY the toolkit (+ libc for snprintf/exit); --need libnwui.ndl pulls the whole
+$(BINFOLDER)notepad.nxe: $(DYN_GLUE) $(BINFOLDER)notepad.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)notepad.elf $(DYN_GLUE) $(BINFOLDER)notepad.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)notepad.elf $@ --need libnwui.ndl
+# form uses ONLY the toolkit (+ libc for snprintf/exit); --need libnwui.ndl pulls the whole
 # chain libnwui->libnw->libc via the recursive loader.
-$(BINFOLDER)nwform.nxe: $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwform.elf $(DYN_GLUE) $(BINFOLDER)nwform.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwform.elf $@ --need libnwui.ndl
-# nwexp: the file explorer — same toolkit-only chain as nwform (--need libnwui.ndl).
+$(BINFOLDER)form.nxe: $(DYN_GLUE) $(BINFOLDER)form.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)form.elf $(DYN_GLUE) $(BINFOLDER)form.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)form.elf $@ --need libnwui.ndl
+# nwexp: the file explorer — same toolkit-only chain as form (--need libnwui.ndl).
 $(BINFOLDER)nwexp.nxe: $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwexp.elf $(DYN_GLUE) $(BINFOLDER)nwexp.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX_TOOL) $(BINFOLDER)nwexp.elf $@ --need libnwui.ndl
-# nwset: the Settings demo — toolkit-only chain like nwform/nwexp.
-$(BINFOLDER)nwset.nxe: $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)nw_settings.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwset.elf $(DYN_GLUE) $(BINFOLDER)nwset.o $(BINFOLDER)nw_settings.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwset.elf $@ --need libnwui.ndl
-# nwabout: "About This Computer" — toolkit-only chain like nwset.
-$(BINFOLDER)nwabout.nxe: $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwabout.elf $(DYN_GLUE) $(BINFOLDER)nwabout.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwabout.elf $@ --need libnwui.ndl
-# nwview: the image viewer — toolkit-only chain (reuses the libnwui PNG decoder + image widget).
-$(BINFOLDER)nwview.nxe: $(DYN_GLUE) $(BINFOLDER)nwview.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwview.elf $(DYN_GLUE) $(BINFOLDER)nwview.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwview.elf $@ --need libnwui.ndl
-# nwprops: the standalone system "Properties" / Get-Info window (toolkit-only chain).
-$(BINFOLDER)nwprops.nxe: $(DYN_GLUE) $(BINFOLDER)nwprops.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwprops.elf $(DYN_GLUE) $(BINFOLDER)nwprops.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwprops.elf $@ --need libnwui.ndl
-# nwterm: the real windowed Terminal — a raw libnw client running nsh on a pty, with the shared
+# settings: the Settings demo — toolkit-only chain like form/nwexp.
+$(BINFOLDER)settings.nxe: $(DYN_GLUE) $(BINFOLDER)settings.o $(BINFOLDER)nw_settings.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)settings.elf $(DYN_GLUE) $(BINFOLDER)settings.o $(BINFOLDER)nw_settings.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)settings.elf $@ --need libnwui.ndl
+# about: "About This Computer" — toolkit-only chain like settings.
+$(BINFOLDER)about.nxe: $(DYN_GLUE) $(BINFOLDER)about.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)about.elf $(DYN_GLUE) $(BINFOLDER)about.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)about.elf $@ --need libnwui.ndl
+# viewer: the image viewer — toolkit-only chain (reuses the libnwui PNG decoder + image widget).
+$(BINFOLDER)viewer.nxe: $(DYN_GLUE) $(BINFOLDER)viewer.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)viewer.elf $(DYN_GLUE) $(BINFOLDER)viewer.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)viewer.elf $@ --need libnwui.ndl
+# properties: the standalone system "Properties" / Get-Info window (toolkit-only chain).
+$(BINFOLDER)properties.nxe: $(DYN_GLUE) $(BINFOLDER)properties.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)properties.elf $(DYN_GLUE) $(BINFOLDER)properties.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)properties.elf $@ --need libnwui.ndl
+# terminal: the real windowed Terminal — a raw libnw client running nsh on a pty, with the shared
 # VT engine (vt.o). --need libnw.ndl.
-$(BINFOLDER)nwterm.nxe: $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwterm.elf $(DYN_GLUE) $(BINFOLDER)nwterm.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwterm.elf $@ --need libnw.ndl
+$(BINFOLDER)terminal.nxe: $(DYN_GLUE) $(BINFOLDER)terminal.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)terminal.elf $(DYN_GLUE) $(BINFOLDER)terminal.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)terminal.elf $@ --need libnw.ndl
 # rustform: the SAME demo written in RUST, proving the C-ABI libnwui is language-agnostic. A
 # cargo staticlib (no_std, -Z build-std for the bare i686-nanos target) is linked with crt0 +
 # the import libraries, then mknx'd like any app; --need libnwui.ndl pulls the whole chain.
@@ -2153,14 +2153,14 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nwsu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
 # NanWM compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
-X64_GUI_PROGS=nwm nwlogin
+X64_GUI_PROGS=nwm greeter
 # NanWM desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
 # (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
-X64_GUI_APPS=rsexp nwset nwabout nwnote nwview nwprops nwform nwterm
+X64_GUI_APPS=rsexp settings about notepad viewer properties form terminal
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
 X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
 _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))
@@ -2342,7 +2342,7 @@ TEST_MODULES+= user/nwm/nw_backdrop.c   # pure backdrop-blur math (rect helpers,
 TEST_MODULES+= user/libnwui/nwui_core.c   # the pure UI-toolkit core (tree/layout/events)
 TEST_MODULES+= user/libnwui/nwui_png.c    # the PNG decoder + nwui_image_load_png file loader (not gated: many format branches exercised live)
 TEST_MODULES+= user/libnwui/nwui_fs.c     # reusable directory-enumeration shim (opendir/readdir wrapper)
-TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (shared by nterm/nwterm)
+TEST_MODULES+= user/term/vt.c             # the pure VT/ANSI terminal engine (shared by nterm/terminal)
 TEST_MODULES+= kernel/Pci.cpp             # MI PCI enumeration/BAR decode (mock config-space backend)
 TEST_MODULES+= kernel/MsiRouter.cpp       # MI MSI/MSI-X cap walk + programming (mock config space)
 TEST_MODULES+= kext/e1000/e1000_core.cpp  # pure helpers (ring/desc encode); engine half #ifdef'd out

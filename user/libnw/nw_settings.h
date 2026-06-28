@@ -1,10 +1,10 @@
 /*
  * nw_settings.h — NanWM desktop preferences: a tiny key/value model shared by the compositor
- * (nwm, which reads + applies them) and the Settings app (nwset, which edits + persists them).
+ * (nwm, which reads + applies them) and the Settings app (settings, which edits + persists them).
  *
  * Persisted as a simple YAML-ish `key: value` text file at /disks/main/nanos/config/settings.yaml.
  * This module is PURE (no I/O, no allocation — caller owns every buffer), so parse/serialize and
- * the level->pixel mappings are host-tested; the file read/write lives in nwm/nwset.
+ * the level->pixel mappings are host-tested; the file read/write lives in nwm/settings.
  *
  * Four knobs: two on/off toggles (backdrop blur, glass translucency) and two 0..100 levels
  * (blur strength, translucency strength). The derive helpers turn levels into the alpha/radius

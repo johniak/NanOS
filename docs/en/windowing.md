@@ -15,8 +15,8 @@ The split mirrors a classic OS:
 | `libnwui.ndl` | `comctl32` / Qt | composable widgets, layout, event dispatch |
 
 ```
-/dev/fb0 (mmap) ─┐                         ┌─ app (e.g. nwnote)  →  libnw  ──┐
-/dev/input0 (kbd)┤   nwm  (compositor)     │  app (e.g. nwform)  →  libnwui →┤  libnw
+/dev/fb0 (mmap) ─┐                         ┌─ app (e.g. notepad)  →  libnw  ──┐
+/dev/input0 (kbd)┤   nwm  (compositor)     │  app (e.g. form)  →  libnwui →┤  libnw
 /dev/input1 (mouse)─►  poll → composite ───┤      pipe fds 3 (req) / 4 (evt) │
                        → blit to /dev/fb0   └─ app (rustform)    →  libnwui ──┘ (Rust via C FFI)
 ```
@@ -282,15 +282,15 @@ see filesystem.md and the graphics stack.)
 
 | App | Library | What it is |
 |---|---|---|
-| `nwterm` | libnwui | terminal emulator in a window (polls its pty master via `nw_event_fd`) |
-| `nwset` | libnwui | system settings |
+| `terminal` | libnwui | terminal emulator in a window (polls its pty master via `nw_event_fd`) |
+| `settings` | libnwui | system settings |
 | `nwexp` | libnwui | file explorer (list widget, directory nav) |
-| `nwform` | libnwui | greeting form (textfield + buttons) — the toolkit demo |
-| `nwabout` | libnwui | about dialog |
-| `nwnote` | libnwui | **Notepad** — a Windows XP-style editor (menus, accelerators, find/replace/go-to, open/save, status bar) on the `nwui_textarea` + modal widgets |
+| `form` | libnwui | greeting form (textfield + buttons) — the toolkit demo |
+| `about` | libnwui | about dialog |
+| `notepad` | libnwui | **Notepad** — a Windows XP-style editor (menus, accelerators, find/replace/go-to, open/save, status bar) on the `nwui_textarea` + modal widgets |
 | `rustform` | libnwui via **Rust** FFI | the same form in Rust — proves the C ABI is language-agnostic |
 
-At boot the compositor spawns `nwterm`, `nwset`, `nwexp` (Files last → on top + focused).
+At boot the compositor spawns `terminal`, `settings`, `nwexp` (Files last → on top + focused).
 
 **Build (Makefile).** `libnw.ndl` and `libnwui.ndl` are built like any shared library (→
 `/nanos/lib`), the shared cores `nwproto.o`/`nw_gfx.o` link into both `nwm` and the clients. `nwm` is

@@ -57,8 +57,8 @@ edits; host tests `make test64`; image `make image64`; QEMU per CLAUDE.md headle
 ### Task 4.1: settings model
 - [ ] `nw_settings`: add `ui_font[64]` + parse/serialize + getter; default `UISans-Regular.ttf`. Host test parse round-trip. Commit.
 
-### Task 4.2: nwset UI + reload
-- [ ] nwset: "Fonts" group lists `/nanos/share/fonts/*.{ttf,otf}` (nwui_dir_*) as rows; pick → write setting → reload broadcast.
+### Task 4.2: settings UI + reload
+- [ ] settings: "Fonts" group lists `/nanos/share/fonts/*.{ttf,otf}` (nwui_dir_*) as rows; pick → write setting → reload broadcast.
 - [ ] Reload path: on settings reload, call `nwfont_set(NWFONT_UI, path, px)` + repaint (compositor + apps via existing reload signal). Build + QEMU: switch font live. Commit.
 
 ## Phase 5 — rsexp "Install font" (optional polish)

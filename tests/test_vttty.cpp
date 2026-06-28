@@ -95,7 +95,7 @@ TEST_CASE("/dev/tty forwards to a pty slave when the controlling terminal is the
 
 	Pty pty;
 	PtySlave slave(&pty);
-	// The shell (login_tty/nwterm) adopts the pty slave as its controlling terminal.
+	// The shell (login_tty/terminal) adopts the pty slave as its controlling terminal.
 	CHECK(slave.ioctl(IOCTL_TIOCSCTTY, (void*) 0) == 0);
 	CHECK(p->cttyDev == &slave);
 

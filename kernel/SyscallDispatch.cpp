@@ -965,8 +965,8 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		//
 		// PER-CPU, not plain static: with these shared across CPUs, two concurrent execve calls
 		// clobbered each other's pathBuf — at boot a getty's short ".../login.nxe" overwrote the
-		// greeter's ".../nwlogin.nxe" at the same basename offset (identical directory prefix), so
-		// the greeter exec'd TOYBOX ("toybox: Unknown command nwlogin", no tty7 login). One buffer
+		// greeter's ".../login.nxe" at the same basename offset (identical directory prefix), so
+		// the greeter exec'd TOYBOX ("toybox: Unknown command login", no tty7 login). One buffer
 		// set per CPU removes the sharing without a lock; execve runs in ring 0 (not preempted) and
 		// its reads busy-poll (never yield), so the task cannot migrate mid-call to another CPU's set.
 		static char pathBuf[arch::SMP_MAX_CPUS][256];

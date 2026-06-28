@@ -4,7 +4,7 @@ The text path from the kernel boot log to an interactive shell: a machine-indepe
 over a swappable sink (VGA text → framebuffer glyphs), an **evdev keyboard** (`/dev/input0`), a
 **PTY** (`/dev/ptmx` + `/dev/pts0` + `/dev/tty`) with a line discipline + job-control signals, and
 a shared **VT/ANSI engine** used by both the kernel framebuffer console and the userland terminals
-(`nterm`, `nwterm`). For the GUI compositor see windowing.md; for `/dev/fb0` + `/dev/input*`
+(`nterm`, `terminal`). For the GUI compositor see windowing.md; for `/dev/fb0` + `/dev/input*`
 in the namespace see filesystem.md.
 
 ---
@@ -90,7 +90,7 @@ tcsetattr/cfmakeraw/tcsetpgrp) and `ptyutil.c` (`openpty`/`forkpty`/`login_tty` 
 ## 6. The VT/ANSI engine (`user/term/vt.*`)
 
 A **pure** VT100/xterm state machine — no I/O, no globals, host-tested — **shared** by the kernel
-fbcon (`FbConsole`) and the userland terminals (`nterm`, `nwterm`). It holds the cell grid
+fbcon (`FbConsole`) and the userland terminals (`nterm`, `terminal`). It holds the cell grid
 (`ch, fg, bg`), cursor, SGR attributes (16 base + 256-color + truecolor palette), scroll region,
 saved cursor, an **alt screen** (DECSET 47/1047/1049), and a per-row **dirty** bitmap so a renderer
 repaints only changed rows. `vt_feed(bytes)` runs the parser (NORMAL/ESC/CSI/OSC): printable →
@@ -100,13 +100,13 @@ alt-screen swap; OSC swallowed to BEL/ST. The font is `vtfont.c` (8×16, shared 
 
 ---
 
-## 7. The terminals: `nterm` vs `nwterm`
+## 7. The terminals: `nterm` vs `terminal`
 
 - **`nterm`** (`user/term/nterm.c`) — a **fullscreen** terminal: it `mmap`s `/dev/fb0` directly,
   sizes a `vt` grid to the framebuffer, opens `/dev/ptmx`, `fork`s a shell on `/dev/pts0`
   (`TERM=xterm-256color`), and its `poll` loop pumps master→`vt_feed`→render-dirty and
   keyboard(`/dev/input0`)→master. It is the terminal when there's no compositor.
-- **`nwterm`** (`user/nwterm/`) — the **windowed** terminal: same `vt` engine + pty + shell, but a
+- **`terminal`** (`user/terminal/`) — the **windowed** terminal: same `vt` engine + pty + shell, but a
   NanWM client drawing into a window via `libnw` and polling the compositor's event fd alongside the
   pty master (windowing.md §7).
 
@@ -120,7 +120,7 @@ Both reuse the exact same VT engine and font; only the pixel destination and inp
 framebuffer), `/dev/input0` (`KeyboardDevice` + `kbdRegister` so the IRQ path feeds it),
 `/dev/ptmx` + `/dev/pts0` + `/dev/tty` (one `Pty`, with `ptySignal` wired for Ctrl+C → pgrp). The
 kernel console (VGA→fbcon) carries the boot log; once `init` starts the shell, interaction goes
-through the PTY (and `nterm`/`nwterm` for a full terminal).
+through the PTY (and `nterm`/`terminal` for a full terminal).
 
 **Key files:** `drivers/{Console,FbConsole,Framebuffer,Fbdev,Fb0Device,KeyboardDevice,Pty}.*`,
 `arch/x86/drivers/{console_x86,input_x86}.cpp`, `kernel/KeyDecoder.*`,

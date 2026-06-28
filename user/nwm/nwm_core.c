@@ -552,8 +552,8 @@ static void menu_close(struct nw_server *s)
 static void menu_activate(struct nw_server *s, int item)   /* an item was chosen */
 {
 	if (s->menu_which == NW_MENU_LOGO) {
-		if (item == 0 || item == 1) {               /* My Computer (rsexp) / About (nwabout) */
-			const char *cmd = item == 0 ? "rsexp" : "nwabout"; int i = 0;
+		if (item == 0 || item == 1) {               /* My Computer (rsexp) / About (about) */
+			const char *cmd = item == 0 ? "rsexp" : "about"; int i = 0;
 			for (; cmd[i] && i < NW_RUN_MAX - 1; i++) s->run_cmd[i] = cmd[i];
 			s->run_cmd[i] = 0; s->spawn_has_arg = 0; s->want_spawn = 1;
 		} else if (item == 2) {                      /* Run... -> the Super+R launcher dialog */

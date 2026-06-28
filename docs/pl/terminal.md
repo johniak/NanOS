@@ -4,7 +4,7 @@
 **konsola** nad wymienialnym ujściem (tekst VGA → glify framebuffera), **klawiatura evdev**
 (`/dev/input0`), **PTY** (`/dev/ptmx` + `/dev/pts0` + `/dev/tty`) z line discipline + sygnałami
 kontroli zadań oraz współdzielony **silnik VT/ANSI** używany zarówno przez framebufferową konsolę
-jądra, jak i terminale w przestrzeni użytkownika (`nterm`, `nwterm`). Kompozytor GUI opisuje
+jądra, jak i terminale w przestrzeni użytkownika (`nterm`, `terminal`). Kompozytor GUI opisuje
 windowing.md; `/dev/fb0` + `/dev/input*` w przestrzeni nazw opisuje filesystem.md.
 
 ---
@@ -95,7 +95,7 @@ tcsetattr/cfmakeraw/tcsetpgrp) i `ptyutil.c` (`openpty`/`forkpty`/`login_tty` dl
 
 **Czysta** maszyna stanów VT100/xterm — bez I/O, bez globalnych zmiennych, testowana na hoście —
 **współdzielona** przez fbcon jądra (`FbConsole`) i terminale przestrzeni użytkownika (`nterm`,
-`nwterm`). Trzyma siatkę komórek (`ch, fg, bg`), kursor, atrybuty SGR (16 bazowych + 256 kolorów +
+`terminal`). Trzyma siatkę komórek (`ch, fg, bg`), kursor, atrybuty SGR (16 bazowych + 256 kolorów +
 paleta truecolor), region przewijania, zapisany kursor, **ekran alternatywny** (DECSET 47/1047/1049)
 oraz bitmapę **dirty** per wiersz, aby renderer przemalowywał tylko zmienione wiersze.
 `vt_feed(bytes)` uruchamia parser (NORMAL/ESC/CSI/OSC): drukowalne → glif; finały CSI → ruchy
@@ -105,13 +105,13 @@ biblioteki libnw).
 
 ---
 
-## 7. Terminale: `nterm` vs `nwterm`
+## 7. Terminale: `nterm` vs `terminal`
 
 - **`nterm`** (`user/term/nterm.c`) — terminal **pełnoekranowy**: `mmap`uje `/dev/fb0` bezpośrednio,
   wymiaruje siatkę `vt` do framebuffera, otwiera `/dev/ptmx`, `fork`uje powłokę na `/dev/pts0`
   (`TERM=xterm-256color`), a jego pętla `poll` pompuje master→`vt_feed`→render-dirty oraz
   klawiaturę(`/dev/input0`)→master. To terminal, gdy nie ma kompozytora.
-- **`nwterm`** (`user/nwterm/`) — terminal **w oknie**: ten sam silnik `vt` + pty + powłoka, ale
+- **`terminal`** (`user/terminal/`) — terminal **w oknie**: ten sam silnik `vt` + pty + powłoka, ale
   klient NanWM rysujący do okna przez `libnw` i odpytujący event fd kompozytora obok mastera pty
   (windowing.md §7).
 
@@ -126,7 +126,7 @@ pikseli i źródłem wejścia.
 framebuffer), `/dev/input0` (`KeyboardDevice` + `kbdRegister`, aby ścieżka IRQ go zasilała),
 `/dev/ptmx` + `/dev/pts0` + `/dev/tty` (jeden `Pty`, z `ptySignal` podpiętym dla Ctrl+C → pgrp).
 Konsola jądra (VGA→fbcon) niesie dziennik rozruchu; gdy `init` uruchomi powłokę, interakcja idzie
-przez PTY (oraz `nterm`/`nwterm` dla pełnego terminala).
+przez PTY (oraz `nterm`/`terminal` dla pełnego terminala).
 
 **Kluczowe pliki:** `drivers/{Console,FbConsole,Framebuffer,Fbdev,Fb0Device,KeyboardDevice,Pty}.*`,
 `arch/x86/drivers/{console_x86,input_x86}.cpp`, `kernel/KeyDecoder.*`,

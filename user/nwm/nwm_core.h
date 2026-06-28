@@ -151,7 +151,7 @@ struct nw_server {
 	/* System authentication ("sudo") dialog — compositor-owned, modal: ANY client can request an
 	 * elevated launch (NW_REQ_ELEVATE / the spawn socket); nwm presents this, captures the keyboard,
 	 * collects the admin password ITSELF (the client never sees it), and on success the shell runs
-	 * the target as root via nwsu. Blocks all other input while open. */
+	 * the target as root via nanosu. Blocks all other input while open. */
 	int   auth_open;
 	char  auth_cmd[NW_RUN_MAX];     /* command to launch elevated on success                */
 	char  auth_arg[NW_RUN_MAX];     /* its optional argv[1]                                 */
@@ -220,7 +220,7 @@ void nw_auth_key(struct nw_server *s, unsigned char code);    /* type/Backspace/
 void nw_auth_cancel(struct nw_server *s);                     /* dismiss + scrub the password */
 void nw_auth_submit(struct nw_server *s);                     /* arm the elevated launch + close */
 /* When a submit is pending, copy out the command/arg/password (each into a cap-sized buffer),
- * scrub the stored password, and return 1; else 0. The shell then runs cmd as root via nwsu. */
+ * scrub the stored password, and return 1; else 0. The shell then runs cmd as root via nanosu. */
 int  nw_auth_take(struct nw_server *s, char *cmd, char *arg, char *pass, int cap);
 
 /* ---- global menu (pure helpers, shared by compositing + hit-testing + tests) ---- */

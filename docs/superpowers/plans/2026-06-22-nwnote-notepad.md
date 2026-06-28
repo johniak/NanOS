@@ -1,10 +1,10 @@
-# nwnote → Windows XP-style Notepad — Implementation Plan
+# notepad → Windows XP-style Notepad — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rebuild `user/nwnote` into a Windows XP-style Notepad by growing the `libnwui` toolkit with reusable widgets (multiline editor, checkbox, keyboard accelerators, modal dialogs, file dialog) and making Notepad a thin client on top.
+**Goal:** Rebuild `user/notepad` into a Windows XP-style Notepad by growing the `libnwui` toolkit with reusable widgets (multiline editor, checkbox, keyboard accelerators, modal dialogs, file dialog) and making Notepad a thin client on top.
 
-**Architecture:** Reusable *logic* goes into the pure, host-tested core `user/libnwui/nwui_core.c` (gated >90% coverage); *painting* into `user/libnwui/nwui_paint.c`; *I/O* into `user/libnwui/nwui.c`; *public API* into `user/libnwui/nwui.h`. `user/nwnote/nwnote.c` is rewritten to consume the toolkit, declares menus via the existing global-menu-bar API, and registers accelerators that share the menu callbacks.
+**Architecture:** Reusable *logic* goes into the pure, host-tested core `user/libnwui/nwui_core.c` (gated >90% coverage); *painting* into `user/libnwui/nwui_paint.c`; *I/O* into `user/libnwui/nwui.c`; *public API* into `user/libnwui/nwui.h`. `user/notepad/notepad.c` is rewritten to consume the toolkit, declares menus via the existing global-menu-bar API, and registers accelerators that share the menu callbacks.
 
 **Tech Stack:** Freestanding C (picolibc), NanWM `libnw` client protocol, `libnwui` toolkit, doctest host tests, QEMU headless verification.
 
@@ -17,7 +17,7 @@
 - **App-owned buffers**: editor/field widgets never own their text buffer; the app passes `char *buf, int cap` (existing `nwui_textfield` pattern).
 - **Node arena bound**: `NWUI_MAX_NODES = 128`, `NWUI_MAX_CHILD = 16`. Bump in Task 10 only if the modal + file-dialog subtrees overflow.
 - **Font metrics**: `NW_FONT_W = 8`, `NW_FONT_H = 16`.
-- Branch `feat/nwnote-notepad` already exists with the design spec committed.
+- Branch `feat/notepad-notepad` already exists with the design spec committed.
 
 ---
 
@@ -31,8 +31,8 @@
 | `user/libnwui/nwui.c` | I/O: `getdents` listing for the file dialog | 12 |
 | `user/libnwui/nwui.h` | public toolkit API | 1,4,6,8,9,11,12 |
 | `tests/test_nwui_core.cpp` | new doctest cases (the gate) | 1–12 |
-| `user/nwnote/nwnote.c` | the Notepad app (rewrite) | 15 |
-| `Makefile` | relink `nwnote.nxe` against `libnwui` | 15 |
+| `user/notepad/notepad.c` | the Notepad app (rewrite) | 15 |
+| `Makefile` | relink `notepad.nxe` against `libnwui` | 15 |
 | `docs/en/*`, design memory | docs touch-up | 16 |
 
 ---
@@ -1480,29 +1480,29 @@ git commit -m "feat(nwui): paint checkbox + modal backdrop/dialog"
 
 ---
 
-## Task 15: Rewrite `nwnote.c` as the Notepad; relink against `libnwui`
+## Task 15: Rewrite `notepad.c` as the Notepad; relink against `libnwui`
 
 **Files:**
-- Rewrite: `user/nwnote/nwnote.c`
-- Modify: `Makefile` (the `nwnote.nxe` recipe, ~lines 1779–1781)
+- Rewrite: `user/notepad/notepad.c`
+- Modify: `Makefile` (the `notepad.nxe` recipe, ~lines 1779–1781)
 
 **Interfaces:**
 - Consumes: all of `libnwui` (textarea, checkbox, accelerators, modal, message/prompt/file
   dialog, menus).
-- Produces: `/disks/main/apps/nwnote/nwnote.nxe` — the Notepad.
+- Produces: `/disks/main/apps/notepad/notepad.nxe` — the Notepad.
 
 - [ ] **Step 1: Change the Makefile recipe**
 
-Replace the libnw-direct `nwnote.nxe` recipe with the libnwui chain (copy `nwform`'s
+Replace the libnw-direct `notepad.nxe` recipe with the libnwui chain (copy `form`'s
 recipe, lines ~1784–1786):
 
 ```make
-$(BINFOLDER)nwnote.nxe: $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
-	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwnote.elf $(DYN_GLUE) $(BINFOLDER)nwnote.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX_TOOL) $(BINFOLDER)nwnote.elf $@ --need libnwui.ndl
+$(BINFOLDER)notepad.nxe: $(DYN_GLUE) $(BINFOLDER)notepad.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)notepad.elf $(DYN_GLUE) $(BINFOLDER)notepad.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)notepad.elf $@ --need libnwui.ndl
 ```
 
-- [ ] **Step 2: Rewrite `user/nwnote/nwnote.c`**
+- [ ] **Step 2: Rewrite `user/notepad/notepad.c`**
 
 Full file — the thin client. Global menus + accelerators share callbacks; status bar
 updates via the textarea `on_change`; Find/Replace built from the modal + primitives; file
@@ -1510,7 +1510,7 @@ I/O via libc; single-level undo via a snapshot buffer.
 
 ```c
 /*
- * nwnote.c — NanOS Notepad: a Windows XP-style text editor on libnwui. The editor itself
+ * notepad.c — NanOS Notepad: a Windows XP-style text editor on libnwui. The editor itself
  * is the reusable nwui_textarea; this file wires menus, accelerators, the status bar,
  * find/replace/go-to dialogs, file open/save, and single-level undo.
  */
@@ -1683,7 +1683,7 @@ acceptable; keep them in `nwui.c` next to the other I/O glue.)
 - [ ] **Step 3: Build**
 
 Run: `make build 2>&1 | tail -20`
-Expected: clean compile; `bin/nwnote.nxe` produced.
+Expected: clean compile; `bin/notepad.nxe` produced.
 
 - [ ] **Step 4: Host tests still green**
 
@@ -1693,8 +1693,8 @@ Expected: all pass; `nwui_core.c` coverage ≥90%.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add user/nwnote/nwnote.c Makefile user/libnwui/nwui.c user/libnwui/nwui.h user/libnwui/nwui_core.c tests/test_nwui_core.cpp
-git commit -m "feat(nwnote): rewrite as a Windows XP-style Notepad on libnwui"
+git add user/notepad/notepad.c Makefile user/libnwui/nwui.c user/libnwui/nwui.h user/libnwui/nwui_core.c tests/test_nwui_core.cpp
+git commit -m "feat(notepad): rewrite as a Windows XP-style Notepad on libnwui"
 ```
 
 ---
@@ -1707,11 +1707,11 @@ git commit -m "feat(nwnote): rewrite as a Windows XP-style Notepad on libnwui"
 - [ ] **Step 1: Build the image**
 
 Run: `make image 2>&1 | tail -15`
-Expected: `disk/image-grub2.img` built with the new `nwnote.nxe`.
+Expected: `disk/image-grub2.img` built with the new `notepad.nxe`.
 
 - [ ] **Step 2: Boot headless and screenshot (per CLAUDE.md)**
 
-Set `grub.cfg` `timeout=0`, boot `qemu-system-i386 -drive file=disk/image-grub2.img,format=raw -display none -monitor unix:/tmp/qmon,server,nowait`, drive the Run dialog (Super+R) to launch `nwnote`, then via the monitor socket `screendump /tmp/x.ppm`, `sips -s format png /tmp/x.ppm --out /tmp/x.png`, and read `/tmp/x.png`. Restore `grub.cfg` `timeout=5` afterward.
+Set `grub.cfg` `timeout=0`, boot `qemu-system-i386 -drive file=disk/image-grub2.img,format=raw -display none -monitor unix:/tmp/qmon,server,nowait`, drive the Run dialog (Super+R) to launch `notepad`, then via the monitor socket `screendump /tmp/x.ppm`, `sips -s format png /tmp/x.ppm --out /tmp/x.png`, and read `/tmp/x.png`. Restore `grub.cfg` `timeout=5` afterward.
 
 Verify visually:
 - the Notepad window with the editor + status bar,

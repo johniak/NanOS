@@ -8,7 +8,7 @@
  *     shell output (master) -> the shared VT engine (vt.c) -> rasterized to /dev/fb0.
  *
  * The escape-sequence parsing + screen grid live in vt.c (shared with the windowed terminal
- * nwterm); this file is the framebuffer + keyboard + pty glue, repainting only dirty rows.
+ * terminal); this file is the framebuffer + keyboard + pty glue, repainting only dirty rows.
  */
 #include <unistd.h>
 #include <fcntl.h>

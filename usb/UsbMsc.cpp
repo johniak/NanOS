@@ -39,9 +39,9 @@ static int bot(UsbMsc* m, const uint8_t* cdb, int cdbLen, arch::UsbDir dataDir, 
         // SHORT (cc=13) — xhciSubmit reports that as success with a partial byte count. The old
         // check (< 0 only) then accepted a partially-filled buffer, leaving the PREVIOUS transfer's
         // bytes in the tail. With one READ(10) per 512 B sector, a fully-short read left the entire
-        // sector holding stale data: when init read the greeter (nwlogin.nxe) right after a getty
+        // sector holding stale data: when init read the greeter (login.nxe) right after a getty
         // read toybox (login.nxe), the greeter sector came back as toybox -> "toybox: Unknown
-        // command nwlogin" and no tty7 login. QEMU always transfers the full 512 B, so it never hit
+        // command login" and no tty7 login. QEMU always transfers the full 512 B, so it never hit
         // this. Treat any short/failed data phase as a command failure (the block layer retries).
         int moved = bulk(m->slot, ep, dataDir, data, dataLen);
         if (moved < 0 || (uint32_t) moved != dataLen) return -1;

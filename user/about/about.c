@@ -1,5 +1,5 @@
 /*
- * nwabout.c — "About This Computer" for NanoOS, launched from the logo menu. A small nwui window
+ * about.c — "About This Computer" for NanoOS, launched from the logo menu. A small nwui window
  * showing REAL system info read from /proc (version, CPU, memory, uptime). Mirrors macOS's About
  * panel. Built on libnwui; the data comes from the shared sysinfo.h helper.
  */

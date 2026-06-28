@@ -375,13 +375,13 @@ receives events. The full architecture (compositor, protocol, full API) is descr
 
 | Library | When | Examples |
 |------------|-------|-----------|
-| **`libnwui.ndl`** (toolkit) | a typical app: buttons, lists, text fields, layout, menus | `nwform`, `nwexp`, `nwset`, `nwabout` |
-| **`libnw.ndl`** (raw) | custom rendering: you draw pixels into the window buffer and handle events manually | `nwnote`, `nwterm` |
+| **`libnwui.ndl`** (toolkit) | a typical app: buttons, lists, text fields, layout, menus | `form`, `nwexp`, `settings`, `about` |
+| **`libnw.ndl`** (raw) | custom rendering: you draw pixels into the window buffer and handle events manually | `notepad`, `terminal` |
 
 #### Variant A — toolkit (`libnwui`, recommended)
 
 You build a tree of widgets, attach callbacks, `nwui_run()` does the event loop. File
-`user/mygui/mygui.c` (modeled on `nwform`):
+`user/mygui/mygui.c` (modeled on `form`):
 
 ```c
 #include "nwui.h"
@@ -408,7 +408,7 @@ int main(void) {
 
 You get the window's pixel buffer (BGRX, `0x00RRGGBB`), draw with `nw_gfx` primitives,
 `nw_commit()` pushes the damaged rectangle, and `nw_next_event()` is your
-`GetMessage`/`DispatchMessage` (modeled on `nwnote`):
+`GetMessage`/`DispatchMessage` (modeled on `notepad`):
 
 ```c
 #include "libnw.h"
@@ -473,7 +473,7 @@ takes over the screen. You run your app:
 - from the bar/shortcut **Super+R** (Run) by typing the name, or
 - programmatically: `nwui_spawn(u, "mygui")` / `nw_spawn(d, "mygui")` from another app, or
 - to have it start together with the desktop — add `spawn_client(slot, "/disks/main/apps/mygui/mygui.nxe")`
-  in `user/nwm/nwm.c` (like `nwterm`/`nwset`/`nwexp`).
+  in `user/nwm/nwm.c` (like `terminal`/`settings`/`nwexp`).
 
 The app — being in `APP_PROGS` — lands in the bundle `/apps/mygui/mygui.nxe` with a symlink `/bin/mygui.nxe`,
 so it works "by name".
@@ -481,7 +481,7 @@ so it works "by name".
 #### Another language (Rust)
 
 The `libnwui` ABI is pure C (opaque handles, POD, callbacks), so a GUI app can be written in
-any language with a C FFI. `rustform` is exactly the same form as `nwform`, but in Rust:
+any language with a C FFI. `rustform` is exactly the same form as `form`, but in Rust:
 `cargo` builds a `no_std` staticlib for the `i686-nanos.json` target (`-Z build-std=core,alloc`), and
 it is linked with `crt0` + `libnwui.ndl.a` + `libc.ndl.a` and `mknx --need libnwui.ndl` like any
 app (see the `rustform` rule in the `Makefile`).
@@ -857,7 +857,7 @@ The shell (`user/nsh.c`) resolves a bare command name in the order:
 - **Syscall numbers:** `kernel/SyscallNr.h` (Linux-style i386, `int 0x80`).
 - **GUI:** `libnw.ndl` (the NanWM compositor client) + `libnwui.ndl` (UI toolkit) — how to write
   a windowed app: **section 3.8**; architecture + full API: **`windowing.md`**. Examples:
-  `nwnote`/`nwterm` (raw, libnw), `nwform`/`nwexp`/`nwset`/`nwabout` (toolkit, libnwui),
+  `notepad`/`terminal` (raw, libnw), `form`/`nwexp`/`settings`/`about` (toolkit, libnwui),
   `rustform` (toolkit in Rust).
 
 What is **missing** (as of today): TLS/OpenSSL (so `wget` is HTTP-only), IPv6, full locale/NLS,
@@ -945,7 +945,7 @@ look at the PNG. To diagnose faults: `-no-reboot -d int -D log`, grep `v=0d`/`v=
 | `user/libnw/{libnw.h,nwproto.h,nw_gfx.h}` | the NanWM client: window/event API, protocol, rasterizer |
 | `user/libnwui/nwui.h` | the UI toolkit (widgets, layout, menus) — pure C ABI |
 | `user/nwm/` | the compositor (`nwm.nxe`) |
-| `user/{nwform,nwnote,nwexp,nwset,nwabout,nwterm}/` | example windowed apps |
+| `user/{form,notepad,nwexp,settings,about,terminal}/` | example windowed apps |
 | `user/rust/rustform/` | an example GUI app in Rust (toolkit via C FFI) |
 | `docs/windowing.md` | the NanWM architecture + full API (complements section 3.8) |
 | `kernel/NxFormat.h` | the `.nxe`/`.ndl` format definition |

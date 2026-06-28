@@ -1,16 +1,16 @@
-# Design: nwnote → a Windows XP-style Notepad (library-first)
+# Design: notepad → a Windows XP-style Notepad (library-first)
 
 Date: 2026-06-22
 Status: approved (brainstorm)
 
 ## Goal
 
-Turn `user/nwnote` — today a ~90-line append-only clipboard demo with no scrolling,
+Turn `user/notepad` — today a ~90-line append-only clipboard demo with no scrolling,
 caret movement, selection, or file I/O — into a real Windows XP-style Notepad.
 
 **Guiding principle (user directive):** whenever a piece of the editor is a *reusable
 component*, it goes into the UI toolkit `libnwui` (the "comctl32 of NanWM"), not into
-the app. Notepad ends up a thin client like `nwform`/`nwexp`/`nwset`. Every reusable
+the app. Notepad ends up a thin client like `form`/`nwexp`/`settings`. Every reusable
 widget's *pure logic* lands in `nwui_core.c` (host-tested under doctest, **>90% coverage
 gated** via `COV_PATTERNS`), its painting in `nwui_paint.c`, its public API in `nwui.h`,
 and any I/O in `nwui.c`.
@@ -95,7 +95,7 @@ and any I/O in `nwui.c`.
   *out_path, int cap, nwui_cb on_ok, void*)`. Pure helpers (path join, `..` normalisation,
   name filtering) host-tested; the `getdents` listing is the I/O part in `nwui.c`.
 
-## What stays app-level in `nwnote.c`
+## What stays app-level in `notepad.c`
 
 Thin client: owns the text buffer (cap e.g. 64 KiB) and current filename + dirty flag;
 builds the window = a `nwui_textarea` (flex) over a status-bar row (`Ln x, Col y`, updated
@@ -130,9 +130,9 @@ same app callbacks. File I/O and clipboard touch the OS only through `nwui.c`/li
   accelerator table; the modal overlay + `nwui_message`/`nwui_prompt`/`nwui_file_dialog`.
   New constants/fields in `nwui_core.h`; new API in `nwui.h`. Node arena bound
   `NWUI_MAX_NODES` (128) re-checked — bump if the file dialog + modal subtrees need it.
-- `nwnote.nxe` re-links against `libnwui` like `nwform` (Makefile line ~1779–1781 changes
-  from the libnw-direct link to the `--need libnwui.ndl` chain used by `nwform`/`nwexp`).
-  `nwnote.c` is rewritten; no extra app source files needed (logic lives in the toolkit).
+- `notepad.nxe` re-links against `libnwui` like `form` (Makefile line ~1779–1781 changes
+  from the libnw-direct link to the `--need libnwui.ndl` chain used by `form`/`nwexp`).
+  `notepad.c` is rewritten; no extra app source files needed (logic lives in the toolkit).
 
 ## Testing
 

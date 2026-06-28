@@ -1049,7 +1049,7 @@ git commit -m "feat(rsexp): XP layout — toolbar, Other Places + Details task p
 
 - [ ] **Step 1: Replace `nwexp` with `rsexp` in `X64_GUI_APPS`**
 
-Find `X64_GUI_APPS=nwexp nwset nwabout nwnote nwform nwterm` and change to `X64_GUI_APPS=rsexp nwset nwabout nwnote nwform nwterm`. The `_image64` app-install loop (the `for p in $(X64_GUI_APPS)` block) then installs `bin/rsexp.nxe` → `/apps/rsexp/rsexp.nxe` and symlinks `/bin/rsexp.nxe`. Ensure `bin/rsexp.nxe` is a build prerequisite of `image64` (add it to the x64 app object/nxe list the same way `nwexp.nxe` was — `grep -n "nwexp.nxe" Makefile` and replace those prerequisite references with `rsexp.nxe`).
+Find `X64_GUI_APPS=nwexp settings about notepad form terminal` and change to `X64_GUI_APPS=rsexp settings about notepad form terminal`. The `_image64` app-install loop (the `for p in $(X64_GUI_APPS)` block) then installs `bin/rsexp.nxe` → `/apps/rsexp/rsexp.nxe` and symlinks `/bin/rsexp.nxe`. Ensure `bin/rsexp.nxe` is a build prerequisite of `image64` (add it to the x64 app object/nxe list the same way `nwexp.nxe` was — `grep -n "nwexp.nxe" Makefile` and replace those prerequisite references with `rsexp.nxe`).
 
 - [ ] **Step 2: Keep `nwexp` source for now (don't delete)**
 
@@ -1134,7 +1134,7 @@ Confirm, capturing a screendump at each step:
 - Double-clicking `main` enters `/disks/main`; folders/`.nxe`/text/image/other show their **distinct icons**.
 - Single-click updates the **Details** panel (name + kind).
 - **Up** returns toward My Computer; **Home** jumps to the home dir.
-- Double-clicking a `.nxe` (e.g. `/bin/nwabout.nxe` target) **spawns** it.
+- Double-clicking a `.nxe` (e.g. `/bin/about.nxe` target) **spawns** it.
 - nwm **wallpaper still renders** (PNG-decoder dedup regression check).
 
 - [ ] **Step 4: Restore `grub.cfg` (timeout=5) and commit any fixes**

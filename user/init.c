@@ -230,10 +230,10 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
 }
 
 #define NWM_PATH     "/disks/main/nanos/bin/nwm.nxe"
-#define NWLOGIN_PATH "/disks/main/nanos/bin/nwlogin.nxe"
+#define GREETER_PATH "/disks/main/nanos/bin/greeter.nxe"
 
 /* Launch the graphics VT (tty7), display-manager style: we give the child its own session with
- * tty7 as the controlling terminal + stdin/out/err, then exec the GREETER (nwlogin), which
+ * tty7 as the controlling terminal + stdin/out/err, then exec the GREETER (login), which
  * authenticates a user and execs nwm AS THAT USER — so the desktop never runs as root. If the
  * greeter is absent we fall back to running nwm directly (the legacy behaviour) so a graphics
  * image still boots. Skipped entirely if nwm or the framebuffer is missing (text-only image).
@@ -242,19 +242,19 @@ static int spawn_nwm(char* const* env, int skip_greeter)
 {
 	if (access(NWM_PATH, X_OK) != 0 || access("/dev/fb0", F_OK) != 0)
 		return 0;
-	int have_greeter = !skip_greeter && (access(NWLOGIN_PATH, X_OK) == 0);
+	int have_greeter = !skip_greeter && (access(GREETER_PATH, X_OK) == 0);
 	if (have_greeter) {
 		/* Report on screen EXACTLY what init is about to exec on tty7: the path, the size, and the
 		 * first 4 bytes (NXE magic = 0x0045584e). This is the byte-level truth init sees — if it
 		 * ever shows a size/identity other than the greeter, that is the bug, visible without any
-		 * shell command. (nwlogin greeter ~3518 B; toybox ~29937 B — both are NXE, so size tells.) */
+		 * shell command. (login greeter ~3518 B; toybox ~29937 B — both are NXE, so size tells.) */
 		struct stat gst;
 		unsigned mg = 0;
-		long sz = (stat(NWLOGIN_PATH, &gst) == 0) ? (long) gst.st_size : -1;
-		int gf = open(NWLOGIN_PATH, O_RDONLY);
+		long sz = (stat(GREETER_PATH, &gst) == 0) ? (long) gst.st_size : -1;
+		int gf = open(GREETER_PATH, O_RDONLY);
 		if (gf >= 0) { read(gf, &mg, 4); close(gf); }
 		char gm[176];
-		snprintf(gm, sizeof gm, "init: tty7 greeter %s size=%ld magic=%08x\n", NWLOGIN_PATH, sz, mg);
+		snprintf(gm, sizeof gm, "init: tty7 greeter %s size=%ld magic=%08x\n", GREETER_PATH, sz, mg);
 		console_note(gm);
 	}
 	int pid = fork();
@@ -264,7 +264,7 @@ static int spawn_nwm(char* const* env, int skip_greeter)
 		if (fd < 0) {
 			/* No graphics console (VT7 not ready, or no framebuffer). Do NOT fall through to exec
 			 * with init's inherited fds — those point at the text console (tty1), so a child that
-			 * prints anything (e.g. a wrong nwlogin binary saying "Unknown command") would spam the
+			 * prints anything (e.g. a wrong login binary saying "Unknown command") would spam the
 			 * login prompt the user is sitting at. Discard output and exit; the reaper's backoff and
 			 * give-up limit govern any retry. */
 			int dn = open("/dev/null", O_RDWR);
@@ -274,8 +274,8 @@ static int spawn_nwm(char* const* env, int skip_greeter)
 		ioctl(fd, TIOCSCTTY, 0); dup2(fd, 0); dup2(fd, 1); dup2(fd, 2); if (fd > 2) close(fd);
 		signal(SIGTTOU, SIG_DFL); signal(SIGTTIN, SIG_DFL); signal(SIGTSTP, SIG_DFL);
 		if (have_greeter) {
-			char* g[] = { (char*) "nwlogin", 0 };
-			execve(NWLOGIN_PATH, g, env);   /* greeter -> auth -> setuid -> exec nwm */
+			char* g[] = { (char*) "greeter", 0 };
+			execve(GREETER_PATH, g, env);   /* greeter -> auth -> setuid -> exec nwm */
 		}
 		char* a[] = { (char*) "nwm", 0 };   /* no greeter (or it failed to exec): run nwm directly */
 		execve(NWM_PATH, a, env);
@@ -361,7 +361,7 @@ int main(void) {
 		struct timespec bo = { 0, 200 * 1000 * 1000 };   // backoff vs a crash-looping child
 		if (nwm_pid > 0 && w == nwm_pid) {
 			/* The graphics session (greeter or nwm) exited. A healthy one runs until the user logs
-			 * out; an exit within a few hundred ms means the binary is broken (a wrong nwlogin, a
+			 * out; an exit within a few hundred ms means the binary is broken (a wrong login, a
 			 * missing nwm, tty7 unavailable). Don't respawn a broken binary forever: after a couple
 			 * of immediate exits bypass the greeter and try nwm directly, and after a few give up so
 			 * the text VTs stay clean and usable. */

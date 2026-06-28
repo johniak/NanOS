@@ -177,13 +177,13 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	// is NOT zeroed, so a short/zero read (only <0 was checked before — a positive partial count
 	// slipped through) would leave the PREVIOUS program in the window and load THAT. In practice a
 	// getty execs toybox just before init execs the greeter, so a short greeter read ran toybox in
-	// its place ("toybox: Unknown command nwlogin"). Treat anything but a full read as a load error.
+	// its place ("toybox: Unknown command login"). Treat anything but a full read as a load error.
 	// Read the WHOLE image, LOOPING over short reads. A single vfs->read can return fewer bytes
 	// than requested (e.g. block-at-a-time on real hardware) — the old code issued one read and
 	// only checked for <0, so a partial read fell through and the loader ran whatever the PREVIOUS
 	// exec left in the shared, non-zeroed staging window. Since a getty execs toybox just before
 	// init execs the greeter, a short greeter read ran toybox in its place ("toybox: Unknown
-	// command nwlogin"). Loop to completion; treat a stall (0/<0 before EOF) as a load error.
+	// command login"). Loop to completion; treat a stall (0/<0 before EOF) as a load error.
 	unsigned got = 0;
 	int stalls = 0;
 	while (got < st.size) {

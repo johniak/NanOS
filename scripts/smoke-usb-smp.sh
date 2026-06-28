@@ -4,7 +4,7 @@
 # Boots the image as a USB mass-storage stick (root-on-USB, like the real Dell) AND with -smp 2,
 # the combination that exposed the xHCI event-ring data race: the USB-MSC read path and the USB-HID
 # poll thread consumed the same event ring concurrently, so file reads returned corrupted bytes and
-# the tty7 greeter exec ran toybox's image ("toybox: Unknown command nwlogin"). Single-CPU smoke-usb
+# the tty7 greeter exec ran toybox's image ("toybox: Unknown command login"). Single-CPU smoke-usb
 # never reproduced it. This gate switches to the graphics VT (F7), logs in at the greeter, and
 # requires the nwm DESKTOP to render — a colour-rich frame only a clean read path can produce.
 #

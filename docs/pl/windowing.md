@@ -14,8 +14,8 @@ Podział odzwierciedla klasyczny OS:
 | `libnwui.ndl` | `comctl32` / Qt | komponowalne widżety, layout, dispatch zdarzeń |
 
 ```
-/dev/fb0 (mmap) ─┐                         ┌─ app (e.g. nwnote)  →  libnw  ──┐
-/dev/input0 (kbd)┤   nwm  (compositor)     │  app (e.g. nwform)  →  libnwui →┤  libnw
+/dev/fb0 (mmap) ─┐                         ┌─ app (e.g. notepad)  →  libnw  ──┐
+/dev/input0 (kbd)┤   nwm  (compositor)     │  app (e.g. form)  →  libnwui →┤  libnw
 /dev/input1 (mouse)─►  poll → composite ───┤      pipe fds 3 (req) / 4 (evt) │
                        → blit to /dev/fb0   └─ app (rustform)    →  libnwui ──┘ (Rust via C FFI)
 ```
@@ -255,15 +255,15 @@ patrz filesystem.md i stos graficzny.)
 
 | App | Biblioteka | Czym jest |
 |---|---|---|
-| `nwterm` | libnwui | emulator terminala w oknie (poll-uje mastera pty przez `nw_event_fd`) |
-| `nwset` | libnwui | ustawienia systemu |
+| `terminal` | libnwui | emulator terminala w oknie (poll-uje mastera pty przez `nw_event_fd`) |
+| `settings` | libnwui | ustawienia systemu |
 | `nwexp` | libnwui | eksplorator plików (widżet list, nawigacja po katalogach) |
-| `nwform` | libnwui | formularz powitalny (textfield + przyciski) — demo toolkitu |
-| `nwabout` | libnwui | okno about |
-| `nwnote` | **libnw** (bezpośrednio) | notatka tekstowa + demo schowka |
+| `form` | libnwui | formularz powitalny (textfield + przyciski) — demo toolkitu |
+| `about` | libnwui | okno about |
+| `notepad` | **libnw** (bezpośrednio) | notatka tekstowa + demo schowka |
 | `rustform` | libnwui przez FFI **Rust** | ten sam formularz w Rust — dowód, że ABI w C jest language-agnostic |
 
-Przy starcie kompozytor spawnuje `nwterm`, `nwset`, `nwexp` (Files jako ostatnie → na wierzchu + fokus).
+Przy starcie kompozytor spawnuje `terminal`, `settings`, `nwexp` (Files jako ostatnie → na wierzchu + fokus).
 
 **Build (Makefile).** `libnw.ndl` i `libnwui.ndl` budowane są jak każda biblioteka dzielona (→
 `/nanos/lib`), wspólne rdzenie `nwproto.o`/`nw_gfx.o` linkują się zarówno do `nwm`, jak i do klientów. `nwm` to

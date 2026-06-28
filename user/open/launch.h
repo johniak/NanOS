@@ -46,10 +46,10 @@ static void nw_file_ext(const char *path, char *ext, int cap)
 
 /* Built-in default associations (used when the config has no entry for an extension). */
 static const struct { const char *ext, *app; } NW_DEFAULT_ASSOC[] = {
-	{ "txt", "nwnote" }, { "c", "nwnote" }, { "h", "nwnote" }, { "md", "nwnote" },
-	{ "cfg", "nwnote" }, { "conf", "nwnote" }, { "rs", "nwnote" }, { "sh", "nwnote" },
-	{ "log", "nwnote" }, { "yaml", "nwnote" }, { "ini", "nwnote" }, { "json", "nwnote" },
-	{ "png", "nwview" },
+	{ "txt", "notepad" }, { "c", "notepad" }, { "h", "notepad" }, { "md", "notepad" },
+	{ "cfg", "notepad" }, { "conf", "notepad" }, { "rs", "notepad" }, { "sh", "notepad" },
+	{ "log", "notepad" }, { "yaml", "notepad" }, { "ini", "notepad" }, { "json", "notepad" },
+	{ "png", "viewer" },
 };
 
 /* Resolve `ext` (lowercase, no dot) -> app name into out[cap]. Config overrides built-ins. 1/0. */
@@ -139,7 +139,7 @@ static int nw_file_app_lookup(const char *path, char *out, int cap)
 
 /* Ask the desktop (nwm) to launch `cmd` with `arg` as argv[1]. If `mode` is "elevate", the launch
  * is run as administrator: the COMPOSITOR pops its modal system auth dialog, collects the admin
- * password itself, and (on success) runs the app as root via nwsu — the client never handles the
+ * password itself, and (on success) runs the app as root via nanosu — the client never handles the
  * password. Sends "cmd\0arg\0mode" over the launch socket. Returns 0 on success, -1 if the desktop
  * isn't reachable. */
 #define NW_LAUNCH_NORMAL  ""

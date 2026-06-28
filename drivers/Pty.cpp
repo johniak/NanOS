@@ -4,7 +4,7 @@
 
 namespace kernel {
 
-// TIOCSCTTY on the slave (login_tty / nwterm) makes this pty the caller's controlling terminal,
+// TIOCSCTTY on the slave (login_tty / terminal) makes this pty the caller's controlling terminal,
 // so /dev/tty (ControllingTty) forwards to it. Other ioctls go to the shared Pty line discipline.
 int PtySlave::ioctl(unsigned cmd, void* arg) {
 	if (cmd == IOCTL_TIOCSCTTY) {

@@ -1,5 +1,5 @@
 /*
- * nwlogin — a minimal "display manager" greeter for the NanOS graphics VT (tty7).
+ * login — a minimal "display manager" greeter for the NanOS graphics VT (tty7).
  *
  * The Linux model (gdm/lightdm/sddm), stripped to its essence: init runs this AS ROOT on the
  * graphics console; it authenticates a username + password against /etc/shadow (crypt), then
@@ -120,7 +120,7 @@ int main(void) {
 
 		char* argv[] = { (char*) "nwm", 0 };
 		execve(NWM_PATH, argv, newenv);
-		perror("nwlogin: exec nwm");        /* exec failed: bail, init respawns the greeter */
+		perror("login: exec nwm");        /* exec failed: bail, init respawns the greeter */
 		return 127;
 	}
 	return 0;

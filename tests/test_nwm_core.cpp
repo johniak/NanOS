@@ -396,12 +396,12 @@ TEST_CASE("logo menu: My Computer / About queue spawns, Run opens, Shut Down set
 	char out[64];
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
 	CHECK(strcmp(out, "rsexp") == 0);
-	// reopen, click "About This Computer" (item 1) -> spawn nwabout queued
+	// reopen, click "About This Computer" (item 1) -> spawn about queued
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
 	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
 	nw_pointer(&s, ix + 5, iy + NW_MENU_ITEM_H + 5, 0);
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
-	CHECK(strcmp(out, "nwabout") == 0);
+	CHECK(strcmp(out, "about") == 0);
 	// reopen, click "Run..." (item 2) -> opens the Run launcher
 	nw_pointer(&s, 12, 6, NW_BTN_LEFT); nw_pointer(&s, 12, 6, 0);
 	nw_pointer(&s, ix + 5, iy + 2 * NW_MENU_ITEM_H + 5, NW_BTN_LEFT);
@@ -629,16 +629,16 @@ TEST_CASE("drag-and-drop: crossing a window boundary emits DRAG_LEAVE to the old
 TEST_CASE("SPAWN request splits cmd\\0arg into command + argv[1] (open-with)") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
-	const char payload[] = "nwnote\0/disks/main/x.txt";   // NUL-separated cmd + arg
+	const char payload[] = "notepad\0/disks/main/x.txt";   // NUL-separated cmd + arg
 	nw_msg m{}; m.type = NW_REQ_SPAWN; m.length = (uint32_t) (sizeof(payload) - 1);
 	nw_client_msg(&s, 0, &m, (const unsigned char*) payload);
 	CHECK(s.want_spawn == 1);
-	CHECK(strcmp(s.run_cmd, "nwnote") == 0);
+	CHECK(strcmp(s.run_cmd, "notepad") == 0);
 	CHECK(s.spawn_has_arg == 1);
 	CHECK(strcmp(s.run_arg, "/disks/main/x.txt") == 0);
 	char out[128];
 	CHECK(nw_run_take_spawn(&s, out, sizeof out) == 1);
-	CHECK(strcmp(out, "nwnote") == 0);
+	CHECK(strcmp(out, "notepad") == 0);
 }
 
 TEST_CASE("SPAWN request without an argument carries no argv[1]") {
@@ -676,7 +676,7 @@ TEST_CASE("Cmd+<key> the compositor does not claim is forwarded with the Cmd mod
 TEST_CASE("system auth dialog: modal keyboard, masked password, submit hands off cmd/arg/pass") {
 	nw_server s; nw_server_init(&s, 800, 600);
 	CHECK(s.auth_open == 0);
-	nw_auth_begin(&s, "/disks/main/nanos/bin/nwnote.nxe", "/etc/secret");
+	nw_auth_begin(&s, "/disks/main/nanos/bin/notepad.nxe", "/etc/secret");
 	CHECK(s.auth_open == 1);
 	nw_key(&s, 0x1E, 1);                            // 'a'
 	nw_key(&s, 0x1F, 1);                            // 's'
@@ -687,7 +687,7 @@ TEST_CASE("system auth dialog: modal keyboard, masked password, submit hands off
 	CHECK(s.auth_open == 0);
 	char cmd[120], arg[120], pass[120];
 	REQUIRE(nw_auth_take(&s, cmd, arg, pass, 120) == 1);
-	CHECK(strcmp(cmd, "/disks/main/nanos/bin/nwnote.nxe") == 0);
+	CHECK(strcmp(cmd, "/disks/main/nanos/bin/notepad.nxe") == 0);
 	CHECK(strcmp(arg, "/etc/secret") == 0);
 	CHECK(strcmp(pass, "a") == 0);
 	CHECK(nw_auth_take(&s, cmd, arg, pass, 120) == 0);   // one-shot

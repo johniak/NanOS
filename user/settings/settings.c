@@ -1,5 +1,5 @@
 /*
- * nwset.c — NanoOS "Settings" app (libnwui). An Appearance panel that edits the desktop
+ * settings.c — NanoOS "Settings" app (libnwui). An Appearance panel that edits the desktop
  * preferences in /disks/main/nanos/config/settings.yaml: two toggles (backdrop blur, glass
  * transparency) and two 0..100 levels (blur strength, transparency level). Every change is
  * persisted to the YAML file and applied live by asking the compositor to reload it
@@ -114,10 +114,10 @@ static void cb_font(nwui_node *s, void *u)
 #define ASSOC_PATH "/disks/main/nanos/config/associations.conf"
 static const char *const TEXT_EXTS[] = { "txt","c","h","md","cfg","conf","rs","sh","log","yaml","ini","json" };
 static const char *const IMG_EXTS[]  = { "png" };
-static const char *const APP_CHOICES[] = { "nwnote", "nwview" };
+static const char *const APP_CHOICES[] = { "notepad", "viewer" };
 enum { NTEXT_EXTS = 12, NIMG_EXTS = 1, NAPP_CHOICES = 2 };
-static char g_text_app[32] = "nwnote";   /* app that opens text files  */
-static char g_img_app[32]  = "nwview";   /* app that opens images      */
+static char g_text_app[32] = "notepad";   /* app that opens text files  */
+static char g_img_app[32]  = "viewer";   /* app that opens images      */
 static nwui_node *g_textapp_btn, *g_imgapp_btn;
 
 static void assoc_load(void)

@@ -1,7 +1,7 @@
 /*
  * FbConsole.h — a text console over a linear framebuffer (the Linux fbcon model).
  *
- * Machine-independent: it drives the shared VT/ANSI engine (vt.c, the same one nterm/nwterm
+ * Machine-independent: it drives the shared VT/ANSI engine (vt.c, the same one nterm/terminal
  * use) and rasterizes the resulting character grid with the 8x16 font. Because the full xterm
  * escape subset (cursor positioning, erase, scroll region, SGR 16/256, alt-screen) is handled
  * by vt.c, full-screen TUIs (vim, less, top) render correctly on the bare kernel console — not

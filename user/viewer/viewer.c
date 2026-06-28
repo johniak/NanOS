@@ -1,5 +1,5 @@
 /*
- * nwview.c — a minimal image viewer for NanOS, built entirely from REUSABLE toolkit pieces:
+ * viewer.c — a minimal image viewer for NanOS, built entirely from REUSABLE toolkit pieces:
  * the libnwui PNG decoder (nwui_image_load_png) + the image widget (nwui_image). It is the
  * "open with" target for images — the file manager's nwui_open_file() launches it with a PNG
  * path as argv[1] (macOS-style `open`). A deliberately tiny app, to show the image components

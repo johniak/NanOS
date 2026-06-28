@@ -10,12 +10,12 @@
 #   A = tty1 after login (bash prompt)
 #   B = tty2 after Ctrl+Alt+F2 (a distinct, independent login)   -> A != B
 #   C = tty1 after Ctrl+Alt+F1 (back)                            -> A == C  (screen restored)
-#   D = tty7 after Ctrl+Alt+F7 + logging in at the graphical greeter (nwlogin -> nwm desktop)
+#   D = tty7 after Ctrl+Alt+F7 + logging in at the graphical greeter (login -> nwm desktop)
 #
-# The D step is the graphics-VT gate: the greeter (nwlogin) is itself a TEXT login on tty7, so we
+# The D step is the graphics-VT gate: the greeter (login) is itself a TEXT login on tty7, so we
 # actually log in (jan/jan) and require the nwm DESKTOP to render — a wallpaper-rich frame with many
-# distinct colours. This catches a broken greeter binary (e.g. a stale image where nwlogin.nxe is
-# really toybox: "Unknown command nwlogin"), which can't be logged into and never reaches a desktop.
+# distinct colours. This catches a broken greeter binary (e.g. a stale image where login.nxe is
+# really toybox: "Unknown command login"), which can't be logged into and never reaches a desktop.
 #
 # Pass iff A!=B and A==C, the tty7 desktop renders (D is graphical), and no kernel fault/panic is logged.
 set -u
@@ -63,7 +63,7 @@ keys(["ctrl-alt-f2"]); time.sleep(3.5)
 cmd("screendump "+B); time.sleep(0.8)          # tty2 (fresh login)
 keys(["ctrl-alt-f1"]); time.sleep(3.5)         # switch back; the kernel repaints tty1's saved grid
 cmd("screendump "+C); time.sleep(0.8)          # back to tty1 — must equal A (state restored)
-# tty7: the graphical greeter. nwlogin is a text login ON the graphics VT, so log in jan/jan and
+# tty7: the graphical greeter. login is a text login ON the graphics VT, so log in jan/jan and
 # require the nwm desktop to come up (verified by the colour-richness oracle below).
 keys(["ctrl-alt-f7"]); time.sleep(4.0)         # greeter renders its "NanOS graphical login" prompt
 for c in "jan": keys([c])
@@ -112,7 +112,7 @@ print(len(cols))
 PY
 )
 if [ "${NCOL:-0}" -lt 200 ]; then
-	echo "x86_64 VT switch: FAIL — tty7 desktop did not render (only ${NCOL:-0} distinct colours; greeter likely broken, e.g. a stale nwlogin.nxe)"; tail -15 "$SER"; exit 1
+	echo "x86_64 VT switch: FAIL — tty7 desktop did not render (only ${NCOL:-0} distinct colours; greeter likely broken, e.g. a stale login.nxe)"; tail -15 "$SER"; exit 1
 fi
 echo "x86_64 VT switch: PASS (tty1 != tty2, tty1 restored, and tty7 nwm desktop rendered: $NCOL colours)"
 exit 0

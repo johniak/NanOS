@@ -1,5 +1,5 @@
 /*
- * nwterm — the real NanoOS Terminal: a NanWM window running `nsh` on a pty.
+ * terminal — the real NanoOS Terminal: a NanWM window running `nsh` on a pty.
  *
  * Unlike the framebuffer terminal (nterm), this is a libnw client: it draws the VT grid into its
  * window buffer and gets keystrokes as NanWM KEY events. The shared VT engine (vt.c) parses the

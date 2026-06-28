@@ -704,11 +704,11 @@ impl App {
         }
     }
 
-    /// Open the system Properties window (a separate nwm window — see user/nwprops) for the
+    /// Open the system Properties window (a separate nwm window — see user/properties) for the
     /// selected item. Launched by name like any app, so the dialog is NOT painted inside Files.
     fn show_properties(&mut self) {
         let path = match self.sel_path() { Some(p) => p, None => return };   // NUL-terminated
-        Ui(self.ui).spawn_arg("nwprops", path.as_ptr());
+        Ui(self.ui).spawn_arg("properties", path.as_ptr());
     }
 
     /* ---- drag and drop ---- */

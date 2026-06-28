@@ -374,13 +374,13 @@ odbiera zdarzenia. Pełną architekturę (kompozytor, protokół, pełne API) op
 
 | Biblioteka | Kiedy | Przykłady |
 |------------|-------|-----------|
-| **`libnwui.ndl`** (toolkit) | typowa apka: przyciski, listy, pola tekstowe, layout, menu | `nwform`, `nwexp`, `nwset`, `nwabout` |
-| **`libnw.ndl`** (surowo) | własny rendering: rysujesz piksele w buforze okna i obsługujesz zdarzenia ręcznie | `nwnote`, `nwterm` |
+| **`libnwui.ndl`** (toolkit) | typowa apka: przyciski, listy, pola tekstowe, layout, menu | `form`, `nwexp`, `settings`, `about` |
+| **`libnw.ndl`** (surowo) | własny rendering: rysujesz piksele w buforze okna i obsługujesz zdarzenia ręcznie | `notepad`, `terminal` |
 
 #### Wariant A — toolkit (`libnwui`, zalecany)
 
 Budujesz drzewo widżetów, podpinasz callbacki, `nwui_run()` robi pętlę zdarzeń. Plik
-`user/mygui/mygui.c` (wzorowane na `nwform`):
+`user/mygui/mygui.c` (wzorowane na `form`):
 
 ```c
 #include "nwui.h"
@@ -407,7 +407,7 @@ int main(void) {
 
 Dostajesz bufor pikseli okna (BGRX, `0x00RRGGBB`), rysujesz prymitywami `nw_gfx`,
 `nw_commit()` wypycha uszkodzony prostokąt, a `nw_next_event()` to Twoje
-`GetMessage`/`DispatchMessage` (wzorowane na `nwnote`):
+`GetMessage`/`DispatchMessage` (wzorowane na `notepad`):
 
 ```c
 #include "libnw.h"
@@ -472,7 +472,7 @@ przejmuje ekran. Twoją apkę uruchomisz:
 - z paska/skrótu **Super+R** (Run) wpisując nazwę, albo
 - programowo: `nwui_spawn(u, "mygui")` / `nw_spawn(d, "mygui")` z innej apki, albo
 - żeby startowała razem z pulpitem — dopisz `spawn_client(slot, "/disks/main/apps/mygui/mygui.nxe")`
-  w `user/nwm/nwm.c` (jak `nwterm`/`nwset`/`nwexp`).
+  w `user/nwm/nwm.c` (jak `terminal`/`settings`/`nwexp`).
 
 Apka — jako `APP_PROGS` — ląduje w bundlu `/apps/mygui/mygui.nxe` z symlinkiem `/bin/mygui.nxe`,
 więc działa „po nazwie".
@@ -480,7 +480,7 @@ więc działa „po nazwie".
 #### Inny język (Rust)
 
 ABI `libnwui` jest czystym C (uchwyty opaque, POD, callbacki), więc apkę GUI da się napisać w
-dowolnym języku z C FFI. `rustform` to dokładnie ten sam formularz co `nwform`, ale w Rust:
+dowolnym języku z C FFI. `rustform` to dokładnie ten sam formularz co `form`, ale w Rust:
 `cargo` buduje `no_std` staticlib pod cel `i686-nanos.json` (`-Z build-std=core,alloc`), a
 linkuje się go z `crt0` + `libnwui.ndl.a` + `libc.ndl.a` i `mknx --need libnwui.ndl` jak każdą
 apkę (patrz reguła `rustform` w `Makefile`).
@@ -856,7 +856,7 @@ Powłoka (`user/nsh.c`) rozwiązuje gołą nazwę komendy w kolejności:
 - **Numery syscalli:** `kernel/SyscallNr.h` (Linux-style i386, `int 0x80`).
 - **GUI:** `libnw.ndl` (klient kompozytora NanWM) + `libnwui.ndl` (toolkit UI) — jak napisać
   apkę okienkową: **sekcja 3.8**; architektura + pełne API: **`windowing.md`**. Przykłady:
-  `nwnote`/`nwterm` (surowo, libnw), `nwform`/`nwexp`/`nwset`/`nwabout` (toolkit, libnwui),
+  `notepad`/`terminal` (surowo, libnw), `form`/`nwexp`/`settings`/`about` (toolkit, libnwui),
   `rustform` (toolkit z Rust).
 
 Czego **nie ma** (na dziś): TLS/OpenSSL (więc `wget` to HTTP-only), IPv6, pełne locale/NLS,
@@ -944,7 +944,7 @@ obejrzyj PNG. Do diagnozy faultów: `-no-reboot -d int -D log`, grep `v=0d`/`v=0
 | `user/libnw/{libnw.h,nwproto.h,nw_gfx.h}` | klient NanWM: API okna/zdarzeń, protokół, rasterizer |
 | `user/libnwui/nwui.h` | toolkit UI (widżety, layout, menu) — ABI w czystym C |
 | `user/nwm/` | kompozytor (`nwm.nxe`) |
-| `user/{nwform,nwnote,nwexp,nwset,nwabout,nwterm}/` | przykładowe apki okienkowe |
+| `user/{form,notepad,nwexp,settings,about,terminal}/` | przykładowe apki okienkowe |
 | `user/rust/rustform/` | przykładowa apka GUI w Rust (toolkit przez C FFI) |
 | `docs/windowing.md` | architektura NanWM + pełne API (uzupełnia sekcję 3.8) |
 | `kernel/NxFormat.h` | definicja formatu `.nxe`/`.ndl` |

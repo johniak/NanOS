@@ -1222,7 +1222,7 @@ netsurf: bin/libc.ndl bin/libc.ndl.a bin/libnw.ndl bin/libnw.ndl.a
 ### Task 5.3: Optionally auto-launch from the desktop
 
 **Files:**
-- Modify: `~/Projects/NanOS/user/nwm/nwm.c`  (spawn list, like `nwterm`/`nwset`/`nwexp`)
+- Modify: `~/Projects/NanOS/user/nwm/nwm.c`  (spawn list, like `terminal`/`settings`/`nwexp`)
 
 - [ ] **Step 1:** add `spawn_client(slot, "/disks/main/apps/netsurf/netsurf.nxe")` to the boot spawn
       list (only if you want NetSurf to open with the desktop — otherwise launch via Super+R). Keep

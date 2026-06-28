@@ -56,10 +56,10 @@ enum { BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112 };
 
 #define CLIENT_OUTCAP   (64 * 1024)
 #define CLIENT_COMMITCAP (512 * 1024)   /* max COMMIT payload reassembled per client */
-#define NWNOTE_PATH "/disks/main/apps/nwnote/nwnote.nxe"
+#define NWNOTE_PATH "/disks/main/apps/notepad/notepad.nxe"
 #define NWEXP_PATH  "/disks/main/apps/rsexp/rsexp.nxe"   /* the Files app (Rust icon explorer) */
-#define NWSET_PATH  "/disks/main/apps/nwset/nwset.nxe"
-#define NWTERM_PATH "/disks/main/apps/nwterm/nwterm.nxe"
+#define NWSET_PATH  "/disks/main/apps/settings/settings.nxe"
+#define NWTERM_PATH "/disks/main/apps/terminal/terminal.nxe"
 
 /* framebuffer + the cached scene (desktop+windows, NO cursor) */
 static uint8_t  *g_fb;
@@ -155,7 +155,7 @@ static void set_cloexec(int fd) { fcntl(fd, F_SETFD, FD_CLOEXEC); }
 static void set_nonblock(int fd) { fcntl(fd, F_SETFL, O_NONBLOCK); }
 
 /* Spawn a GUI client with an inherited request(3)/event(4) pipe pair into nw_server slot. If
- * `password` is non-empty, launch ELEVATED: exec the setuid-root nwsu helper, which verifies the
+ * `password` is non-empty, launch ELEVATED: exec the setuid-root nanosu helper, which verifies the
  * password (root's) and runs the app as root ("authenticate to open"). */
 static int spawn_client_priv(int slot, const char *path, const char *arg, const char *password)
 {
@@ -175,14 +175,14 @@ static int spawn_client_priv(int slot, const char *path, const char *arg, const 
 		fcntl(4, F_SETFD, 0);
 		const char *base = path;                     /* argv[0] = the binary's basename */
 		for (const char *p = path; *p; p++) if (*p == '/') base = p + 1;
-		if (password && password[0]) {               /* elevated launch via setuid-root nwsu */
+		if (password && password[0]) {               /* elevated launch via setuid-root nanosu */
 			static char passenv[272];
 			snprintf(passenv, sizeof passenv, "NW_AUTH_PASS=%s", password);
 			char *eenv[] = { (char *) "NW_DISPLAY=1", passenv, 0 };
 			char *eav[4];
-			eav[0] = (char *) "nwsu"; eav[1] = (char *) path;
+			eav[0] = (char *) "nanosu"; eav[1] = (char *) path;
 			if (arg && arg[0]) { eav[2] = (char *) arg; eav[3] = 0; } else eav[2] = 0;
-			execve("/disks/main/nanos/bin/nwsu.nxe", eav, eenv);
+			execve("/disks/main/nanos/bin/nanosu.nxe", eav, eenv);
 			_exit(127);
 		}
 		char *argv[3];
@@ -263,7 +263,7 @@ static void handle_spawn_conns(void)
 		buf[got] = 0;
 		/* request = "cmd\0arg\0mode": cmd resolved like Run; arg = argv[1]; mode = "elevate"
 		 * means run as root — the COMPOSITOR pops its modal auth dialog, collects the admin
-		 * password itself, and (on success) launches via nwsu. The client never sees the password. */
+		 * password itself, and (on success) launches via nanosu. The client never sees the password. */
 		const char *cmd = buf;
 		int cl = (int) strlen(cmd);
 		const char *arg  = (cl + 1 <= got) ? buf + cl + 1 : "";
@@ -833,8 +833,8 @@ int main(void)
 				spawn_client(slot, path, arg);
 		}
 
-		/* The system auth dialog was submitted: launch the target as root (nwsu verifies the
-		 * password the compositor collected). On a wrong password nwsu just exits — nothing runs. */
+		/* The system auth dialog was submitted: launch the target as root (nanosu verifies the
+		 * password the compositor collected). On a wrong password nanosu just exits — nothing runs. */
 		char acmd[NW_RUN_MAX], aarg[NW_RUN_MAX], apass[NW_AUTH_MAX];
 		if (nw_auth_take(&S, acmd, aarg, apass, NW_RUN_MAX)) {
 			char path[256];

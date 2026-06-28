@@ -21,14 +21,14 @@ one libre monospace (terminal).
 2. **Proportional UI text** (the chosen, ambitious option): variable advances, AA. This requires
    replacing every fixed-width assumption (`strlen * NW_FONT_W`) in the toolkit with real text
    measurement.
-3. **Terminal stays monospace:** the VT grid (`user/term/vt.c`, nterm/nwterm) needs fixed cells, so
+3. **Terminal stays monospace:** the VT grid (`user/term/vt.c`, nterm/terminal) needs fixed cells, so
    it renders a **monospace** font (JetBrains Mono) at a fixed advance — a separate font role.
 4. **Two font roles:** `NWFONT_UI` (proportional sans) and `NWFONT_MONO` (monospace). The engine
    loads both; `nw_text*` uses UI, the terminal/`nw_draw_char` uses MONO.
 5. **Shipped fonts:** `assets/fonts/UISans-Regular.ttf` (IBM Plex Sans, OFL) + `assets/fonts/
    Mono-Regular.ttf` (JetBrains Mono, OFL), installed to `/nanos/share/fonts/`.
 6. **Settings:** the existing settings model (`user/libnw/nw_settings.*`, `settings.yaml`) gains a
-   `ui_font` key; nwset lists `*.ttf`/`*.otf` in `/nanos/share/fonts` and lets the user pick the
+   `ui_font` key; settings lists `*.ttf`/`*.otf` in `/nanos/share/fonts` and lets the user pick the
    active UI font. Change broadcasts a settings reload (the existing `nwui_reload_settings` /
    compositor settings-reload path), so chrome + apps re-render with the new font live.
 7. **Adding fonts:** drop a `.ttf`/`.otf` into `/nanos/share/fonts/` and it appears in Settings
@@ -82,11 +82,11 @@ advances:
   by advances. This is the largest single change.
 - `nwui_iconview` label: truncate by pixel width (ellipsis when it overflows the cell).
 
-### D. Settings — `user/libnw/nw_settings.*` + `user/nwset`
+### D. Settings — `user/libnw/nw_settings.*` + `user/settings`
 
 - `nw_settings` gains `char ui_font[64]` (basename under `/nanos/share/fonts`) + getter; serialize
   to `settings.yaml`. Default `UISans-Regular.ttf`.
-- nwset: a "Fonts" group listing `/nanos/share/fonts/*.{ttf,otf}` (via `nwui_dir_*`) as selectable
+- settings: a "Fonts" group listing `/nanos/share/fonts/*.{ttf,otf}` (via `nwui_dir_*`) as selectable
   rows; selecting one writes the setting and triggers a reload.
 - On reload, the compositor and apps call `nwfont_set(NWFONT_UI, "/nanos/share/fonts/<name>", px)` and
   repaint.

@@ -222,8 +222,8 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 - [x] **NanWM desktop apps now build + install + run on x86_64** (commit e76da9d). Their recipes were
       i686-only (`$(MKNX)` + `user/nx.ld`); fixed to `$(MKNX_TOOL)`/`$(USER_NX_LD)`, added `X64_GUI_APPS`,
       installed as `/apps/<name>/` bundles (where nwm spawns them). VERIFIED on screen: `nwm` starts and
-      **Files (nwexp) reads /disks/main, Settings (nwset) + NetSurf render; Terminal (nwterm) spawns.** ✅
-      *(Residual: `nwterm` was occluded behind other windows — not individually surfaced headless; mouse
+      **Files (nwexp) reads /disks/main, Settings (settings) + NetSurf render; Terminal (terminal) spawns.** ✅
+      *(Residual: `terminal` was occluded behind other windows — not individually surfaced headless; mouse
       input precision via QEMU monitor PS/2 is unreliable, so on-screen mouse interaction stays unverified.)*
 
 **B. Verification debt (we don't actually know these work):**
@@ -291,12 +291,12 @@ before the SSH end-to-end can be re-verified; the mechanism itself is proven by 
 
 **Phase 2b — port the NanWM desktop to x86_64 — DONE (commit e76da9d), except residual mouse verify:**
 - [x] 10–11 DONE: apps added to `X64_GUI_APPS`, recipes made arch-correct, built clean, installed as
-  `/apps/<name>/` bundles. 12 DONE for Files/Settings/NetSurf (rendered on screen); `nwterm` spawned but
+  `/apps/<name>/` bundles. 12 DONE for Files/Settings/NetSurf (rendered on screen); `terminal` spawned but
   occluded — on-screen mouse interaction (raise/click a window) still unverified (QEMU PS/2 imprecision).
-10. **Add the desktop apps to the x64 build set:** put `nwexp` (Files), `nwterm` (terminal), `nwset`
-    (Settings), `nwnote`, `nwform`, `nwabout` into `X64_GUI_PROGS` (Makefile), plus any libs they pull
-    that `nwm` doesn't already (e.g. the `vt` terminal core / ncurses for `nwterm`). One app at a time —
-    start with `nwexp` (simplest, file-list) then `nwterm` (most complex: PTY + vt).
+10. **Add the desktop apps to the x64 build set:** put `nwexp` (Files), `terminal` (terminal), `settings`
+    (Settings), `notepad`, `form`, `about` into `X64_GUI_PROGS` (Makefile), plus any libs they pull
+    that `nwm` doesn't already (e.g. the `vt` terminal core / ncurses for `terminal`). One app at a time —
+    start with `nwexp` (simplest, file-list) then `terminal` (most complex: PTY + vt).
 11. **LP64-clean each app** with the same rules as the rest of the port: `-fno-pie -fno-PIC`, 8-byte
     long/ptr/size_t, no pointer truncation in the compositor IPC / draw calls; run the per-file LP64
     truncation check (§ the `make` LP64 guard). Fix per-app until it links + mknx's clean.

@@ -1,5 +1,5 @@
 /*
- * nwform.c — a NanWM demo app built with libnwui: a tiny greeting form. Shows composition
+ * form.c — a NanWM demo app built with libnwui: a tiny greeting form. Shows composition
  * (nested column/row), the flex layout, a text field, buttons with callbacks, and MVU-style
  * state -> view updates (clicking "Greet" sets a label via nwui_set_text). The whole UI is
  * the toolkit's; this app is just the tree + a little state.

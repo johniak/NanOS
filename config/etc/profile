@@ -7,7 +7,7 @@ PS1='\[\e[01;32m\]\u@\h\[\e[0m\]:\[\e[01;34m\]\w\[\e[0m\]\$ '
 # vim runtime: the console login flow (init -> login -> bash) resets the environment, so PID 1's
 # VIMRUNTIME is dropped by `login`. Set it here (sourced by every login shell, console and GUI) so
 # vim finds its runtime and does not fail with "E1187: Failed to source defaults.vim". Terminal-
-# agnostic, so TERM/TERMINFO stay out (the VGA console is not xterm-256color). Mirrors nwterm.c.
+# agnostic, so TERM/TERMINFO stay out (the VGA console is not xterm-256color). Mirrors terminal.c.
 export VIMRUNTIME=/disks/main/apps/vim/runtime
 export VIMINIT='set nocompatible backspace=indent,eol,start hlsearch incsearch ruler showcmd wildmenu'
 

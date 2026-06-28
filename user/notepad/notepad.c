@@ -1,5 +1,5 @@
 /*
- * nwnote.c — NanOS Notepad: a Windows XP-style text editor built on libnwui. The editor itself
+ * notepad.c — NanOS Notepad: a Windows XP-style text editor built on libnwui. The editor itself
  * is the reusable nwui_textarea widget; this thin client only wires the File/Edit/Format/View/
  * Help menus + matching keyboard accelerators, the status bar (Ln/Col + filename), file open/
  * save via libc, find / find-next / replace / go-to dialogs, single-level undo, and the About

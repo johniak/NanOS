@@ -19,11 +19,11 @@ app is a thin client over it.
 
 ## Background / current state (verified against the tree)
 
-- The GUI desktop is **x86_64** (`make image64`; `X64_GUI_PROGS=nwm nwlogin`,
-  `X64_GUI_APPS=nwexp nwset nwabout nwnote nwform nwterm`). All GUI apps link the **dynamic**
+- The GUI desktop is **x86_64** (`make image64`; `X64_GUI_PROGS=nwm login`,
+  `X64_GUI_APPS=nwexp settings about notepad form terminal`). All GUI apps link the **dynamic**
   `libnwui.ndl` + `libc.ndl` via the C ABI, built with the x64 `crt0`+`nxhdr` glue (`DYN_GLUE`),
   `arch/x86_64/user-nx.ld`, and the x64 `mknx` (`MKNX64`). Reference rule: `nwexp.nxe` /
-  `nwnote.nxe` in the Makefile.
+  `notepad.nxe` in the Makefile.
 - The **only** Rust userland target today is **`user/rust/i686-nanos.json`** (32-bit). The existing
   `rustform` demo is a `no_std` cargo `staticlib` (`-Z build-std=core,alloc`) linked against the
   C-ABI `libnwui` — but **i686 only**, and **not** in the x64 desktop. Closing that tooling gap (an

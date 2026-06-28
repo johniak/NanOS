@@ -1,8 +1,8 @@
 /*
- * nwprops.c — the system "Properties" / Get-Info window for NanOS. A STANDALONE toolkit app (its
+ * properties.c — the system "Properties" / Get-Info window for NanOS. A STANDALONE toolkit app (its
  * own real window, managed by the window manager), NOT a modal painted inside whatever launched it.
  * Launched with a path as argv[1] — by the file manager's right-click "Properties", or from a
- * terminal (`nwprops /some/file`), exactly like `open`. It shows Name / Kind / Where / Size (files)
+ * terminal (`properties /some/file`), exactly like `open`. It shows Name / Kind / Where / Size (files)
  * or Items (folders), and for a regular data file the "Opens with" default program with two
  * macOS-Get-Info-style controls:
  *   - "Change..."        sets the per-FILE default (the system store $HOME/.nanos-open),
@@ -144,8 +144,8 @@ static void set_opener(const char *app)
 	nwui_close_modal(g_u);
 	refresh_opener_label();
 }
-static void cb_pick_nwnote(nwui_node *s, void *u) { (void) s; (void) u; set_opener("nwnote"); }
-static void cb_pick_nwview(nwui_node *s, void *u) { (void) s; (void) u; set_opener("nwview"); }
+static void cb_pick_notepad(nwui_node *s, void *u) { (void) s; (void) u; set_opener("notepad"); }
+static void cb_pick_viewer(nwui_node *s, void *u) { (void) s; (void) u; set_opener("viewer"); }
 static void cb_pick_cancel(nwui_node *s, void *u) { (void) s; (void) u; nwui_close_modal(g_u); }
 
 static void open_picker(int mode)
@@ -153,8 +153,8 @@ static void open_picker(int mode)
 	g_picker_mode = mode;
 	nwui_node *col = nwui_gap(nwui_pad(nwui_vbox(g_u), 14), 8);
 	nwui_add(col, nwui_colors(nwui_label(g_u, mode ? "Open this type with:" : "Open this file with:"), 0x172130, 0));
-	nwui_add(col, nwui_button(g_u, "Text Editor", cb_pick_nwnote, 0));
-	nwui_add(col, nwui_button(g_u, "Image Viewer", cb_pick_nwview, 0));
+	nwui_add(col, nwui_button(g_u, "Text Editor", cb_pick_notepad, 0));
+	nwui_add(col, nwui_button(g_u, "Image Viewer", cb_pick_viewer, 0));
 	nwui_add(col, nwui_button(g_u, "Cancel", cb_pick_cancel, 0));
 	nwui_colors(col, 0, 0x00ffffff);
 	nwui_open_modal(g_u, col, 0, 0);

@@ -1,7 +1,7 @@
 /*
  * vt.h — a pure VT/ANSI terminal engine: the screen grid + an xterm-subset escape parser, with
  * NO I/O and NO rendering. Shared by the framebuffer terminal (nterm) and the windowed terminal
- * (nwterm); each renders the grid its own way. Pure logic, host-testable.
+ * (terminal); each renders the grid its own way. Pure logic, host-testable.
  *
  * Handles the xterm subset shells/TUIs need: printable text, CR/LF/BS/TAB, CSI cursor moves +
  * absolute position, erase line/display, SGR colours (16 + 256 + truecolor→256), scroll region,

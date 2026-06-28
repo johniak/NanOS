@@ -1,4 +1,4 @@
-//! rustform — the greeting form (cf. the C nwform), written in Rust against libnwui through
+//! rustform — the greeting form (cf. the C form), written in Rust against libnwui through
 //! the `nanos` SDK. Proves a Rust app runs on NanOS using the same window server, protocol
 //! and shared toolkit as the C apps — only the language differs. Buttons use Rust closures.
 #![no_std]
