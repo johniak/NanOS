@@ -18,6 +18,10 @@ void sort(void *base, size_t num, size_t size,
 void *bsearch(const void *key, const void *base, size_t num, size_t size,
               int (*cmp)(const void *, const void *));
 
+/* collision-free engine entry (bsearch aliases this in the kext; host tests call it). */
+void *lkpi_bsearch(const void *key, const void *base, size_t num, size_t size,
+                   int (*cmp)(const void *, const void *));
+
 #ifdef __cplusplus
 }
 #endif

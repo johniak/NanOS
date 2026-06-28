@@ -7,8 +7,8 @@
  */
 #include <linux/jiffies.h>
 #include <linux/delay.h>
+#include "lkpi_knx.h"
 
-extern unsigned long long knx_uptime_us(void);
 #ifndef NANOS_HOST_TEST
 extern void knx_yield(void) __attribute__((weak));
 #endif

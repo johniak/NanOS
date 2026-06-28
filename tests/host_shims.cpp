@@ -22,6 +22,13 @@ void free(void* p) { __builtin_free(p); }
 void* realloc(void* p, size_t n) { return __builtin_realloc(p, n); }
 void* calloc(size_t a, size_t b) { return __builtin_calloc(a, b); }
 
+// LinuxKPI shim imports: the kext resolves these to the kernel export table; under the
+// host harness they forward to libc. knx_uptime_us is supplied by the time test (its only
+// consumer), so that test can drive a deterministic clock.
+extern "C" void *knx_malloc(unsigned n) { return __builtin_malloc(n); }
+extern "C" void  knx_free(void *p) { __builtin_free(p); }
+extern "C" void  knx_log(const char *s) { (void)s; }
+
 // Arch console sink stand-in: route glyphs to stdout, ignore cursor/clear.
 namespace arch {
 void consolePutChar(char c) { putchar(c); }

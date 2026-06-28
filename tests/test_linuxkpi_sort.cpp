@@ -2,8 +2,6 @@
 #include "doctest.h"
 extern "C" {
 #include "linux/sort.h"
-void *lkpi_bsearch(const void *key, const void *base, size_t num, size_t size,
-                   int (*cmp)(const void *, const void *));
 }
 
 static int cmp_int(const void *a, const void *b) {

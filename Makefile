@@ -2316,7 +2316,7 @@ ARCH_PAGING_TESTS_EXCL=tests/test_addressspace64.cpp tests/test_paging64.cpp
 endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue -Ilinuxkpi/include -Ilinuxkpi
 # The host is LP64 (arm64/x86_64) but does not define __x86_64__, so force the v4 64-bit
 # .nx format (nxaddr_t = uint64_t) across the whole host test build. This exercises the
 # x86_64 loader path (R_X86_64_64 fixups, 8-byte IAT slots) and keeps every TU's view of
@@ -2358,6 +2358,9 @@ TEST_MODULES+= usb/UsbHid.cpp                   # MI USB-HID boot keyboard/mouse
 TEST_MODULES+= usb/UsbMsc.cpp                   # MI USB mass-storage: BOT + SCSI read
 TEST_MODULES+= drivers/UsbMscBlockDevice.cpp    # MI BlockDevice adapter over USB MSC
 TEST_MODULES+= kernel/PartitionTable.cpp        # MI MBR+GPT root-partition discovery
+# LinuxKPI shim — pure primitives (compiled as C++ by g++; kept C-valid for the kext).
+# Not in COV_PATTERNS (not gated), just compiled + exercised by tests/test_linuxkpi_*.
+TEST_MODULES+= linuxkpi/kpi_slab.c linuxkpi/kpi_print.c linuxkpi/kpi_idr.c linuxkpi/kpi_sort.c linuxkpi/kpi_time.c
 # lcov patterns selecting the modules whose coverage is gated (String is support).
 COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/Cred.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Acpi.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nw_settings.*" "*/nwm_core.*" "*/nw_compose.*" "*/nw_backdrop.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/MsiRouter.*" "*/lapic_x86_64.*" "*/e1000_core.*" "*/i219_phy.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*" "*/UsbCore.*" "*/UsbHid.*" "*/UsbMsc.*" "*/UsbMscBlockDevice.*" "*/PartitionTable.*" "*/GdtBase.*"
 COV_INFO=/tmp/cov.info

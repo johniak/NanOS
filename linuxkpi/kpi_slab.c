@@ -10,9 +10,7 @@
  */
 #include <linux/slab.h>
 #include <linux/string.h>
-
-extern void *knx_malloc(unsigned size);
-extern void  knx_free(void *p);
+#include "lkpi_knx.h"
 
 #define SLAB_HDR 16u  /* room for a size_t, padded so payload stays 16-byte aligned */
 

@@ -11,8 +11,7 @@
  */
 #include <linux/printk.h>
 #include <linux/string.h>
-
-extern void knx_log(const char *s);
+#include "lkpi_knx.h"
 
 struct out {
 	char *buf;
