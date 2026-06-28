@@ -51,6 +51,8 @@ static inline size_t dma_max_mapping_size(struct device *dev) { (void)dev; retur
 static inline int dma_set_max_seg_size(struct device *dev, unsigned int size) { (void)dev; (void)size; return 0; }
 static inline void dma_sync_single_for_cpu(struct device *d, dma_addr_t a, size_t s, enum dma_data_direction dir) { (void)d;(void)a;(void)s;(void)dir; }
 static inline void dma_sync_single_for_device(struct device *d, dma_addr_t a, size_t s, enum dma_data_direction dir) { (void)d;(void)a;(void)s;(void)dir; }
+static inline void dma_sync_single_range_for_cpu(struct device *d, dma_addr_t a, unsigned long off, size_t s, enum dma_data_direction dir) { (void)d;(void)a;(void)off;(void)s;(void)dir; }
+static inline void dma_sync_single_range_for_device(struct device *d, dma_addr_t a, unsigned long off, size_t s, enum dma_data_direction dir) { (void)d;(void)a;(void)off;(void)s;(void)dir; }
 static inline bool dma_need_sync(struct device *dev, dma_addr_t addr) { (void)dev;(void)addr; return false; }
 
 /* page maps: phys == virt under identity mapping */

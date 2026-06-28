@@ -23,6 +23,7 @@
 #define smp_store_release(p, v) do { smp_mb(); WRITE_ONCE(*(p), (v)); } while (0)
 #define smp_load_acquire(p) ({ __typeof__(*(p)) ___v = READ_ONCE(*(p)); smp_mb(); ___v; })
 #define smp_store_mb(var, value) do { WRITE_ONCE(var, value); smp_mb(); } while (0)
+#define virt_store_mb(var, value) do { WRITE_ONCE(var, value); virt_mb(); } while (0)
 
 static inline void virt_mb(void)  { mb(); }
 static inline void virt_rmb(void) { __asm__ __volatile__("" ::: "memory"); }

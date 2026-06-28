@@ -12,6 +12,8 @@
 #include <linux/types.h>
 #include <linux/string.h>
 
+struct page;  /* token: pointer value == kernel virtual address (see linux/mm.h) */
+
 struct scatterlist {
 	unsigned long  page_link;     /* buffer addr | flags (bit0 chain, bit1 end) */
 	unsigned int   offset;
@@ -31,6 +33,22 @@ static inline void sg_assign_buf(struct scatterlist *sg, const void *buf) {
 
 static inline void *sg_virt(struct scatterlist *sg) {
 	return (void *)((sg->page_link & SG_PAGE_LINK_MASK) + sg->offset);
+}
+
+/* page model: a struct page* is the page's kernel virtual address (see linux/mm.h). */
+static inline struct page *sg_page(struct scatterlist *sg) {
+	return (struct page *)(sg->page_link & SG_PAGE_LINK_MASK);
+}
+static inline void sg_set_page(struct scatterlist *sg, struct page *page,
+                               unsigned int len, unsigned int offset) {
+	unsigned long flags = sg->page_link & (SG_CHAIN | SG_END);
+	sg->page_link = ((unsigned long)page & SG_PAGE_LINK_MASK) | flags;
+	sg->offset = offset;
+	sg->length = len;
+}
+static inline void sg_assign_page(struct scatterlist *sg, struct page *page) {
+	unsigned long flags = sg->page_link & (SG_CHAIN | SG_END);
+	sg->page_link = ((unsigned long)page & SG_PAGE_LINK_MASK) | flags;
 }
 
 static inline int sg_is_chain(struct scatterlist *sg) { return !!(sg->page_link & SG_CHAIN); }

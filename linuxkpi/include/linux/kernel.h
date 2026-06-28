@@ -19,6 +19,7 @@
 #define container_of(ptr, type, member) ({                          \
 	void *__mptr = (void *)(ptr);                               \
 	((type *)(__mptr - offsetof(type, member))); })
+#define container_of_const(ptr, type, member) container_of(ptr, type, member)
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
@@ -74,6 +75,16 @@
 static inline u32 reciprocal_scale(u32 val, u32 ep_ro) {
 	return (u32)(((u64)val * ep_ro) >> 32);
 }
+
+static inline int is_power_of_2(unsigned long n) { return n != 0 && ((n & (n - 1)) == 0); }
+static inline unsigned long roundup_pow_of_two(unsigned long n) {
+	if (n < 2) return 1;
+	return 1UL << (BITS_PER_LONG - __builtin_clzl(n - 1));
+}
+static inline unsigned long rounddown_pow_of_two(unsigned long n) {
+	return 1UL << (BITS_PER_LONG - 1 - __builtin_clzl(n));
+}
+#define ilog2(n) ((unsigned)(BITS_PER_LONG - 1 - __builtin_clzl((unsigned long)(n))))
 
 #define might_sleep()      do {} while (0)
 #define might_sleep_if(c)  do {} while (0)

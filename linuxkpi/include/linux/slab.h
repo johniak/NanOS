@@ -8,6 +8,9 @@
 
 #include <linux/types.h>
 #include <linux/gfp.h>
+#ifndef NANOS_HOST_TEST
+#include <linux/mm.h>   /* slab pulls mm in mainline; gives page helpers to .c that only include slab.h */
+#endif
 
 #ifdef __cplusplus
 extern "C" {

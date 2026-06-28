@@ -28,6 +28,8 @@ FILES=(
   include/linux/virtio.h
   include/linux/virtio_ring.h
   include/linux/virtio_config.h
+  include/linux/virtio_byteorder.h
+  include/linux/virtio_anchor.h
   include/linux/virtio_pci_modern.h
   include/linux/virtio_pci_legacy.h
   include/uapi/linux/virtio_ring.h

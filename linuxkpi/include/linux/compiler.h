@@ -77,6 +77,8 @@
 
 #define OPTIMIZER_HIDE_VAR(var) __asm__ __volatile__("" : "+r" (var))
 
+#define data_race(expr) ({ __auto_type __v = ({ expr; }); __v; })
+
 static inline void __chk_user_ptr(const volatile void *p) { (void)p; }
 
 #endif /* __ASSEMBLY__ */
