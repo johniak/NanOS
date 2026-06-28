@@ -115,10 +115,18 @@ void nwui_open_file(nwui *u, const char *path)
 	if (l > 4 && !strcmp(path + l - 4, ".nxe")) { nwui_spawn(u, path); return; }   /* a program: run it */
 	char ext[16]; nwui_file_ext(path, ext, sizeof ext);
 	char app[64];
-	if (nwui_assoc_lookup(ext, app, sizeof app))
-		nwui_spawn_arg(u, app, path);
-	else
+	if (!nwui_assoc_lookup(ext, app, sizeof app)) {
 		nwui_message(u, "Open", "No application is associated with this file type.");
+		return;
+	}
+	/* Permissions: the opened app runs as the current user (uid inherited from the session) and
+	 * reads the file with that identity. Check readability up front so a permission problem is a
+	 * clear message here rather than a cryptic failure inside the launched app. */
+	if (access(path, R_OK) != 0) {
+		nwui_message(u, "Open", "Permission denied - you do not have access to this file.");
+		return;
+	}
+	nwui_spawn_arg(u, app, path);
 }
 
 void nwui_reload_settings(nwui *u)
