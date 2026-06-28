@@ -34,6 +34,8 @@ int main(int argc, char **argv)
 	char app[128];
 	if (is_nxe) {
 		strncpy(app, path, sizeof app - 1); app[sizeof app - 1] = 0;   /* run the program directly */
+	} else if (nw_file_app_lookup(path, app, sizeof app)) {
+		/* a per-file "default program" override (set in Properties) wins over the type assoc */
 	} else {
 		char ext[16];
 		nw_file_ext(path, ext, sizeof ext);

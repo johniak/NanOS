@@ -16,12 +16,17 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include "nwspawn.h"   /* NW_SPAWN_SOCK — the compositor's launch socket */
 
 /* Where the editable associations live (the "Default Apps" Settings panel writes this). */
 #define NW_ASSOC_PATH  "/disks/main/nanos/config/associations.conf"
+/* Per-FILE "default program" overrides (path TAB app, one per line), under $HOME. A system-level,
+ * per-user store (macOS LaunchServices style) honoured by EVERY open path — the GUI toolkit, the
+ * `open` command, and set by the Properties window. Distinct from the per-extension assoc above. */
+#define NW_FILEAPPS_NAME "/.nanos-open"
 
 /* Lowercased extension (no dot) of `path` into ext[cap]; "" if none. */
 static void nw_file_ext(const char *path, char *ext, int cap)
@@ -85,6 +90,50 @@ static int nw_assoc_lookup(const char *ext, char *out, int cap)
 			out[k] = 0;
 			return 1;
 		}
+	return 0;
+}
+
+/* The per-user file-apps store path ($HOME/.nanos-open) into out[cap]. */
+static int nw_fileapps_path(char *out, int cap)
+{
+	const char *h = getenv("HOME");
+	if (!h || !h[0]) h = "/disks/main";
+	int n = 0;
+	for (; h[n] && n < cap - 1; n++) out[n] = h[n];
+	for (const char *s = NW_FILEAPPS_NAME; *s && n < cap - 1; s++) out[n++] = *s;
+	out[n] = 0;
+	return n;
+}
+
+/* Per-FILE app override for `path` -> out[cap]. 1 if one is set, else 0. */
+static int nw_file_app_lookup(const char *path, char *out, int cap)
+{
+	char fp[256]; nw_fileapps_path(fp, sizeof fp);
+	int fd = open(fp, O_RDONLY);
+	if (fd < 0) return 0;
+	static char buf[8192];
+	int n = (int) read(fd, buf, sizeof buf - 1);
+	close(fd);
+	if (n <= 0) return 0;
+	buf[n] = 0;
+	int pl = (int) strlen(path);
+	for (char *line = buf; line && *line; ) {
+		char *nl = strchr(line, '\n');
+		int len = nl ? (int) (nl - line) : (int) strlen(line);
+		char *tab = (char *) memchr(line, '\t', len);
+		if (tab) {
+			int klen = (int) (tab - line);
+			if (klen == pl && !memcmp(line, path, pl)) {
+				int alen = len - klen - 1;
+				if (alen > cap - 1) alen = cap - 1;
+				if (alen < 0) alen = 0;
+				memcpy(out, tab + 1, alen);
+				out[alen] = 0;
+				return out[0] ? 1 : 0;
+			}
+		}
+		line = nl ? nl + 1 : 0;
+	}
 	return 0;
 }
 

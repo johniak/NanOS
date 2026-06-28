@@ -70,8 +70,10 @@ void nwui_open_file(nwui *u, const char *path)
 {
 	int l = (int) strlen(path);
 	if (l > 4 && !strcmp(path + l - 4, ".nxe")) { nwui_spawn(u, path); return; }   /* a program: run it */
-	char ext[16]; nw_file_ext(path, ext, sizeof ext);
 	char app[64];
+	/* a per-FILE "default program" override (set in Properties) wins over the type association */
+	if (nw_file_app_lookup(path, app, sizeof app)) { nwui_open_file_with(u, path, app); return; }
+	char ext[16]; nw_file_ext(path, ext, sizeof ext);
 	if (!nwui_assoc_lookup(ext, app, sizeof app)) {
 		nwui_message(u, "Open", "No application is associated with this file type.");
 		return;
