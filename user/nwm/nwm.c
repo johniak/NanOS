@@ -26,6 +26,9 @@
 #include "nwui_png.h"             /* decode the branded wallpaper.png at runtime (toolkit decoder) */
 #include "nw_settings.h"          /* desktop preferences (blur/transparency) from settings.yaml */
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
+#include "open/nwspawn.h"         /* the AF_UNIX launch socket `open` connects to */
+#include <sys/socket.h>
+#include <sys/un.h>
 
 /* Power the machine off via the kernel (privileged port I/O lives in the kernel). */
 static void sys_poweroff(void) { __asm__ __volatile__("int $0x80" : : "a"(SYS_reboot) : "memory"); }
@@ -72,6 +75,7 @@ static int g_prev_cx = -1, g_prev_cy = -1;/* last drawn cursor position         
 static volatile int g_own = 0;            /* do we own the framebuffer? (VT_SETMODE, 0 until acquire) */
 static int g_ttyfd = -1;                  /* our graphics VT (tty7) for KD/VT ioctls + VT_RELDISP    */
 static int g_wakefd[2] = { -1, -1 };      /* self-pipe so VT signals wake the poll() loop            */
+static int g_spawnfd = -1;                /* AF_UNIX listen socket: `open` requests app launches     */
 static int g_started = 0;                 /* have we spawned the desktop yet? (once, on first own)  */
 static volatile int g_force_full = 0;     /* next present() must repaint the WHOLE screen (after acquire) */
 static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
@@ -206,6 +210,49 @@ static int resolve_cmd(const char *cmd, char *out, int cap)
 	snprintf(out, cap, "/disks/main/nanos/bin/%s.nxe", cmd);    if (file_exists(out)) return 1;
 	return 0;
 }
+static int free_slot(void);   /* defined just below; used by the launch-socket handler */
+
+/* ---- launch socket: a non-window process (e.g. `open` in a terminal) asks us to start an app ----
+ * Bind the well-known AF_UNIX path + listen. This is how the SAME "open" works from the command
+ * line as from the UI: the desktop is the launcher (macOS WindowServer/launchd style). */
+static void setup_spawn_socket(void)
+{
+	unlink(NW_SPAWN_SOCK);                         /* clear a stale socket from a previous run */
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) return;
+	struct sockaddr_un sa;
+	memset(&sa, 0, sizeof sa);
+	sa.sun_family = AF_UNIX;
+	strncpy(sa.sun_path, NW_SPAWN_SOCK, sizeof sa.sun_path - 1);
+	if (bind(fd, (struct sockaddr *) &sa, sizeof sa) < 0 || listen(fd, 8) < 0) { close(fd); return; }
+	set_cloexec(fd); set_nonblock(fd);
+	g_spawnfd = fd;
+}
+
+/* Drain all pending launch requests. Each connection carries "cmd\0arg"; resolve `cmd` like the
+ * Run dialog and spawn a new window client with `arg` (the file) as argv[1]. */
+static void handle_spawn_conns(void)
+{
+	if (g_spawnfd < 0) return;
+	int c;
+	while ((c = accept(g_spawnfd, 0, 0)) >= 0) {
+		set_nonblock(c);
+		char buf[640]; int got = 0, r;
+		while (got < (int) sizeof buf - 1 && (r = (int) read(c, buf + got, sizeof buf - 1 - got)) > 0)
+			got += r;
+		close(c);
+		if (got <= 0) continue;
+		buf[got] = 0;
+		const char *cmd = buf;
+		int cl = (int) strlen(cmd);                            /* cmd ends at the first NUL */
+		const char *arg = (cl + 1 < got) ? buf + cl + 1 : 0;   /* the rest (if any) = argv[1] */
+		char path[256];
+		int slot = free_slot();
+		if (slot >= 0 && resolve_cmd(cmd, path, sizeof path))
+			spawn_client(slot, path, (arg && arg[0]) ? arg : 0);
+	}
+}
+
 static int free_slot(void)
 {
 	for (int i = 0; i < NW_MAX_CLIENTS; i++)
@@ -680,6 +727,7 @@ int main(void)
 
 	for (int i = 0; i < NW_MAX_CLIENTS; i++) { cl_req[i] = cl_evt[i] = -1; }
 	nw_server_init(&S, (int) g_xres, (int) g_yres);
+	setup_spawn_socket();   /* the launch channel for `open` (and any non-window launcher) */
 
 	/* When we own a graphics VT (tty7) the kernel does not text-draw it, so termmode is unneeded;
 	 * and we must do NOTHING (no console mode change, no GUI clients, no fb writes) until the first
@@ -691,11 +739,12 @@ int main(void)
 	}
 
 	for (;;) {
-		struct pollfd pfd[3 + NW_MAX_CLIENTS * 2];
+		struct pollfd pfd[4 + NW_MAX_CLIENTS * 2];
 		int n = 0;
 		pfd[n].fd = in0; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
 		pfd[n].fd = in1; pfd[n].events = POLLIN; pfd[n].revents = 0; n++;
 		if (g_wakefd[0] >= 0) { pfd[n].fd = g_wakefd[0]; pfd[n].events = POLLIN; pfd[n].revents = 0; n++; }
+		if (g_spawnfd >= 0)   { pfd[n].fd = g_spawnfd;   pfd[n].events = POLLIN; pfd[n].revents = 0; n++; }
 		for (int i = 0; i < NW_MAX_CLIENTS; i++) {
 			if (cl_req[i] < 0)
 				continue;
@@ -717,6 +766,7 @@ int main(void)
 			start_desktop();
 		drain_keyboard(in0);
 		drain_mouse(in1);
+		handle_spawn_conns();   /* launch requests from `open` (terminal) -> spawn the app */
 		for (int i = 0; i < NW_MAX_CLIENTS; i++)
 			if (cl_req[i] >= 0 && drain_client(i) == 0)
 				disconnect(i);
