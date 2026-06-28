@@ -25,6 +25,7 @@
 #include "nw_gfx.h"
 #include "nwui_png.h"             /* decode the branded wallpaper.png at runtime (toolkit decoder) */
 #include "nw_settings.h"          /* desktop preferences (blur/transparency) from settings.yaml */
+#include "nw_settings_path.h"     /* per-user prefs file in $HOME (writable by the desktop user) */
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
 #include "open/nwspawn.h"         /* the AF_UNIX launch socket `open` connects to */
 #include <sys/socket.h>
@@ -85,18 +86,28 @@ static struct nw_backdrop_ctx g_bdc;
 static struct nw_settings g_set;           /* live desktop preferences (settings.yaml)    */
 static int g_blur_on;                      /* derived: backdrop blur currently enabled    */
 
-/* (Re)load settings.yaml and fold it into the compositor's runtime knobs. Missing/garbled file
- * just leaves the defaults (blur off, glass on). Caller marks the scene dirty to recompose. */
+/* Overlay any settings found in the file at `path` onto g_set (no-op if it is absent/empty). */
+static void overlay_settings_file(const char *path)
+{
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return;
+	char buf[1024];
+	int n = (int) read(fd, buf, sizeof buf - 1);
+	close(fd);
+	if (n > 0) nw_settings_parse(buf, n, &g_set);
+}
+
+/* (Re)load the desktop preferences and fold them into the compositor's runtime knobs. Layered:
+ * shipped defaults, then the system-wide file (if an admin placed one), then the per-user file in
+ * $HOME (which the unprivileged desktop can actually write — see nw_settings_path.h). The user
+ * file wins. Missing/garbled files just leave earlier values. Caller marks the scene dirty. */
 static void apply_settings(void)
 {
+	char up[256];
 	nw_settings_defaults(&g_set);
-	int fd = open(NW_SETTINGS_PATH, O_RDONLY);
-	if (fd >= 0) {
-		char buf[1024];
-		int n = (int) read(fd, buf, sizeof buf - 1);
-		close(fd);
-		if (n > 0) nw_settings_parse(buf, n, &g_set);
-	}
+	overlay_settings_file(NW_SETTINGS_PATH);            /* system-wide default (optional) */
+	nw_settings_user_path(up, sizeof up);
+	overlay_settings_file(up);                          /* per-user override (wins) */
 	g_blur_on = g_set.blur && g_set.transparency;   /* blur only shows through translucent glass */
 	g_bdc.win_alpha  = nw_settings_win_alpha(&g_set);
 	g_bdc.dark_alpha = nw_settings_dark_alpha(&g_set);

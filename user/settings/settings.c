@@ -8,6 +8,7 @@
 #include "nwui.h"
 #include "nwui_fs.h"
 #include "nw_settings.h"
+#include "nw_settings_path.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -31,26 +32,37 @@ static int accent_index(unsigned c) { for (int i = 0; i < NACC; i++) if (ACCENTS
 
 static void m_close(nwui_node *self, void *u) { (void) self; (void) u; _exit(0); }
 
-/* Load settings.yaml into g_set (defaults if the file is missing/garbled). */
-static void load_settings(void)
+/* Overlay any settings in the file at `path` onto g_set (no-op if absent/empty). */
+static void overlay_file(const char *path)
 {
-	nw_settings_defaults(&g_set);
-	int fd = open(NW_SETTINGS_PATH, O_RDONLY);
-	if (fd >= 0) {
-		char buf[1024];
-		int n = (int) read(fd, buf, sizeof buf - 1);
-		close(fd);
-		if (n > 0) nw_settings_parse(buf, n, &g_set);
-	}
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return;
+	char buf[1024];
+	int n = (int) read(fd, buf, sizeof buf - 1);
+	close(fd);
+	if (n > 0) nw_settings_parse(buf, n, &g_set);
 }
 
-/* Persist g_set to the YAML file and ask the compositor to apply it live. */
+/* Load the effective preferences into g_set: shipped defaults, then the system-wide file (if any),
+ * then the per-user file in $HOME (which wins). Matches the layering nwm applies (apply_settings). */
+static void load_settings(void)
+{
+	char up[256];
+	nw_settings_defaults(&g_set);
+	overlay_file(NW_SETTINGS_PATH);              /* system-wide default (optional) */
+	nw_settings_user_path(up, sizeof up);
+	overlay_file(up);                            /* per-user override (wins) */
+}
+
+/* Persist g_set to the PER-USER file in $HOME (the system config dir is root-owned and not writable
+ * by the unprivileged desktop), then ask the compositor to apply it live. */
 static void save_and_apply(void)
 {
-	char buf[256];
+	char buf[256], up[256];
 	int n = nw_settings_serialize(&g_set, buf, sizeof buf);
 	if (n > 0) {
-		int fd = open(NW_SETTINGS_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		nw_settings_user_path(up, sizeof up);
+		int fd = open(up, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (fd >= 0) { write(fd, buf, n); close(fd); }
 	}
 	nwui_reload_settings(g_u);
