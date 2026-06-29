@@ -1,8 +1,17 @@
 /*
  * linuxkpi/include/linux/errno.h — the errno constants Linux source uses (subset).
+ *
+ * IMPORTANT host-build note: glibc's <errno.h> itself does `#include <linux/errno.h>`, and
+ * with -Ilinuxkpi/include on the path that resolves HERE. So under the host doctest build we
+ * must NOT shadow the system's full errno set — chain to the real kernel header with
+ * include_next. In the freestanding kext build (no system headers) we provide the subset.
  */
 #ifndef _LINUXKPI_LINUX_ERRNO_H
 #define _LINUXKPI_LINUX_ERRNO_H
+
+#ifdef NANOS_HOST_TEST
+#include_next <linux/errno.h>
+#else
 
 #define EPERM    1
 #define ENOENT   2
@@ -33,4 +42,5 @@
 #define EREMOTEIO 121
 #define EPROBE_DEFER 517
 
+#endif /* NANOS_HOST_TEST */
 #endif /* _LINUXKPI_LINUX_ERRNO_H */
