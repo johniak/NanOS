@@ -33,3 +33,9 @@ static inline bool dma_resv_test_signaled(struct dma_resv *r, enum dma_resv_usag
 #define _LKPI_DMA_RESV_USAGE
 static inline enum dma_resv_usage dma_resv_usage_rw(bool write){ return write?DMA_RESV_USAGE_WRITE:DMA_RESV_USAGE_READ; }
 #endif
+
+#ifndef _LKPI_DMA_RESV_SLOW
+#define _LKPI_DMA_RESV_SLOW
+static inline int dma_resv_lock_slow_interruptible(struct dma_resv *r, struct ww_acquire_ctx *c){ return dma_resv_lock_interruptible(r,c); }
+static inline void dma_resv_lock_slow(struct dma_resv *r, struct ww_acquire_ctx *c){ dma_resv_lock(r,c); }
+#endif

@@ -15,3 +15,8 @@ static inline int  ww_mutex_trylock(struct ww_mutex *l, struct ww_acquire_ctx *c
 static inline void ww_mutex_unlock(struct ww_mutex *l){ mutex_unlock(&l->base); }
 static inline int  ww_mutex_is_locked(struct ww_mutex *l){ return mutex_is_locked(&l->base); }
 #endif
+
+#ifndef _LKPI_WW_RESV
+#define _LKPI_WW_RESV
+extern struct ww_class reservation_ww_class;
+#endif

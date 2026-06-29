@@ -107,6 +107,9 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #ifndef __cleanup
 #define __cleanup(f)
 #endif
+#define __read_mostly
+#define __ro_after_init
+#define __initconst
 #define _THIS_IP_   0UL
 #define _RET_IP_    0UL
 #define KBUILD_MODNAME "virtio_gpu"

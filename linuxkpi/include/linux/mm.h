@@ -80,3 +80,11 @@ static inline int is_vmalloc_addr(const void *x){ (void)x; return 0; }
 #define _LKPI_MM_VMA
 static inline unsigned long vma_pages(struct vm_area_struct *v){ return (v->vm_end-v->vm_start)>>PAGE_SHIFT; }
 #endif
+
+#ifndef _LKPI_MM_VMF
+#define _LKPI_MM_VMF
+typedef unsigned long vm_fault_t_lkpi_;
+static inline unsigned long vmf_insert_pfn(struct vm_area_struct *v, unsigned long a, unsigned long pfn){ (void)v;(void)a;(void)pfn; return 0x100; }
+static inline unsigned long vmf_insert_mixed(struct vm_area_struct *v, unsigned long a, unsigned long pfn){ (void)v;(void)a;(void)pfn; return 0x100; }
+static inline unsigned long vmf_insert_pfn_prot(struct vm_area_struct *v, unsigned long a, unsigned long pfn, pgprot_t p){ (void)v;(void)a;(void)pfn;(void)p; return 0x100; }
+#endif

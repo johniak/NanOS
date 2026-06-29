@@ -57,3 +57,9 @@ void  ida_free(struct ida *ida, unsigned int id);
 int idr_for_each(struct idr*, int (*fn)(int,void*,void*), void*);
 #define idr_for_each_entry(idr,entry,id) for(id=0; ((entry)=idr_find((idr),id))!=0 || id<(idr)->cap; id++) if((entry))
 #endif
+
+#ifndef _LKPI_IDA_MINMAX
+#define _LKPI_IDA_MINMAX
+static inline int ida_alloc_max(struct ida *ida, unsigned int max, gfp_t gfp){ return ida_alloc_range(ida,0,max,gfp); }
+static inline int ida_alloc_min(struct ida *ida, unsigned int min, gfp_t gfp){ return ida_alloc_range(ida,min,0xffffffffu,gfp); }
+#endif

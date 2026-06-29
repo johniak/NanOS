@@ -65,3 +65,10 @@ int printk(const char *fmt, ...);
 char *kasprintf(unsigned gfp, const char *fmt, ...);
 char *kvasprintf(unsigned gfp, const char *fmt, va_list ap);
 #endif
+
+#ifndef _LKPI_PRINTK_HEXDUMP
+#define _LKPI_PRINTK_HEXDUMP
+enum { DUMP_PREFIX_NONE=0, DUMP_PREFIX_ADDRESS, DUMP_PREFIX_OFFSET };
+static inline void print_hex_dump(const char*a,const char*b,int c,int d,int e,const void*f,size_t g,_Bool h){ (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h; }
+static inline void print_hex_dump_debug(const char*a,int b,int c,int d,const void*e,size_t f,_Bool g){ (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g; }
+#endif

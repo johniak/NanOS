@@ -66,3 +66,9 @@ static inline size_t str_has_prefix(const char *s, const char *pfx){ size_t i=0;
 long simple_strtol(const char*, char**, unsigned);
 unsigned long simple_strtoul(const char*, char**, unsigned);
 #endif
+
+#ifndef _LKPI_STRING_X4
+#define _LKPI_STRING_X4
+static inline void strtomem_pad(void *dest, const char *src, char pad){ (void)pad; size_t i=0; char *d=(char*)dest; while(src[i]){d[i]=src[i];i++;} }
+static inline int mem_is_zero(const void *s, size_t n){ const unsigned char *p=(const unsigned char*)s; for(size_t i=0;i<n;i++) if(p[i]) return 0; return 1; }
+#endif
