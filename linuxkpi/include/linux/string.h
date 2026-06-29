@@ -27,3 +27,9 @@ static inline void *memmove_(void *d, const void *s, size_t n) {
 #endif
 
 #endif /* _LINUXKPI_LINUX_STRING_H */
+
+#ifndef _LKPI_STRING_EXTRA
+#define _LKPI_STRING_EXTRA
+long strscpy(char *d, const char *s, size_t n);
+static inline long strncpy_from_user(char *d, const char *s, long n){ long i=0; for(;i<n&&s[i];i++)d[i]=s[i]; if(i<n)d[i]=0; return i; }
+#endif

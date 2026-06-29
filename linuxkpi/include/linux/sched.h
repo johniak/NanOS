@@ -17,3 +17,9 @@ static inline long schedule_timeout(long t){ return t; }
 static inline long io_schedule_timeout(long t){ return t; }
 #define TASK_COMM_LEN 16
 #endif
+
+#ifndef _LKPI_SCHED_EXTRA
+#define _LKPI_SCHED_EXTRA
+#include <linux/string.h>
+static inline char *get_task_comm(char *buf, struct task_struct *t){ (void)t; buf[0]=0; return buf; }
+#endif

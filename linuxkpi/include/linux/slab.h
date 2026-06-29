@@ -39,3 +39,17 @@ char *kstrdup(const char *s, gfp_t flags);
 #endif
 
 #endif /* _LINUXKPI_LINUX_SLAB_H */
+
+#ifndef _LKPI_SLAB_EXTRA
+#define _LKPI_SLAB_EXTRA
+static inline void *kvmalloc_array(size_t n, size_t s, gfp_t f){ return kmalloc(n*s, f); }
+static inline void *kvcalloc(size_t n, size_t s, gfp_t f){ return kzalloc(n*s, f); }
+struct kmem_cache { size_t size; };
+static inline struct kmem_cache *kmem_cache_create(const char *n, unsigned sz, unsigned al, unsigned long fl, void *ctor){ (void)n;(void)al;(void)fl;(void)ctor; struct kmem_cache *c=(struct kmem_cache*)kmalloc(sizeof(*c),0); if(c)c->size=sz; return c; }
+static inline void kmem_cache_destroy(struct kmem_cache *c){ kfree(c); }
+static inline void *kmem_cache_alloc(struct kmem_cache *c, gfp_t f){ return kmalloc(c->size, f); }
+static inline void *kmem_cache_zalloc(struct kmem_cache *c, gfp_t f){ return kzalloc(c->size, f); }
+static inline void kmem_cache_free(struct kmem_cache *c, void *p){ (void)c; kfree(p); }
+static inline void *memdup_user(const void *src, size_t len){ void *p=kmalloc(len,0); if(p)memcpy(p,src,len); return p; }
+static inline void *vmemdup_user(const void *src, size_t len){ return memdup_user(src,len); }
+#endif

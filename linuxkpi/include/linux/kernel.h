@@ -98,3 +98,12 @@ static inline unsigned long rounddown_pow_of_two(unsigned long n) {
 void panic(const char *fmt, ...) __attribute__((noreturn, __format__(__printf__, 1, 2)));
 
 #endif /* _LINUXKPI_LINUX_KERNEL_H */
+
+#ifndef _LKPI_KERNEL_EXTRA
+#define _LKPI_KERNEL_EXTRA
+#define u64_to_user_ptr(x) ((void *)(unsigned long)(x))
+#define typecheck(type,x) 1
+static inline const char *str_yes_no(bool v){ return v?"yes":"no"; }
+static inline const char *str_on_off(bool v){ return v?"on":"off"; }
+static inline const char *str_enabled_disabled(bool v){ return v?"enabled":"disabled"; }
+#endif

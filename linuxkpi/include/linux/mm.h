@@ -69,3 +69,9 @@ static inline void vm_flags_clear(struct vm_area_struct *v, unsigned long f){ v-
 static inline int remap_pfn_range(struct vm_area_struct *v, unsigned long a, unsigned long pfn, unsigned long s, pgprot_t p){ (void)v;(void)a;(void)pfn;(void)s;(void)p; return 0; }
 static inline int io_remap_pfn_range(struct vm_area_struct *v, unsigned long a, unsigned long pfn, unsigned long s, pgprot_t p){ (void)v;(void)a;(void)pfn;(void)s;(void)p; return 0; }
 #endif /* _LINUXKPI_LINUX_MM_H */
+
+#ifndef _LKPI_MM_EXTRA
+#define _LKPI_MM_EXTRA
+static inline struct page *vmalloc_to_page(const void *addr){ return virt_to_page(addr); }
+static inline int is_vmalloc_addr(const void *x){ (void)x; return 0; }
+#endif
