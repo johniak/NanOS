@@ -34,3 +34,9 @@ static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, unsigned limit, 
 #define _LKPI_XA_ERR
 static inline int xa_err(void *e){ (void)e; return 0; }
 #endif
+
+#ifndef _LKPI_XA_LIMIT
+#define _LKPI_XA_LIMIT
+struct xa_limit { unsigned min, max; };
+#define XA_LIMIT(_min,_max) (struct xa_limit){ .min=(_min), .max=(_max) }
+#endif
