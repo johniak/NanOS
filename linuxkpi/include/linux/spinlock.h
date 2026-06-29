@@ -67,3 +67,10 @@ typedef struct { volatile int lock; } rwlock_t__unused_;
 #define write_lock_irqsave(l, f) do { (f) = 0; (void)(l); } while (0)
 #define write_unlock_irqrestore(l, f) do { (void)(f); (void)(l); } while (0)
 #endif
+
+#ifndef _LKPI_LOCKDEP_X
+#define _LKPI_LOCKDEP_X
+#define lockdep_assert_held_once(l) do{}while(0)
+#define lockdep_assert_none_held_once() do{}while(0)
+#define lockdep_assert_not_held(l) do{}while(0)
+#endif
