@@ -221,7 +221,7 @@ Goal: vendor the DRM core subset, let `virtio_gpu` create a `drm_device` + resou
 
 ---
 
-## Phase P3 — `/dev/fb0` bridge: desktop on virtio-gpu  ◑ SUBSTANTIALLY DONE (console + graphical login render via virtio-gpu, screendump-verified; full nwm-compositor capture pending a NanOS nwm/login-on-VT detail, orthogonal to LinuxKPI)
+## Phase P3 — `/dev/fb0` bridge: desktop on virtio-gpu  ✅ COMPLETE (full nwm desktop renders on virtio-gpu via LinuxKPI, screendump-verified; the 30fps present cadence fixed the single-core userspace starvation)
 
 Goal: repoint `Fb0Device` at the virtio_gpu scanout and wire damage→flush so `fbcon`/`nwm` render through the Linux driver.
 
