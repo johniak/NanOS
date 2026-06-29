@@ -24,7 +24,9 @@ struct fwnode_handle;
 struct device_node;
 
 struct kobject { const char *name; struct kobject *parent; };
-struct class { const char *name; };
+struct class { const char *name; const struct attribute_group **dev_groups; char *(*devnode)(const struct device*, unsigned short*); };
+struct device_type { const char *name; const struct attribute_group **groups; void (*release)(struct device*); char *(*devnode)(const struct device*, unsigned short*, unsigned*, unsigned*); };
+struct component_ops { int (*bind)(struct device*, struct device*, void*); void (*unbind)(struct device*, struct device*, void*); };
 struct device {
 	struct device *parent;
 	const char *init_name;
@@ -41,6 +43,7 @@ struct device {
 	struct kobject kobj;
 	dev_t devt;
 	struct class *class;
+	const struct device_type *type;
 	void (*type_release)(struct device*);
 };
 

@@ -75,3 +75,8 @@ static inline int io_remap_pfn_range(struct vm_area_struct *v, unsigned long a, 
 static inline struct page *vmalloc_to_page(const void *addr){ return virt_to_page(addr); }
 static inline int is_vmalloc_addr(const void *x){ (void)x; return 0; }
 #endif
+
+#ifndef _LKPI_MM_VMA
+#define _LKPI_MM_VMA
+static inline unsigned long vma_pages(struct vm_area_struct *v){ return (v->vm_end-v->vm_start)>>PAGE_SHIFT; }
+#endif

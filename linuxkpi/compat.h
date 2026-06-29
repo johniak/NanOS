@@ -163,5 +163,6 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/stringify.h>
+#include <linux/sysfs.h>
 
 #endif /* _LINUXKPI_COMPAT_H */

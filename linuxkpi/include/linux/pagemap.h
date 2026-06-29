@@ -31,3 +31,11 @@ static inline int check_move_unevictable_folios(struct folio_batch *b){ (void)b;
 static inline void mapping_set_gfp_mask(struct address_space *m, unsigned g){ (void)m;(void)g; }
 static inline unsigned long invalidate_mapping_pages(struct address_space *m, unsigned long s, unsigned long e){ (void)m;(void)s;(void)e; return 0; }
 #endif
+
+#ifndef _LKPI_PAGEMAP_FOLIO2
+#define _LKPI_PAGEMAP_FOLIO2
+static inline struct folio *page_folio(struct page *p){ return (struct folio*)p; }
+static inline unsigned folio_batch_add(struct folio_batch *b, struct folio *f){ if(b->nr<16)b->folios[b->nr++]=f; return 16-b->nr; }
+static inline unsigned folio_batch_count(struct folio_batch *b){ return b->nr; }
+static inline unsigned folio_batch_space(struct folio_batch *b){ return 16-b->nr; }
+#endif
