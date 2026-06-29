@@ -113,5 +113,4 @@ static inline const char *str_enabled_disabled(bool v){ return v?"enabled":"disa
 #define DIV_ROUND_UP_ULL(n,d) DIV_ROUND_UP((unsigned long long)(n),(d))
 #define DIV64_U64_ROUND_UP(n,d) DIV_ROUND_UP_ULL(n,d)
 #define KHZ2PICOS(a) (1000000000UL/(a))
-static inline u64 mul_u32_u32(u32 a, u32 b){ return (u64)a*b; }
 #endif

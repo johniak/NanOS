@@ -23,3 +23,9 @@ static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, unsigned limit, 
 #define xa_unlock_irqrestore(xa,f) do{ (void)(f); xa_unlock(xa); }while(0)
 #define xa_limit_32b ((unsigned)0xffffffff)
 #endif
+
+#ifndef _LKPI_XARRAY_ALLOC
+#define _LKPI_XARRAY_ALLOC
+#define DEFINE_XARRAY_ALLOC(name) struct xarray name
+#define DEFINE_XARRAY_ALLOC1(name) struct xarray name
+#endif

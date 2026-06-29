@@ -59,3 +59,13 @@ static inline void *vmemdup_user(const void *src, size_t len){ return memdup_use
 #define ARCH_KMALLOC_MINALIGN 16
 #define ARCH_DMA_MINALIGN 16
 #endif
+
+#ifndef _LKPI_SLAB_X2
+#define _LKPI_SLAB_X2
+static inline void *krealloc_array(void *p, size_t n, size_t s, gfp_t f){ return krealloc(p, n*s, f); }
+static inline void kfree_const(const void *p){ kfree(p); }
+static inline void *kmalloc_node_track_caller(size_t n, gfp_t f, int node){ (void)node; return kmalloc(n,f); }
+static inline char *kstrdup_const(const char *s, gfp_t f){ return kstrdup(s,f); }
+static inline void *kmemdup(const void *src, size_t len, gfp_t f){ void *p=kmalloc(len,f); if(p)memcpy(p,src,len); return p; }
+static inline void *kvmemdup(const void *src, size_t len, gfp_t f){ return kmemdup(src,len,f); }
+#endif
