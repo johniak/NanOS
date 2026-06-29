@@ -1,0 +1,1 @@
+/* stub: linux/of.h */

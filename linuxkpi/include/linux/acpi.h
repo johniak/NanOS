@@ -1,0 +1,1 @@
+/* stub: linux/acpi.h */

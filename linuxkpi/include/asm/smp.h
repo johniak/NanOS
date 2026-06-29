@@ -1,0 +1,1 @@
+/* stub: asm/smp.h */
