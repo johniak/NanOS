@@ -74,3 +74,16 @@ typedef struct { volatile int lock; } rwlock_t__unused_;
 #define lockdep_assert_none_held_once() do{}while(0)
 #define lockdep_assert_not_held(l) do{}while(0)
 #endif
+
+#ifndef _LKPI_LOCKDEP_X2
+#define _LKPI_LOCKDEP_X2
+struct lockdep_map { int x; };
+#define lockdep_assert_once(c) do{}while(0)
+#define lockdep_is_held(l) 1
+#define lockdep_init_map(m,n,k,s) do{}while(0)
+#define lock_acquire_shared_recursive(m,a,b,c,d,e) do{}while(0)
+#define lock_release(m,i) do{}while(0)
+#define lock_acquire(m,a,b,c,d,e,f) do{}while(0)
+#define mutex_acquire(m,a,b,c) do{}while(0)
+#define mutex_release(m,c) do{}while(0)
+#endif

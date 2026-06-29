@@ -37,6 +37,7 @@
 #define EROFS    30
 #define ERANGE   34
 #define ENOSYS   38
+#define ENOTTY   25
 #define ENODATA  61
 #define EPROTO   71
 #define EOVERFLOW 75

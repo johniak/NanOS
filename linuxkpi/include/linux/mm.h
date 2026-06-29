@@ -88,3 +88,9 @@ static inline unsigned long vmf_insert_pfn(struct vm_area_struct *v, unsigned lo
 static inline unsigned long vmf_insert_mixed(struct vm_area_struct *v, unsigned long a, unsigned long pfn){ (void)v;(void)a;(void)pfn; return 0x100; }
 static inline unsigned long vmf_insert_pfn_prot(struct vm_area_struct *v, unsigned long a, unsigned long pfn, pgprot_t p){ (void)v;(void)a;(void)pfn;(void)p; return 0x100; }
 #endif
+
+#ifndef _LKPI_MM_MAPPING
+#define _LKPI_MM_MAPPING
+static inline void mapping_set_gfp_mask(struct address_space *m, unsigned g){ (void)m;(void)g; }
+static inline unsigned long invalidate_mapping_pages(struct address_space *m, unsigned long s, unsigned long e){ (void)m;(void)s;(void)e; return 0; }
+#endif

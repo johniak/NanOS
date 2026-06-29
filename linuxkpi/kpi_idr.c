@@ -72,9 +72,13 @@ void *idr_remove(struct idr *idr, int id) {
 	return (p == IDA_SENTINEL) ? 0 : p;
 }
 
-void idr_replace(struct idr *idr, void *ptr, int id) {
-	if (id >= 0 && id < idr->cap && idr->slots[id])
+void *idr_replace(struct idr *idr, void *ptr, int id) {
+	void *old = 0;
+	if (id >= 0 && id < idr->cap && idr->slots[id]) {
+		old = idr->slots[id];
 		idr->slots[id] = ptr ? ptr : IDA_SENTINEL;
+	}
+	return (old == IDA_SENTINEL) ? 0 : old;
 }
 
 int idr_is_empty(struct idr *idr) {

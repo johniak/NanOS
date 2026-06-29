@@ -35,7 +35,7 @@ void  idr_destroy(struct idr *idr);
 int   idr_alloc(struct idr *idr, void *ptr, int start, int end, gfp_t gfp);
 void *idr_find(struct idr *idr, int id);
 void *idr_remove(struct idr *idr, int id);
-void  idr_replace(struct idr *idr, void *ptr, int id);
+void *idr_replace(struct idr *idr, void *ptr, int id);
 int   idr_is_empty(struct idr *idr);
 
 void  ida_init(struct ida *ida);

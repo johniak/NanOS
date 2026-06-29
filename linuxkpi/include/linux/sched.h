@@ -31,3 +31,8 @@ static inline int task_pid_nr(struct task_struct *t){ (void)t; return 0; }
 static inline int task_tgid_nr(struct task_struct *t){ (void)t; return 0; }
 static inline void *task_tgid(struct task_struct *t){ (void)t; return 0; }
 #endif
+
+#ifndef _LKPI_SCHED_X3
+#define _LKPI_SCHED_X3
+static inline int task_pid_vnr(struct task_struct *t){ (void)t; return 0; }
+#endif

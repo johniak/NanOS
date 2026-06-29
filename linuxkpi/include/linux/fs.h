@@ -24,3 +24,11 @@ static inline unsigned imajor(struct inode *i){ (void)i; return 0; }
 struct file *anon_inode_getfile(const char *name, const struct file_operations *ops, void *priv, int flags);
 int anon_inode_getfd(const char *name, const struct file_operations *ops, void *priv, int flags);
 #endif
+
+#ifndef _LKPI_FCNTL_X
+#define _LKPI_FCNTL_X
+#define O_NONBLOCK 04000
+#define O_CLOEXEC  02000000
+#define O_RDWR     2
+static inline struct file *file_clone_open(struct file *f){ return f; }
+#endif
