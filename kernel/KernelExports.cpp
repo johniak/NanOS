@@ -16,6 +16,7 @@
 #include <arch/irq.h>
 #include <arch/input.h>
 #include <arch/console.h>   // consoleSerialOut
+#include <arch/bootinfo.h>  // bootFramebuffer (mirror source for a display kext)
 #include <stdint.h>
 #include <string.h>
 
@@ -140,6 +141,7 @@ int knx_register_msi(uint8_t bus, uint8_t dev, uint8_t func, void (*h)(void*), v
 // buffer here — this runs during loadAllKexts, BEFORE the scheduler starts init, so init's
 // spawn_nwm finds /dev/fb0 + /dev/tty7 and brings up the desktop. A periodic kernel thread
 // calls the kext's flush callback so whatever the console/nwm draw is presented to the device.
+void knx_fb_start_present(void (*flush)(void));   // fwd (defined below; used by set_backing)
 static void (*g_fbFlush)(void) = 0;
 static void fbFlushBody() {
 	for (;;) {
@@ -174,11 +176,38 @@ void knx_fb_set_backing(uint64_t phys, uint32_t pitch, uint32_t w, uint32_t h,
 	g_root->addChar(g_root->dev(), "fb0", new Fb0Device(info), 0666);
 
 	// Periodic present thread (task id 5).
+	knx_fb_start_present(flush);
+}
+
+// Register the present callback. The thread itself is spawned later by fbStartPresentThread(),
+// called from Kernel::start AFTER Scheduler::init() — kexts load BEFORE the scheduler exists,
+// so creating the task here would be wiped by Scheduler::init().
+void knx_fb_start_present(void (*flush)(void)) {
 	g_fbFlush = flush;
-	Scheduler::create(fbFlushBody, 5);
+}
+
+// Report the bootloader-provided framebuffer (vesafb/GOP), so a display kext can MIRROR the
+// already-working console/desktop onto its device. Returns 1 if a framebuffer exists, else 0.
+int knx_boot_fb(uint64_t* addr, uint32_t* pitch, uint32_t* w, uint32_t* h, uint8_t* bpp) {
+	const arch::BootFramebuffer* fb = arch::bootFramebuffer();
+	if (!fb)
+		return 0;
+	if (addr)  *addr  = fb->addr;
+	if (pitch) *pitch = fb->pitch;
+	if (w)     *w     = fb->width;
+	if (h)     *h     = fb->height;
+	if (bpp)   *bpp   = fb->bpp;
+	return 1;
 }
 
 }  // extern "C"
+
+// Spawn the framebuffer present thread, if a display kext registered a flush callback. Called
+// from Kernel::start AFTER Scheduler::init() (kexts load before the scheduler exists).
+void fbStartPresentThread() {
+	if (g_fbFlush)
+		Scheduler::create(fbFlushBody, 5);
+}
 
 // ---- the resolver table, generated from kexports.def (single source of truth) ----
 struct KExport { const char* name; void* fn; };

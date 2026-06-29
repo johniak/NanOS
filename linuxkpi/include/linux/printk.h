@@ -47,7 +47,13 @@ int printk(const char *fmt, ...);
 #define pr_notice(fmt, ...)  printk(KERN_NOTICE  pr_fmt(fmt), ##__VA_ARGS__)
 #define pr_info(fmt, ...)    printk(KERN_INFO    pr_fmt(fmt), ##__VA_ARGS__)
 #define pr_cont(fmt, ...)    printk(KERN_CONT    pr_fmt(fmt), ##__VA_ARGS__)
+/* pr_debug is a no-op unless DEBUG (Linux default); keeps vring/DRM debug chatter off the
+ * console — the lifted virtio_ring.c calls pr_debug on every buffer add/get. */
+#ifdef DEBUG
 #define pr_debug(fmt, ...)   printk(KERN_DEBUG   pr_fmt(fmt), ##__VA_ARGS__)
+#else
+#define pr_debug(fmt, ...)   do { } while (0)
+#endif
 #define pr_info_once(fmt, ...)  printk(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
 #define pr_err_once(fmt, ...)   printk(KERN_ERR  pr_fmt(fmt), ##__VA_ARGS__)
 

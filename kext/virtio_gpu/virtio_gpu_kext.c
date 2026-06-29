@@ -17,6 +17,7 @@
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/string.h>
 #include <uapi/linux/virtio_gpu.h>
 #include "lkpi_knx.h"
 #include "virtio_transport.h"
@@ -29,6 +30,8 @@
 static struct virtqueue *g_controlq;
 static u32 *g_fb;            /* guest framebuffer (BGRX), identity-mapped */
 static u32  g_w, g_h;        /* scanout dimensions */
+static u32 *g_mirror_src;    /* if set: copy this (the kernel/boot fb) into g_fb each present */
+static u32  g_mirror_pitch;  /* source stride in bytes */
 
 /* ---- small decimal logger ---- */
 static void log_dim(const char *pfx, unsigned w, unsigned h) {
@@ -94,10 +97,27 @@ int virtio_gpu_flush(u32 x, u32 y, u32 w, u32 h) {
 	return 0;
 }
 
-/* present the whole framebuffer (called periodically by the kernel present thread) */
+/* present the whole framebuffer (called periodically by the kernel present thread).
+ * In mirror mode, first copy the kernel/boot framebuffer into our DMA-able g_fb. */
 void virtio_gpu_present(void) {
-	if (g_fb)
-		virtio_gpu_flush(0, 0, g_w, g_h);
+	static int once = 0;
+	if (!g_fb)
+		return;
+	if (g_mirror_src) {
+		u32 spl = g_mirror_pitch / 4;   /* source pixels per line (pitch may exceed width) */
+		for (u32 y = 0; y < g_h; y++)
+			memcpy(&g_fb[y * g_w], &g_mirror_src[y * spl], (size_t)g_w * 4);
+	}
+	if (!once) {
+		once = 1;
+		char b[80]; int i = 0; const char *m = "virtio_gpu: present#1 src0=0x";
+		for (const char *p = m; *p; p++) b[i++] = *p;
+		const char *hx = "0123456789abcdef";
+		u32 v = g_mirror_src ? g_mirror_src[0] : 0xDEAD;
+		for (int s = 28; s >= 0; s -= 4) b[i++] = hx[(v >> s) & 0xf];
+		b[i++] = '\n'; b[i] = 0; knx_log(b);
+	}
+	virtio_gpu_flush(0, 0, g_w, g_h);
 }
 
 static int gpu_setup_scanout(void) {
@@ -144,11 +164,21 @@ static int gpu_setup_scanout(void) {
 	kfree(c2d); kfree(att); kfree(ss); kfree(resp);
 	knx_log("virtio_gpu: scanout configured, test pattern flushed (P2 checkpoint)\n");
 
-	/* 5) hand the framebuffer to the kernel as /dev/fb0 + a present thread, so fbcon/nwm
-	 *    render through virtio-gpu (P3 — desktop on the Linux GPU driver). */
-	knx_fb_set_backing((unsigned long long)(unsigned long)g_fb, g_w * 4, g_w, g_h, 32,
-	                   virtio_gpu_present);
-	knx_log("virtio_gpu: /dev/fb0 backed by virtio-gpu; present thread up (P3 checkpoint)\n");
+	/* 5) P3 — present the NanOS desktop through virtio-gpu. */
+	if (g_mirror_src) {
+		/* Mirror mode: the kernel already owns /dev/fb0 + VTs on the boot framebuffer and the
+		 * proven graphics stack (greeter/nwm/VT-switch) runs there. We just copy that fb onto
+		 * the virtio-gpu scanout every frame, so the desktop is displayed BY the Linux virtio
+		 * GPU driver stack. */
+		knx_fb_start_present(virtio_gpu_present);
+		knx_log("virtio_gpu: mirroring the kernel framebuffer -> virtio-gpu (P3 checkpoint)\n");
+	} else {
+		/* No boot framebuffer: make our buffer THE system fb (creates /dev/fb0 + VT console),
+		 * so init brings the desktop up directly on virtio-gpu. */
+		knx_fb_set_backing((unsigned long long)(unsigned long)g_fb, g_w * 4, g_w, g_h, 32,
+		                   virtio_gpu_present);
+		knx_log("virtio_gpu: /dev/fb0 backed by virtio-gpu; present thread up (P3 checkpoint)\n");
+	}
 	return 0;
 }
 
@@ -192,6 +222,19 @@ int nkext_init(void) {
 	g_h = le32_to_cpu(resp->pmodes[0].r.height);
 	if (!g_w || !g_h) { g_w = 1024; g_h = 768; }   /* fallback if scanout 0 is disabled */
 	log_dim("virtio_gpu: scanout0 ", g_w, g_h);
+
+	/* If the bootloader gave the kernel a framebuffer, the full graphics stack (VTs, greeter,
+	 * nwm, VT switching) is already running on it — mirror it onto virtio-gpu at its exact size
+	 * so the real desktop is displayed by the Linux virtio GPU stack. */
+	{
+		unsigned long long baddr; unsigned int bpitch, bw, bh; unsigned char bbpp;
+		if (knx_boot_fb(&baddr, &bpitch, &bw, &bh, &bbpp) && bw && bh) {
+			g_w = bw; g_h = bh;
+			g_mirror_src = (u32 *)(unsigned long)baddr;
+			g_mirror_pitch = bpitch;
+			log_dim("virtio_gpu: mirror boot fb ", g_w, g_h);
+		}
+	}
 
 	kfree(cmd); kfree(resp);
 	return gpu_setup_scanout();

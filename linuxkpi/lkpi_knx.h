@@ -36,6 +36,9 @@ int            knx_register_msi(unsigned char bus, unsigned char dev, unsigned c
  * bootloader gave none) and runs a present thread calling `flush` periodically. */
 void           knx_fb_set_backing(unsigned long long phys, unsigned int pitch, unsigned int w,
                                   unsigned int h, unsigned char bpp, void (*flush)(void));
+void           knx_fb_start_present(void (*flush)(void));
+int            knx_boot_fb(unsigned long long *addr, unsigned int *pitch, unsigned int *w,
+                           unsigned int *h, unsigned char *bpp);
 
 #ifdef __cplusplus
 }

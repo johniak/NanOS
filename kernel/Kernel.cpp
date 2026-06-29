@@ -514,6 +514,10 @@ void Kernel::start() {
 	registerKthread(netTimerThread(), "net-timer");
 	netBringUp();
 	okEnd();
+
+	// If a display kext (virtio_gpu) registered a framebuffer present callback during
+	// loadAllKexts, spawn its present thread now (the scheduler exists from here on).
+	kernel::fbStartPresentThread();
 	Console::writeLine("       eth0 10.0.2.15/24 gw 10.0.2.2 (static; udhcpc refines it at init)");
 
 	// USB-HID input: if a USB keyboard/mouse enumerated, start the poll thread feeding the
