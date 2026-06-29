@@ -16,8 +16,6 @@ static inline void fd_install(unsigned fd, struct file *f){ (void)fd;(void)f; }
 
 #ifndef _LKPI_FILE_FDGET
 #define _LKPI_FILE_FDGET
-struct fd { unsigned long word; };
-static inline struct file *fd_file(struct fd f){ return (struct file*)(f.word & ~3UL); }
-static inline struct fd fdget(unsigned fd){ (void)fd; struct fd r={0}; return r; }
-static inline void fdput(struct fd f){ (void)f; }
+static inline struct file *fd_file(struct fd f){ return f.file; }
+static inline struct fd fdget(unsigned fd){ (void)fd; struct fd r={0,0}; return r; }
 #endif
