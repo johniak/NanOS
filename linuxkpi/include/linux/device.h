@@ -91,3 +91,9 @@ static inline void *devm_kcalloc(struct device *dev, size_t n, size_t size, gfp_
 static inline void  devm_kfree(struct device *dev, void *p) { (void)dev; kfree(p); }
 
 #endif /* _LINUXKPI_LINUX_DEVICE_H */
+
+#ifndef _LKPI_DEVICE_EXTRA
+#define _LKPI_DEVICE_EXTRA
+extern void *knx_map_mmio(unsigned int, unsigned int);
+static inline void *devm_request_mem_region(struct device *d, unsigned long s, unsigned long n, const char *nm){ (void)d;(void)nm; return knx_map_mmio((unsigned)s,(unsigned)n); }
+#endif

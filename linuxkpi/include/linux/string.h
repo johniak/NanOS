@@ -33,3 +33,20 @@ static inline void *memmove_(void *d, const void *s, size_t n) {
 long strscpy(char *d, const char *s, size_t n);
 static inline long strncpy_from_user(char *d, const char *s, long n){ long i=0; for(;i<n&&s[i];i++)d[i]=s[i]; if(i<n)d[i]=0; return i; }
 #endif
+
+#ifndef _LKPI_STRING_MEM
+#define _LKPI_STRING_MEM
+#ifdef __cplusplus
+extern "C" {
+#endif
+int memcmp(const void*, const void*, size_t);
+void *memchr(const void*, int, size_t);
+void *memmove(void*, const void*, size_t);
+size_t strnlen(const char*, size_t);
+char *strchr(const char*, int);
+char *strrchr(const char*, int);
+char *strstr(const char*, const char*);
+#ifdef __cplusplus
+}
+#endif
+#endif

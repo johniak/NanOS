@@ -23,7 +23,7 @@ struct dma_fence_ops {
   long (*wait)(struct dma_fence*, bool, long);
   void (*release)(struct dma_fence*);
   void (*fence_value_str)(struct dma_fence*, char*, int);
-  void (*timeline_value_str)(struct dma_fence*, struct dma_fence*, char*, int);
+  void (*timeline_value_str)(struct dma_fence*, char*, int);
 };
 enum { DMA_FENCE_FLAG_SIGNALED_BIT=0, DMA_FENCE_FLAG_TIMESTAMP_BIT, DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT, DMA_FENCE_FLAG_USER_BITS };
 #ifdef __cplusplus
