@@ -24,5 +24,6 @@ Architecture references for the NanOS kernel and userland. Polish version: [`../
 | [linuxkpi.md](linuxkpi.md) | **LinuxKPI**: the kernel-space shim that recompiles & runs **unmodified Linux drivers** — the KPI surface (Linux API → NanOS backing), the lifted-vs-shimmed split, the cooperative-UP model, and how to add another driver. |
 | [graphics.md](graphics.md) | The display stack: the firmware framebuffer behind `/dev/fb0`, and the LinuxKPI shim running an **unmodified Linux 6.12 `virtio_gpu` DRM driver** to drive the scanout. |
 | [writing-apps.md](writing-apps.md) | How-to: writing an in-tree app, GUI apps (NanWM), and porting real Linux programs with the nanos-sdk. |
+| [libc-glue-porting.md](libc-glue-porting.md) | **Port-build troubleshooting**: the picolibc + libc-glue + syscall three-layer libc, how `sync-sysroot` assembles the sysroot, and a symptom→fix table for missing headers (`stdio_ext.h`), undefined symbols, and autoconf mis-detection. |
 
 Design specs and plans live under [`../superpowers/`](../superpowers/).
