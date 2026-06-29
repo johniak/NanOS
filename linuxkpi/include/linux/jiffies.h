@@ -47,3 +47,8 @@ static inline u64 nsecs_to_jiffies(u64 n) {
 }
 
 #endif /* _LINUXKPI_LINUX_JIFFIES_H */
+
+#ifndef _LKPI_JIFFIES_NS64
+#define _LKPI_JIFFIES_NS64
+static inline u64 nsecs_to_jiffies64(u64 n){ return n / 1000000ull; }
+#endif

@@ -57,3 +57,10 @@ static inline struct dma_fence *dma_fence_get_rcu_safe(struct dma_fence **pf){ r
 #define _LKPI_DMA_FENCE_EXTRA2
 static inline void dma_fence_set_deadline(struct dma_fence *f, ktime_t d){ (void)f;(void)d; }
 #endif
+
+#ifndef _LKPI_DMA_FENCE_STUB
+#define _LKPI_DMA_FENCE_STUB
+struct dma_fence *dma_fence_get_stub(void);
+struct dma_fence *dma_fence_allocate_private_stub(ktime_t timestamp);
+static inline int dma_fence_remove_callback(struct dma_fence *f, struct dma_fence_cb *cb){ (void)f;(void)cb; return 0; }
+#endif

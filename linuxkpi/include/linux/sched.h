@@ -36,3 +36,8 @@ static inline void *task_tgid(struct task_struct *t){ (void)t; return 0; }
 #define _LKPI_SCHED_X3
 static inline int task_pid_vnr(struct task_struct *t){ (void)t; return 0; }
 #endif
+
+#ifndef _LKPI_SCHED_WAKE
+#define _LKPI_SCHED_WAKE
+static inline int wake_up_process(struct task_struct *t){ (void)t; return 0; }
+#endif
