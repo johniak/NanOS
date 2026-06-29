@@ -148,7 +148,7 @@ static void fbFlushBody() {
 		unsigned t = Scheduler::ticks();
 		if (g_fbFlush)
 			g_fbFlush();
-		Scheduler::sleepUntil(t + 2);   // ~present cadence (a few ticks)
+		Scheduler::sleepUntil(t + 33);  // ~30 fps; leaves the CPU to userspace (single-core safe)
 	}
 }
 
