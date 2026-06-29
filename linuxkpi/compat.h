@@ -86,6 +86,21 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #ifndef __counted_by
 #define __counted_by(member)
 #endif
+#ifndef __malloc
+#define __malloc
+#endif
+#ifndef __alloc_size
+#define __alloc_size(...)
+#endif
+#ifndef __realloc_size
+#define __realloc_size(...)
+#endif
+#ifndef __assume_aligned
+#define __assume_aligned(...)
+#endif
+#ifndef fallthrough
+#define fallthrough __attribute__((__fallthrough__))
+#endif
 #ifndef __nonstring
 #define __nonstring
 #endif
