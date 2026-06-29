@@ -82,4 +82,40 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #define cpu_to_le16s(p) do {} while (0)
 #define cpu_to_le32s(p) do {} while (0)
 
+/* Compiler attributes the vendored DRM source uses that our toolchain lacks. */
+#ifndef __counted_by
+#define __counted_by(member)
+#endif
+#ifndef __nonstring
+#define __nonstring
+#endif
+#ifndef __cleanup
+#define __cleanup(f)
+#endif
+#define _THIS_IP_   0UL
+#define _RET_IP_    0UL
+#define KBUILD_MODNAME "virtio_gpu"
+
+/* preempt/irq context predicates — single-threaded ring-0 bring-up: never in atomic/dbg. */
+#define in_atomic()      0
+#define in_interrupt()   0
+#define in_dbg_master()  0
+#define irqs_disabled()  0
+#define preempt_disable() do {} while (0)
+#define preempt_enable()  do {} while (0)
+#define preempt_count()   0
+
+/* rounding helpers beyond linux/kernel.h */
+#define DIV_ROUND_CLOSEST(x, d)     (((x) + ((d) / 2)) / (d))
+#define DIV_ROUND_CLOSEST_ULL(x, d) DIV_ROUND_CLOSEST((unsigned long long)(x), (d))
+#define BUILD_BUG_ON_INVALID(e)     ((void)(sizeof((long)(e))))
+
+/* printf vector wrapper used by drm_print.h */
+#include <stdarg.h>
+struct va_format { const char *fmt; va_list *va; };
+
+/* the vendored DRM/virtio source assumes these are always pulled in. */
+#include <linux/bug.h>
+#include <linux/bitops.h>
+
 #endif /* _LINUXKPI_COMPAT_H */

@@ -109,4 +109,9 @@ static inline void pci_release_selected_regions(struct pci_dev *d, int bars) { (
 static inline int  pci_select_bars(struct pci_dev *d, unsigned long flags) { (void)d;(void)flags; return 0; }
 static inline int  pci_device_is_present(struct pci_dev *d) { (void)d; return 1; }
 
+static inline struct pci_dev *to_pci_dev(struct device *dev) { return container_of(dev, struct pci_dev, dev); }
+static inline int dev_is_pci(struct device *dev) { (void)dev; return 1; }
+static inline int pci_is_vga(struct pci_dev *d) { (void)d; return 0; }
+#define dev_is_removable(dev) (false)
+
 #endif /* _LINUXKPI_LINUX_PCI_H */

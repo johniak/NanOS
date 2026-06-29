@@ -57,4 +57,5 @@ static inline unsigned long __get_free_pages(gfp_t gfp, unsigned int order) { re
 static inline void free_page(unsigned long addr) { free_pages_exact((void *)addr, PAGE_SIZE); }
 static inline void free_pages(unsigned long addr, unsigned int order) { free_pages_exact((void *)addr, PAGE_SIZE << order); }
 
+static inline void unmap_mapping_range(void *m, unsigned long h, unsigned long e, int z){(void)m;(void)h;(void)e;(void)z;}
 #endif /* _LINUXKPI_LINUX_MM_H */

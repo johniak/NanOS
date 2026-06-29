@@ -13,7 +13,7 @@
 #include <linux/compiler.h>
 #include <asm/barrier.h>
 
-typedef struct { volatile int lock; } raw_spinlock_t;
+typedef struct raw_spinlock { volatile int lock; } raw_spinlock_t;
 typedef struct { raw_spinlock_t rlock; } spinlock_t;
 
 #define __RAW_SPIN_LOCK_INITIALIZER { 0 }
@@ -52,3 +52,18 @@ static inline void raw_spin_unlock(raw_spinlock_t *l) { __lk_release(&l->lock); 
 #define lockdep_assert_held(l) do {} while (0)
 
 #endif /* _LINUXKPI_LINUX_SPINLOCK_H */
+
+/* rwlock — degenerate to a plain spinlock (single-threaded bring-up) */
+#ifndef _LKPI_RWLOCK_DEFINED
+#define _LKPI_RWLOCK_DEFINED
+typedef struct { volatile int lock; } rwlock_t__unused_;
+#define rwlock_init(l)   do { (l)->lock = 0; } while (0)
+#define read_lock(l)     do { (void)(l); } while (0)
+#define read_unlock(l)   do { (void)(l); } while (0)
+#define write_lock(l)    do { (void)(l); } while (0)
+#define write_unlock(l)  do { (void)(l); } while (0)
+#define read_lock_irqsave(l, f)  do { (f) = 0; (void)(l); } while (0)
+#define read_unlock_irqrestore(l, f) do { (void)(f); (void)(l); } while (0)
+#define write_lock_irqsave(l, f) do { (f) = 0; (void)(l); } while (0)
+#define write_unlock_irqrestore(l, f) do { (void)(f); (void)(l); } while (0)
+#endif
