@@ -49,3 +49,11 @@ void  ida_free(struct ida *ida, unsigned int id);
 #endif
 
 #endif /* _LINUXKPI_LINUX_IDR_H */
+
+#ifndef _LKPI_IDR_EXTRA
+#define _LKPI_IDR_EXTRA
+#define idr_preload(gfp) do{}while(0)
+#define idr_preload_end() do{}while(0)
+int idr_for_each(struct idr*, int (*fn)(int,void*,void*), void*);
+#define idr_for_each_entry(idr,entry,id) for(id=0; ((entry)=idr_find((idr),id))!=0 || id<(idr)->cap; id++) if((entry))
+#endif

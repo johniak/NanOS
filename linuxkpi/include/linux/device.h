@@ -23,6 +23,8 @@ struct bus_type;
 struct fwnode_handle;
 struct device_node;
 
+struct kobject { const char *name; struct kobject *parent; };
+struct class { const char *name; };
 struct device {
 	struct device *parent;
 	const char *init_name;
@@ -36,6 +38,10 @@ struct device {
 	u64 *dma_mask;
 	u64 coherent_dma_mask;
 	void *platform_data;
+	struct kobject kobj;
+	dev_t devt;
+	struct class *class;
+	void (*type_release)(struct device*);
 };
 
 struct device_driver {
@@ -92,6 +98,8 @@ static inline void  devm_kfree(struct device *dev, void *p) { (void)dev; kfree(p
 
 #endif /* _LINUXKPI_LINUX_DEVICE_H */
 
+static inline const char *dev_driver_string(const struct device *dev){ (void)dev; return "virtio_gpu"; }
+static inline int dev_to_node(struct device *dev){ (void)dev; return -1; }
 #ifndef _LKPI_DEVICE_EXTRA
 #define _LKPI_DEVICE_EXTRA
 extern void *knx_map_mmio(unsigned int, unsigned int);

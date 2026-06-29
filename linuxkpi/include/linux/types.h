@@ -54,6 +54,7 @@ typedef u32           depot_stack_handle_t;
 typedef u64           sector_t;
 typedef int           pid_t;
 typedef unsigned short umode_t;
+typedef unsigned int dev_t;
 typedef unsigned      __poll_t;
 typedef unsigned long pgprot_t;
 typedef u64           phys_addr_t_unused_;

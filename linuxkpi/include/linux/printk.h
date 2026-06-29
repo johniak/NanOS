@@ -58,3 +58,10 @@ int printk(const char *fmt, ...);
 #define pr_err_once(fmt, ...)   printk(KERN_ERR  pr_fmt(fmt), ##__VA_ARGS__)
 
 #endif /* _LINUXKPI_LINUX_PRINTK_H */
+
+#ifndef _LKPI_PRINTK_EXTRA
+#define _LKPI_PRINTK_EXTRA
+#include <linux/types.h>
+char *kasprintf(unsigned gfp, const char *fmt, ...);
+char *kvasprintf(unsigned gfp, const char *fmt, va_list ap);
+#endif

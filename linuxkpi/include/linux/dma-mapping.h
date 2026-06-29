@@ -79,3 +79,9 @@ struct sg_table;
 static inline void dma_sync_sgtable_for_device(struct device *d, struct sg_table *s, enum dma_data_direction dir){ (void)d;(void)s;(void)dir; }
 static inline void dma_sync_sgtable_for_cpu(struct device *d, struct sg_table *s, enum dma_data_direction dir){ (void)d;(void)s;(void)dir; }
 #endif
+
+#ifndef _LKPI_DMA_SGTABLE2
+#define _LKPI_DMA_SGTABLE2
+static inline int dma_map_sgtable(struct device *d, struct sg_table *s, enum dma_data_direction dir, unsigned long a){ (void)d;(void)s;(void)dir;(void)a; return 0; }
+static inline void dma_unmap_sgtable(struct device *d, struct sg_table *s, enum dma_data_direction dir, unsigned long a){ (void)d;(void)s;(void)dir;(void)a; }
+#endif
