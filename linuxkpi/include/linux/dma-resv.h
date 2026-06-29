@@ -28,3 +28,8 @@ long dma_resv_wait_timeout(struct dma_resv*, enum dma_resv_usage, bool, long);
 #define _LKPI_DMA_RESV_EXTRA
 static inline bool dma_resv_test_signaled(struct dma_resv *r, enum dma_resv_usage u){ (void)r;(void)u; return true; }
 #endif
+
+#ifndef _LKPI_DMA_RESV_USAGE
+#define _LKPI_DMA_RESV_USAGE
+static inline enum dma_resv_usage dma_resv_usage_rw(bool write){ return write?DMA_RESV_USAGE_WRITE:DMA_RESV_USAGE_READ; }
+#endif

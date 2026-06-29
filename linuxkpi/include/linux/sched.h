@@ -23,3 +23,11 @@ static inline long io_schedule_timeout(long t){ return t; }
 #include <linux/string.h>
 static inline char *get_task_comm(char *buf, struct task_struct *t){ (void)t; buf[0]=0; return buf; }
 #endif
+
+#ifndef _LKPI_SCHED_EXTRA2
+#define _LKPI_SCHED_EXTRA2
+static inline int capable(int cap){ (void)cap; return 1; }
+static inline int task_pid_nr(struct task_struct *t){ (void)t; return 0; }
+static inline int task_tgid_nr(struct task_struct *t){ (void)t; return 0; }
+static inline void *task_tgid(struct task_struct *t){ (void)t; return 0; }
+#endif

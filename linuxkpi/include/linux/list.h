@@ -76,3 +76,11 @@ static inline void hlist_del_init(struct hlist_node *n) { if (n->pprev) { hlist_
 	     pos; pos = hlist_entry_safe((pos)->member.next, __typeof__(*(pos)), member))
 
 #endif /* _LINUXKPI_LINUX_LIST_H */
+
+#ifndef _LKPI_LIST_EXTRA
+#define _LKPI_LIST_EXTRA
+static inline void list_splice_tail(struct list_head *list, struct list_head *head){
+  if(!list_empty(list)){ struct list_head *f=list->next,*l=list->prev,*p=head->prev;
+    p->next=f; f->prev=p; l->next=head; head->prev=l; } }
+static inline void list_splice_tail_init(struct list_head *list, struct list_head *head){ list_splice_tail(list,head); INIT_LIST_HEAD(list); }
+#endif

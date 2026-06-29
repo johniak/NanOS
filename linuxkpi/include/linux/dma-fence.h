@@ -52,3 +52,8 @@ static inline bool dma_fence_is_later(struct dma_fence *a, struct dma_fence *b){
 static inline bool dma_fence_match_context(struct dma_fence *f, u64 ctx){ return f && f->context==ctx; }
 static inline struct dma_fence *dma_fence_get_rcu_safe(struct dma_fence **pf){ return pf?*pf:0; }
 #endif
+
+#ifndef _LKPI_DMA_FENCE_EXTRA2
+#define _LKPI_DMA_FENCE_EXTRA2
+static inline void dma_fence_set_deadline(struct dma_fence *f, ktime_t d){ (void)f;(void)d; }
+#endif

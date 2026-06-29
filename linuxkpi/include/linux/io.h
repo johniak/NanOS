@@ -47,3 +47,11 @@ struct resource { unsigned long start, end; const char *name; unsigned long flag
 static inline void *devm_ioremap(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
 static inline void *devm_ioremap_wc(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
 #endif
+
+#ifndef _LKPI_IO_MEMCPY
+#define _LKPI_IO_MEMCPY
+#include <linux/string.h>
+static inline void memcpy_toio(volatile void *d, const void *s, size_t n){ for(size_t i=0;i<n;i++)((volatile char*)d)[i]=((const char*)s)[i]; }
+static inline void memcpy_fromio(void *d, const volatile void *s, size_t n){ for(size_t i=0;i<n;i++)((char*)d)[i]=((const volatile char*)s)[i]; }
+static inline void memset_io(volatile void *d, int c, size_t n){ for(size_t i=0;i<n;i++)((volatile char*)d)[i]=c; }
+#endif
