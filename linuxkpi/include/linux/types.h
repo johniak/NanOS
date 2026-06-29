@@ -42,6 +42,20 @@ typedef uint64_t __virtio64;
 typedef u64 dma_addr_t;
 typedef u64 phys_addr_t;
 typedef u64 resource_size_t;
+typedef s64 ktime_t;
+
+typedef long          ssize_t;
+typedef unsigned long __kernel_size_t;
+typedef long          __kernel_ssize_t;
+typedef unsigned int  uint;
+typedef unsigned long ulong;
+typedef unsigned short ushort;
+typedef u32           depot_stack_handle_t;
+typedef u64           sector_t;
+typedef int           pid_t;
+typedef struct { unsigned char b[16]; } uuid_t;
+typedef struct { unsigned char b[16]; } guid_t;
+typedef struct { volatile int lock; } rwlock_t;
 typedef s64 loff_t;
 typedef u32 gfp_t;
 typedef int bool_unused_; /* placeholder to keep section non-empty if <stdbool.h> absent */
