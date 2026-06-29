@@ -21,6 +21,8 @@ Dokumentacja architektury jądra i userlandu NanOS. Wersja angielska: [`../en/`]
 | [networking.md](networking.md) | Pełny stos IPv4: e1000/e1000e/I219 → Ethernet/ARP → IP → ICMP/UDP/RAW/TCP → gniazda BSD → ABI gniazd Linuksa, DHCP, `/proc/net`. |
 | [crypto.md](crypto.md) | Bezpieczeństwo transportu: CSPRNG w jądrze, port OpenSSL (libcrypto/libssl/CLI), HTTPS klient+serwer, serwer SSH-2 (Dropbear). |
 | [windowing.md](windowing.md) | NanWM: kompozytor `nwm`, protokół klient↔kompozytor, `libnw`, toolkit `libnwui`, aplikacje GUI. |
+| [linuxkpi.md](linuxkpi.md) | **LinuxKPI**: shim w przestrzeni jądra, który rekompiluje i uruchamia **niezmodyfikowane sterowniki Linux** — powierzchnia KPI (Linux API → backing NanOS), podział zliftowane-vs-shimowane, model kooperatywnego UP i jak dodać kolejny sterownik. |
+| [graphics.md](graphics.md) | Stos wyświetlania: framebuffer firmware za `/dev/fb0` oraz shim LinuxKPI uruchamiający **niezmodyfikowany sterownik DRM `virtio_gpu` z Linux 6.12**, który napędza scanout. |
 | [writing-apps.md](writing-apps.md) | How-to: pisanie aplikacji wbudowanej, aplikacji GUI (NanWM) i portowanie realnych programów linuksowych z nanos-sdk. |
 
 Specyfikacje i plany projektowe znajdują się w [`../superpowers/`](../superpowers/).

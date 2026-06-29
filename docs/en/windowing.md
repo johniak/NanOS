@@ -274,7 +274,8 @@ linear framebuffer, 32-bpp BGRX with a pixel stride of `line_length/4`. It keeps
 **`g_scene`** (the composed frame), a cached **`g_wall`** (wallpaper), and a **`g_scratch`** work
 buffer; only the per-frame damage rect is `memcpy`'d from `g_scene` into the mapped framebuffer, so a
 small change costs a small blit. (The kernel framebuffer/fbcon side is `Fb0Device`/`Framebuffer.*`;
-see filesystem.md and the graphics stack.)
+see filesystem.md. For what *backs* `/dev/fb0` — the firmware framebuffer or the LinuxKPI
+`virtio_gpu` DRM driver — see [graphics.md](graphics.md).)
 
 ---
 

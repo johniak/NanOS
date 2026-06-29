@@ -129,13 +129,19 @@ networking.md §2.2).
 
 ## 5. The modules that exist
 
-All three load at boot from `/nanos/kext/` (`KEXTS = kbd mouse e1000` in the Makefile):
+All load at boot from `/nanos/kext/` (`KEXTS = kbd mouse e1000 e1000e i219 virtio_gpu` in the Makefile):
 
 | Module | Source | Binds | Registers | Uses |
 |---|---|---|---|---|
 | **`kbd.nkext`** | `kext/kbd/kbd_ps2.cpp` | PS/2 8042, **IRQ1** | feeds scancodes to the kernel evdev/console | `knx_register_irq`, `knx_feed_scancode`, `knx_log` |
 | **`mouse.nkext`** | `kext/mouse/mouse_ps2.cpp` (+ `MouseDevice.cpp`) | PS/2 AUX, **IRQ12** | a `CharDevice` → `/dev/input<N>` | `knx_register_irq`, `knx_add_input_dev`, … |
 | **`e1000.nkext`** | `kext/e1000/e1000.cpp` | PCI Intel 82540EM (**`8086:100E`**) | a net device `eth0` (RX/TX DMA rings of 32) | `knx_pci_*`, `knx_map_mmio`, `knx_dma_alloc`, `knx_add_net_dev`, `knx_netif_rx` |
+| **`e1000e.nkext`** / **`i219.nkext`** | `kext/e1000/`, `kext/i219/` | PCI Intel 82574L / I219 NICs (MSI) | a net device `eth0` (shared `E1000Core`) | `knx_pci_*`, `knx_map_mmio`, `knx_dma_alloc`, `knx_msi_*`, `knx_add_net_dev` |
+| **`virtio_gpu.nkext`** | `kext/virtio_gpu/` + `linuxkpi/` + vendored `external/linux-6.12/` | PCI virtio-gpu (**`1AF4:1050`**) | a scanout bridged to `/dev/fb0` | `knx_pci_*`, `knx_map_mmio`, `knx_dma_alloc`, `knx_fb_set_backing` |
+
+`virtio_gpu.nkext` is special: it runs an **unmodified Linux 6.12 `virtio_gpu` DRM driver** on the
+**LinuxKPI** shim — the largest kext by far, and a no-op on hardware without a virtio-gpu device. See
+[linuxkpi.md](linuxkpi.md) for the shim itself and [graphics.md](graphics.md) for the display path.
 
 Each module's `nkext_init()` does the hardware bring-up and registration, then returns 0. The
 keyboard line discipline and `/dev/input0` *policy* stay in the kernel — the kext owns only the

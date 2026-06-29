@@ -247,7 +247,8 @@ liniowego framebuffera, 32-bpp BGRX z pixel stride `line_length/4`. Trzyma rozmi
 **`g_scene`** (skomponowaną klatkę), cache'owaną **`g_wall`** (tapetę) oraz bufor roboczy **`g_scratch`**;
 tylko prostokąt damage per-klatka jest kopiowany `memcpy` z `g_scene` do zmapowanego framebuffera, więc
 mała zmiana kosztuje mały blit. (Strona framebuffer/fbcon jądra to `Fb0Device`/`Framebuffer.*`;
-patrz filesystem.md i stos graficzny.)
+patrz filesystem.md. Co *podpina* `/dev/fb0` — framebuffer firmware czy sterownik DRM `virtio_gpu`
+na LinuxKPI — opisuje [graphics.md](graphics.md).)
 
 ---
 

@@ -1,6 +1,11 @@
 # LinuxKPI + virtio-gpu — Design Spec
 
-> Status: **approved design**, pre-implementation.
+> Status: **IMPLEMENTED** (all phases P0–P3). The **unmodified** Linux 6.12 `virtio_gpu` DRM driver
+> + DRM/KMS core run on the shim and render the `nwm` desktop on `/dev/fb0` (QEMU `screendump`-verified,
+> gated by `smoke-virtio-gpu` in `verify64`). Living docs: the shim is
+> [`../../en/linuxkpi.md`](../../en/linuxkpi.md), the display path is
+> [`../../en/graphics.md`](../../en/graphics.md).
+> This file is the original approved design, kept for context.
 > Roadmap stream: **H — Linux Driver Compat (LinuxKPI)** (`docs/superpowers/ROADMAP.md` §1.1).
 > Date: 2026-06-28.
 

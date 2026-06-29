@@ -21,6 +21,8 @@ Architecture references for the NanOS kernel and userland. Polish version: [`../
 | [networking.md](networking.md) | The full IPv4 stack: e1000/e1000e/I219 → Ethernet/ARP → IP → ICMP/UDP/RAW/TCP → BSD sockets → the Linux socket ABI, DHCP, `/proc/net`. |
 | [crypto.md](crypto.md) | Transport security: the kernel CSPRNG, the OpenSSL port (libcrypto/libssl/CLI), HTTPS client+server, the SSH-2 server (Dropbear). |
 | [windowing.md](windowing.md) | NanWM: the `nwm` compositor, the client↔compositor protocol, `libnw`, the `libnwui` toolkit, the GUI apps. |
+| [linuxkpi.md](linuxkpi.md) | **LinuxKPI**: the kernel-space shim that recompiles & runs **unmodified Linux drivers** — the KPI surface (Linux API → NanOS backing), the lifted-vs-shimmed split, the cooperative-UP model, and how to add another driver. |
+| [graphics.md](graphics.md) | The display stack: the firmware framebuffer behind `/dev/fb0`, and the LinuxKPI shim running an **unmodified Linux 6.12 `virtio_gpu` DRM driver** to drive the scanout. |
 | [writing-apps.md](writing-apps.md) | How-to: writing an in-tree app, GUI apps (NanWM), and porting real Linux programs with the nanos-sdk. |
 
 Design specs and plans live under [`../superpowers/`](../superpowers/).
