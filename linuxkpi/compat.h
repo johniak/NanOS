@@ -153,5 +153,10 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/string.h>
 #include <linux/uuid.h>
 #include <linux/ratelimit.h>
+#include <linux/ktime.h>
+#include <linux/completion.h>
+#include <linux/err.h>
+#include <linux/export.h>
+#include <linux/slab.h>
 
 #endif /* _LINUXKPI_COMPAT_H */

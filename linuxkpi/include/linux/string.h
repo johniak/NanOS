@@ -59,3 +59,11 @@ char *strncpy(char*, const char*, size_t);
 static inline long strscpy_pad(char *d, const char *s, size_t n){ long i=0; for(;i<(long)n-1&&s[i];i++)d[i]=s[i]; for(;i<(long)n;i++)d[i]=0; return i; }
 void *kmemdup(const void *src, size_t len, unsigned gfp);
 #endif
+
+#ifndef _LKPI_STRING_X3
+#define _LKPI_STRING_X3
+static inline char *strnchr(const char *s, size_t n, int c){ for(size_t i=0;i<n&&s[i];i++) if(s[i]==(char)c) return (char*)&s[i]; return 0; }
+static inline size_t str_has_prefix(const char *s, const char *pfx){ size_t i=0; for(;pfx[i];i++) if(s[i]!=pfx[i]) return 0; return i; }
+long simple_strtol(const char*, char**, unsigned);
+unsigned long simple_strtoul(const char*, char**, unsigned);
+#endif

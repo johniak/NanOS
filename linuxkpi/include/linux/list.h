@@ -84,3 +84,12 @@ static inline void list_splice_tail(struct list_head *list, struct list_head *he
     p->next=f; f->prev=p; l->next=head; head->prev=l; } }
 static inline void list_splice_tail_init(struct list_head *list, struct list_head *head){ list_splice_tail(list,head); INIT_LIST_HEAD(list); }
 #endif
+
+#ifndef _LKPI_LIST_SORT
+#define _LKPI_LIST_SORT
+static inline void list_splice(const struct list_head *list, struct list_head *head){
+  if(!list_empty((struct list_head*)list)){ struct list_head *f=list->next,*l=list->prev,*at=head->next;
+    head->next=f; f->prev=head; l->next=at; at->prev=l; } }
+static inline void list_splice_init(struct list_head *list, struct list_head *head){ list_splice(list,head); INIT_LIST_HEAD(list); }
+void list_sort(void *priv, struct list_head *head, int (*cmp)(void*, const struct list_head*, const struct list_head*));
+#endif

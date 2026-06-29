@@ -53,3 +53,9 @@ static inline void kmem_cache_free(struct kmem_cache *c, void *p){ (void)c; kfre
 static inline void *memdup_user(const void *src, size_t len){ void *p=kmalloc(len,0); if(p)memcpy(p,src,len); return p; }
 static inline void *vmemdup_user(const void *src, size_t len){ return memdup_user(src,len); }
 #endif
+
+#ifndef _LKPI_SLAB_ALIGN
+#define _LKPI_SLAB_ALIGN
+#define ARCH_KMALLOC_MINALIGN 16
+#define ARCH_DMA_MINALIGN 16
+#endif

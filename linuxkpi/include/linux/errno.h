@@ -30,6 +30,9 @@
 #define EEXIST   17
 #define ENODEV   19
 #define EINVAL   22
+#define EDEADLK  35
+#define ERESTARTSYS 512
+#define ENOTSUPP 524
 #define ENOSPC   28
 #define EROFS    30
 #define ERANGE   34
