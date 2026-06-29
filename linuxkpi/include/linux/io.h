@@ -43,7 +43,7 @@ static inline void writeq(u64 v, volatile void *a) { *(volatile u64 *)a = v; }
 
 #ifndef _LKPI_IO_EXTRA
 #define _LKPI_IO_EXTRA
-struct resource { unsigned long start, end; const char *name; unsigned long flags; };
+#include <linux/ioport.h>
 static inline void *devm_ioremap(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
 static inline void *devm_ioremap_wc(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
 #endif
