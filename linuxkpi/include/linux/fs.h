@@ -37,3 +37,22 @@ static inline struct file *file_clone_open(struct file *f){ return f; }
 #endif
 
 
+
+#ifndef _LKPI_FS_PSEUDO
+#define _LKPI_FS_PSEUDO
+struct vfsmount { int unused; };
+struct super_block { void *s_fs_info; unsigned long s_blocksize; };
+struct fs_context { int unused; };
+struct file_system_type {
+  const char *name; void *owner; int fs_flags;
+  int (*init_fs_context)(struct fs_context *);
+  struct dentry *(*mount)(struct file_system_type*, int, const char*, void*);
+  void (*kill_sb)(struct super_block *);
+};
+static inline void kill_anon_super(struct super_block *sb){ (void)sb; }
+static inline int init_pseudo(struct fs_context *fc, unsigned long magic){ (void)fc;(void)magic; return 0; }
+static inline int simple_pin_fs(struct file_system_type *t, struct vfsmount **m, int *count){ (void)t;(void)m;(void)count; return 0; }
+static inline void simple_release_fs(struct vfsmount **m, int *count){ (void)m;(void)count; }
+static inline struct inode *alloc_anon_inode(struct super_block *sb){ (void)sb; return 0; }
+static inline void iput(struct inode *i){ (void)i; }
+#endif

@@ -108,3 +108,10 @@ static inline int dev_to_node(struct device *dev){ (void)dev; return -1; }
 extern void *knx_map_mmio(unsigned int, unsigned int);
 static inline void *devm_request_mem_region(struct device *d, unsigned long s, unsigned long n, const char *nm){ (void)d;(void)nm; return knx_map_mmio((unsigned)s,(unsigned)n); }
 #endif
+
+#ifndef _LKPI_DEVICE_REG
+#define _LKPI_DEVICE_REG
+static inline int device_is_registered(struct device *d){ (void)d; return 1; }
+static inline int devm_add_action_or_reset(struct device *d, void (*action)(void*), void *data){ (void)d;(void)action;(void)data; return 0; }
+static inline int devm_add_action(struct device *d, void (*action)(void*), void *data){ (void)d;(void)action;(void)data; return 0; }
+#endif

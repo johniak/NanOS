@@ -29,3 +29,8 @@ static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, unsigned limit, 
 #define DEFINE_XARRAY_ALLOC(name) struct xarray name
 #define DEFINE_XARRAY_ALLOC1(name) struct xarray name
 #endif
+
+#ifndef _LKPI_XA_ERR
+#define _LKPI_XA_ERR
+static inline int xa_err(void *e){ (void)e; return 0; }
+#endif
