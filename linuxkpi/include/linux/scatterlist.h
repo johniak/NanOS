@@ -121,3 +121,9 @@ static inline struct page *sg_page_iter_page(struct sg_page_iter *it){ return sg
 #define _LKPI_SG_ALLOC_SEG
 int sg_alloc_table_from_pages_segment(struct sg_table *sgt, struct page **pages, unsigned n, unsigned off, unsigned long size, unsigned max_seg, unsigned gfp);
 #endif
+
+#ifndef _LKPI_SG_DMA_PAGE
+#define _LKPI_SG_DMA_PAGE
+#define for_each_sgtable_dma_page(sgt, piter, pgoffset) for_each_sgtable_page((sgt), (piter), (pgoffset))
+#define sg_page_iter_dma_address(piter) sg_dma_address((piter)->base.sg)
+#endif

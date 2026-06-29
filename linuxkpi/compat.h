@@ -179,5 +179,9 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/fwnode.h>
 #include <linux/pagemap.h>
 #include <asm/cpufeature.h>
+#include <linux/ioport.h>
+#include <linux/io.h>
+#include <linux/jump_label.h>
+#include <linux/file.h>
 
 #endif /* _LINUXKPI_COMPAT_H */
