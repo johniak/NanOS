@@ -59,3 +59,8 @@ static inline void init_waitqueue_head(wait_queue_head_t *q) {
 static inline long wait_for_completion_interruptible_timeout(struct completion *x, unsigned long t){ wait_for_completion(x); return t?(long)t:1; }
 static inline long wait_for_completion_killable_timeout(struct completion *x, unsigned long t){ wait_for_completion(x); return t?(long)t:1; }
 #endif
+#ifndef _LKPI_WAIT_POLL
+#define _LKPI_WAIT_POLL
+#define wake_up_interruptible_poll(q, m) __wake_up(q)
+#define wake_up_poll(q, m) __wake_up(q)
+#endif

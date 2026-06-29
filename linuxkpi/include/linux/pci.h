@@ -51,8 +51,15 @@ struct pci_dev {
 	unsigned short subsystem_device;
 	unsigned char revision;
 	unsigned int irq;
+	struct pci_bus *bus;
+	unsigned int devfn;
 	void *priv;
 };
+struct pci_bus { unsigned char number; int domain_nr; };
+#define PCI_SLOT(devfn) (((devfn) >> 3) & 0x1f)
+#define PCI_FUNC(devfn) ((devfn) & 0x07)
+#define PCI_DEVFN(slot, func) ((((slot) & 0x1f) << 3) | ((func) & 0x07))
+static inline int pci_domain_nr(struct pci_bus *b){ return b ? b->domain_nr : 0; }
 
 struct pci_device_id;
 struct pci_driver {

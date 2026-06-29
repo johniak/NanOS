@@ -12,3 +12,9 @@ static inline int mutex_is_locked(struct mutex *m){ return m->l.lock; }
 #define mutex_destroy(m) do{}while(0)
 #define might_lock(m) do{}while(0)
 #endif
+
+#ifndef _LKPI_MUTEX_DEC
+#define _LKPI_MUTEX_DEC
+#include <linux/atomic.h>
+static inline int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock){ if(!atomic_dec_and_test(cnt)) return 0; mutex_lock(lock); return 1; }
+#endif

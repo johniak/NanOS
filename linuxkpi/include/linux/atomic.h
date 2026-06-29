@@ -60,3 +60,8 @@ static inline void refcount_inc(refcount_t *r){ atomic_inc(&r->r); }
 static inline int refcount_dec_and_test(refcount_t *r){ return atomic_dec_and_test(&r->r); }
 static inline int refcount_inc_not_zero(refcount_t *r){ return atomic_add_unless(&r->r,1,0); }
 #endif
+
+#ifndef _LKPI_ATOMIC_FETCH_INC
+#define _LKPI_ATOMIC_FETCH_INC
+static inline int atomic_fetch_inc(atomic_t *v){ return atomic_fetch_add(1, v); }
+#endif

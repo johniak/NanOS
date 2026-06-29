@@ -64,3 +64,7 @@ struct dma_fence *dma_fence_get_stub(void);
 struct dma_fence *dma_fence_allocate_private_stub(ktime_t timestamp);
 static inline int dma_fence_remove_callback(struct dma_fence *f, struct dma_fence_cb *cb){ (void)f;(void)cb; return 0; }
 #endif
+#ifndef _LKPI_FENCE_TS
+#define _LKPI_FENCE_TS
+static inline int dma_fence_signal_timestamp(struct dma_fence *f, ktime_t t){ (void)t; return dma_fence_signal(f); }
+#endif
