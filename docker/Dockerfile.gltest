@@ -1,0 +1,34 @@
+# Dockerfile.gltest -> nanos-gltest: a native-arch Linux box that runs the x86_64 NanOS
+# image under QEMU with the virtio-gpu 3D (virgl) device, software-rendered headless.
+#
+# Why a Linux container on the macOS host: macOS has no installable virglrenderer and
+# QEMU's macOS GL backends do not drive virgl headlessly. Debian's qemu-system-x86_64 is
+# built WITH virglrenderer (it ships `virtio-vga-gl`), and Mesa llvmpipe + Xvfb + a GLX
+# context give a working OpenGL with NO /dev/dri render node — the standard headless
+# software-GL recipe. The guest virgl command stream is IDENTICAL whether the host runs it
+# on llvmpipe (here) or on a real GPU (a native Linux box, later), so this verifies the
+# whole 3D path end-to-end and feeds the `smoke-virtio-gpu-gl` gate.
+#
+# This image runs NATIVE arch (arm64 on Apple Silicon): qemu-system-x86_64 emulates the
+# x86 guest under TCG — exactly as it runs on the macOS host today, just inside Linux so we
+# get a virgl-capable QEMU. (Do NOT pin linux/amd64: that would emulate amd64 too, and QEMU
+# would run double-emulated.)
+FROM debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+        qemu-system-x86 \
+        qemu-system-gui \
+        libvirglrenderer1 \
+        libgl1 libegl1 libgles2 libglx-mesa0 libgl1-mesa-dri libegl-mesa0 libgbm1 \
+        xvfb xauth x11-apps netpbm \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Force Mesa's software rasterizer everywhere (no GPU in the container / Docker VM).
+ENV LIBGL_ALWAYS_SOFTWARE=1 \
+    GALLIUM_DRIVER=llvmpipe \
+    MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+
+# Marker so the Makefile / scripts can tell they are inside the GL test box.
+RUN touch /etc/nanos-gltest
