@@ -1,0 +1,3 @@
+#ifndef _LKPI_ASM_CPUFEATURES_H
+#define _LKPI_ASM_CPUFEATURES_H
+#endif

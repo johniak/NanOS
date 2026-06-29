@@ -107,3 +107,12 @@ void sg_free_table(struct sg_table *t);
 #define for_each_sgtable_dma_sg(sgt, sg, i) for_each_sg((sgt)->sgl, sg, (sgt)->nents, i)
 
 #endif /* _LINUXKPI_LINUX_SCATTERLIST_H */
+
+#ifndef _LKPI_SG_PAGEITER
+#define _LKPI_SG_PAGEITER
+struct sg_page_iter { struct scatterlist *sg; unsigned int sg_pgoffset; };
+struct sg_dma_page_iter { struct sg_page_iter base; };
+static inline struct page *sg_page_iter_page(struct sg_page_iter *it){ return sg_page(it->sg); }
+#define for_each_sgtable_page(sgt, piter, pgoffset) for((piter)->sg=(sgt)->sgl,(piter)->sg_pgoffset=(pgoffset); (piter)->sg; (piter)->sg=sg_next((piter)->sg))
+#define for_each_sg_page(sgl, piter, nents, pgoffset) for((piter)->sg=(sgl),(piter)->sg_pgoffset=(pgoffset); (piter)->sg; (piter)->sg=sg_next((piter)->sg))
+#endif
