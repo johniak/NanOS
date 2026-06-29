@@ -124,6 +124,6 @@ int sg_alloc_table_from_pages_segment(struct sg_table *sgt, struct page **pages,
 
 #ifndef _LKPI_SG_DMA_PAGE
 #define _LKPI_SG_DMA_PAGE
-#define for_each_sgtable_dma_page(sgt, piter, pgoffset) for_each_sgtable_page((sgt), (piter), (pgoffset))
+#define for_each_sgtable_dma_page(sgt, dpiter, pgoffset) for((dpiter)->base.sg=(sgt)->sgl,(dpiter)->base.sg_pgoffset=(pgoffset); (dpiter)->base.sg; (dpiter)->base.sg=sg_next((dpiter)->base.sg))
 #define sg_page_iter_dma_address(piter) sg_dma_address((piter)->base.sg)
 #endif

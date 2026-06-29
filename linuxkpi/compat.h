@@ -107,6 +107,7 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #ifndef __cleanup
 #define __cleanup(f)
 #endif
+#define __deprecated
 #define __read_mostly
 #define __ro_after_init
 #define __initconst
@@ -179,6 +180,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/fwnode.h>
 #include <linux/pagemap.h>
 #include <asm/cpufeature.h>
+#include <asm/fpu/api.h>
 #include <linux/ioport.h>
 #include <linux/io.h>
 #include <linux/jump_label.h>
