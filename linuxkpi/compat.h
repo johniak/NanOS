@@ -107,6 +107,8 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #ifndef __cleanup
 #define __cleanup(f)
 #endif
+#define MINORBITS 20
+#define MINORMASK ((1U<<20)-1)
 #define __deprecated
 #define __read_mostly
 #define __ro_after_init

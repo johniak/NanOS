@@ -17,7 +17,7 @@ static inline bool xa_is_err(const void *e){ return false; }
 static inline bool xa_empty(struct xarray *xa){ return idr_is_empty(&xa->idr); }
 static inline void xa_lock(struct xarray *xa){ spin_lock(&xa->lock); }
 static inline void xa_unlock(struct xarray *xa){ spin_unlock(&xa->lock); }
-static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, unsigned limit, unsigned gfp){ (void)limit;(void)gfp; int r=idr_alloc(&xa->idr,p,0,0,0); if(r<0)return r; *id=(u32)r; return 0; }
+struct xa_limit; static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, struct xa_limit limit, unsigned gfp);
 #define xa_for_each(xa, index, entry) for(index=0; ((entry)=xa_load((xa),index))!=0 || (index) < (unsigned long)(xa)->idr.cap; index++) if((entry))
 #define xa_lock_irqsave(xa,f) do{ (f)=0; xa_lock(xa); }while(0)
 #define xa_unlock_irqrestore(xa,f) do{ (void)(f); xa_unlock(xa); }while(0)
@@ -39,4 +39,5 @@ static inline int xa_err(void *e){ (void)e; return 0; }
 #define _LKPI_XA_LIMIT
 struct xa_limit { unsigned min, max; };
 #define XA_LIMIT(_min,_max) (struct xa_limit){ .min=(_min), .max=(_max) }
+static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, struct xa_limit limit, unsigned gfp){ (void)limit;(void)gfp; int r=idr_alloc(&xa->idr,p,0,0,0); if(r<0)return r; *id=(u32)r; return 0; }
 #endif
