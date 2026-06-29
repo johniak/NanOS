@@ -44,6 +44,7 @@ struct device {
 	dev_t devt;
 	struct class *class;
 	const struct device_type *type;
+	const struct attribute_group **groups;
 	void (*type_release)(struct device*);
 };
 

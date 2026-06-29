@@ -175,6 +175,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/sched.h>
 #include <linux/stringify.h>
 #include <linux/sysfs.h>
+#include <linux/kobject.h>
 #include <linux/capability.h>
 #include <linux/uidgid.h>
 #include <linux/set_memory.h>
