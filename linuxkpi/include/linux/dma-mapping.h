@@ -15,6 +15,10 @@
 
 #define DMA_BIT_MASK(n) (((n) == 64) ? ~0ULL : ((1ULL << (n)) - 1))
 #define DMA_MAPPING_ERROR (~(dma_addr_t)0)
+#define DMA_ATTR_SKIP_CPU_SYNC  (1UL << 5)
+#define DMA_ATTR_WRITE_COMBINE  (1UL << 2)
+#define DMA_ATTR_NO_KERNEL_MAPPING (1UL << 1)
+#define DMA_ATTR_FORCE_CONTIGUOUS (1UL << 7)
 
 #ifdef __cplusplus
 extern "C" {

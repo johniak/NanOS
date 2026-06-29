@@ -119,5 +119,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/bitops.h>
 #include <linux/list.h>
 #include <linux/jiffies.h>
+#include <linux/errno.h>
+#include <linux/wait.h>
 
 #endif /* _LINUXKPI_COMPAT_H */
