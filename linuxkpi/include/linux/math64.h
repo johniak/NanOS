@@ -11,5 +11,4 @@ static inline u64 mul_u32_u32(u32 a, u32 b){return (u64)a*b;}
 #ifndef _LKPI_MATH64_X
 #define _LKPI_MATH64_X
 static inline u64 div64_u64_rem(u64 d, u64 v, u64 *rem){ *rem = d % v; return d / v; }
-static inline u64 div64_u64(u64 d, u64 v){ return d / v; }
 #endif
