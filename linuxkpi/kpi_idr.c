@@ -88,6 +88,19 @@ int idr_is_empty(struct idr *idr) {
 	return 1;
 }
 
+/* Call fn(id, ptr, data) for each populated slot; stop (and return) on first non-zero. */
+int idr_for_each(struct idr *idr, int (*fn)(int, void *, void *), void *data) {
+	for (int i = 0; i < idr->cap; i++) {
+		void *p = idr->slots[i];
+		if (p) {
+			int r = fn(idr->base + i, (p == IDA_SENTINEL) ? 0 : p, data);
+			if (r)
+				return r;
+		}
+	}
+	return 0;
+}
+
 /* ---- ida: store the sentinel so any id (incl 0) is valid ---- */
 void ida_init(struct ida *ida) { idr_init(&ida->idr); }
 void ida_destroy(struct ida *ida) { idr_destroy(&ida->idr); }

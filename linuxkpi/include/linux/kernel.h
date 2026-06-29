@@ -27,15 +27,22 @@
 #define struct_size(p, member, n) (sizeof(*(p)) + (n) * sizeof(*(p)->member))
 #define flex_array_size(p, member, n) ((n) * sizeof(*(p)->member))
 
+/* min/max/clamp/swap/abs collide with libstdc++/libc identifiers as function-like macros.
+ * On the host doctest path (NANOS_HOST_TEST) they would clobber std::min/std::max/std::swap/
+ * std::clamp/abs and break <algorithm>/<atomic>/etc., so suppress them there — the host build
+ * never compiles Linux source that needs them (only the C shim primitives, which don't use
+ * them). The kext build keeps the kernel-style macros. */
+#ifndef NANOS_HOST_TEST
 #define min(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a < _b ? _a : _b; })
 #define max(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a > _b ? _a : _b; })
-#define min_t(t, a, b) ({ t _a = (t)(a); t _b = (t)(b); _a < _b ? _a : _b; })
-#define max_t(t, a, b) ({ t _a = (t)(a); t _b = (t)(b); _a > _b ? _a : _b; })
 #define clamp(v, lo, hi) max(lo, min(v, hi))
-#define clamp_t(t, v, lo, hi) max_t(t, lo, min_t(t, v, hi))
-#define clamp_val(v, lo, hi) clamp_t(__typeof__(v), v, lo, hi)
 #define swap(a, b) ({ __typeof__(a) __t = (a); (a) = (b); (b) = __t; })
 #define abs(x) ({ __typeof__(x) __x = (x); __x < 0 ? -__x : __x; })
+#endif
+#define min_t(t, a, b) ({ t _a = (t)(a); t _b = (t)(b); _a < _b ? _a : _b; })
+#define max_t(t, a, b) ({ t _a = (t)(a); t _b = (t)(b); _a > _b ? _a : _b; })
+#define clamp_t(t, v, lo, hi) max_t(t, lo, min_t(t, v, hi))
+#define clamp_val(v, lo, hi) clamp_t(__typeof__(v), v, lo, hi)
 
 #define ALIGN_MASK(x, mask) (((x) + (mask)) & ~(mask))
 #define ALIGN(x, a)        ALIGN_MASK(x, (__typeof__(x))(a) - 1)
@@ -64,9 +71,14 @@
 #define U32_MAX  ((u32)~0U)
 #define U64_MAX  ((u64)~0ULL)
 #define S32_MAX  ((s32)(U32_MAX >> 1))
+/* INT_MAX/UINT_MAX/SIZE_MAX are glibc <limits.h>/<stdint.h> names. Ours use cast expressions
+ * that aren't valid in glibc's `#if INT_MAX == 32767`-style preprocessor checks, so on the host
+ * doctest path defer to the real <limits.h>; the freestanding kext build needs ours. */
+#ifndef NANOS_HOST_TEST
 #define INT_MAX  ((int)(~0U >> 1))
 #define UINT_MAX (~0U)
 #define SIZE_MAX (~(size_t)0)
+#endif
 
 #define upper_32_bits(n) ((u32)(((n) >> 16) >> 16))
 #define lower_32_bits(n) ((u32)((n) & 0xffffffff))

@@ -154,6 +154,29 @@ static int do_format(char *buf, size_t size, const char *fmt, va_list ap) {
 				unsigned long long v = pa ? (unsigned long long)*pa : 0;
 				emit_str(&o, "0x", -1);
 				emit_num(&o, v, 16, 0, 0, 0, -1, 0, 0, 0, 0);
+			} else if (n == 'V') { /* %pV: recursive struct va_format (DRM/dev_printk) */
+				struct lkpi_va_format { const char *fmt; va_list *va; };
+				struct lkpi_va_format *vaf = va_arg(ap, struct lkpi_va_format *);
+				p++;
+				if (vaf && vaf->fmt) {
+					char tmp[512];
+					va_list cp;
+					__builtin_va_copy(cp, *vaf->va);
+					do_format(tmp, sizeof(tmp), vaf->fmt, cp);
+					va_end(cp);
+					emit_str(&o, tmp, -1);
+				}
+			} else if (n == 's' || n == 'S' || n == 'f' || n == 'F' || n == 'B') {
+				/* %ps/%pS/%pf/%pF/%pB: symbol name — no kallsyms in the shim, show hex */
+				p++;
+				unsigned long long v = (unsigned long long)(size_t)va_arg(ap, void *);
+				emit_str(&o, "0x", -1);
+				emit_num(&o, v, 16, 0, 0, 0, -1, 0, 0, 0, 0);
+			} else if (n == 'e') { /* %pe: ERR_PTR -> signed errno */
+				p++;
+				long e = (long)(size_t)va_arg(ap, void *);
+				emit_str(&o, "err:", -1);
+				emit_num(&o, (unsigned long long)(e < 0 ? -e : e), 10, 0, 0, 0, -1, 0, 0, 0, 0);
 			} else {              /* %p / %px / %pK: raw pointer hex */
 				if (n == 'x' || n == 'K') p++;
 				unsigned long long v = (unsigned long long)(size_t)va_arg(ap, void *);

@@ -48,6 +48,17 @@ FILES=(
   include/drm/display/*.h
   include/uapi/drm/*.h
   include/linux/hdmi.h
+  # --- full DRM lift (link phase): dma-buf core + lib helpers the DRM/virtio path needs ---
+  drivers/dma-buf/dma-buf.c
+  drivers/dma-buf/dma-fence.c
+  drivers/dma-buf/dma-fence-chain.c
+  drivers/dma-buf/dma-fence-array.c
+  drivers/dma-buf/dma-resv.c
+  drivers/dma-buf/sync_file.c
+  drivers/virtio/virtio_dma_buf.c
+  lib/rbtree.c
+  lib/list_sort.c
+  lib/scatterlist.c
   # COPYING for the GPL boundary record
   COPYING
 )

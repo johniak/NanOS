@@ -8,6 +8,7 @@
 
 #include <linux/types.h>
 #include <linux/gfp.h>
+#include <linux/string.h>   /* the inline kmemdup/memdup_user helpers below use memcpy */
 #ifndef NANOS_HOST_TEST
 #include <linux/mm.h>   /* slab pulls mm in mainline; gives page helpers to .c that only include slab.h */
 #endif

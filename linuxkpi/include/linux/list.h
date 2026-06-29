@@ -91,7 +91,8 @@ static inline void list_splice(const struct list_head *list, struct list_head *h
   if(!list_empty((struct list_head*)list)){ struct list_head *f=list->next,*l=list->prev,*at=head->next;
     head->next=f; f->prev=head; l->next=at; at->prev=l; } }
 static inline void list_splice_init(struct list_head *list, struct list_head *head){ list_splice(list,head); INIT_LIST_HEAD(list); }
-void list_sort(void *priv, struct list_head *head, int (*cmp)(void*, const struct list_head*, const struct list_head*));
+typedef int __attribute__((nonnull(2,3))) (*list_cmp_func_t)(void *priv, const struct list_head *a, const struct list_head *b);
+void list_sort(void *priv, struct list_head *head, list_cmp_func_t cmp);
 #endif
 
 #ifndef _LKPI_LIST_X2
@@ -103,4 +104,6 @@ static inline void __list_del_entry(struct list_head *entry){ __list_del(entry->
 	for (; &pos->member != (head); pos = list_next_entry(pos, member))
 #define list_for_each_entry_safe_from(pos, n, head, member) \
 	for (n = list_next_entry(pos, member); &pos->member != (head); pos = n, n = list_next_entry(n, member))
+#define list_for_each_entry_from_reverse(pos, head, member) \
+	for (; &pos->member != (head); pos = list_prev_entry(pos, member))
 #endif

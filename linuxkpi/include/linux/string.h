@@ -40,12 +40,17 @@ static inline long strncpy_from_user(char *d, const char *s, long n){ long i=0; 
 extern "C" {
 #endif
 int memcmp(const void*, const void*, size_t);
-void *memchr(const void*, int, size_t);
 void *memmove(void*, const void*, size_t);
 size_t strnlen(const char*, size_t);
+#ifndef NANOS_HOST_TEST
+/* On the host test path glibc's <string.h> already declares these (const-correct, with C++
+ * overloads); redeclaring them (memchr/strchr/strrchr/strstr) conflicts. The kext/freestanding
+ * path needs the declarations, so emit them only there. */
+void *memchr(const void*, int, size_t);
 char *strchr(const char*, int);
 char *strrchr(const char*, int);
 char *strstr(const char*, const char*);
+#endif
 #ifdef __cplusplus
 }
 #endif

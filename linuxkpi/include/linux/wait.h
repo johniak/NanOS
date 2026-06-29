@@ -36,18 +36,27 @@ static inline void init_waitqueue_head(wait_queue_head_t *q) {
 #define wake_up_interruptible_all(q) __wake_up(q)
 #define wake_up_poll(q, m)         __wake_up(q)
 
-/* spin until the condition holds */
-#define __wait_event(wq, condition) do { while (!(condition)) __asm__ __volatile__("pause"); } while (0)
+/* spin until the condition holds. lkpi_wait_pump() services any registered poll source
+ * (the virtio control/cursor vq) so a driver waiting on vq acks/responses at boot — before
+ * the scheduler and device IRQ exist — still makes progress (cooperative polling). */
+void lkpi_wait_pump(void);
+#define __wait_event(wq, condition) do { while (!(condition)) { lkpi_wait_pump(); __asm__ __volatile__("pause"); } } while (0)
 
 #define wait_event(wq, condition)                __wait_event(wq, condition)
 #define wait_event_interruptible(wq, condition)  ({ __wait_event(wq, condition); 0; })
 #define wait_event_killable(wq, condition)       ({ __wait_event(wq, condition); 0; })
 
-/* timeout variants spin then return remaining ticks (>0); never time out in bring-up */
-#define wait_event_timeout(wq, condition, timeout) \
-	({ __wait_event(wq, condition); (timeout) ? (timeout) : 1; })
-#define wait_event_interruptible_timeout(wq, condition, timeout) \
-	({ __wait_event(wq, condition); (timeout) ? (long)(timeout) : 1L; })
+/* timeout variants: bounded cooperative poll. Spin up to ~`timeout` jiffies of pump cycles
+ * (pumping the vq each turn); return remaining ticks (>0) if the condition was met, else 0
+ * (timed out). MUST be bounded — virtio_gpu's display-info probe waits here, and an infinite
+ * __wait_event would stall the whole boot if a response is lost. */
+#define __wait_event_to(wq, condition, timeout) ({ \
+		long __t = (long)(timeout); long __n = __t > 0 ? __t : 1; \
+		while (!(condition) && __n-- > 0) { lkpi_wait_pump(); __asm__ __volatile__("pause"); } \
+		(condition) ? (__n > 0 ? __n : 1L) : 0L; })
+#define wait_event_timeout(wq, condition, timeout)               __wait_event_to(wq, condition, timeout)
+#define wait_event_interruptible_timeout(wq, condition, timeout) __wait_event_to(wq, condition, timeout)
+#define wait_event_killable_timeout(wq, condition, timeout)      __wait_event_to(wq, condition, timeout)
 
 #define might_sleep() do {} while (0)
 
@@ -63,4 +72,14 @@ static inline long wait_for_completion_killable_timeout(struct completion *x, un
 #define _LKPI_WAIT_POLL
 #define wake_up_interruptible_poll(q, m) __wake_up(q)
 #define wake_up_poll(q, m) __wake_up(q)
+#endif
+#ifndef _LKPI_WAIT_LOCK_IRQ
+#define _LKPI_WAIT_LOCK_IRQ
+/* cooperative bring-up: the caller holds `lock`; we drop it around the spin so the
+ * condition-setter can take it, then reacquire before returning (as Linux does). */
+#define wait_event_lock_irq(wq, condition, lock) do { \
+		while (!(condition)) { spin_unlock_irq(&(lock)); __asm__ __volatile__("pause"); spin_lock_irq(&(lock)); } \
+	} while (0)
+#define wait_event_interruptible_lock_irq(wq, condition, lock) \
+	({ wait_event_lock_irq(wq, condition, lock); 0; })
 #endif

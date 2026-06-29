@@ -866,6 +866,13 @@ smoke-usb-dmawindow:
 smoke-vt: image64
 	bash scripts/smoke-vt.sh
 
+# `smoke-virtio-gpu` is the LinuxKPI virtio-gpu display gate: boot with virtio-gpu as the ONLY
+# display (-vga none -device virtio-gpu-pci) and assert the UNMODIFIED Linux 6.12 virtio_gpu DRM
+# driver (the full DRM lift on the shim) probes, brings up scanout 0 / bridges /dev/fb0, and
+# renders the nwm desktop (no VBE fallback — any pixels prove the driver drives the display).
+smoke-virtio-gpu: image64
+	bash scripts/smoke-virtio-gpu.sh
+
 # `smoke-sqlite` is the SQLite-port gate: it boots TWICE on the same image and proves the real
 # sqlite3 CLI creates a database on the read-write ext /disks/main AND that it survives a reboot
 # (3 rows persist; a second insert makes 6). Requires `make ARCH=x86_64 sqlite` + image64 first.
@@ -912,8 +919,8 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-virtio-gpu smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
@@ -2241,12 +2248,24 @@ LINUXKPI_CFLAGS=$(KEXT_CFLAGS) -std=gnu11 -D__KERNEL__ -Ilinuxkpi -Ilinuxkpi/inc
 LINUXKPI_VINC=-Iexternal/linux-6.12/include -Iexternal/linux-6.12/include/uapi -Ikext/virtio_gpu
 $(BINFOLDER)%.o: linuxkpi/%.c
 	@mkdir -p $(BINFOLDER)
-	$(CXX) $(LINUXKPI_CFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: kext/virtio_gpu/%.c
 	@mkdir -p $(BINFOLDER)
-	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
+	$(CXX) $(LINUXKPI_CFLAGS) $(DRM_VINC) -Iexternal/linux-6.12/drivers/gpu/drm/virtio -MMD -MP -c $< -o $@
 # Vendored Linux virtio core (compiled UNMODIFIED against the shim).
 $(BINFOLDER)%.o: external/linux-6.12/drivers/virtio/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
+# Vendored Linux DRM/KMS core + virtio_gpu DRM driver + lib helpers (compiled UNMODIFIED
+# against the shim). DRM files also need the drm subsystem's own dir on the include path.
+DRM_VINC=$(LINUXKPI_VINC) -Iexternal/linux-6.12/drivers/gpu/drm
+$(BINFOLDER)%.o: external/linux-6.12/drivers/gpu/drm/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(LINUXKPI_CFLAGS) $(DRM_VINC) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: external/linux-6.12/drivers/gpu/drm/virtio/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(LINUXKPI_CFLAGS) $(DRM_VINC) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: external/linux-6.12/lib/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
 
@@ -2274,18 +2293,51 @@ $(BINFOLDER)i219.nkext: $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $
 	  $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $(BINFOLDER)e1000_core.o -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
-# virtio_gpu module: LinuxKPI shim primitives + the module entry. (P0: hello_kpi.o proves
-# the build/load path; P1+ swaps in the real virtio_gpu probe and vendored Linux core.)
+# virtio_gpu module: the UNMODIFIED Linux 6.12 virtio_gpu DRM driver + DRM/KMS core + virtio
+# core + lib helpers, all compiled against the LinuxKPI shim, linked with the shim runtime
+# (kpi_*.o), the hand-built modern virtio-pci transport, and the kext bootstrap that runs the
+# real virtio_gpu_probe(). This is the full DRM lift (no hand-written GPU protocol).
 LINUXKPI_OBJS=$(BINFOLDER)kpi_slab.o $(BINFOLDER)kpi_print.o $(BINFOLDER)kpi_idr.o \
   $(BINFOLDER)kpi_sort.o $(BINFOLDER)kpi_time.o $(BINFOLDER)kpi_string.o \
-  $(BINFOLDER)kpi_mm.o $(BINFOLDER)kpi_dma.o $(BINFOLDER)kpi_pci.o
-# Vendored Linux virtio core objects (built from external/linux-6.12 via the rule above).
+  $(BINFOLDER)kpi_mm.o $(BINFOLDER)kpi_dma.o $(BINFOLDER)kpi_pci.o \
+  $(BINFOLDER)kpi_sg.o $(BINFOLDER)kpi_fence.o $(BINFOLDER)kpi_misc.o
+# Vendored Linux virtio core objects (built from external/linux-6.12 via the rules above).
 VIRTIO_CORE_OBJS=$(BINFOLDER)virtio_ring.o $(BINFOLDER)virtio_pci_modern_dev.o
-# The module: hand-built transport + entry, the lifted virtio core, and the shim.
-VIRTIO_GPU_OBJS=$(BINFOLDER)virtio_gpu_kext.o $(BINFOLDER)virtio_transport.o
-$(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
+# Vendored Linux lib helpers (red-black trees, list sort).
+DRM_LIB_OBJS=$(BINFOLDER)rbtree.o $(BINFOLDER)list_sort.o
+# The UNMODIFIED virtio_gpu DRM driver (drivers/gpu/drm/virtio/*.c).
+DRM_DRIVER_OBJS=$(BINFOLDER)virtgpu_drv.o $(BINFOLDER)virtgpu_kms.o $(BINFOLDER)virtgpu_gem.o \
+  $(BINFOLDER)virtgpu_vram.o $(BINFOLDER)virtgpu_display.o $(BINFOLDER)virtgpu_vq.o \
+  $(BINFOLDER)virtgpu_fence.o $(BINFOLDER)virtgpu_object.o $(BINFOLDER)virtgpu_plane.o \
+  $(BINFOLDER)virtgpu_ioctl.o $(BINFOLDER)virtgpu_prime.o $(BINFOLDER)virtgpu_submit.o \
+  $(BINFOLDER)virtgpu_debugfs.o $(BINFOLDER)virtgpu_trace_points.o
+# The UNMODIFIED DRM/KMS core subset the driver pulls in (drivers/gpu/drm/*.c).
+DRM_CORE_OBJS=$(BINFOLDER)drm_aperture.o $(BINFOLDER)drm_atomic_helper.o \
+  $(BINFOLDER)drm_atomic_state_helper.o $(BINFOLDER)drm_atomic_uapi.o $(BINFOLDER)drm_atomic.o \
+  $(BINFOLDER)drm_auth.o $(BINFOLDER)drm_blend.o $(BINFOLDER)drm_bridge.o $(BINFOLDER)drm_cache.o \
+  $(BINFOLDER)drm_client_modeset.o $(BINFOLDER)drm_client.o $(BINFOLDER)drm_color_mgmt.o \
+  $(BINFOLDER)drm_connector.o $(BINFOLDER)drm_crtc_helper.o $(BINFOLDER)drm_crtc.o \
+  $(BINFOLDER)drm_damage_helper.o $(BINFOLDER)drm_displayid.o $(BINFOLDER)drm_drv.o \
+  $(BINFOLDER)drm_dumb_buffers.o $(BINFOLDER)drm_edid.o $(BINFOLDER)drm_eld.o \
+  $(BINFOLDER)drm_encoder.o $(BINFOLDER)drm_fb_dma_helper.o $(BINFOLDER)drm_file.o \
+  $(BINFOLDER)drm_format_helper.o $(BINFOLDER)drm_fourcc.o $(BINFOLDER)drm_framebuffer.o \
+  $(BINFOLDER)drm_gem_atomic_helper.o $(BINFOLDER)drm_gem_framebuffer_helper.o \
+  $(BINFOLDER)drm_gem_shmem_helper.o $(BINFOLDER)drm_gem.o $(BINFOLDER)drm_ioctl.o \
+  $(BINFOLDER)drm_kms_helper_common.o $(BINFOLDER)drm_lease.o $(BINFOLDER)drm_managed.o \
+  $(BINFOLDER)drm_mm.o $(BINFOLDER)drm_mode_config.o $(BINFOLDER)drm_mode_object.o \
+  $(BINFOLDER)drm_modes.o $(BINFOLDER)drm_modeset_helper.o $(BINFOLDER)drm_modeset_lock.o \
+  $(BINFOLDER)drm_panel_orientation_quirks.o $(BINFOLDER)drm_pci.o $(BINFOLDER)drm_plane_helper.o \
+  $(BINFOLDER)drm_plane.o $(BINFOLDER)drm_prime.o $(BINFOLDER)drm_print.o \
+  $(BINFOLDER)drm_probe_helper.o $(BINFOLDER)drm_property.o $(BINFOLDER)drm_rect.o \
+  $(BINFOLDER)drm_self_refresh_helper.o $(BINFOLDER)drm_simple_kms_helper.o \
+  $(BINFOLDER)drm_syncobj.o $(BINFOLDER)drm_sysfs.o $(BINFOLDER)drm_trace_points.o \
+  $(BINFOLDER)drm_vblank_work.o $(BINFOLDER)drm_vblank.o $(BINFOLDER)drm_vma_manager.o \
+  $(BINFOLDER)drm_writeback.o
+# The module: kext bootstrap + hand-built transport (port equivalent of virtio_pci_common.c).
+VIRTIO_GPU_OBJS=$(BINFOLDER)virtio_gpu_drv_entry.o $(BINFOLDER)virtio_transport.o $(BINFOLDER)virtio_gpu_present.o
+$(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(DRM_DRIVER_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
-	  $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) -lgcc
+	  $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(DRM_DRIVER_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
 KEXTS=kbd mouse e1000 e1000e i219

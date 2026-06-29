@@ -82,6 +82,15 @@ static inline void dma_sync_sgtable_for_cpu(struct device *d, struct sg_table *s
 
 #ifndef _LKPI_DMA_SGTABLE2
 #define _LKPI_DMA_SGTABLE2
-static inline int dma_map_sgtable(struct device *d, struct sg_table *s, enum dma_data_direction dir, unsigned long a){ (void)d;(void)s;(void)dir;(void)a; return 0; }
+#include <linux/scatterlist.h>
+/* Identity-mapped DMA: program each entry's bus address from its physical address so the
+ * device sees the real backing pages. (The previous no-op left dma_address=0, which would
+ * make a device DMA from physical 0.) */
+static inline int dma_map_sgtable(struct device *d, struct sg_table *s, enum dma_data_direction dir, unsigned long a){
+	struct scatterlist *sg; unsigned int i; (void)d;(void)dir;(void)a;
+	if (s) for_each_sg(s->sgl, sg, s->orig_nents, i) { sg->dma_address = sg_phys(sg); sg->dma_length = sg->length; }
+	if (s) s->nents = s->orig_nents;
+	return 0;
+}
 static inline void dma_unmap_sgtable(struct device *d, struct sg_table *s, enum dma_data_direction dir, unsigned long a){ (void)d;(void)s;(void)dir;(void)a; }
 #endif

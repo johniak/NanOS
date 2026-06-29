@@ -55,10 +55,12 @@ static void vt_set_status(struct virtio_device *vdev, u8 status) { vp_modern_set
 
 static void vt_reset(struct virtio_device *vdev) {
 	struct vt_dev *vt = to_vt(vdev);
+	unsigned long guard = 100000000UL;
 	vp_modern_set_status(&vt->mdev, 0);
 	/* modern spec: wait until the device clears status to 0 */
-	while (vp_modern_get_status(&vt->mdev))
+	while (vp_modern_get_status(&vt->mdev) && --guard)
 		__asm__ __volatile__("pause");
+	if (!guard) knx_log("virtio_transport: DIAG vt_reset status never cleared\n");
 }
 
 static u64 vt_get_features(struct virtio_device *vdev) { return vp_modern_get_features(&to_vt(vdev)->mdev); }
@@ -168,6 +170,17 @@ struct virtio_device *vt_create(unsigned char bus, unsigned char dev, unsigned c
 	lkpi_pci_fill_ids(&vt->pdev);
 	pci_enable_device(&vt->pdev);   /* enable MEM decode + bus master before BAR mapping */
 
+	/* Cooperative bring-up: we never wire the device's INTx line — used-buffer completions
+	 * are harvested by polling the ISR register via the wait-pump (lkpi_wait_pump -> vt_interrupt).
+	 * virtio INTx is LEVEL-triggered, so once QEMU asserts it on the first kick and nobody acks
+	 * the PCI interrupt, the line stays high and the CPU storms the (unhandled) vector forever,
+	 * stalling pre-scheduler boot. Set PCI_COMMAND.INTX_DISABLE (bit 10) so the pin never asserts;
+	 * the ISR status register still reflects queue completions for the cooperative poll. */
+	{
+		unsigned int cmd = knx_pci_cfg_read32(bus, dev, func, 0x04);
+		knx_pci_cfg_write32(bus, dev, func, 0x04, cmd | (1u << 10));
+	}
+
 	vt->mdev.pci_dev = &vt->pdev;
 	if (vp_modern_probe(&vt->mdev) < 0) {
 		knx_log("virtio_transport: vp_modern_probe failed\n");
@@ -186,8 +199,12 @@ struct virtio_device *vt_create(unsigned char bus, unsigned char dev, unsigned c
 
 	/* bring the device to ACKNOWLEDGE | DRIVER (the driver probe does the rest) */
 	vp_modern_set_status(&vt->mdev, 0);
-	while (vp_modern_get_status(&vt->mdev))
-		__asm__ __volatile__("pause");
+	{
+		unsigned long guard = 100000000UL;
+		while (vp_modern_get_status(&vt->mdev) && --guard)
+			__asm__ __volatile__("pause");
+		if (!guard) knx_log("virtio_transport: DIAG vt_create status never cleared\n");
+	}
 	vp_modern_set_status(&vt->mdev, VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER);
 
 	return &vt->vdev;

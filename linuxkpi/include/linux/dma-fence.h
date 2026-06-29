@@ -68,3 +68,8 @@ static inline int dma_fence_remove_callback(struct dma_fence *f, struct dma_fenc
 #define _LKPI_FENCE_TS
 static inline int dma_fence_signal_timestamp(struct dma_fence *f, ktime_t t){ (void)t; return dma_fence_signal(f); }
 #endif
+
+#ifndef _LKPI_FENCE_SETERR
+#define _LKPI_FENCE_SETERR
+static inline void dma_fence_set_error(struct dma_fence *f, int error){ if (f) f->error = error; }
+#endif

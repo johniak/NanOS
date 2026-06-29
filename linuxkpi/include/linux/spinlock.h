@@ -24,11 +24,14 @@ typedef struct { raw_spinlock_t rlock; } spinlock_t;
 static inline void spin_lock_init(spinlock_t *l) { l->rlock.lock = 0; }
 static inline void raw_spin_lock_init(raw_spinlock_t *l) { l->lock = 0; }
 
-static inline void __lk_acquire(volatile int *l) {
-	while (__atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE)) { while (*l) __asm__ __volatile__("pause"); }
-}
-static inline void __lk_release(volatile int *l) { __atomic_store_n(l, 0, __ATOMIC_RELEASE); }
-static inline int  __lk_try(volatile int *l) { return __atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE) == 0; }
+/* UP cooperative bring-up: locks are NO-OPS. loadAllKexts (where the unmodified DRM driver
+ * probes) runs single-threaded with no preemption, and the cooperative vq pump re-enters the
+ * driver (a wait_event spin calls vt_interrupt -> the vq callback) WHILE a control-queue lock
+ * is held — a real spinlock would self-deadlock there, and DRM's nested modeset locking would
+ * deadlock too. No-op acquire is the correct UP model (rwlocks below are already no-ops). */
+static inline void __lk_acquire(volatile int *l) { (void)l; }
+static inline void __lk_release(volatile int *l) { (void)l; }
+static inline int  __lk_try(volatile int *l) { (void)l; return 1; }
 
 static inline void spin_lock(spinlock_t *l)   { __lk_acquire(&l->rlock.lock); }
 static inline void spin_unlock(spinlock_t *l) { __lk_release(&l->rlock.lock); }

@@ -15,7 +15,9 @@ struct file_operations {
   void *unlocked_ioctl, *compat_ioctl, *llseek, *read_iter, *write_iter, *mmap_supported_flags;
   unsigned int fop_flags;
 };
-struct address_space { void *host; };
+/* address_space doubles as the shmem page cache for gem_shmem: `pages` is a lazily
+ * populated per-index array of single-page folios (see kpi_misc.c shmem_*). */
+struct address_space { void *host; struct page **pages; unsigned long nrpages; unsigned gfp_mask; };
 static inline loff_t i_size_read(const struct inode *i){ (void)i; return 0; }
 extern loff_t noop_llseek(struct file *file, loff_t offset, int whence);
 #define FOP_UNSIGNED_OFFSET (1u<<5)

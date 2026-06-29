@@ -34,10 +34,14 @@ struct module;
 
 #ifndef _LKPI_MODULE_DRIVER
 #define _LKPI_MODULE_DRIVER
-/* module_driver: emit (unused) init/exit wrappers; not auto-run (the kext entry drives probe). */
+/* module_driver: emit a GLOBAL, well-known init/exit entry the kext bootstrap calls
+ * explicitly (lkpi_module_init/exit). This is what lets us run the driver UNMODIFIED:
+ * its `static struct virtio_driver foo` and the module_*_driver() macro stay as-is, and
+ * the registration is reachable from the kext entry through these stable wrapper names.
+ * (One module_driver() per .nkext, which holds for our single-driver modules.) */
 #define module_driver(__driver, __register, __unregister, ...) \
-  static int __maybe_unused __lkpi_init_##__driver(void) { return __register(&(__driver), ##__VA_ARGS__); } \
-  static void __maybe_unused __lkpi_exit_##__driver(void) { __unregister(&(__driver)); }
+  int lkpi_module_init(void) { return __register(&(__driver), ##__VA_ARGS__); } \
+  void lkpi_module_exit(void) { __unregister(&(__driver)); }
 #define module_pci_driver(__pci_driver) \
   module_driver(__pci_driver, pci_register_driver, pci_unregister_driver)
 #endif

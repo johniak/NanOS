@@ -52,9 +52,13 @@ typedef unsigned long ulong;
 typedef unsigned short ushort;
 typedef u32           depot_stack_handle_t;
 typedef u64           sector_t;
-typedef int           pid_t;
 typedef unsigned short umode_t;
+#ifndef NANOS_HOST_TEST
+/* pid_t/dev_t are POSIX names glibc's <sys/types.h> also defines; on the host doctest path a
+ * test pulling both headers would see conflicting typedefs, so defer to glibc there. */
+typedef int           pid_t;
 typedef unsigned int dev_t;
+#endif
 typedef unsigned long pgoff_t;
 typedef unsigned      __poll_t;
 typedef unsigned long pgprot_t;
