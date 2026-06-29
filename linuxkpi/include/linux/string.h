@@ -57,7 +57,6 @@ int strncmp(const char*, const char*, size_t);
 char *strcpy(char*, const char*);
 char *strncpy(char*, const char*, size_t);
 static inline long strscpy_pad(char *d, const char *s, size_t n){ long i=0; for(;i<(long)n-1&&s[i];i++)d[i]=s[i]; for(;i<(long)n;i++)d[i]=0; return i; }
-void *kmemdup(const void *src, size_t len, unsigned gfp);
 #endif
 
 #ifndef _LKPI_STRING_X3
