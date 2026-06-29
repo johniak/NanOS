@@ -115,3 +115,41 @@ static inline int device_is_registered(struct device *d){ (void)d; return 1; }
 static inline int devm_add_action_or_reset(struct device *d, void (*action)(void*), void *data){ (void)d;(void)action;(void)data; return 0; }
 static inline int devm_add_action(struct device *d, void (*action)(void*), void *data){ (void)d;(void)action;(void)data; return 0; }
 #endif
+
+#ifndef _LKPI_DEVICE_ATTR
+#define _LKPI_DEVICE_ATTR
+#include <linux/sysfs.h>
+struct device_attribute { struct attribute attr; long (*show)(struct device*, struct device_attribute*, char*); long (*store)(struct device*, struct device_attribute*, const char*, unsigned long); };
+struct class_attribute { struct attribute attr; long (*show)(const struct class*, const struct class_attribute*, char*); long (*store)(const struct class*, const struct class_attribute*, const char*, unsigned long); };
+#define __ATTR(_name,_mode,_show,_store) { .attr={.name=#_name,.mode=_mode}, .show=_show, .store=_store }
+#define __ATTR_RW(_name) __ATTR(_name, 0644, _name##_show, _name##_store)
+#define __ATTR_RO(_name) __ATTR(_name, 0444, _name##_show, 0)
+#define __ATTR_WO(_name) __ATTR(_name, 0200, 0, _name##_store)
+#define DEVICE_ATTR(_name,_mode,_show,_store) struct device_attribute dev_attr_##_name = __ATTR(_name,_mode,_show,_store)
+#define DEVICE_ATTR_RW(_name) struct device_attribute dev_attr_##_name = __ATTR_RW(_name)
+#define DEVICE_ATTR_RO(_name) struct device_attribute dev_attr_##_name = __ATTR_RO(_name)
+#define DEVICE_ATTR_WO(_name) struct device_attribute dev_attr_##_name = __ATTR_WO(_name)
+#define CLASS_ATTR_RO(_name) struct class_attribute class_attr_##_name = __ATTR_RO(_name)
+#define CLASS_ATTR_RW(_name) struct class_attribute class_attr_##_name = __ATTR_RW(_name)
+static inline struct class *class_create(const char *name){ (void)name; static struct class c; return &c; }
+static inline void class_destroy(struct class *c){ (void)c; }
+static inline int class_create_file(struct class *c, const struct class_attribute *a){ (void)c;(void)a; return 0; }
+static inline void class_remove_file(struct class *c, const struct class_attribute *a){ (void)c;(void)a; }
+static inline struct device *kobj_to_dev(struct kobject *k){ return container_of(k, struct device, kobj); }
+static inline int device_create_file(struct device *d, const struct device_attribute *a){ (void)d;(void)a; return 0; }
+static inline void device_remove_file(struct device *d, const struct device_attribute *a){ (void)d;(void)a; }
+static inline int device_add_group(struct device *d, const struct attribute_group *g){ (void)d;(void)g; return 0; }
+static inline int component_add(struct device *d, const struct component_ops *o){ (void)d;(void)o; return 0; }
+static inline void component_del(struct device *d, const struct component_ops *o){ (void)d;(void)o; }
+#endif
+
+#ifndef _LKPI_DEVICE_ATTR2
+#define _LKPI_DEVICE_ATTR2
+#define S_IRUGO 0444
+#define S_IWUSR 0200
+#define S_IRWXU 0700
+struct class_attribute_string { struct class_attribute attr; char *str; };
+long show_class_attr_string(const struct class*, const struct class_attribute*, char*);
+#define CLASS_ATTR_STRING(_name,_mode,_str) struct class_attribute_string class_attr_##_name = { __ATTR(_name,_mode,(void*)show_class_attr_string,0), (char*)_str }
+static inline struct fwnode_handle *dev_fwnode(const struct device *d){ (void)d; return 0; }
+#endif
