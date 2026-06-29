@@ -38,6 +38,15 @@ FILES=(
   include/uapi/linux/virtio_ids.h
   include/uapi/linux/virtio_types.h
   include/uapi/linux/virtio_gpu.h
+  # --- P2 (full DRM lift): virtio_gpu DRM driver + DRM/KMS core + headers ---
+  drivers/gpu/drm/virtio/*.c
+  drivers/gpu/drm/virtio/*.h
+  drivers/gpu/drm/*.c
+  drivers/gpu/drm/*.h
+  include/drm/*.h
+  include/drm/ttm/*.h
+  include/drm/display/*.h
+  include/uapi/drm/*.h
   # COPYING for the GPL boundary record
   COPYING
 )
