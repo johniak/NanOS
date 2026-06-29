@@ -2233,7 +2233,8 @@ $(BINFOLDER)%.o: kext/i219/%.cpp
 # C (gnu11) by $(CXX)=$(CROSS)gcc (extension-driven).
 LINUXKPI_CFLAGS=$(KEXT_CFLAGS) -std=gnu11 -D__KERNEL__ -Ilinuxkpi -Ilinuxkpi/include \
   -include linuxkpi/autoconf.h -include linuxkpi/compat.h \
-  -Wno-unused -Wno-unused-parameter -Wno-implicit-fallthrough
+  -Wno-unused -Wno-unused-parameter -Wno-implicit-fallthrough \
+  -Wno-incompatible-pointer-types -Wno-attributes -Wno-builtin-declaration-mismatch
 # Vendored-Linux include tree (virtio/DRM subsystem headers) + the module dir. The shim's
 # -Ilinuxkpi/include comes FIRST so <linux/foo.h> kernel-API headers resolve to the shim;
 # virtio/drm-specific headers fall through to the vendored tree.

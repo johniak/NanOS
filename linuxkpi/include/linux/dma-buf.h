@@ -4,6 +4,7 @@
 #include <linux/scatterlist.h>
 #include <linux/dma-direction.h>
 #include <linux/iosys-map.h>
+#include <linux/mm_types.h>
 struct dma_buf; struct dma_buf_attachment; struct device; struct dma_resv;
 struct dma_buf_ops {
   bool cache_sgt_mapping;

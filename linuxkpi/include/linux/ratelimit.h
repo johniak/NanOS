@@ -1,5 +1,7 @@
 #ifndef _LKPI_RATELIMIT_H
 #define _LKPI_RATELIMIT_H
+#define DEFAULT_RATELIMIT_INTERVAL (5*100)
+#define DEFAULT_RATELIMIT_BURST 10
 struct ratelimit_state { int interval; int burst; };
 #define DEFINE_RATELIMIT_STATE(name, intv, brst) struct ratelimit_state name = { (intv), (brst) }
 #define RATELIMIT_STATE_INIT(name, intv, brst) { (intv), (brst) }
