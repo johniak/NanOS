@@ -63,3 +63,9 @@ static inline int dma_buf_end_cpu_access(struct dma_buf *b, enum dma_data_direct
 static inline int dma_buf_mmap(struct dma_buf *b, struct vm_area_struct *v, unsigned long off){ (void)b;(void)v;(void)off; return -1; }
 static inline void get_dma_buf(struct dma_buf *b){ (void)b; }
 #endif
+
+#ifndef _LKPI_DMABUF_ATTACH_UNLOCKED
+#define _LKPI_DMABUF_ATTACH_UNLOCKED
+static inline struct sg_table *dma_buf_map_attachment_unlocked(struct dma_buf_attachment *a, enum dma_data_direction d){ (void)a;(void)d; return 0; }
+static inline void dma_buf_unmap_attachment_unlocked(struct dma_buf_attachment *a, struct sg_table *s, enum dma_data_direction d){ (void)a;(void)s;(void)d; }
+#endif

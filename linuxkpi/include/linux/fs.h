@@ -33,9 +33,4 @@ int anon_inode_getfd(const char *name, const struct file_operations *ops, void *
 static inline struct file *file_clone_open(struct file *f){ return f; }
 #endif
 
-#ifndef _LKPI_FS_FD
-#define _LKPI_FS_FD
-static inline int get_unused_fd_flags(unsigned f){ (void)f; return -1; }
-static inline void put_unused_fd(unsigned fd){ (void)fd; }
-static inline void fd_install(unsigned fd, struct file *f){ (void)fd;(void)f; }
-#endif
+

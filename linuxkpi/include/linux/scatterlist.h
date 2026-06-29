@@ -116,3 +116,8 @@ static inline struct page *sg_page_iter_page(struct sg_page_iter *it){ return sg
 #define for_each_sgtable_page(sgt, piter, pgoffset) for((piter)->sg=(sgt)->sgl,(piter)->sg_pgoffset=(pgoffset); (piter)->sg; (piter)->sg=sg_next((piter)->sg))
 #define for_each_sg_page(sgl, piter, nents, pgoffset) for((piter)->sg=(sgl),(piter)->sg_pgoffset=(pgoffset); (piter)->sg; (piter)->sg=sg_next((piter)->sg))
 #endif
+
+#ifndef _LKPI_SG_ALLOC_SEG
+#define _LKPI_SG_ALLOC_SEG
+int sg_alloc_table_from_pages_segment(struct sg_table *sgt, struct page **pages, unsigned n, unsigned off, unsigned long size, unsigned max_seg, unsigned gfp);
+#endif
