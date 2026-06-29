@@ -190,3 +190,16 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/file.h>
 
 #endif /* _LINUXKPI_COMPAT_H */
+
+/* edid uses these without including their headers; define under the headers' own
+ * guards so the header copies are skipped (no double-definition). */
+#ifndef _LKPI_BITMAP_SET
+#define _LKPI_BITMAP_SET
+static inline void bitmap_set(unsigned long *map, unsigned start, unsigned nbits){ for(unsigned i=0;i<nbits;i++) map[(start+i)/(8*sizeof(long))] |= (1UL<<((start+i)%(8*sizeof(long)))); }
+static inline void bitmap_clear(unsigned long *map, unsigned start, unsigned nbits){ for(unsigned i=0;i<nbits;i++) map[(start+i)/(8*sizeof(long))] &= ~(1UL<<((start+i)%(8*sizeof(long)))); }
+#endif
+struct seq_file;
+#ifndef _LKPI_SEQ_WRITE
+#define _LKPI_SEQ_WRITE
+static inline int seq_write(struct seq_file *m, const void *data, unsigned long len){ (void)m;(void)data;(void)len; return 0; }
+#endif

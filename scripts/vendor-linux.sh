@@ -47,6 +47,7 @@ FILES=(
   include/drm/ttm/*.h
   include/drm/display/*.h
   include/uapi/drm/*.h
+  include/linux/hdmi.h
   # COPYING for the GPL boundary record
   COPYING
 )
