@@ -53,6 +53,7 @@ typedef unsigned short ushort;
 typedef u32           depot_stack_handle_t;
 typedef u64           sector_t;
 typedef int           pid_t;
+typedef unsigned short umode_t;
 typedef struct { unsigned char b[16]; } uuid_t;
 typedef struct { unsigned char b[16]; } guid_t;
 typedef struct { volatile int lock; } rwlock_t;
