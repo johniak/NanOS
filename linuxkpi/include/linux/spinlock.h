@@ -81,7 +81,7 @@ struct lockdep_map { int x; };
 #define lockdep_assert_once(c) do{}while(0)
 #define lockdep_is_held(l) 1
 #define lockdep_init_map(m,n,k,s) do{}while(0)
-#define lock_acquire_shared_recursive(m,a,b,c,d,e) do{}while(0)
+#define lock_acquire_shared_recursive(...) do{}while(0)
 #define lock_release(m,i) do{}while(0)
 #define lock_acquire(m,a,b,c,d,e,f) do{}while(0)
 #define mutex_acquire(m,a,b,c) do{}while(0)

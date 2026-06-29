@@ -26,11 +26,7 @@ static inline void folio_batch_release(struct folio_batch *b){ b->nr=0; }
 static inline int check_move_unevictable_folios(struct folio_batch *b){ (void)b; return 0; }
 #endif
 
-#ifndef _LKPI_PAGEMAP_X
-#define _LKPI_PAGEMAP_X
-static inline void mapping_set_gfp_mask(struct address_space *m, unsigned g){ (void)m;(void)g; }
-static inline unsigned long invalidate_mapping_pages(struct address_space *m, unsigned long s, unsigned long e){ (void)m;(void)s;(void)e; return 0; }
-#endif
+
 
 #ifndef _LKPI_PAGEMAP_FOLIO2
 #define _LKPI_PAGEMAP_FOLIO2

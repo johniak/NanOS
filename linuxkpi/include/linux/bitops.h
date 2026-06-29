@@ -58,3 +58,10 @@ static inline unsigned long find_next_bit(const unsigned long *a, unsigned long 
 static inline unsigned long find_first_bit(const unsigned long *a, unsigned long sz){ return find_next_bit(a,sz,0); }
 #define for_each_set_bit(bit,addr,size) for((bit)=find_first_bit((addr),(size)); (bit)<(size); (bit)=find_next_bit((addr),(size),(bit)+1))
 #endif
+
+#ifndef _LKPI_BITOPS_UNLOCK
+#define _LKPI_BITOPS_UNLOCK
+static inline void clear_bit_unlock(long nr, volatile unsigned long *addr){ __atomic_fetch_and(&addr[BIT_WORD(nr)], ~BIT_MASK(nr), __ATOMIC_RELEASE); }
+static inline void __clear_bit_unlock(long nr, volatile unsigned long *addr){ clear_bit_unlock(nr,addr); }
+static inline int test_and_set_bit_lock(long nr, volatile unsigned long *addr){ return test_and_set_bit(nr,addr); }
+#endif

@@ -57,3 +57,9 @@ static inline void dma_buf_vunmap_unlocked(struct dma_buf *b, struct iosys_map *
 static inline int dma_buf_begin_cpu_access(struct dma_buf *b, enum dma_data_direction d){ (void)b;(void)d; return 0; }
 static inline int dma_buf_end_cpu_access(struct dma_buf *b, enum dma_data_direction d){ (void)b;(void)d; return 0; }
 #endif
+
+#ifndef _LKPI_DMABUF_X2
+#define _LKPI_DMABUF_X2
+static inline int dma_buf_mmap(struct dma_buf *b, struct vm_area_struct *v, unsigned long off){ (void)b;(void)v;(void)off; return -1; }
+static inline void get_dma_buf(struct dma_buf *b){ (void)b; }
+#endif

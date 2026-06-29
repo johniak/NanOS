@@ -41,3 +41,10 @@
 #define _IOC_SIZE(nr)  (((nr) >> _IOC_SIZESHIFT) & _IOC_SIZEMASK)
 
 #endif /* _LINUXKPI_ASM_IOCTL_H */
+
+#ifndef _LKPI_IOC_INOUT
+#define _LKPI_IOC_INOUT
+#define IOC_IN    (1U << 30)
+#define IOC_OUT   (2U << 30)
+#define IOC_INOUT (IOC_IN|IOC_OUT)
+#endif

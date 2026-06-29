@@ -93,3 +93,14 @@ static inline void list_splice(const struct list_head *list, struct list_head *h
 static inline void list_splice_init(struct list_head *list, struct list_head *head){ list_splice(list,head); INIT_LIST_HEAD(list); }
 void list_sort(void *priv, struct list_head *head, int (*cmp)(void*, const struct list_head*, const struct list_head*));
 #endif
+
+#ifndef _LKPI_LIST_X2
+#define _LKPI_LIST_X2
+static inline void __list_del_entry(struct list_head *entry){ __list_del(entry->prev, entry->next); }
+#define list_for_each_entry_continue(pos, head, member) \
+	for (pos = list_next_entry(pos, member); &pos->member != (head); pos = list_next_entry(pos, member))
+#define list_for_each_entry_from(pos, head, member) \
+	for (; &pos->member != (head); pos = list_next_entry(pos, member))
+#define list_for_each_entry_safe_from(pos, n, head, member) \
+	for (n = list_next_entry(pos, member); &pos->member != (head); pos = n, n = list_next_entry(n, member))
+#endif

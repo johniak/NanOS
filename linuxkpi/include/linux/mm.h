@@ -94,3 +94,8 @@ static inline unsigned long vmf_insert_pfn_prot(struct vm_area_struct *v, unsign
 static inline void mapping_set_gfp_mask(struct address_space *m, unsigned g){ (void)m;(void)g; }
 static inline unsigned long invalidate_mapping_pages(struct address_space *m, unsigned long s, unsigned long e){ (void)m;(void)s;(void)e; return 0; }
 #endif
+
+#ifndef _LKPI_MM_COW
+#define _LKPI_MM_COW
+static inline int is_cow_mapping(unsigned long flags){ (void)flags; return 0; }
+#endif

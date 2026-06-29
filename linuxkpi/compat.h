@@ -172,5 +172,11 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/sched.h>
 #include <linux/stringify.h>
 #include <linux/sysfs.h>
+#include <linux/capability.h>
+#include <linux/uidgid.h>
+#include <linux/set_memory.h>
+#include <linux/dma-mapping.h>
+#include <linux/fwnode.h>
+#include <linux/pagemap.h>
 
 #endif /* _LINUXKPI_COMPAT_H */
