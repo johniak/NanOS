@@ -125,6 +125,20 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #define DIV_ROUND_CLOSEST_ULL(x, d) DIV_ROUND_CLOSEST((unsigned long long)(x), (d))
 #define BUILD_BUG_ON_INVALID(e)     ((void)(sizeof((long)(e))))
 
+/* Kconfig query — canonical kernel IS_ENABLED (CONFIG_* are defined as 1 in autoconf.h). */
+#define __ARG_PLACEHOLDER_1 0,
+#define __take_second_arg(__ignored, val, ...) val
+#define __is_defined(x)        ___is_defined(x)
+#define ___is_defined(val)     ____is_defined(__ARG_PLACEHOLDER_##val)
+#define ____is_defined(arg1_or_junk) __take_second_arg(arg1_or_junk 1, 0)
+#define IS_BUILTIN(option)     __is_defined(option)
+#define IS_MODULE(option)      0
+#define IS_ENABLED(option)     (IS_BUILTIN(option) || IS_MODULE(option))
+#define IS_REACHABLE(option)   IS_BUILTIN(option)
+#define O_CLOEXEC 02000000
+#define O_RDWR    02
+#define O_RDONLY  00
+
 /* printf vector wrapper used by drm_print.h */
 #include <stdarg.h>
 struct va_format { const char *fmt; va_list *va; };
@@ -136,5 +150,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/jiffies.h>
 #include <linux/errno.h>
 #include <linux/wait.h>
+#include <linux/string.h>
+#include <linux/uuid.h>
 
 #endif /* _LINUXKPI_COMPAT_H */

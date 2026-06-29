@@ -22,6 +22,8 @@ struct dma_fence_ops {
   bool (*signaled)(struct dma_fence*);
   long (*wait)(struct dma_fence*, bool, long);
   void (*release)(struct dma_fence*);
+  void (*fence_value_str)(struct dma_fence*, char*, int);
+  void (*timeline_value_str)(struct dma_fence*, struct dma_fence*, char*, int);
 };
 enum { DMA_FENCE_FLAG_SIGNALED_BIT=0, DMA_FENCE_FLAG_TIMESTAMP_BIT, DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT, DMA_FENCE_FLAG_USER_BITS };
 #ifdef __cplusplus
@@ -42,4 +44,11 @@ u64  dma_fence_context_alloc(unsigned);
 }
 #endif
 static inline bool dma_fence_is_signaled_locked(struct dma_fence*f){return dma_fence_is_signaled(f);}
+#endif
+
+#ifndef _LKPI_DMA_FENCE_EXTRA
+#define _LKPI_DMA_FENCE_EXTRA
+static inline bool dma_fence_is_later(struct dma_fence *a, struct dma_fence *b){ return a&&b&&(a->seqno>b->seqno); }
+static inline bool dma_fence_match_context(struct dma_fence *f, u64 ctx){ return f && f->context==ctx; }
+static inline struct dma_fence *dma_fence_get_rcu_safe(struct dma_fence **pf){ return pf?*pf:0; }
 #endif

@@ -72,3 +72,10 @@ static inline void dma_unmap_resource(struct device *d, dma_addr_t a, size_t siz
 }
 
 #endif /* _LINUXKPI_LINUX_DMA_MAPPING_H */
+
+#ifndef _LKPI_DMA_SGTABLE
+#define _LKPI_DMA_SGTABLE
+struct sg_table;
+static inline void dma_sync_sgtable_for_device(struct device *d, struct sg_table *s, enum dma_data_direction dir){ (void)d;(void)s;(void)dir; }
+static inline void dma_sync_sgtable_for_cpu(struct device *d, struct sg_table *s, enum dma_data_direction dir){ (void)d;(void)s;(void)dir; }
+#endif

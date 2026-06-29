@@ -40,3 +40,11 @@ static inline void writeq(u64 v, volatile void *a) { *(volatile u64 *)a = v; }
 #define writeq_relaxed(v, a) writeq(v, a)
 
 #endif /* _LINUXKPI_LINUX_IO_H */
+
+#ifndef _LKPI_IO_EXTRA
+#define _LKPI_IO_EXTRA
+struct resource { unsigned long start, end; const char *name; unsigned long flags; };
+static inline void *devm_request_mem_region(struct device *d, unsigned long s, unsigned long n, const char *nm){ (void)d;(void)nm; return knx_map_mmio((unsigned)s,(unsigned)n); }
+static inline void *devm_ioremap(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
+static inline void *devm_ioremap_wc(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
+#endif
