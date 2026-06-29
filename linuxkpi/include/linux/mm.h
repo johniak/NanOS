@@ -12,6 +12,7 @@
 #include <linux/types.h>
 #include <linux/gfp.h>
 #include <linux/kernel.h>
+#include <linux/mm_types.h>
 
 #define PAGE_SHIFT 12
 #define PAGE_SIZE  (1UL << PAGE_SHIFT)
@@ -58,4 +59,13 @@ static inline void free_page(unsigned long addr) { free_pages_exact((void *)addr
 static inline void free_pages(unsigned long addr, unsigned int order) { free_pages_exact((void *)addr, PAGE_SIZE << order); }
 
 static inline void unmap_mapping_range(void *m, unsigned long h, unsigned long e, int z){(void)m;(void)h;(void)e;(void)z;}
+/* page protections + user-mapping helpers (inert: bridge drives KMS in-kernel, no DRM mmap) */
+static inline pgprot_t pgprot_writecombine(pgprot_t p){ return p; }
+static inline pgprot_t pgprot_noncached(pgprot_t p){ return p; }
+static inline pgprot_t pgprot_decrypted(pgprot_t p){ return p; }
+static inline pgprot_t vm_get_page_prot(unsigned long f){ (void)f; return 0; }
+static inline void vm_flags_set(struct vm_area_struct *v, unsigned long f){ v->vm_flags |= f; }
+static inline void vm_flags_clear(struct vm_area_struct *v, unsigned long f){ v->vm_flags &= ~f; }
+static inline int remap_pfn_range(struct vm_area_struct *v, unsigned long a, unsigned long pfn, unsigned long s, pgprot_t p){ (void)v;(void)a;(void)pfn;(void)s;(void)p; return 0; }
+static inline int io_remap_pfn_range(struct vm_area_struct *v, unsigned long a, unsigned long pfn, unsigned long s, pgprot_t p){ (void)v;(void)a;(void)pfn;(void)s;(void)p; return 0; }
 #endif /* _LINUXKPI_LINUX_MM_H */

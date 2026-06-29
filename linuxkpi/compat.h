@@ -117,5 +117,7 @@ struct va_format { const char *fmt; va_list *va; };
 /* the vendored DRM/virtio source assumes these are always pulled in. */
 #include <linux/bug.h>
 #include <linux/bitops.h>
+#include <linux/list.h>
+#include <linux/jiffies.h>
 
 #endif /* _LINUXKPI_COMPAT_H */

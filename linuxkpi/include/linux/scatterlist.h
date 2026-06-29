@@ -92,4 +92,18 @@ static inline dma_addr_t sg_phys(struct scatterlist *sg) {
 #define for_each_sg(sglist, sg, nr, i) \
 	for ((i) = 0, (sg) = (sglist); (i) < (nr); (i)++, (sg) = sg_next(sg))
 
+struct sg_table { struct scatterlist *sgl; unsigned int nents; unsigned int orig_nents; };
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+int  sg_alloc_table(struct sg_table *t, unsigned int nents, unsigned gfp);
+void sg_free_table(struct sg_table *t);
+#ifdef __cplusplus
+}
+#endif
+
+#define for_each_sgtable_sg(sgt, sg, i)     for_each_sg((sgt)->sgl, sg, (sgt)->orig_nents, i)
+#define for_each_sgtable_dma_sg(sgt, sg, i) for_each_sg((sgt)->sgl, sg, (sgt)->nents, i)
+
 #endif /* _LINUXKPI_LINUX_SCATTERLIST_H */

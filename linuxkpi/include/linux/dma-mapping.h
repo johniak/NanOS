@@ -58,4 +58,13 @@ static inline dma_addr_t dma_map_page_attrs(struct device *dev, void *page, size
 static inline void dma_unmap_page_attrs(struct device *d, dma_addr_t a, size_t s, enum dma_data_direction dir, unsigned long attrs) { (void)d;(void)a;(void)s;(void)dir;(void)attrs; }
 #define dma_unmap_page(d, a, sz, dir) dma_unmap_page_attrs(d, a, sz, dir, 0)
 
+static inline dma_addr_t dma_map_resource(struct device *d, phys_addr_t phys, size_t size,
+                                          enum dma_data_direction dir, unsigned long attrs) {
+	(void)d; (void)size; (void)dir; (void)attrs; return (dma_addr_t)phys;   /* identity */
+}
+static inline void dma_unmap_resource(struct device *d, dma_addr_t a, size_t size,
+                                      enum dma_data_direction dir, unsigned long attrs) {
+	(void)d; (void)a; (void)size; (void)dir; (void)attrs;
+}
+
 #endif /* _LINUXKPI_LINUX_DMA_MAPPING_H */

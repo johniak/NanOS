@@ -24,6 +24,8 @@
 #define container_of_const(ptr, type, member) container_of(ptr, type, member)
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define struct_size(p, member, n) (sizeof(*(p)) + (n) * sizeof(*(p)->member))
+#define flex_array_size(p, member, n) ((n) * sizeof(*(p)->member))
 
 #define min(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a < _b ? _a : _b; })
 #define max(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a > _b ? _a : _b; })
