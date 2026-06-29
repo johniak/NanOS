@@ -48,3 +48,15 @@ static inline void atomic64_inc(atomic64_t *v) { (void)atomic64_add_return(1, v)
 #define xchg(ptr, n) __atomic_exchange_n((ptr), (n), __ATOMIC_SEQ_CST)
 
 #endif /* _LINUXKPI_LINUX_ATOMIC_H */
+
+#ifndef _LKPI_ATOMIC_X
+#define _LKPI_ATOMIC_X
+static inline void atomic64_add(long i, atomic64_t *v){ (void)atomic64_add_return(i,v); }
+static inline long atomic64_sub_return(long i, atomic64_t *v){ return __atomic_sub_fetch(&v->counter,i,__ATOMIC_SEQ_CST); }
+typedef struct { atomic_t r; } refcount_t;
+static inline void refcount_set(refcount_t *r, int n){ atomic_set(&r->r,n); }
+static inline int refcount_read(const refcount_t *r){ return atomic_read(&r->r); }
+static inline void refcount_inc(refcount_t *r){ atomic_inc(&r->r); }
+static inline int refcount_dec_and_test(refcount_t *r){ return atomic_dec_and_test(&r->r); }
+static inline int refcount_inc_not_zero(refcount_t *r){ return atomic_add_unless(&r->r,1,0); }
+#endif

@@ -20,3 +20,9 @@ static inline int  ww_mutex_is_locked(struct ww_mutex *l){ return mutex_is_locke
 #define _LKPI_WW_RESV
 extern struct ww_class reservation_ww_class;
 #endif
+
+#ifndef _LKPI_WW_SLOW
+#define _LKPI_WW_SLOW
+static inline void ww_mutex_lock_slow(struct ww_mutex *l, struct ww_acquire_ctx *c){ ww_mutex_lock(l,c); }
+static inline int ww_mutex_lock_slow_interruptible(struct ww_mutex *l, struct ww_acquire_ctx *c){ return ww_mutex_lock_interruptible(l,c); }
+#endif

@@ -36,3 +36,10 @@ static inline ktime_t us_to_ktime(u64 us) { return (ktime_t)us * 1000; }
 static inline ktime_t ms_to_ktime(u64 ms) { return (ktime_t)ms * 1000000; }
 
 #endif /* _LINUXKPI_LINUX_KTIME_H */
+
+#ifndef _LKPI_KTIME_X
+#define _LKPI_KTIME_X
+static inline ktime_t ktime_sub_ns(ktime_t k, u64 ns){ return k-(s64)ns; }
+struct timespec64 { s64 tv_sec; long tv_nsec; };
+static inline struct timespec64 ktime_to_timespec64(ktime_t k){ struct timespec64 t; t.tv_sec=k/1000000000LL; t.tv_nsec=k%1000000000LL; return t; }
+#endif

@@ -26,3 +26,13 @@ static inline struct workqueue_struct *create_singlethread_workqueue(const char 
 #define work_pending(w) (false)
 #define to_delayed_work(w) container_of(w, struct delayed_work, work)
 #endif
+
+#ifndef _LKPI_WQ_X
+#define _LKPI_WQ_X
+extern struct workqueue_struct *system_wq, *system_unbound_wq, *system_long_wq, *system_highpri_wq;
+static inline bool mod_delayed_work(struct workqueue_struct *q, struct delayed_work *w, unsigned long d){ (void)q;(void)d; if(w->work.func)w->work.func(&w->work); return true; }
+static inline struct work_struct *current_work(void){ return 0; }
+#define destroy_work_on_stack(w) do{}while(0)
+#define destroy_delayed_work_on_stack(w) do{}while(0)
+#define drain_workqueue(q) do{}while(0)
+#endif

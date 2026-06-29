@@ -110,6 +110,10 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #define __read_mostly
 #define __ro_after_init
 #define __initconst
+#define oops_in_progress 0
+#define might_fault() do{}while(0)
+#define BITS_PER_TYPE(t) (sizeof(t)*8)
+#define MAX_T(t,a,b) max_t(t,a,b)
 #define _THIS_IP_   0UL
 #define _RET_IP_    0UL
 #define KBUILD_MODNAME "virtio_gpu"
@@ -151,6 +155,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/bitops.h>
 #include <linux/list.h>
 #include <linux/jiffies.h>
+#include <linux/math64.h>
 #include <linux/errno.h>
 #include <linux/wait.h>
 #include <linux/string.h>

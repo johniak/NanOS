@@ -39,3 +39,8 @@ static inline enum dma_resv_usage dma_resv_usage_rw(bool write){ return write?DM
 static inline int dma_resv_lock_slow_interruptible(struct dma_resv *r, struct ww_acquire_ctx *c){ return dma_resv_lock_interruptible(r,c); }
 static inline void dma_resv_lock_slow(struct dma_resv *r, struct ww_acquire_ctx *c){ dma_resv_lock(r,c); }
 #endif
+
+#ifndef _LKPI_DMA_RESV_SINGLETON
+#define _LKPI_DMA_RESV_SINGLETON
+static inline int dma_resv_get_singleton(struct dma_resv *r, enum dma_resv_usage u, struct dma_fence **f){ (void)r;(void)u; *f=0; return 0; }
+#endif

@@ -52,3 +52,10 @@ static inline void init_waitqueue_head(wait_queue_head_t *q) {
 #define might_sleep() do {} while (0)
 
 #endif /* _LINUXKPI_LINUX_WAIT_H */
+
+#ifndef _LKPI_WAIT_CMPL
+#define _LKPI_WAIT_CMPL
+#include <linux/completion.h>
+static inline long wait_for_completion_interruptible_timeout(struct completion *x, unsigned long t){ wait_for_completion(x); return t?(long)t:1; }
+static inline long wait_for_completion_killable_timeout(struct completion *x, unsigned long t){ wait_for_completion(x); return t?(long)t:1; }
+#endif

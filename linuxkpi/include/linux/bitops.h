@@ -51,3 +51,10 @@ static inline u32 ror32(u32 word, unsigned int shift) { return (word >> (shift &
 static inline int get_count_order(unsigned int count) { return count <= 1 ? 0 : (int)fls(count - 1); }
 
 #endif /* _LINUXKPI_LINUX_BITOPS_H */
+
+#ifndef _LKPI_BITOPS_FOREACH
+#define _LKPI_BITOPS_FOREACH
+static inline unsigned long find_next_bit(const unsigned long *a, unsigned long sz, unsigned long st){ for(unsigned long i=st;i<sz;i++) if(test_bit(i,a)) return i; return sz; }
+static inline unsigned long find_first_bit(const unsigned long *a, unsigned long sz){ return find_next_bit(a,sz,0); }
+#define for_each_set_bit(bit,addr,size) for((bit)=find_first_bit((addr),(size)); (bit)<(size); (bit)=find_next_bit((addr),(size),(bit)+1))
+#endif

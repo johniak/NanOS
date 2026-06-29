@@ -114,3 +114,11 @@ static inline const char *str_enabled_disabled(bool v){ return v?"enabled":"disa
 #define DIV64_U64_ROUND_UP(n,d) DIV_ROUND_UP_ULL(n,d)
 #define KHZ2PICOS(a) (1000000000UL/(a))
 #endif
+
+#ifndef _LKPI_KERNEL_MIN
+#define _LKPI_KERNEL_MIN
+#define INT_MIN  (-INT_MAX-1)
+#define S32_MIN  (-S32_MAX-1)
+#define SHRT_MAX 32767
+#define SHRT_MIN (-32768)
+#endif

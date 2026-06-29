@@ -42,6 +42,7 @@
 #define EOVERFLOW 75
 #define EOPNOTSUPP 95
 #define ETIME 62
+#define EALREADY 114
 #define ETIMEDOUT 110
 #define EREMOTEIO 121
 #define EPROBE_DEFER 517
