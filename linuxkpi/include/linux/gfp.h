@@ -31,3 +31,10 @@
 #define GFP_DMA32         __GFP_DMA32
 
 #endif /* _LINUXKPI_LINUX_GFP_H */
+#ifndef _LKPI_GFP_HIGHUSER
+#define _LKPI_GFP_HIGHUSER
+#define GFP_HIGHUSER  ((gfp_t)0u)
+#define GFP_HIGHUSER_MOVABLE ((gfp_t)0u)
+#define GFP_NOIO ((gfp_t)0u)
+#define GFP_KERNEL_ACCOUNT ((gfp_t)0u)
+#endif

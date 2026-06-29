@@ -42,3 +42,12 @@ void dma_buf_unmap_attachment(struct dma_buf_attachment*, struct sg_table*, enum
 }
 #endif
 #endif
+
+#ifndef _LKPI_DMABUF_VMAP
+#define _LKPI_DMABUF_VMAP
+struct iosys_map;
+static inline int dma_buf_vmap(struct dma_buf *b, struct iosys_map *m){ (void)b;(void)m; return -1; }
+static inline void dma_buf_vunmap(struct dma_buf *b, struct iosys_map *m){ (void)b;(void)m; }
+static inline int dma_buf_vmap_unlocked(struct dma_buf *b, struct iosys_map *m){ (void)b;(void)m; return -1; }
+static inline void dma_buf_vunmap_unlocked(struct dma_buf *b, struct iosys_map *m){ (void)b;(void)m; }
+#endif
