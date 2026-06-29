@@ -2,8 +2,10 @@
 
 Guidance for Claude Code (and humans) working in this repository.
 
-> **This file is intentionally NOT committed.** It is a living, full-detail working
-> document. Do not `git add` it.
+> **This file IS committed in this repo** (the global `~/.gitignore_global` ignores
+> `CLAUDE.md` + `.claude/`, but the repo `.gitignore` negates that — Claude working files
+> are tracked here on purpose). It is a living, full-detail working document; keep it current
+> and commit changes to it like any other source file.
 
 ---
 
