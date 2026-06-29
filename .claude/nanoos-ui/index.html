@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NanoOS UI Concept</title>
+  <style>
+    :root {
+      --nano-blue: #12a8f4;
+      --nano-purple: #7d3ff2;
+      --nano-orange: #ff9d00;
+      --nano-green: #6fd033;
+      --glass: rgba(255, 255, 255, .72);
+      --glass-strong: rgba(255, 255, 255, .9);
+      --ink: #172130;
+      --muted: #657184;
+      --line: rgba(13, 28, 48, .14);
+      --shadow: 0 24px 70px rgba(10, 26, 54, .22), 0 4px 18px rgba(10, 26, 54, .12);
+      --topbar-height: 34px;
+      --dock-height: 76px;
+      --window-radius: 14px;
+      font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+
+    body {
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 14% 23%, rgba(18,168,244,.98) 0 17%, transparent 31%),
+        radial-gradient(circle at 76% 31%, rgba(255,157,0,.92) 0 18%, transparent 34%),
+        radial-gradient(circle at 58% 76%, rgba(111,208,51,.82) 0 16%, transparent 32%),
+        radial-gradient(circle at 20% 82%, rgba(125,63,242,.84) 0 20%, transparent 36%),
+        linear-gradient(135deg, #e3f7ff 0%, #edf5ff 42%, #fff0d8 100%);
+    }
+
+    .desktop {
+      height: 100%;
+      position: relative;
+      isolation: isolate;
+      padding-top: var(--topbar-height);
+    }
+
+    .desktop::before {
+      content: "";
+      position: absolute;
+      inset: var(--topbar-height) 0 0;
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.26), rgba(255,255,255,0) 38%),
+        radial-gradient(circle at 50% 43%, rgba(255,255,255,.38), transparent 58%);
+      z-index: -1;
+    }
+
+    /* macOS-like global app menu at the top */
+    .menubar {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: var(--topbar-height);
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px 0 10px;
+      background: rgba(239, 248, 255, .66);
+      border-bottom: 1px solid rgba(255, 255, 255, .62);
+      box-shadow: 0 8px 26px rgba(27, 43, 71, .13);
+      backdrop-filter: blur(24px) saturate(1.45);
+      z-index: 90;
+      user-select: none;
+    }
+
+    .menu-left, .menu-items, .menu-right {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .menu-left { gap: 10px; }
+    .app-name { font-size: 13px; font-weight: 760; color: #111d2e; }
+
+    .menu-items { gap: 2px; font-size: 13px; color: #1f2b3a; overflow: hidden; }
+
+    .menu-item {
+      position: relative;
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 8px;
+      border-radius: 7px;
+      cursor: default;
+      white-space: nowrap;
+    }
+
+    .menu-item:hover, .menu-item.active { background: rgba(255,255,255,.68); }
+
+    .menu-popover {
+      position: fixed;
+      top: 31px;
+      min-width: 184px;
+      padding: 7px;
+      border: 1px solid rgba(13,28,48,.13);
+      border-radius: 11px;
+      background: rgba(248, 251, 255, .86);
+      backdrop-filter: blur(26px) saturate(1.4);
+      box-shadow: 0 18px 52px rgba(10, 26, 54, .22);
+      z-index: 120;
+      display: none;
+    }
+
+    .menu-popover.open { display: block; }
+    .menu-command {
+      height: 28px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 20px;
+      padding: 0 9px;
+      border-radius: 7px;
+      font-size: 12px;
+      color: #202c3c;
+    }
+    .menu-command:hover { background: rgba(18, 168, 244, .11); }
+    .menu-command kbd {
+      color: #788399;
+      font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .menu-separator { height: 1px; background: rgba(13,28,48,.1); margin: 6px 4px; }
+
+    .menu-right {
+      gap: 10px;
+      justify-self: end;
+      font-size: 13px;
+      color: #253142;
+      white-space: nowrap;
+    }
+    .status-pill {
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 6px;
+      border-radius: 7px;
+    }
+    .status-pill:hover { background: rgba(255,255,255,.62); }
+
+    .nano-mark {
+      width: 20px;
+      height: 20px;
+      position: relative;
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+    .nano-mark::before, .nano-mark::after, .nano-mark span {
+      content: "";
+      position: absolute;
+      border-radius: 7px;
+      transform-origin: center;
+    }
+    .nano-mark::before {
+      width: 7px; height: 18px; left: 1px; top: 1px;
+      background: linear-gradient(180deg, var(--nano-blue), var(--nano-purple));
+    }
+    .nano-mark::after {
+      width: 7px; height: 18px; right: 1px; top: 1px;
+      background: linear-gradient(180deg, var(--nano-orange), var(--nano-green));
+    }
+    .nano-mark span {
+      width: 24px; height: 7px; left: -2px; top: 7px;
+      background: linear-gradient(90deg, var(--nano-blue), var(--nano-green));
+      transform: rotate(34deg);
+    }
+
+    .workspace {
+      position: relative;
+      height: calc(100vh - var(--topbar-height));
+      padding: 30px 34px calc(var(--dock-height) + 28px);
+    }
+
+    .desktop-icons {
+      position: absolute;
+      top: 32px;
+      left: 26px;
+      display: grid;
+      gap: 22px;
+      z-index: 2;
+    }
+    .desktop-icon {
+      width: 74px;
+      text-align: center;
+      color: white;
+      font-size: 12px;
+      text-shadow: 0 1px 7px rgba(0,0,0,.25);
+      user-select: none;
+    }
+    .desktop-icon .tile {
+      width: 43px; height: 43px;
+      margin: 0 auto 7px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(255,255,255,.56), rgba(255,255,255,.17));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.58), 0 8px 20px rgba(8,18,38,.18);
+      backdrop-filter: blur(8px);
+      font-size: 21px;
+    }
+
+    .window {
+      position: absolute;
+      background: rgba(248, 251, 255, .92);
+      border: 1px solid rgba(13, 28, 48, .18);
+      border-radius: var(--window-radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(24px) saturate(1.32);
+    }
+    .window.files { left: 210px; top: 74px; width: 720px; height: 480px; }
+    .window.settings { right: 42px; top: 194px; width: 520px; height: 386px; }
+    .window.terminal { left: 118px; bottom: 100px; width: 510px; height: 292px; background: rgba(15,18,31,.94); color: #d9f6ff; }
+
+    /* Windows-like title bars: title on left, controls on right, no app menu inside */
+    .titlebar {
+      height: 38px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      background: linear-gradient(180deg, rgba(255,255,255,.99), rgba(229,237,248,.96));
+      border-bottom: 1px solid rgba(15, 32, 54, .14);
+      user-select: none;
+    }
+    .titlebar.dark {
+      background: linear-gradient(180deg, #22283a, #141928);
+      border-bottom-color: rgba(255,255,255,.09);
+    }
+    .title-left {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding-left: 12px;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 670;
+    }
+    .window-controls { height: 100%; display: flex; margin-left: auto; }
+    .control {
+      width: 46px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: #243044;
+      font-size: 13px;
+      border-left: 1px solid rgba(15,32,54,.06);
+    }
+    .titlebar.dark .control { color: #dce6f8; border-left-color: rgba(255,255,255,.06); }
+    .control:hover { background: rgba(16,34,58,.08); }
+    .control.close:hover { background: #e81123; color: #fff; }
+    .window-content { height: calc(100% - 38px); }
+
+    .mini-icon { width: 16px; height: 16px; border-radius: 4px; display: inline-block; box-shadow: inset 0 1px 0 rgba(255,255,255,.35); }
+    .i-files { background: linear-gradient(135deg, #1797ff, #58c4ff); }
+    .i-terminal { background: linear-gradient(135deg, #111827, #3b4560); }
+    .i-settings { background: linear-gradient(135deg, #43b548, #88dd50); }
+    .i-browser { background: linear-gradient(135deg, #7d3ff2, #12a8f4); }
+    .i-music { background: linear-gradient(135deg, #ff8500, #ffb539); }
+    .i-trash { background: linear-gradient(135deg, #dfe6ef, #b8c2d2); }
+
+    .files-layout { display: grid; grid-template-columns: 174px 1fr; height: 100%; }
+    .sidebar { background: rgba(235,241,249,.72); border-right: 1px solid var(--line); padding: 14px 10px; }
+    .nav-item { height: 31px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border-radius: 7px; font-size: 13px; color: #263244; }
+    .nav-item.active { background: rgba(18,168,244,.13); color: #075da0; font-weight: 650; }
+    .content-pane { padding: 18px 22px; }
+    .toolbar { height: 38px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+    .breadcrumb { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+    .search { height: 30px; width: 190px; border-radius: 8px; border: 1px solid rgba(15,32,54,.12); background: rgba(255,255,255,.7); display: flex; align-items: center; padding: 0 10px; color: var(--muted); font-size: 12px; }
+    .file-grid { display: grid; grid-template-columns: repeat(4, minmax(94px, 1fr)); gap: 24px 19px; }
+    .file-card { min-height: 94px; display: grid; place-items: center; text-align: center; gap: 7px; font-size: 12px; color: #273244; }
+    .folder { width: 58px; height: 46px; border-radius: 8px 8px 11px 11px; position: relative; box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 8px 18px rgba(18,31,55,.12); }
+    .folder::before { content: ""; position: absolute; left: 0; top: -8px; width: 30px; height: 14px; border-radius: 7px 7px 0 0; background: inherit; }
+    .blue { background: linear-gradient(135deg, #0d81ff, #63ceff); }
+    .green { background: linear-gradient(135deg, #34a637, #8fe34d); }
+    .purple { background: linear-gradient(135deg, #7139e8, #b062ff); }
+    .orange { background: linear-gradient(135deg, #ff8500, #ffb539); }
+
+    .settings-layout { display: grid; grid-template-columns: 146px 1fr; height: 100%; }
+    .settings-main { padding: 28px; }
+    .settings-head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .settings-head .nano-mark { width: 42px; height: 42px; transform: scale(1.8); margin-left: 12px; }
+    .setting-list { border: 1px solid rgba(15,32,54,.12); border-radius: 11px; overflow: hidden; background: rgba(255,255,255,.64); }
+    .setting-row { display: grid; grid-template-columns: 1fr auto; align-items: center; height: 41px; padding: 0 13px; font-size: 12px; border-bottom: 1px solid rgba(15,32,54,.09); }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-row span:last-child { color: var(--muted); }
+
+    .terminal-body {
+      height: calc(100% - 38px);
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 18px;
+      padding: 21px 22px;
+      font: 12px/1.42 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .terminal-logo { display: grid; place-items: center; }
+    .terminal-logo .nano-mark { transform: scale(4); }
+    .terminal pre { margin: 0; white-space: pre-wrap; color: #dffbff; }
+    .prompt { color: #63e6be; }
+    .dim { color: #8c9aaf; }
+
+    /* bottom bar/dock kept in the original concept style */
+    .dock {
+      position: fixed;
+      left: 50%;
+      bottom: 17px;
+      height: 64px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 22px;
+      border: 1px solid rgba(255,255,255,.68);
+      background: rgba(238, 248, 255, .42);
+      box-shadow: 0 18px 48px rgba(10, 26, 54, .22), inset 0 1px 0 rgba(255,255,255,.62);
+      backdrop-filter: blur(26px) saturate(1.45);
+      z-index: 80;
+    }
+    .dock-icon {
+      position: relative;
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 13px;
+      color: white;
+      font-size: 21px;
+      background: rgba(255,255,255,.24);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.38), 0 8px 18px rgba(8,18,38,.18);
+      cursor: default;
+      transition: transform .14s ease, filter .14s ease;
+    }
+    .dock-icon:hover { transform: translateY(-5px) scale(1.05); filter: brightness(1.04); }
+    .dock-icon.active::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -7px;
+      width: 5px;
+      height: 5px;
+      transform: translateX(-50%);
+      border-radius: 999px;
+      background: rgba(23, 33, 48, .58);
+    }
+    .dock-icon.logo { background: rgba(255,255,255,.2); }
+    .dock-icon.logo .nano-mark { transform: scale(1.45); }
+    .dock-icon.files { background: linear-gradient(135deg, #1797ff, #58c4ff); }
+    .dock-icon.terminal { background: linear-gradient(135deg, #161b2a, #49526a); }
+    .dock-icon.music { background: linear-gradient(135deg, #ff8500, #ffb539); }
+    .dock-icon.photos { background: linear-gradient(135deg, #7139e8, #b062ff); }
+    .dock-icon.settings-d { background: linear-gradient(135deg, #43b548, #88dd50); }
+    .dock-icon.trash { background: linear-gradient(135deg, #eaf0f8, #bbc6d5); color: #425066; }
+    .dock-separator { width: 1px; height: 34px; background: rgba(14, 29, 51, .13); margin: 0 2px; }
+
+    @media (max-width: 1100px) {
+      .window.settings { display: none; }
+      .window.files { width: calc(100vw - 280px); }
+      .menu-items .optional { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      .menu-items span:nth-child(n+4) { display: none; }
+      .window.files { left: 110px; width: calc(100vw - 140px); }
+      .window.terminal { display: none; }
+      .dock { max-width: calc(100vw - 22px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="desktop">
+    <header class="menubar">
+      <div class="menu-left">
+        <span class="nano-mark" aria-label="NanoOS"><span></span></span>
+        <strong class="app-name" id="activeAppName">Files</strong>
+        <nav class="menu-items" aria-label="Menu aktywnej aplikacji">
+          <span class="menu-item" data-menu="file">File</span>
+          <span class="menu-item" data-menu="edit">Edit</span>
+          <span class="menu-item" data-menu="view">View</span>
+          <span class="menu-item optional" data-menu="go">Go</span>
+          <span class="menu-item optional" data-menu="window">Window</span>
+          <span class="menu-item optional" data-menu="help">Help</span>
+        </nav>
+      </div>
+
+      <div></div>
+
+      <section class="menu-right" aria-label="Status systemu">
+        <span class="status-pill">⌁</span>
+        <span class="status-pill">🔊</span>
+        <span class="status-pill">87%</span>
+        <span class="status-pill" id="dateText">Thu Jun 11</span>
+        <span class="status-pill" id="clock">10:42</span>
+      </section>
+    </header>
+
+    <div class="menu-popover" id="menuPopover" role="menu"></div>
+
+    <main class="workspace">
+      <section class="desktop-icons">
+        <div class="desktop-icon"><div class="tile">🏠</div>Home</div>
+        <div class="desktop-icon"><div class="tile">🧪</div>Projects</div>
+        <div class="desktop-icon"><div class="tile">🗑</div>Trash</div>
+      </section>
+
+      <article class="window files" data-app="Files">
+        <div class="titlebar">
+          <div class="title-left"><span class="mini-icon i-files"></span> Files</div>
+          <div class="window-controls"><div class="control">—</div><div class="control">□</div><div class="control close">×</div></div>
+        </div>
+        <div class="window-content files-layout">
+          <aside class="sidebar">
+            <div class="nav-item active">🏠 Home</div>
+            <div class="nav-item">🕘 Recent</div>
+            <div class="nav-item">📄 Documents</div>
+            <div class="nav-item">⬇ Downloads</div>
+            <div class="nav-item">🖼 Pictures</div>
+            <div class="nav-item">💼 Projects</div>
+            <div class="nav-item">💾 128 GB Drive</div>
+          </aside>
+          <section class="content-pane">
+            <div class="toolbar">
+              <div class="breadcrumb">‹ › 🏠 Home</div>
+              <div class="search">Search Home</div>
+            </div>
+            <div class="file-grid">
+              <div class="file-card"><div class="folder blue"></div><span>Documents</span></div>
+              <div class="file-card"><div class="folder green"></div><span>Downloads</span></div>
+              <div class="file-card"><div class="folder purple"></div><span>Pictures</span></div>
+              <div class="file-card"><div class="folder orange"></div><span>Music</span></div>
+              <div class="file-card"><div class="folder purple"></div><span>Videos</span></div>
+              <div class="file-card"><div class="folder blue"></div><span>Projects</span></div>
+              <div class="file-card"><div class="folder green"></div><span>Work</span></div>
+              <div class="file-card"><div class="folder orange"></div><span>nanoos.iso</span></div>
+            </div>
+          </section>
+        </div>
+      </article>
+
+      <article class="window settings" data-app="Settings">
+        <div class="titlebar">
+          <div class="title-left"><span class="mini-icon i-settings"></span> Settings</div>
+          <div class="window-controls"><div class="control">—</div><div class="control">□</div><div class="control close">×</div></div>
+        </div>
+        <div class="window-content settings-layout">
+          <aside class="sidebar">
+            <div class="nav-item active">▣ System</div>
+            <div class="nav-item">⌁ Network</div>
+            <div class="nav-item">◉ Display</div>
+            <div class="nav-item">🔒 Privacy</div>
+            <div class="nav-item">👤 Accounts</div>
+          </aside>
+          <section class="settings-main">
+            <div class="settings-head"><span class="nano-mark"><span></span></span><div><h2 style="margin:0">NanoOS</h2><small>System Settings</small></div></div>
+            <div class="setting-list">
+              <div class="setting-row"><span>Device name</span><span>NanoBook Pro</span></div>
+              <div class="setting-row"><span>Processor</span><span>Nanochip M1 Pro</span></div>
+              <div class="setting-row"><span>Memory</span><span>16 GB</span></div>
+              <div class="setting-row"><span>Storage</span><span>128 GB</span></div>
+              <div class="setting-row"><span>System version</span><span>NanoOS 1.0</span></div>
+            </div>
+          </section>
+        </div>
+      </article>
+
+      <article class="window terminal" data-app="Terminal">
+        <div class="titlebar dark">
+          <div class="title-left"><span class="mini-icon i-terminal"></span> Terminal</div>
+          <div class="window-controls"><div class="control">—</div><div class="control">□</div><div class="control close">×</div></div>
+        </div>
+        <div class="terminal-body">
+          <div class="terminal-logo"><span class="nano-mark"><span></span></span></div>
+          <pre><span class="dim">Welcome to NanoOS Terminal</span>
+<span class="prompt">nano@nanobook</span>:~$ neofetch
+OS: NanoOS 1.0.0 x86_64
+Kernel: 1.0.0-nano
+Shell: nano-shell 1.0
+DE: Nano Desktop
+WM: Nano Window Manager
+Theme: Nano Light
+Icons: Nano Colorful
+
+<span class="prompt">nano@nanobook</span>:~$ <span class="dim">_</span></pre>
+        </div>
+      </article>
+    </main>
+
+    <nav class="dock" aria-label="Dolny dock">
+      <button class="dock-icon logo active" title="Nano"><span class="nano-mark"><span></span></span></button>
+      <button class="dock-icon files" title="Files">📁</button>
+      <button class="dock-icon terminal" title="Terminal">⌨</button>
+      <button class="dock-icon music" title="Music">♪</button>
+      <button class="dock-icon photos" title="Photos">🖼</button>
+      <button class="dock-icon settings-d" title="Settings">⚙</button>
+      <span class="dock-separator"></span>
+      <button class="dock-icon trash" title="Trash">🗑</button>
+    </nav>
+  </div>
+
+  <script>
+    const activeAppName = document.getElementById('activeAppName');
+    const menuPopover = document.getElementById('menuPopover');
+    const menus = {
+      file: [
+        ['New Window', 'Ctrl+N'], ['New Folder', 'Ctrl+Shift+N'], ['Open', 'Ctrl+O'], '---', ['Close Window', 'Alt+F4']
+      ],
+      edit: [
+        ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y'], '---', ['Cut', 'Ctrl+X'], ['Copy', 'Ctrl+C'], ['Paste', 'Ctrl+V']
+      ],
+      view: [
+        ['Icon View', 'Ctrl+1'], ['List View', 'Ctrl+2'], ['Compact View', 'Ctrl+3'], '---', ['Show Hidden Files', 'Ctrl+H']
+      ],
+      go: [
+        ['Home', 'Alt+Home'], ['Documents', ''], ['Downloads', ''], ['Projects', '']
+      ],
+      window: [
+        ['Minimize', 'Ctrl+M'], ['Zoom', ''], ['Tile Window Left', ''], ['Bring All to Front', '']
+      ],
+      help: [
+        ['NanoOS Help', ''], ['Keyboard Shortcuts', ''], ['About NanoOS', '']
+      ]
+    };
+
+    function openMenu(item) {
+      document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      const rect = item.getBoundingClientRect();
+      const commands = menus[item.dataset.menu] || [];
+      menuPopover.innerHTML = commands.map(command => {
+        if (command === '---') return '<div class="menu-separator"></div>';
+        const [label, shortcut] = command;
+        return `<div class="menu-command"><span>${label}</span><kbd>${shortcut || ''}</kbd></div>`;
+      }).join('');
+      menuPopover.style.left = `${Math.max(8, rect.left)}px`;
+      menuPopover.classList.add('open');
+    }
+
+    document.querySelectorAll('.menu-item').forEach(item => {
+      item.addEventListener('click', event => {
+        event.stopPropagation();
+        if (item.classList.contains('active') && menuPopover.classList.contains('open')) {
+          menuPopover.classList.remove('open');
+          item.classList.remove('active');
+          return;
+        }
+        openMenu(item);
+      });
+      item.addEventListener('mouseenter', () => {
+        if (menuPopover.classList.contains('open')) openMenu(item);
+      });
+    });
+
+    document.addEventListener('click', () => {
+      menuPopover.classList.remove('open');
+      document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
+    });
+
+    document.querySelectorAll('.window').forEach(win => {
+      win.addEventListener('mousedown', () => {
+        activeAppName.textContent = win.dataset.app || 'NanoOS';
+        document.querySelectorAll('.window').forEach(w => w.style.zIndex = '');
+        win.style.zIndex = '30';
+      });
+    });
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('dateText').textContent = now.toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'short' });
+    }
+    updateClock();
+    setInterval(updateClock, 30000);
+  </script>
+</body>
+</html>
