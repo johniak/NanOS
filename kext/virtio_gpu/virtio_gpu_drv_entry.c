@@ -135,6 +135,16 @@ int nkext_init(void)
 	}
 	host = vdev->features;
 
+	/* Surface the negotiated 3D state as a serial marker the GL smoke gates key on.
+	 * VIRTIO_GPU_F_VIRGL is bit 0 (uapi/linux/virtio_gpu.h); define locally to avoid
+	 * pulling the full uapi header into this transport-glue TU. */
+#ifndef VIRTIO_GPU_F_VIRGL
+#define VIRTIO_GPU_F_VIRGL 0
+#endif
+	knx_log((vdev->features & (1ULL << VIRTIO_GPU_F_VIRGL))
+			? "virtio_gpu: virgl 3D negotiated\n"
+			: "virtio_gpu: 2D only (no virgl)\n");
+
 	/* 3) hand the device to the UNMODIFIED virtio_gpu_probe() */
 	knx_log("virtio_gpu: probing unmodified Linux virtio_gpu DRM driver...\n");
 	ret = g_virtio_drv->probe(vdev);

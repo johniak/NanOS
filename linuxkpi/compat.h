@@ -82,6 +82,19 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #define cpu_to_le16s(p) do {} while (0)
 #define cpu_to_le32s(p) do {} while (0)
 
+/* Endianness selectors. The kernel's <linux/byteorder/little_endian.h> defines these; we
+ * supply the byteorder conversion macros directly above instead of including it, so define
+ * the selectors here to match that header's convention (x86_64 is little-endian; __BIG_ENDIAN
+ * is intentionally left undefined). Vendored code keys on `#ifdef __LITTLE_ENDIAN` — e.g.
+ * virtio_gpu's feature table gates VIRTIO_GPU_F_VIRGL behind it, so without this the guest
+ * never negotiates virgl 3D. */
+#ifndef __LITTLE_ENDIAN
+#define __LITTLE_ENDIAN 1234
+#endif
+#ifndef __LITTLE_ENDIAN_BITFIELD
+#define __LITTLE_ENDIAN_BITFIELD
+#endif
+
 /* Compiler attributes the vendored DRM source uses that our toolchain lacks. */
 #ifndef __counted_by
 #define __counted_by(member)
