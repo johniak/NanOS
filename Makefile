@@ -1707,6 +1707,12 @@ $(BINFOLDER)%.o: user/%.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/libc-glue/%.c
 	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
+# drmtest links the raw DRM ABI against the VENDORED uapi headers (byte-identical struct/ioctl
+# numbers to the driver) + the pinned virgl protocol header — never the host's.
+DRMTEST_INC=-Iexternal/linux-6.12/include/uapi -Iexternal/linux-6.12/include -Iexternal/virgl -Iuser/drmtest -Ilinuxkpi/include
+$(BINFOLDER)drmtest.o: user/drmtest/drmtest.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DRMTEST_INC) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/%.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/libutil/%.c
@@ -1927,6 +1933,7 @@ $(BINFOLDER)pingtest.nxe:  $(DYN_DEPS) $(BINFOLDER)pingtest.o
 $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
+$(BINFOLDER)drmtest.nxe:   $(DYN_DEPS) $(BINFOLDER)drmtest.o
 $(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
 $(BINFOLDER)greeter.nxe:   $(DYN_DEPS) $(BINFOLDER)greeter.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
@@ -2160,7 +2167,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter
