@@ -38,7 +38,7 @@
 - `$(SDK_WORK)/mesa-port/` — nxport.toml + meson cross file + build hooks.
 - `user/gles2info/gles2info.c` — EGL+GLES2 probe (`GL_RENDERER` print) — the Mesa bring-up oracle.
 - `user/nwm/nw_compose_gl.c` / `nw_compose_gl.h` — the GL ES compositor backend.
-- `docs/superpowers/plans/2026-07-01-gl-desktop-virgl-qemu.md` — this plan.
+- `docs/superpowers/plans/2026-07-01-plan-1-gl-desktop-virgl-qemu.md` — this plan.
 
 **Modified:**
 - `kernel/SyscallDispatch.cpp:878-905` (`SYS_mmap2` device path) — honor the mmap offset for devices.

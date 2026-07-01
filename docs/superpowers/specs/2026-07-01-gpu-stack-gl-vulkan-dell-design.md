@@ -62,12 +62,12 @@ nothing is thrown away.
 
 ## 4. Rollout — three plans
 
-1. `2026-07-01-gl-desktop-virgl-qemu.md` — OpenGL desktop + app GL on QEMU/M4 (DRM nodes,
+1. `2026-07-01-plan-1-gl-desktop-virgl-qemu.md` — OpenGL desktop + app GL on QEMU/M4 (DRM nodes,
    GEM mmap, libdrm + Mesa virgl ports, GBM/KMS present, nwm GL ES backend, smoke gates).
-2. `2026-07-01-vulkan-venus.md` — Vulkan on QEMU (host-stack validation gate, blob
+2. `2026-07-01-plan-2-vulkan-venus.md` — Vulkan on QEMU (host-stack validation gate, blob
    resources/hostmem, syncobj, Mesa vn, offscreen smoke; zink experiment; ANV interfaces
    noted for the Dell).
-3. `2026-07-01-gl-on-dell-i915-iris.md` — i915 through LinuxKPI in stages (KPI upgrades
+3. `2026-07-01-plan-3-gl-on-dell-i915-iris.md` — i915 through LinuxKPI in stages (KPI upgrades
    proven on QEMU first, KMS-first milestone with firmware-fb fallback, execbuf, Mesa iris,
    Dell test protocol).
 

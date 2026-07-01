@@ -4,7 +4,7 @@
 
 **Goal:** Vulkan 1.x apps run on NanOS in QEMU on the M4 through the venus protocol (guest Mesa `vn` driver → virtio-gpu blob resources → host virglrenderer → KosmicKrisp/Metal), gated first by a host-stack validation with a stock Linux guest; ANV (Dell) interfaces are recorded but not implemented here.
 
-**PREREQUISITE:** `2026-07-01-gl-desktop-virgl-qemu.md` is fully implemented (DRM nodes + `mmapAt` + libdrm + Mesa port flow + smoke-gate pattern all exist). This plan only ADDS to that foundation.
+**PREREQUISITE:** `2026-07-01-plan-1-gl-desktop-virgl-qemu.md` is fully implemented (DRM nodes + `mmapAt` + libdrm + Mesa port flow + smoke-gate pattern all exist). This plan only ADDS to that foundation.
 
 **Architecture:** Venus serializes the entire Vulkan API into virtio-gpu execbuffers; the kernel's job is plumbing, not GL semantics: blob resources (`RESOURCE_CREATE_BLOB`), mapping host-allocated memory into the guest (`VIRTGPU_MAP` on blob BOs backed by the device's hostmem PCI BAR — driver file `virtgpu_vram.c`), per-context capset init (`CONTEXT_INIT`), and DRM syncobjs for fences. Userspace is Mesa's `vn` Vulkan driver + the Khronos loader. Design record: `docs/superpowers/specs/2026-07-01-gpu-stack-gl-vulkan-dell-design.md`.
 
@@ -409,7 +409,7 @@ Guest: `vktri` → both markers. `VN_DEBUG=all` on failure — venus logs the se
 
 - [ ] **Step 1: Gate:** SKIP unless `run64-vk.sh`'s qemu exists AND `-device virtio-gpu-gl,help` lists `venus`; else boot image64 via `run64-vk.sh`, assert serial: `blob resources negotiated`, `drmtest: blob-map OK`, `drmtest: syncobj OK`, `vktri: triangle OK`, no PANIC. Wire `smoke-venus` into `verify64:`.
 - [ ] **Step 2:** `make verify64` all green (GL gates unaffected).
-- [ ] **Step 3: Docs:** venus section in graphics.md (host requirements macOS 15+/M-series, tap, run64-vk, the GO/NO-GO record, `VN_DEBUG`); record follow-ons: WSI/presentation (Vulkan→screen via GBM or a compositor swapchain), zink (GL-over-Vulkan — worth a spike once vn is stable), **ANV on the Dell: same DRM-node + syncobj surface, i915 kernel driver from plan `2026-07-01-gl-on-dell-i915-iris.md`, Mesa `-Dvulkan-drivers=intel`; no NanOS-side ABI additions expected beyond that plan.**
+- [ ] **Step 3: Docs:** venus section in graphics.md (host requirements macOS 15+/M-series, tap, run64-vk, the GO/NO-GO record, `VN_DEBUG`); record follow-ons: WSI/presentation (Vulkan→screen via GBM or a compositor swapchain), zink (GL-over-Vulkan — worth a spike once vn is stable), **ANV on the Dell: same DRM-node + syncobj surface, i915 kernel driver from plan `2026-07-01-plan-3-gl-on-dell-i915-iris.md`, Mesa `-Dvulkan-drivers=intel`; no NanOS-side ABI additions expected beyond that plan.**
 - [ ] **Step 4: Commit** `git commit -m "ci+docs: smoke-venus gate + venus documentation"`.
 
 ---

@@ -4,7 +4,7 @@
 
 **Goal:** The Dell Latitude 5310 (Comet Lake-U, Intel UHD Graphics Gen9.5) runs the UNMODIFIED Linux 6.12 `i915` DRM driver through LinuxKPI — first as KMS (native-resolution display replacing the firmware framebuffer), then GEM/execbuf — and the same Mesa/GBM/EGL/nwm GL stack from the QEMU plan runs on it via the Gallium `iris` driver.
 
-**PREREQUISITE:** `2026-07-01-gl-desktop-virgl-qemu.md` fully implemented (DRM nodes, `mmapAt`, libdrm/Mesa ports, GBM/KMS present path, nwm GL backend, gate patterns). The Vulkan plan is NOT a prerequisite.
+**PREREQUISITE:** `2026-07-01-plan-1-gl-desktop-virgl-qemu.md` fully implemented (DRM nodes, `mmapAt`, libdrm/Mesa ports, GBM/KMS present path, nwm GL backend, gate patterns). The Vulkan plan is NOT a prerequisite.
 
 **Architecture:** Three phases with a hard rule: **every LinuxKPI capability i915 needs that CAN be exercised on QEMU is built and gated on QEMU first** (real IRQs, kthread workqueues, firmware loader, io_mapping) using the virtio-gpu driver as the proving ground; only then is i915 vendored and brought up on the Dell, KMS-first, with the firmware-fb path as the always-available fallback. Mesa `iris` reuses the whole userspace stack — only `-Dgallium-drivers` grows. Design record: `docs/superpowers/specs/2026-07-01-gpu-stack-gl-vulkan-dell-design.md`.
 
