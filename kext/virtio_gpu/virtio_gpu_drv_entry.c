@@ -68,6 +68,9 @@ extern void lkpi_set_fence_poll(void (*fn)(void));
  * weak so the module links even before that stage is wired. */
 __attribute__((weak)) int virtio_gpu_fbcon_bringup(struct virtio_device *vdev) { (void)vdev; return -1; }
 
+/* Register /dev/dri/card0 + renderD128 over the DRM stack (virtio_gpu_drm_node.c). */
+int virtio_gpu_drm_node_init(struct virtio_device *vdev);
+
 static struct virtio_device *g_vdev;
 
 static void entry_vq_poll(void)
@@ -159,6 +162,11 @@ int nkext_init(void)
 		knx_log("virtio_gpu: scanout up; /dev/fb0 bridged via the DRM driver\n");
 	else
 		knx_log("virtio_gpu: DRM up; scanout/fbcon bring-up pending\n");
+
+	/* 5) expose the real DRM ioctl ABI on /dev/dri/{card0,renderD128}. Register
+	 * unconditionally — dumb BOs + KMS are useful even on 2D-only QEMU; virgl-only
+	 * ioctls simply return errors there. */
+	virtio_gpu_drm_node_init(vdev);
 
 	return 0;
 }

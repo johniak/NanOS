@@ -2334,7 +2334,7 @@ DRM_CORE_OBJS=$(BINFOLDER)drm_aperture.o $(BINFOLDER)drm_atomic_helper.o \
   $(BINFOLDER)drm_vblank_work.o $(BINFOLDER)drm_vblank.o $(BINFOLDER)drm_vma_manager.o \
   $(BINFOLDER)drm_writeback.o
 # The module: kext bootstrap + hand-built transport (port equivalent of virtio_pci_common.c).
-VIRTIO_GPU_OBJS=$(BINFOLDER)virtio_gpu_drv_entry.o $(BINFOLDER)virtio_transport.o $(BINFOLDER)virtio_gpu_present.o
+VIRTIO_GPU_OBJS=$(BINFOLDER)virtio_gpu_drv_entry.o $(BINFOLDER)virtio_transport.o $(BINFOLDER)virtio_gpu_present.o $(BINFOLDER)virtio_gpu_drm_node.o
 $(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(DRM_DRIVER_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(DRM_DRIVER_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) -lgcc
