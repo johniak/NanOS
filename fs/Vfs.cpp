@@ -328,6 +328,15 @@ int Vfs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
 	return fs->mmapInfo(rel, physOut, lenOut);
 }
 
+int Vfs::mmapAt(String path, uint64_t off, uint64_t* physOut, unsigned* lenOut) {
+	RecursiveGuard g(g_vfsLock);
+	String rel;
+	FileSystem* fs = resolve(path, rel);
+	if (fs == 0)
+		return -1;
+	return fs->mmapAt(rel, off, physOut, lenOut);
+}
+
 // Give a freshly-created object the caller's identity: owner = fsuid; group = the parent
 // directory's group when it is setgid, else the caller's fsgid; a setgid parent also
 // propagates its S_ISGID bit onto a new sub-directory (BSD/Linux semantics).

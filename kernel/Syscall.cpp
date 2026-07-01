@@ -1012,6 +1012,12 @@ int Syscalls::mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut) {
 	return vfs->mmapInfo(fds[fd].path, physOut, lenOut);
 }
 
+int Syscalls::mmapAt(int fd, uint64_t off, uint64_t* physOut, unsigned* lenOut) {
+	if (!valid(fd) || fds[fd].isConsole)
+		return -EBADF;
+	return vfs->mmapAt(fds[fd].path, off, physOut, lenOut);
+}
+
 void Syscalls::exit(int code) {
 	exited = true;
 	exitCode = code;

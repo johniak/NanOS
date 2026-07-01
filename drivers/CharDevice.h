@@ -35,6 +35,11 @@ struct CharDevice {
 	// Returns 0 on success, <0 if the device is not mmappable. physOut is 64-bit so an
 	// MMIO/framebuffer region above 4 GiB is reported without losing the high bits.
 	virtual int mmapInfo(uint64_t* physOut, unsigned* lenOut) = 0;
+	// Offset-aware mmap: map the object at device offset `off` (e.g. a GEM fake offset).
+	// Default: only offset 0, backed by mmapInfo — existing devices (fb0, ...) keep working.
+	virtual int mmapAt(uint64_t off, uint64_t* physOut, unsigned* lenOut) {
+		return off == 0 ? mmapInfo(physOut, lenOut) : -22;   // -EINVAL for nonzero offset
+	}
 	// poll() readiness: return the subset of `events` (POLLIN/POLLOUT bits) ready now.
 	// Default = always ready (suits mmap devices like /dev/fb0); streaming devices (pty,
 	// keyboard) override to report buffer state.

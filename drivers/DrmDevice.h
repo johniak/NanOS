@@ -18,8 +18,7 @@ public:
 	int ioctl(unsigned cmd, void* arg) override;
 	int mmapInfo(uint64_t*, unsigned*) override { return -22; }          /* DRM mmap is offset-based only (Task 5) */
 	// Offset-aware GEM mmap: resolve a fake offset to a physical range via the kext table.
-	// Task 3 defines it as a plain method; Task 5 promotes CharDevice::mmapAt to a virtual.
-	int mmapAt(uint64_t off, uint64_t* physOut, unsigned* lenOut);
+	int mmapAt(uint64_t off, uint64_t* physOut, unsigned* lenOut) override;
 	// On last close for the calling process, release its drm_file + GEM handles (Task 4).
 	void close() override;
 private:

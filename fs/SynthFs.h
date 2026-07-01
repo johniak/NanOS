@@ -127,6 +127,7 @@ public:
 	int write(String path, unsigned size, unsigned off, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, uint64_t* physOut, unsigned* lenOut);
+	int mmapAt(String path, uint64_t off, uint64_t* physOut, unsigned* lenOut) override;
 	short pollReady(String path, short events);
 	WaitQueue* waitQueueAt(String path);
 	bool deviceOpen(String path);

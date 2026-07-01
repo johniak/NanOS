@@ -883,12 +883,15 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		unsigned length = (unsigned) a0;
 		int prot = (int) a1;
 		int fd = (int) a3;
-		unsigned offset = (unsigned) a4;
+		// offset is BYTES here (NanOS libc-glue passes byte offsets, not mmap2 page counts) and
+		// must stay 64-bit: DRM GEM fake offsets are >= 0x100000000, so truncating to 32 bits
+		// (the old bug) would collide distinct BOs and misroute the mapping.
+		uint64_t offset = (uint64_t) a4;
 		Process* p = ProcTable::current();
 		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
-		if (fd >= 0) {                          // device region? (fb0 etc.)
+		if (fd >= 0) {                          // device region? (fb0, GEM BO, ...)
 			uint64_t phys = 0; unsigned dlen = 0;
-			if (g_sys->mmapInfo(fd, &phys, &dlen) >= 0) {
+			if (g_sys->mmapAt(fd, offset, &phys, &dlen) >= 0) {   // offset 0 -> mmapInfo (fb0)
 				unsigned want = (length && length < dlen) ? length : dlen;
 				unsigned va = arch::mmuMapUserFb(space, phys, want);   // phys is 64-bit: real HW LFB sits >4 GiB
 				ret = va ? (long) va : -12;   // -ENOMEM

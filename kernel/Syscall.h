@@ -276,6 +276,7 @@ public:
 	// blocks inside arch::inputRead). Lets the dispatch sleep event-driven, not per tick.
 	WaitQueue* fdWaitQueue(int fd);
 	int mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut);   // for SYS_mmap of a device
+	int mmapAt(int fd, uint64_t off, uint64_t* physOut, unsigned* lenOut);   // offset-aware (GEM)
 
 	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
 	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).

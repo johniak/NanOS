@@ -21,6 +21,10 @@
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
+#include <drm/drm_gem.h>
+#include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_vma_manager.h>
+#include <linux/mm.h>       /* page_to_phys, PAGE_SHIFT/PAGE_SIZE */
 #include "drm_internal.h"   /* drm_file_alloc / drm_file_free (DRM-core-internal) */
 #include "knx_drm_node.h"
 #include "lkpi_knx.h"
@@ -73,10 +77,54 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	return drm_ioctl(&c->shim, cmd, (unsigned long)arg);
 }
 
+/* Resolve a GEM mmap fake-offset (bytes, as handed to userspace by e.g. MODE_MAP_DUMB /
+ * VIRTGPU_MAP) to the physical range of the backing shmem object. The DRM vma manager keys
+ * nodes by page start (off >> PAGE_SHIFT). */
 static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len)
 {
-	(void)pid; (void)off; (void)phys; (void)len;
-	return -ENOSYS;   /* Task 5 fills this in (GEM fake-offset -> physical range) */
+	struct drm_vma_offset_node *vnode;
+	struct drm_gem_object *obj;
+	struct drm_gem_shmem_object *shmem;
+	unsigned long p0;
+	unsigned long npages, i;
+	(void)pid;
+	if (!g_ddev)
+		return -ENODEV;
+
+	drm_vma_offset_lock_lookup(g_ddev->vma_offset_manager);
+	vnode = drm_vma_offset_exact_lookup_locked(g_ddev->vma_offset_manager,
+						   off >> PAGE_SHIFT, 1);
+	drm_vma_offset_unlock_lookup(g_ddev->vma_offset_manager);
+	if (!vnode)
+		return -EINVAL;
+	obj = container_of(vnode, struct drm_gem_object, vma_node);
+
+	/* Pin the shmem pages (drm_gem_shmem_get_pages is static in 6.12; drm_gem_shmem_pin is the
+	 * exported entry point — it populates shmem->pages under dma_resv and pins them; we never
+	 * unpin while mapped, matching our no-reclaim KPI). */
+	shmem = to_drm_gem_shmem_obj(obj);
+	if (!shmem->pages) {
+		int r = drm_gem_shmem_pin(shmem);
+		if (r)
+			return r;
+	}
+	if (!shmem->pages || !shmem->pages[0])
+		return -ENOMEM;
+
+	/* Our shmem backing (linuxkpi kpi_mm) is one contiguous block: phys of page 0 covers the
+	 * whole object. Assert contiguity (fail loud, never map a corrupt range). */
+	p0 = (unsigned long) page_to_phys(shmem->pages[0]);
+	npages = (obj->size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	for (i = 1; i < npages; i++) {
+		if (!shmem->pages[i] ||
+		    (unsigned long) page_to_phys(shmem->pages[i]) != p0 + i * PAGE_SIZE) {
+			knx_log("virtio_gpu: GEM shmem not physically contiguous — refusing mmap\n");
+			return -EIO;
+		}
+	}
+	*phys = p0;
+	*len  = obj->size;
+	return 0;
 }
 
 static void node_release(int pid)

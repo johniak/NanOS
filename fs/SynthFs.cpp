@@ -815,6 +815,13 @@ int SynthFs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
 	return n->dev->mmapInfo(physOut, lenOut);
 }
 
+int SynthFs::mmapAt(String path, uint64_t off, uint64_t* physOut, unsigned* lenOut) {
+	SynthNode* n = walk((char*) path);
+	if (!n || n->kind != SK_CHARDEV)
+		return -22;            // -EINVAL: not mmappable
+	return n->dev->mmapAt(off, physOut, lenOut);
+}
+
 short SynthFs::pollReady(String path, short events) {
 	SynthNode* n = walk((char*) path);
 	if (!n || n->kind != SK_CHARDEV)
