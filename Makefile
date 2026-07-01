@@ -6,7 +6,7 @@ include arch/$(ARCH)/arch.mk
 # Machine-independent objects (portable across architectures).
 MI_SOURCES=kmain.o Kernel.o Console.o ExtFilesystem.o SynthFs.o RamFs.o RamBlockDevice.o DeviceManager.o Vfs.o
 MI_SOURCES+= Crc32c.o BlockCache.o ExtCsum.o ExtAllocator.o Journal.o
-MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o KeyboardDevice.o Pty.o
+MI_SOURCES+= Framebuffer.o Font8x16.o FbConsole.o vtk.o Fbdev.o Fb0Device.o DrmDevice.o KeyboardDevice.o Pty.o
 MI_SOURCES+= VtConsole.o VtManager.o VtTty.o   # virtual terminals: per-VT console + switching manager + /dev/ttyN
 MI_SOURCES+= Syscall.o Cred.o SyscallDispatch.o NxeLoader.o Exec.o DynLoader.o KernelExports.o KextLoader.o FrameAllocator.o KeyDecoder.o Scheduler.o Process.o Signal.o Futex.o Csprng.o
 MI_SOURCES+= Pci.o MsiRouter.o Acpi.o Bkl.o
@@ -1037,7 +1037,7 @@ LD=$(CROSS)gcc
 VPATH=init:kernel:kernel/vt:drivers:fs:fs/ext:mm:lib:net:usb:kext/mouse:$(ARCH_VPATH)
 # Kernel include path: the MI code dirs + the arch contracts (arch/include) + the
 # selected arch's headers (ARCH_INCLUDES) + the freestanding <string.h> in include/.
-KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Ikext/mouse -Iinclude -Iuser/term $(ARCH_INCLUDES)
+KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Ikext/mouse -Ikext/virtio_gpu -Iinclude -Iuser/term $(ARCH_INCLUDES)
 
 # Optimization. -O2 is the single biggest performance win for the target (it was all -O0): pixel
 # loops get inlined and the ~10x interpreter-style overhead disappears. Two safety flags make -O2
@@ -2409,7 +2409,7 @@ ARCH_PAGING_TESTS_EXCL=tests/test_addressspace64.cpp tests/test_paging64.cpp
 endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue -Ilinuxkpi/include -Ilinuxkpi
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Ikext/virtio_gpu -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue -Ilinuxkpi/include -Ilinuxkpi
 # The host is LP64 (arm64/x86_64) but does not define __x86_64__, so force the v4 64-bit
 # .nx format (nxaddr_t = uint64_t) across the whole host test build. This exercises the
 # x86_64 loader path (R_X86_64_64 fixups, 8-byte IAT slots) and keeps every TU's view of
@@ -2423,6 +2423,7 @@ TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Consol
 TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp $(ARCH_ADDRSPACE)
 TEST_MODULES+= arch/x86_64/cpu/lapic_x86_64.cpp   # pure-logic half: MSI vector pool (arch half #ifdef'd out under NANOS_HOST_TEST)
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
+TEST_MODULES+= drivers/DrmDevice.cpp   # /dev/dri forwarder — pure ioctl/mmap-offset dispatch (test_drm_node.cpp)
 TEST_MODULES+= kernel/vt/VtConsole.cpp kernel/vt/VtManager.cpp drivers/VtTty.cpp   # virtual terminals: per-VT console + switching manager + /dev/ttyN
 TEST_MODULES+= kext/mouse/MouseDevice.cpp   # MI half of the mouse kext (PS/2 decode -> evdev)
 # nanowm (window server) pure cores — userland C, host-tested as C++ (g++ treats .c as C++).

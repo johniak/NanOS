@@ -40,6 +40,12 @@ void           knx_fb_start_present(void (*flush)(void));
 int            knx_boot_fb(unsigned long long *addr, unsigned int *pitch, unsigned int *w,
                            unsigned int *h, unsigned char *bpp);
 
+/* DRM nodes: register the kext's knx_drm_ops table, creating /dev/dri/card0 + renderD128.
+ * knx_getpid = the calling process id (per-process drm_file identity). See knx_drm_node.h. */
+struct knx_drm_ops;
+void           knx_drm_register(const struct knx_drm_ops *ops);
+int            knx_getpid(void);
+
 #ifdef __cplusplus
 }
 #endif

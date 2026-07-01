@@ -9,6 +9,9 @@
 #include "memory_manager.h"
 #include "Fbdev.h"          // FbInfo
 #include "Fb0Device.h"      // /dev/fb0 over a kext framebuffer
+#include "DrmDevice.h"      // /dev/dri/card0 + renderD128 forwarder
+#include "knx_drm_node.h"   // knx_drm_ops table (kext/virtio_gpu)
+#include "Process.h"        // ProcTable::current() for knx_getpid / syscallCurrentPid
 #include "Framebuffer.h"    // FbSurface
 #include "vt/VtManager.h"   // VtManager + g_vtmgr + kVtCount (graphics console over a kext fb)
 #include "VtTty.h"          // /dev/ttyN
@@ -30,6 +33,11 @@ void kernelExportsInit(SynthFs* root) { g_root = root; }
 // LAPIC accessors (arch/x86_64/cpu/lapic_x86_64.cpp) used by knx_register_msi below.
 uint8_t lapicId();
 int     lapicAllocVector();
+
+// DRM node helpers (kernel:: linkage; defined after the extern "C" block). Forward-declared here
+// so the C-ABI knx_getpid/knx_drm_register wrappers inside that block can call them.
+int  syscallCurrentPid();
+void drmNodesRegister(const struct knx_drm_ops* ops);
 
 // MSI handler slot + trampoline (Phase 1: one active NIC vector). arch::registerTrapHandler installs
 // msiTrampoline on the LAPIC vector msiSetup allocated; it forwards to the module's handler + ctx.
@@ -71,6 +79,14 @@ int knx_add_input_dev(CharDevice* dev) {
 	g_root->addChar(g_root->dev(), name, dev, 0444);
 	return n;
 }
+
+// ---- DRM nodes: /dev/dri/card0 + /dev/dri/renderD128 ----
+// The virtio_gpu kext owns the vendored DRM stack; it registers a knx_drm_ops table and two
+// DrmDevice char devices forward SYS_ioctl / SYS_mmap(offset) into it (see DrmDevice + Task 4/5).
+// The C-ABI exports below are thin wrappers over the kernel::-linkage helpers (defined after the
+// extern "C" block), so DrmDevice.cpp (which calls kernel::syscallCurrentPid) links correctly.
+int  knx_getpid(void)                            { return syscallCurrentPid(); }
+void knx_drm_register(const struct knx_drm_ops* ops) { drmNodesRegister(ops); }
 
 // ---- PCI access for driver modules (the e1000 NIC kext binds its device through these) ----
 // The (bus,dev,func) triple is the stable handle; a driver finds it once via knx_pci_find then
@@ -201,6 +217,22 @@ int knx_boot_fb(uint64_t* addr, uint32_t* pitch, uint32_t* w, uint32_t* h, uint8
 }
 
 }  // extern "C"
+
+// kernel:: linkage (NOT extern "C") — DrmDevice.cpp references kernel::syscallCurrentPid, and
+// DrmDevice.h declares kernel::drmNodesRegister.
+int syscallCurrentPid() {
+	Process* p = ProcTable::current();
+	return p ? p->pid : 0;
+}
+void drmNodesRegister(const struct knx_drm_ops* ops) {
+	if (!g_root)
+		return;
+	SynthNode* dri = g_root->addDir(g_root->dev(), "dri");
+	if (!dri)
+		return;
+	g_root->addChar(dri, "card0",      new DrmDevice(ops, KNX_DRM_NODE_PRIMARY), 0666);
+	g_root->addChar(dri, "renderD128", new DrmDevice(ops, KNX_DRM_NODE_RENDER),  0666);
+}
 
 // Spawn the framebuffer present thread, if a display kext registered a flush callback. Called
 // from Kernel::start AFTER Scheduler::init() (kexts load before the scheduler exists).
