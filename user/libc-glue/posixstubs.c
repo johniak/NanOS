@@ -451,3 +451,55 @@ int   pclose(FILE *f) { (void) f; return -1; }
 
 /* sched_getcpu: single-CPU view for the port (see sched_getaffinity). */
 int sched_getcpu(void) { return 0; }
+
+/* --- Mesa (gallium-virgl + EGL) bring-up gaps --------------------------------------------------
+ * These five are referenced by unmodified Mesa 24.2 and were the only genuinely-missing libc
+ * symbols in the gles2info link (the stdout/stderr/_ctype_b data imports are handled by the
+ * dllimport shim, not here). Real implementations where NanOS can back them; honest degradations
+ * where it cannot. */
+#include <time.h>
+
+/* secure_getenv: NanOS draws no setuid-tainted-environment distinction here, so it is exactly
+ * getenv. Mesa reads MESA_ and GALLIUM_ driver tunables through it. */
+char *secure_getenv(const char *name) { return getenv(name); }
+
+/* pthread_condattr: the NanOS pthread cond (vendored musl) encodes the clock in __attr —
+ * pthread_cond_init does `_c_clock = __attr & 0x7fffffff; shared = __attr>>31`. Mirror that so a
+ * CLOCK_MONOTONIC cond built by Mesa's dri2 sync path actually waits on the monotonic clock. */
+int pthread_condattr_init(pthread_condattr_t *a)    { if (a) a->__attr = 0; return 0; }
+int pthread_condattr_destroy(pthread_condattr_t *a) { (void) a; return 0; }
+int pthread_condattr_setclock(pthread_condattr_t *a, clockid_t clk) {
+	if (!a) return EINVAL;
+	a->__attr = (a->__attr & 0x80000000u) | ((unsigned) clk & 0x7fffffffu);
+	return 0;
+}
+
+/* pthread_getcpuclockid: NanOS has no true per-thread CPU clock; report CLOCK_THREAD_CPUTIME_ID
+ * and let clock_gettime decide. Mesa uses this only for optional profiling counters. */
+#ifndef CLOCK_THREAD_CPUTIME_ID
+#define CLOCK_THREAD_CPUTIME_ID 3
+#endif
+int pthread_getcpuclockid(pthread_t t, clockid_t *clk) { (void) t; if (clk) *clk = CLOCK_THREAD_CPUTIME_ID; return 0; }
+
+/* clock_nanosleep: the kernel exposes only relative nanosleep, so the absolute (TIMER_ABSTIME)
+ * form subtracts the current time of the requested clock. Returns 0 or a positive errno (POSIX).
+ * Mesa's os_time throttling uses the CLOCK_MONOTONIC absolute form. */
+#ifndef TIMER_ABSTIME
+#define TIMER_ABSTIME 1
+#endif
+int clock_nanosleep(clockid_t clk, int flags, const struct timespec *req, struct timespec *rem) {
+	struct timespec rel;
+	if (!req) return EINVAL;
+	if (flags & TIMER_ABSTIME) {
+		struct timespec now;
+		if (clock_gettime(clk, &now) != 0) return EINVAL;
+		rel.tv_sec  = req->tv_sec  - now.tv_sec;
+		rel.tv_nsec = req->tv_nsec - now.tv_nsec;
+		if (rel.tv_nsec < 0) { rel.tv_sec--; rel.tv_nsec += 1000000000L; }
+		if (rel.tv_sec < 0 || (rel.tv_sec == 0 && rel.tv_nsec <= 0)) return 0; /* deadline passed */
+		rem = NULL; /* remaining is undefined for the absolute form */
+	} else {
+		rel = *req;
+	}
+	return nanosleep(&rel, rem) == 0 ? 0 : errno;
+}

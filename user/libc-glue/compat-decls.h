@@ -30,6 +30,9 @@ int mknod(const char* path, mode_t mode, dev_t dev);
 #endif
 int clock_gettime(clockid_t clk, struct timespec* tp);
 int nanosleep(const struct timespec* req, struct timespec* rem);
+/* clock_nanosleep + secure_getenv: referenced by Mesa; impls in user/libc-glue/posixstubs.c. */
+int clock_nanosleep(clockid_t clk, int flags, const struct timespec* req, struct timespec* rem);
+char* secure_getenv(const char* name);
 
 /* utimensat/futimens sentinels: picolibc defines UTIME_NOW/OMIT only for Cygwin/RTEMS, so they
  * are absent for i686-elf. Use the real Linux tv_nsec encoding — exactly what the NanOS kernel

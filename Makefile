@@ -1332,6 +1332,12 @@ _image64: _all _userland64 _kext
 	if [ -f $(BINFOLDER)htop.nxe ]; then \
 	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\nset_inode_field /nanos/bin/htop.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
+	# gles2info (optional, external): the Mesa (gallium-virgl + EGL + GLES2) bring-up oracle, built by
+	# `make gles2info` (links the Mesa .a closure from the mesa-port). A system utility (flat in
+	# /nanos/bin). Skipped if absent — only present on a GL dev build.
+	if [ -f $(BINFOLDER)gles2info.nxe ]; then \
+	  printf "rm /nanos/bin/gles2info.nxe\nwrite $(BINFOLDER)gles2info.nxe /nanos/bin/gles2info.nxe\nset_inode_field /nanos/bin/gles2info.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
 	# SQLite (optional, external): the real sqlite3 CLI built by `make ARCH=x86_64 sqlite` (the SQLite
 	# fork). A system utility (flat in /nanos/bin); the libsqlite.ndl shared engine goes to /nanos/lib
 	# so other apps can import the SQL API by name. Skipped if absent.
