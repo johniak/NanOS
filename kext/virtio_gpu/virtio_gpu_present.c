@@ -28,6 +28,15 @@ static struct virtio_gpu_device *g_vgdev;
 static struct virtio_gpu_object  *g_bo;
 static u32 g_w, g_h, g_resid;
 
+/* Console/fb0 mirror suspend. While a userland DRM client drives the CRTC via KMS (glkms / the nwm
+ * GL compositor issue their own SET_SCANOUT for the frame they rendered), the periodic console
+ * mirror below must NOT re-flush the fbcon resource onto scanout 0 — otherwise it fights the KMS
+ * client and the console overwrites every presented frame. Mirrors real Linux suspending fbcon
+ * when a DRM master takes over the CRTC. Set by the DRM node on a successful MODE_SETCRTC and
+ * cleared when the client releases the node (virtio_gpu_drm_node.c). */
+static volatile int g_present_suspended;
+void virtio_gpu_present_set_suspended(int s) { g_present_suspended = s ? 1 : 0; }
+
 /* Periodic present: hand the freshly-drawn framebuffer to the host and flush scanout 0.
  * Runs on the kernel present thread (post-scheduler); the pump harvests the vq acks
  * cooperatively (INTx is masked — see virtio_transport.c). */
@@ -36,6 +45,8 @@ static void present_flush(void)
 	struct virtio_gpu_object_array *objs;
 
 	if (!g_vgdev || !g_bo)
+		return;
+	if (g_present_suspended)   /* a KMS client owns the CRTC — don't fight its scanout */
 		return;
 
 	objs = virtio_gpu_array_alloc(1);

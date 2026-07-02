@@ -420,6 +420,75 @@ libdrm: bin/libc.ndl bin/libc.ndl.a
 	  -w /work/port nanos-sdk-dev:latest sh /work/port/build.sh
 	@echo "libdrm.a + headers installed into $(SDK_TC)/x86_64-nanos (for the Mesa port)"
 
+# ---- Mesa 24.2.8 (gallium-virgl + EGL + GLES2 + GBM, static) — the GL stack (Task 8) ----
+# Consumes the libdrm sysroot; installs the static .a closure + EGL/GLES2/gbm headers back into the
+# x86_64-nanos sysroot for the GL apps (gles2info/glkms) and nwm to link. Drives meson directly via
+# build.sh (same reason as libdrm: nanos-port's meson build type is i686-only).
+MESA_PORT := $(SDK_WORK)/mesa-port
+
+# Common docker env for the mesa-port link scripts.
+MESA_DOCKER_PATH := /work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Stage into the x86_64-nanos sysroot everything the mesa-port link scripts expect: libc headers +
+# SyscallNr + dllimport shim, the static libc, and the startup objects + mknx (crt0/nxhdr/mknx are
+# what build-gles2info.sh / build-glkms.sh reference by path). Mirrors the libdrm target's staging.
+define GLAPP_STAGE
+	$(NXPORT_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/x86_64-nanos/include/"
+	cp kernel/SyscallNr.h            "$(SDK_TC)/x86_64-nanos/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/x86_64-nanos/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/x86_64-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/x86_64-nanos/lib/libc.ndl"
+	cp $(BINFOLDER)crt0.o            "$(SDK_TC)/x86_64-nanos/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o           "$(SDK_TC)/x86_64-nanos/lib/nxhdr.o"
+	cp $(BINFOLDER)mknx64            "$(SDK_TC)/bin/x86_64-nanos-mknx"
+endef
+
+mesa: bin/libc.ndl bin/libc.ndl.a
+	@test -f "$(MESA_PORT)/build.sh" || { echo "mesa port not found at $(MESA_PORT) (fetch mesa-24.2.8 there)"; exit 1; }
+	@test -f "$(SDK_TC)/x86_64-nanos/lib/libdrm.a" || { echo "run 'make libdrm' first (Mesa consumes it)"; exit 1; }
+	$(NXPORT_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/x86_64-nanos/include/"
+	cp kernel/SyscallNr.h            "$(SDK_TC)/x86_64-nanos/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/x86_64-nanos/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/x86_64-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/x86_64-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(MESA_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e PATH="$(MESA_DOCKER_PATH)" \
+	  -w /work/port nanos-sdk-dev:latest sh /work/port/build.sh
+	@echo "Mesa .a closure + EGL/GLES2/gbm headers installed into $(SDK_TC)/x86_64-nanos"
+
+# gles2info.nxe — Task 8 bring-up oracle (surfaceless/fd-direct EGL + GLES2 renderer string). Links
+# the Mesa .a closure from the sysroot via build-gles2info.sh in docker.
+gles2info: bin/libc.ndl bin/libc.ndl.a
+	@test -f "$(MESA_PORT)/build-gles2info.sh" || { echo "build-gles2info.sh not found in $(MESA_PORT)"; exit 1; }
+	@test -f "$(SDK_TC)/x86_64-nanos/lib/libEGL.a" || { echo "run 'make mesa' first"; exit 1; }
+	$(GLAPP_STAGE)
+	cp user/gles2info/gles2info.c        "$(MESA_PORT)/gles2info.c"
+	cp user/gles2info/nx_stream_bridge.c "$(MESA_PORT)/nx_stream_bridge.c"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(MESA_PORT)":/work/port \
+	  -e PATH="$(MESA_DOCKER_PATH)" \
+	  -w /work/port nanos-sdk-dev:latest sh /work/port/build-gles2info.sh
+	cp "$(MESA_PORT)/gles2info.nxe" $(BINFOLDER)gles2info.nxe
+	@echo "gles2info.nxe -> $(BINFOLDER)gles2info.nxe"
+
+# glkms.nxe — Task 9 GBM+EGL+KMS present oracle (GL gradient → scanout via AddFB/SetCrtc). Same
+# Mesa link closure as gles2info + libdrm KMS wrappers; sources are canonical in user/glkms/.
+glkms: bin/libc.ndl bin/libc.ndl.a
+	@test -f "$(MESA_PORT)/build-glkms.sh" || { echo "build-glkms.sh not found in $(MESA_PORT)"; exit 1; }
+	@test -f "$(SDK_TC)/x86_64-nanos/lib/libgbm.a" || { echo "run 'make mesa' first"; exit 1; }
+	$(GLAPP_STAGE)
+	cp user/glkms/glkms.c user/glkms/glkms_init.c user/glkms/glkms_init.h "$(MESA_PORT)/"
+	cp user/gles2info/nx_stream_bridge.c "$(MESA_PORT)/nx_stream_bridge.c"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(MESA_PORT)":/work/port \
+	  -e PATH="$(MESA_DOCKER_PATH)" \
+	  -w /work/port nanos-sdk-dev:latest sh /work/port/build-glkms.sh
+	cp "$(MESA_PORT)/glkms.nxe" $(BINFOLDER)glkms.nxe
+	@echo "glkms.nxe -> $(BINFOLDER)glkms.nxe"
+
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
 ifeq ($(ARCH),x86_64)
 OPENSSL_TRIPLE  := x86_64-nanos
@@ -776,7 +845,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa gles2info glkms   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
@@ -1379,6 +1448,12 @@ _image64: _all _userland64 _kext
 	# /nanos/bin). Skipped if absent — only present on a GL dev build.
 	if [ -f $(BINFOLDER)gles2info.nxe ]; then \
 	  printf "rm /nanos/bin/gles2info.nxe\nwrite $(BINFOLDER)gles2info.nxe /nanos/bin/gles2info.nxe\nset_inode_field /nanos/bin/gles2info.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	fi
+	# glkms (optional, external): the Task-9 GBM+EGL+KMS present oracle (GL gradient → scanout), built
+	# by `make glkms` (Mesa .a closure + libdrm KMS). A system utility (flat in /nanos/bin). Skipped if
+	# absent — only present on a GL dev build.
+	if [ -f $(BINFOLDER)glkms.nxe ]; then \
+	  printf "rm /nanos/bin/glkms.nxe\nwrite $(BINFOLDER)glkms.nxe /nanos/bin/glkms.nxe\nset_inode_field /nanos/bin/glkms.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
 	fi
 	# SQLite (optional, external): the real sqlite3 CLI built by `make ARCH=x86_64 sqlite` (the SQLite
 	# fork). A system utility (flat in /nanos/bin); the libsqlite.ndl shared engine goes to /nanos/lib

@@ -81,15 +81,26 @@ static struct node_client *client_get(int pid, int node)
 	}
 }
 
+/* Suspend the kernel console/fb0 mirror-present while a userland client drives the CRTC via KMS
+ * (defined in virtio_gpu_present.c). Without this, the periodic console mirror re-flushes the
+ * fbcon resource onto scanout 0 and overwrites every frame glkms/nwm present. */
+void virtio_gpu_present_set_suspended(int s);
+
 static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
+	long r;
 	if (!g_ddev)
 		return -ENODEV;
 	c = client_get(pid, node);
 	if (!c)
 		return -ENOMEM;
-	return drm_ioctl(&c->shim, cmd, (unsigned long)arg);
+	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
+	/* A successful MODE_SETCRTC means a KMS client now owns the scanout — stop the console mirror.
+	 * (node_release re-enables it when the client goes away.) */
+	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
+		virtio_gpu_present_set_suspended(1);
+	return r;
 }
 
 /* Resolve a GEM mmap fake-offset (bytes, as handed to userspace by e.g. MODE_MAP_DUMB /
@@ -150,6 +161,10 @@ static void node_release(int pid)
 			drm_file_free(g_cli[i].file);
 			g_cli[i].file = 0;
 			g_cli[i].pid = 0;
+			/* the KMS client is gone — hand the scanout back to the console mirror. (Coarse: any
+			 * client release resumes it. A second live KMS client would re-suspend on its next
+			 * SETCRTC; fine for the single-compositor model here.) */
+			virtio_gpu_present_set_suspended(0);
 		}
 }
 

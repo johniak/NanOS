@@ -86,8 +86,13 @@ int nkext_init(void)
 	u64 host;
 	int ret;
 
-	/* verbose DRM logging during bring-up (CORE|DRIVER|KMS|PRIME|ATOMIC|...) */
-	{ extern unsigned long __drm_debug; __drm_debug = 0x1ff; }
+	/* DRM debug categories (CORE|DRIVER|KMS|PRIME|ATOMIC|VBL|STATE|LEASE|DP). Keep this at 0:
+	 * every drm_dbg/atomic-state-dump goes through printk -> knx_log -> the graphical console
+	 * (fbcon), and under KMS the console mirror-present re-grabs the scanout on each write, so a
+	 * chatty commit (SetCrtc) overwrites the very frame a userland compositor (glkms/nwm) just
+	 * presented. Raise to 0x1ff only for a bring-up session that reads the serial log, never for
+	 * a normal / compositor run. */
+	{ extern unsigned long __drm_debug; __drm_debug = 0x0; }
 
 	/* 0) initialize DRM core (chrdev/class + drm_core_init_complete) before any probe */
 	__lkpi_modinit_drm_core_init();
