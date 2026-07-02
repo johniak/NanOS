@@ -91,6 +91,7 @@ typedef struct { union { int __i[5]; volatile int __vi[5]; void *__p[5]; } __u; 
 
 /* ---- prototypes ------------------------------------------------------------------- */
 int pthread_create(pthread_t *__restrict, const pthread_attr_t *__restrict, void *(*)(void *), void *__restrict);
+int pthread_setname_np(pthread_t, const char *);   /* thread debug name — no-op on NanOS */
 int pthread_detach(pthread_t);
 _Noreturn void pthread_exit(void *);
 int pthread_join(pthread_t, void **);

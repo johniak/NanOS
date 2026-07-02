@@ -393,3 +393,61 @@ int mprotect(void* addr, size_t len, int prot) { (void) addr; (void) len; (void)
  * they are never on the virgl/Mesa render path. */
 #include <stdio.h>
 FILE *open_memstream(char **ptr, size_t *sizeloc) { (void) ptr; (void) sizeloc; errno = ENOSYS; return NULL; }
+
+/* memfd_create: an anonymous memory-backed fd. NanOS /tmp is RamFs (memory), so a uniquely-named
+ * file created there and immediately unlinked is exactly that — the fd keeps the memory file alive
+ * with no directory entry. Mesa/GBM use it as an mmap-able, ftruncate-able buffer. Seal flags
+ * (MFD_ALLOW_SEALING) are accepted but not enforced (no F_ADD_SEALS); MFD_CLOEXEC is a no-op. */
+#include <fcntl.h>
+int memfd_create(const char *name, unsigned int flags) {
+	static unsigned ctr;
+	char path[64];
+	int fd;
+	(void) name; (void) flags;
+	snprintf(path, sizeof path, "/tmp/.memfd-%d-%u", (int) getpid(), ctr++);
+	fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+	if (fd < 0) return -1;
+	unlink(path);
+	return fd;
+}
+
+/* dl_iterate_phdr: NanOS has no glibc-style shared-object phdr chain (single .nxe per process +
+ * the DynLoader for .ndl modules), so iterate nothing and return 0. The only consumer, Mesa's
+ * build_id.c, then finds no ELF build-id — harmless (the shader cache that would use it is off). */
+#include <link.h>
+int dl_iterate_phdr(int (*cb)(struct dl_phdr_info *, size_t, void *), void *data) {
+	(void) cb; (void) data;
+	return 0;
+}
+
+/* dladdr: no runtime symbol/object table on NanOS -> report "not found" (0). Mesa's build_id.c
+ * falls back gracefully (no build-id; the shader cache that would use it is disabled). */
+#include <dlfcn.h>
+int dladdr(const void *addr, Dl_info *info) { (void) addr; if (info) { info->dli_fname=0; info->dli_fbase=0; info->dli_sname=0; info->dli_saddr=0; } return 0; }
+
+
+/* mincore: NanOS eagerly backs every mapping (no reclaim), so all queried pages are resident. */
+int mincore(void *addr, size_t length, unsigned char *vec) {
+	size_t pages = (length + 4095) / 4096, i;
+	(void) addr;
+	if (vec) for (i = 0; i < pages; i++) vec[i] = 1;
+	return 0;
+}
+
+/* CPU affinity: report a single schedulable CPU (Mesa sizes thread pools from CPU_COUNT; our
+ * libstdc++ has threads disabled, so single-threaded is correct). sched_yield: no-op. */
+#include <sched.h>
+int sched_getaffinity(int pid, size_t sz, cpu_set_t *m) { (void) pid; (void) sz; if (m) { CPU_ZERO(m); CPU_SET(0, m); } return 0; }
+int sched_yield(void) { return 0; }
+
+/* pthread_setname_np: thread debug name — accepted, ignored. */
+#include <pthread.h>
+int pthread_setname_np(pthread_t t, const char *n) { (void) t; (void) n; return 0; }
+
+/* popen/pclose: no shell/process pipes on NanOS -> report unsupported (callers degrade). */
+#include <stdio.h>
+FILE *popen(const char *cmd, const char *mode) { (void) cmd; (void) mode; errno = ENOSYS; return NULL; }
+int   pclose(FILE *f) { (void) f; return -1; }
+
+/* sched_getcpu: single-CPU view for the port (see sched_getaffinity). */
+int sched_getcpu(void) { return 0; }

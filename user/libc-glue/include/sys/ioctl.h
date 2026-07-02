@@ -7,7 +7,8 @@
 #ifndef _NANOS_SYS_IOCTL_H
 #define _NANOS_SYS_IOCTL_H
 
-#include <sys/termios.h>   /* TCGETS/TIOCGWINSZ/TIOCGPGRP/... + struct winsize */
+#include <sys/termios.h>
+#include <asm/ioctl.h>   /* _IOC/_IOR/_IOW/_IOWR for DRM ioctl macros */   /* TCGETS/TIOCGWINSZ/TIOCGPGRP/... + struct winsize */
 
 /* Present so callers compile; the kernel returns -EINVAL for ones it does not implement. */
 #ifndef TIOCSCTTY

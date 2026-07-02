@@ -8,6 +8,12 @@
 
 #include_next <limits.h>
 
+#ifndef LLONG_MAX
+#define LLONG_MAX  __LONG_LONG_MAX__
+#define LLONG_MIN  (-__LONG_LONG_MAX__ - 1LL)
+#define ULLONG_MAX (__LONG_LONG_MAX__ * 2ULL + 1ULL)
+#endif
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif

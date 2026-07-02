@@ -5,3 +5,4 @@
 #define _SYS_SYSCALL_H
 #include <syscall.h>
 #endif
+#define SYS_gettid 224

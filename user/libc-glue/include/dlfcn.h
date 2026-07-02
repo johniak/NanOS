@@ -14,4 +14,14 @@ void* dlsym(void* handle, const char* name);
 int   dlclose(void* handle);
 char* dlerror(void);
 
+/* dladdr: map an address to its object/symbol. NanOS has no such runtime table, so the stub
+ * returns 0 (not found) — Mesa's build_id.c then finds no build-id (harmless; cache disabled). */
+typedef struct {
+	const char* dli_fname;   /* object path */
+	void*       dli_fbase;   /* object base address */
+	const char* dli_sname;   /* nearest symbol name */
+	void*       dli_saddr;   /* nearest symbol address */
+} Dl_info;
+int dladdr(const void* addr, Dl_info* info);
+
 #endif
