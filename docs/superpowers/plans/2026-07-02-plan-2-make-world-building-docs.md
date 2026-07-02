@@ -479,6 +479,64 @@ fi
 
 ---
 
+### Task 9: Pętla deweloperska „build na serwerze, run na Macu" — `scripts/remote-build.sh`
+
+Docelowy workflow użytkownika: edycja + `make run64`/GUI na Macu, ciężkie buildy na serwerze i9. Obraz `disk/image64-grub2.img` (~320 MB) wraca po LAN w sekundy.
+
+**Files:**
+- Create: `/Users/johniak/Projects/NanOS/scripts/remote-build.sh`
+- Modify: `/Users/johniak/Projects/NanOS/BUILDING.md` (sekcja „Build server": workflow remote-build)
+
+**Interfaces:**
+- Consumes: serwer po Task 6 (bootstrap zrobiony, siblings + SDK_WORK żyją na serwerze).
+- Produces: `scripts/remote-build.sh [cel]` — domyślnie `image64`; `remote-build.sh world` dla pełnego builda; po powrocie obrazu lokalne `make run64` działa bez żadnego builda na Macu.
+
+- [ ] **Step 1: Napisz skrypt**
+
+```sh
+#!/bin/sh
+# remote-build.sh — build on the build server, run on this machine.
+# Rsyncs the working tree (uncommitted changes included) to the server, runs make there,
+# and pulls the disk image back, so a local `make run64` boots the fresh build.
+# Env: NANOS_BUILD_HOST=user@server (required), NANOS_BUILD_DIR (default ~/build/NanOS).
+# Usage: scripts/remote-build.sh [make-target]      # default: image64; e.g. world, verify64
+set -eu
+HOST=${NANOS_BUILD_HOST:?set NANOS_BUILD_HOST=user@server}
+RDIR=${NANOS_BUILD_DIR:-build/NanOS}
+TARGET=${1:-image64}
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# push the tree (incl. .git — cheap after the first sync); never touch server-side artifacts
+rsync -az --delete \
+  --exclude '/bin/' --exclude '/disk/' --exclude '.DS_Store' \
+  "$HERE/" "$HOST:$RDIR/"
+ssh "$HOST" "cd $RDIR && make $TARGET"
+case "$TARGET" in image64|world|world-gl)
+  mkdir -p "$HERE/disk"
+  rsync -az "$HOST:$RDIR/disk/image64-grub2.img" "$HERE/disk/"
+  echo "image pulled — boot it: make run64";;
+esac
+```
+
+`chmod +x scripts/remote-build.sh`. Uwagi dla wykonawcy: `--delete` z `--exclude '/bin/'`/`'/disk/'` zostawia serwerowe artefakty w spokoju (nie kasuje ich mimo braku po stronie Maca); cele smoke/verify64 wykonują się w całości na serwerze (headless, serial) — nic nie wraca poza kodem wyjścia.
+
+- [ ] **Step 2: Test pełnej pętli z Maca**
+
+```bash
+export NANOS_BUILD_HOST=<user@serwer>
+scripts/remote-build.sh image64 && make run64          # desktop wstaje z obrazu zbudowanego na serwerze
+scripts/remote-build.sh verify64                        # gate'y zdalnie, wynik w terminalu Maca
+```
+
+Zmierz i zanotuj w BUILDING.md czas `remote-build.sh image64` po drobnej edycji (oczekiwanie: rsync sekundy + przyrostowy build na i9 znacznie szybszy niż lokalny docker na Macu).
+
+- [ ] **Step 3: Dopisz workflow do BUILDING.md (sekcja „Build server") + commit**
+
+```bash
+git add scripts/remote-build.sh BUILDING.md && git commit -m "remote-build: edit on the laptop, build on the server, pull the image back"
+```
+
+---
+
 ## Kolejność i zależności
 
-Task 1 → 2 (world potrzebuje sdk-toolchain) → 3 i 4 równolegle → 5+6 (serwer JEST maszyną bramy clean-machine; Task 6 Step 2 wykonuje Task 5) → 7 → 8. Wszystko po ukończeniu Planu 1.
+Task 1 → 2 (world potrzebuje sdk-toolchain) → 3 i 4 równolegle → 5+6 (serwer JEST maszyną bramy clean-machine; Task 6 Step 2 wykonuje Task 5) → 9 (zaraz po 6 — to codzienny workflow użytkownika) → 7 → 8. Wszystko po ukończeniu Planu 1.
