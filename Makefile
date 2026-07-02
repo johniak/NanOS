@@ -983,13 +983,18 @@ run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
 
 # GL/virgl interactive run — like `run64`, but with GPU-accelerated OpenGL ES. Stock homebrew QEMU
-# has no virgl, so `run64` cannot show GL; this points at the kosmickrisp fork (virtio-vga-gl →
+# has no virgl, so `run64` cannot show GL; this points at the kosmickrisp fork (virtio-gpu-gl →
 # virglrenderer → ANGLE → Metal on Apple Silicon) and adds the cocoa GL display. Boot, log in
-# root/nanos, then run `gles2info` (prints renderer=virgl) or `nwm` (the desktop over virtio-gpu).
+# root/nanos (or jan/jan on the graphics VT F7), and the nwm desktop renders GPU-accelerated.
 # Override the binary path with QEMU_GL=/path/to/qemu-system-x86_64 if the fork moved. The fork is
 # validated single-vCPU (MTTCG-SMP + virgl is flaky), so this pins -smp 1 regardless of NCPU64.
 QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64
-QEMU_GL_VGA ?= -device virtio-vga-gl -display cocoa,gl=es
+# Use the PURE virtio-gpu-gl device, NOT virtio-vga-gl: virtio-vga-gl also exposes a legacy VGA
+# output that QEMU displays by DEFAULT, so the cocoa gl=es window shows the (black, unused) VGA
+# surface and the virtio-gpu scanout — the actual desktop — never appears. virtio-gpu-gl-pci has no
+# VGA part, so the virtio-gpu scanout IS the display and the desktop shows. (A/B-proven: with
+# virtio-vga-gl the window is black; with virtio-gpu-gl-pci the full nwm desktop composites.)
+QEMU_GL_VGA ?= -device virtio-gpu-gl-pci -display cocoa,gl=es
 # No NIC by default: the kosmickrisp fork is built WITHOUT the slirp ('user') network backend, so
 # passing NIC_NET aborts it ("network backend 'user' is not compiled into this binary"). GL bring-up
 # needs no network. To add one anyway, build the fork with slirp and run `make run64-gl QEMU_GL_NET='...'`.
@@ -1769,6 +1774,11 @@ DRMTEST_INC=-Iexternal/linux-6.12/include/uapi -Iexternal/linux-6.12/include -Ie
 $(BINFOLDER)drmtest.o: user/drmtest/drmtest.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DRMTEST_INC) $(DYNHDR) -MMD -MP -c $< -o $@
+# glpix — the render->scanout oracle. Same vendored-uapi discipline as drmtest, and it reuses
+# drmtest's virgl_words.h (build_clear_stream) via -Iuser/drmtest.
+$(BINFOLDER)glpix.o: user/glpix/glpix.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DRMTEST_INC) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/%.c
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: $(SBASE)/libutil/%.c
@@ -1990,6 +2000,7 @@ $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
 $(BINFOLDER)drmtest.nxe:   $(DYN_DEPS) $(BINFOLDER)drmtest.o
+$(BINFOLDER)glpix.nxe:     $(DYN_DEPS) $(BINFOLDER)glpix.o
 $(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
 $(BINFOLDER)greeter.nxe:   $(DYN_DEPS) $(BINFOLDER)greeter.o
 $(BINFOLDER)dhcpcfg.nxe:   $(DYN_DEPS) $(BINFOLDER)dhcpcfg.o
@@ -2224,7 +2235,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest malloctest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest glpix malloctest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter

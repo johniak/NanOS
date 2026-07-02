@@ -28,7 +28,7 @@ fi
 
 pkill -9 -f "qemu-system-x86_64.*$IMG" 2>/dev/null; sleep 1
 "$QEMU_GL" -cpu qemu64 -accel tcg,thread=multi -smp 1 -m 512 \
-    -drive file="$IMG",format=raw -device virtio-vga-gl -display cocoa,gl=es \
+    -drive file="$IMG",format=raw -device virtio-gpu-gl-pci -display cocoa,gl=es \
     -serial file:"$SER" -monitor unix:"$MON",server,nowait -no-reboot >/dev/null 2>&1 &
 QPID=$!
 trap 'kill -9 "$QPID" 2>/dev/null; rm -f "$SER" "$MON"' EXIT
