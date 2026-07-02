@@ -53,6 +53,7 @@ def typ(text, settle):
 typ("jan", 2.5)                    # username (generous settles: boot now brings up 6 getty logins
 typ("jan", 4.0)                    # + nwm, so login/bash can lag under verify64's concurrent load)
 typ("echo X64_SMOKE_FORK_OK", 1.0) # a command at the shell -> fork/exec
+typ("malloctest", 2.5)             # libc allocator 16-byte-alignment gate (ABI max_align_t)
 s.close()
 PY
 sleep 3
@@ -67,6 +68,8 @@ chk "jan@nanos"                               "logged in -> bash login shell (bo
 chk "EXT-RW selftest: write+read OK"          "ext4 JBD2 write path (selftest)"
 chk "eth0 .* up\|Networking: lo + eth0"        "networking (e1000 + net threads) up"
 chk "X64_SMOKE_FORK_OK"                        "ring-3 fork/exec from console (echo ran, output returned)"
+chk "malloctest: MALLOC_ALIGN16 PASS"          "libc malloc/calloc/realloc are 16-byte aligned (ABI max_align_t)"
+no  "MALLOC_ALIGN16 FAIL"                       "no under-aligned allocation from the C allocator"
 no  "CPU EXCEPTION|KERNEL EXCEPTION|killed faulting process|Triple fault"  "no faults on the console"
 # QEMU int log: a guest reset / triple fault would show here even if the console didn't
 if grep -qE "Triple fault" "$INT" 2>/dev/null; then echo "  FAIL: QEMU logged a Triple fault"; PASS=0; else echo "  OK  : no triple fault in QEMU int log"; fi

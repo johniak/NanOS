@@ -1,0 +1,22 @@
+Backport picolibc upstream malloc 16-byte alignment fix to 1.8.6 (x86_64).
+
+nano-malloc derives MALLOC_CHUNK_ALIGN from offsetof(align_chunk_t, u), and the
+align_chunk_t union {void*, double, long long, size_t} has alignment 8 on x86_64
+-- so malloc/calloc/realloc return only 8-byte-aligned memory. The System V AMD64
+ABI requires 16 (max_align_t): code that stores SSE regs to malloc'd memory with a
+16-byte-aligned store (e.g. Mesa ralloc's `movaps %xmm0,(%rax)` into an alignas(16)
+struct) #GPs. Upstream picolibc fixed this by widening the alignment type to
+max_align_t; adding `long double` (alignof 16 on x86_64 SysV) to the union raises
+offsetof(align_chunk_t, u) to 16 with no other change. i686 is unaffected (long
+double there is alignof 4) and intentionally not patched.
+
+--- a/newlib/libc/stdlib/nano-mallocr.c
++++ b/newlib/libc/stdlib/nano-mallocr.c
+@@ -74,6 +74,7 @@
+     union {
+ 	void *p;
+ 	double d;
+ 	long long ll;
++	long double ld;
+ 	size_t s;
+     } u;

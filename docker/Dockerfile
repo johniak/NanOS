@@ -133,10 +133,18 @@ RUN touch /etc/nanos-build
 # layer. Built non-PIC / small code model (-fno-pic -mcmodel=small -mno-red-zone via the
 # cross-file) so objects emit absolute relocs that mknx64 handles, not GOTPCREL/PLT.
 COPY picolibc-x86_64-elf.txt /tmp/picolibc-x86_64-elf.txt
+# Backport picolibc's upstream malloc 16-byte alignment fix to 1.8.6: nano-malloc derives
+# MALLOC_CHUNK_ALIGN from offsetof(align_chunk_t, u), whose union {void*,double,long long,size_t}
+# aligns to 8 on x86_64 — but the System V AMD64 ABI requires 16 (max_align_t). Widening the union
+# with `long double` (alignof 16 here) raises the alignment to 16 so malloc/calloc/realloc satisfy
+# 16-byte SSE stores (e.g. Mesa ralloc's `movaps %xmm0,(%rax)`). i686 uses a different picolibc build
+# (long double there is alignof 4) and is intentionally NOT patched.
+COPY picolibc-nano-malloc-align16.patch /tmp/picolibc-nano-malloc-align16.patch
 RUN set -eux; \
     git clone --depth 1 --branch "${PICOLIBC_VERSION}" \
         https://github.com/picolibc/picolibc /tmp/picolibc; \
     cd /tmp/picolibc; \
+    git apply /tmp/picolibc-nano-malloc-align16.patch; \
     meson setup build --cross-file /tmp/picolibc-x86_64-elf.txt \
         -Dprefix=/opt/picolibc/x86_64-elf \
         -Dincludedir=include -Dlibdir=lib \
@@ -146,7 +154,7 @@ RUN set -eux; \
         -Derrno-function=__errno_location; \
     ninja -C build; \
     ninja -C build install; \
-    cd /; rm -rf /tmp/picolibc /tmp/picolibc-x86_64-elf.txt
+    cd /; rm -rf /tmp/picolibc /tmp/picolibc-x86_64-elf.txt /tmp/picolibc-nano-malloc-align16.patch
 
 # Limine bootloader (BIOS+UEFI) for the hybrid GPT image. The vN.x-binary branch ships prebuilt
 # BIOS stages + BOOTX64.EFI and a tiny host `limine` deploy tool we build with the host cc. Fetched

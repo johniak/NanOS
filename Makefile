@@ -982,6 +982,37 @@ image64:
 run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
 
+# GL/virgl interactive run — like `run64`, but with GPU-accelerated OpenGL ES. Stock homebrew QEMU
+# has no virgl, so `run64` cannot show GL; this points at the kosmickrisp fork (virtio-vga-gl →
+# virglrenderer → ANGLE → Metal on Apple Silicon) and adds the cocoa GL display. Boot, log in
+# root/nanos, then run `gles2info` (prints renderer=virgl) or `nwm` (the desktop over virtio-gpu).
+# Override the binary path with QEMU_GL=/path/to/qemu-system-x86_64 if the fork moved. The fork is
+# validated single-vCPU (MTTCG-SMP + virgl is flaky), so this pins -smp 1 regardless of NCPU64.
+QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64
+QEMU_GL_VGA ?= -device virtio-vga-gl -display cocoa,gl=es
+# No NIC by default: the kosmickrisp fork is built WITHOUT the slirp ('user') network backend, so
+# passing NIC_NET aborts it ("network backend 'user' is not compiled into this binary"). GL bring-up
+# needs no network. To add one anyway, build the fork with slirp and run `make run64-gl QEMU_GL_NET='...'`.
+QEMU_GL_NET ?=
+.PHONY: run64-gl
+run64-gl: image64
+	@test -x "$(QEMU_GL)" || { echo "run64-gl: no virgl QEMU at $(QEMU_GL) — build the kosmickrisp fork or set QEMU_GL=..."; exit 1; }
+	@# Ad-hoc re-sign the Homebrew tap dylibs the fork dlopen()s (libepoxy/angle/virglrenderer):
+	@# bottle relocation invalidates their code signatures and QEMU aborts on a bad one.
+	@command -v brew >/dev/null 2>&1 && for keg in libepoxy angle virglrenderer; do \
+	  d="$$(brew --prefix startergo/$$keg/$$keg 2>/dev/null)/lib"; \
+	  [ -d "$$d" ] && for l in "$$d"/*.dylib; do codesign --force --sign - "$$l" >/dev/null 2>&1; done; \
+	done; true
+	$(QEMU_GL) $(QEMU_CPU64) -accel tcg,thread=multi -smp 1 $(QEMU_MEM) \
+	    -drive file=$(IMAGE64_GRUB2),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
+
+# Headless GL proof — boot on the virgl fork, log in, run `gles2info`, print the GL markers to this
+# terminal (no cocoa window, no clicking). Success = `renderer=virgl`. The GL-composited desktop is
+# a separate unbuilt milestone; this proves only the unmodified-Mesa → virgl → ANGLE → Metal path.
+.PHONY: run64-gl-test
+run64-gl-test: image64
+	QEMU_GL="$(QEMU_GL)" IMG="$(IMAGE64_GRUB2)" bash scripts/run64-gl-selftest.sh
+
 # Doom (in-tree doomgeneric), ARCH-AWARE host wrapper. Stages bin/doom.nxe in the container for
 # the selected arch — i686 (default) or x86_64 — using the arch-selected userland toolchain,
 # picolibc sysroot, linker script and mknx (see the $(BINFOLDER)doom.nxe rule). For i686 doom is
@@ -1976,6 +2007,7 @@ $(BINFOLDER)forkmany.nxe:  $(DYN_DEPS) $(BINFOLDER)forkmany.o
 $(BINFOLDER)orphan.nxe:    $(DYN_DEPS) $(BINFOLDER)orphan.o
 $(BINFOLDER)clonetest.nxe: $(DYN_DEPS) $(BINFOLDER)clonetest.o $(BINFOLDER)clone_helper.o
 $(BINFOLDER)errnotest.nxe: $(DYN_DEPS) $(BINFOLDER)errnotest.o
+$(BINFOLDER)malloctest.nxe: $(DYN_DEPS) $(BINFOLDER)malloctest.o
 $(BINFOLDER)pthrtest.nxe: $(DYN_DEPS) $(BINFOLDER)pthrtest.o
 $(BINFOLDER)pthrstress.nxe: $(DYN_DEPS) $(BINFOLDER)pthrstress.o
 $(BINFOLDER)pfract.nxe:    $(DYN_DEPS) $(BINFOLDER)pfract.o
@@ -2192,7 +2224,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest malloctest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter
