@@ -2097,7 +2097,7 @@ LIBC_GLUE_OBJS=$(BINFOLDER)syscalls.o $(BINFOLDER)cwd.o $(BINFOLDER)sigtramp.o $
 # below (extra -I for the musl headers + the weak_alias/hidden force-include).
 LIBC_PTHREAD_OBJS=$(BINFOLDER)__wait.o $(BINFOLDER)__timedwait.o $(BINFOLDER)__lock.o \
   $(BINFOLDER)pthread_self.o $(BINFOLDER)default_attr.o $(BINFOLDER)nanos_glue.o \
-  $(BINFOLDER)clone.o $(BINFOLDER)__set_thread_area.o \
+  $(BINFOLDER)clone.o $(BINFOLDER)__set_thread_area.o $(BINFOLDER)nx_tls.o \
   $(BINFOLDER)pthread_create.o $(BINFOLDER)pthread_join.o $(BINFOLDER)pthread_detach.o \
   $(BINFOLDER)pthread_cancel.o $(BINFOLDER)cancel_impl.o \
   $(BINFOLDER)pthread_attr.o \

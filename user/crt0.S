@@ -16,7 +16,9 @@ _start:
     mov ebp, 0
     ; Install the main thread's TLS (TCB + %gs:0) FIRST, before any libc work — errno is
     ; (*__errno_location()) which reads the TCB at %gs:0, so the thread pointer must be
-    ; live before the first libc call. (libc.ndl exports __nx_init_tls; see tls.c.)
+    ; live before the first libc call. (libc.ndl exports __nx_init_tls; see tls.c.) i386 programs
+    ; carry no __thread data, so the legacy 0-arg bare-TCB entry is exactly right. (Program TLS is
+    ; an x86_64 feature: x86_64 crt064.S calls __nx_init_tls_tpl with the user-nx.ld template.)
     call __nx_init_tls
     mov eax, [esp]              ; argc
     lea edx, [esp + 4]         ; argv

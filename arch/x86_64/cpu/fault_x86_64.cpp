@@ -12,6 +12,7 @@
 #include "PagingControl.h"   // kernel::readCr2 (64-bit)
 #include "Console.h"
 #include "Exec.h"            // kernel::killCurrentProcess
+#include "Process.h"         // kernel::Process::current() (faulting-process name)
 #include "Signal.h"          // SIGSEGV
 #include "vt/VtManager.h"    // force the text console visible so a kernel panic is on screen
 
@@ -24,6 +25,9 @@ void faultHandler(kernel::Registers* r) {
         if (r->int_no == 14) { kernel::Console::write(" cr2="); kernel::Console::writeHex((unsigned long) kernel::readCr2()); }
         kernel::Console::write(" rip=");
         kernel::Console::writeHex((unsigned long) r->rip);
+        if (kernel::Process* cp = kernel::ProcTable::current()) {
+            kernel::Console::write(" proc="); kernel::Console::write(cp->comm);
+        }
         kernel::Console::writeLine("]");
         kernel::killCurrentProcess(SIGSEGV);   // terminates current + reschedules; does NOT return
         return;                                // (unreachable)

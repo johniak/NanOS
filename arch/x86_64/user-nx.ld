@@ -17,9 +17,25 @@ SECTIONS
    * section name (.nxlib.<soname>) survives linking — mknx reads it to tag each import
    * with its library. Add a line here when introducing a new shared library. */
   .nxlib.libc.ndl  : { *(.nxlib.libc.ndl) }
+  /* TLS template. .tdata/.tbss are not caught by the .data/.bss globs, so place them explicitly
+     and export the template bounds for the runtime TLS builder (nx_tls.c); the flat .nx has no ELF
+     phdrs so musl auxv discovery cannot run. .tdata (init image) is in the loaded image before
+     __bss_start; .tbss is NOBITS in the zeroed bss range. __nx_tls_align_sym is an ABSOLUTE symbol
+     whose value is the segment alignment (read via (size_t)&__nx_tls_align_sym). */
+  .tdata     : { __nx_tls_image = .; *(.tdata .tdata.* .gnu.linkonce.td.*) }
+  __nx_tls_edata = .;
   __bss_start = .;
+  .tbss (NOLOAD) : { *(.tbss .tbss.* .gnu.linkonce.tb.*) *(.tcommon) }
+  __nx_tls_end = .;
   .bss       : { *(.bss*) *(COMMON) }
   __bss_end = .;
+  /* Sizes as ABSOLUTE (base-independent) constants so crt0 loads them as plain immediates — never
+     as a runtime difference of two relocated addresses, which mknx could rebase inconsistently when
+     a program loads at a base other than 0x800000. Only __nx_tls_image is a real (rebased) address
+     (the memcpy source); memsz/filesz/align are constants. */
+  __nx_tls_filesz   = ABSOLUTE(__nx_tls_edata - __nx_tls_image);
+  __nx_tls_memsz    = ABSOLUTE(__nx_tls_end   - __nx_tls_image);
+  __nx_tls_align_sym = ABSOLUTE(MAX(ALIGNOF(.tdata), ALIGNOF(.tbss)));
   /* Stored image size (everything before bss); used as NxHeader.imageSize. */
   __nx_image_size = __bss_start - 0x800000;
 }

@@ -6,9 +6,15 @@
 [GLOBAL _start]
 [EXTERN main]
 [EXTERN exit]
-[EXTERN __nx_init_tls]
+[EXTERN __nx_init_tls_tpl]
 [EXTERN __nx_set_environ]
 [EXTERN __nx_set_progname]
+; Per-program TLS template (defined by arch/x86_64/user-nx.ld). image is a real address; the
+; sizes/align are absolute link-time constants (loaded as immediates, not relocated differences).
+[EXTERN __nx_tls_image]
+[EXTERN __nx_tls_filesz]
+[EXTERN __nx_tls_memsz]
+[EXTERN __nx_tls_align_sym]
 _start:
     xor rbp, rbp
     ; Capture argc/argv/envp from the entry stack into callee-saved regs BEFORE touching rsp
@@ -20,8 +26,14 @@ _start:
     ; Install the main thread's TLS (TCB + %fs.base) FIRST, before any libc work — errno is
     ; (*__errno_location()) which reads the TCB at %fs:0, so the thread pointer must be live
     ; before the first libc call. (libc.ndl exports __nx_init_tls; it arch_prctl(ARCH_SET_FS)
-    ; on x86_64 — see tls.c.)
-    call __nx_init_tls
+    ; on x86_64 — see tls.c.) The program's TLS template (.tdata/.tbss) is PER-PROGRAM, defined by
+    ; user-nx.ld — libc.ndl can't reference those symbols, so we compute image/filesz/memsz/align
+    ; here and pass them in. A program with no __thread data has memsz=0 -> bare-TCB fallback.
+    mov rdi, __nx_tls_image             ; image = .tdata start (real, rebased address)
+    mov rsi, __nx_tls_filesz            ; filesz (absolute constant from user-nx.ld)
+    mov rdx, __nx_tls_memsz             ; memsz  (absolute constant; 0 => bare-TCB fallback)
+    mov rcx, __nx_tls_align_sym         ; align  (absolute constant)
+    call __nx_init_tls_tpl
     ; Publish the environment to libc (environ lives in libc.ndl, unreachable as a data symbol
     ; from here) so getenv()/environ work, and the program name for getprogname(). Mirrors the
     ; i686 crt0.S — without __nx_set_environ, libc's environ stays NULL and any environ deref

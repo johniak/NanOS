@@ -84,13 +84,18 @@ static void __nx_run_ctors(void) {
 		(*p)();
 }
 
-/* Install the main thread's TLS: self-point the TCB and aim the thread pointer at it. On
- * x86_64 that is %fs.base via arch_prctl(ARCH_SET_FS); on i386 the fixed TLS GDT slot
- * (entry 6 / selector 0x33) via set_thread_area. The kernel records the base and reloads
- * the thread pointer on its way back to ring 3 / on every context switch, so the thread
- * pointer reads `self` immediately after this returns. Called from crt0 (_start) before any
- * other libc work, so errno is valid for the whole program. */
-void __nx_init_tls(void) {
+/* Real per-program TLS (nx_tls.c). Builds a variant-II TLS block from the template crt0 passes
+ * (image/filesz/memsz/align, from the .nxe's user-nx.ld symbols), installs the thread pointer, and
+ * returns the TCB — or 0 when the program has no __thread data (the common case). */
+void *__nx_init_main_tls(void *image, unsigned long filesz, unsigned long memsz, unsigned long align);
+
+/* Install the bare self-pointing TCB + thread pointer (errno + %fs:0 only). On x86_64 that is
+ * %fs.base via arch_prctl(ARCH_SET_FS); on i386 the fixed TLS GDT slot (entry 6 / selector 0x33)
+ * via set_thread_area. The kernel records the base and reloads the thread pointer on its way back
+ * to ring 3, so %fs:0 reads `self` immediately. Then runs libc.ndl's constructors (std-stream
+ * lock-init) — after the thread pointer is live (ctors may touch errno/malloc) but before crt0
+ * sets `environ` (so no ctor may call getenv). */
+static void __nx_init_tls_bare(void) {
 	__nx_main_tcb.self = &__nx_main_tcb;
 
 #if defined(__x86_64__)
@@ -105,15 +110,27 @@ void __nx_init_tls(void) {
 	ud.limit        = 0xFFFFF;
 	ud.flags        = 0x51;                /* seg_32bit | limit_in_pages | useable */
 	if (sys_set_thread_area(&ud) != 0)
-		/* TLS setup failed -> %gs:0 is invalid and the first errno access would fault or
-		 * corrupt memory. Trap loudly instead of limping on with a broken thread pointer. */
 		__asm__ __volatile__("int3");
 #endif
 
-	/* TLS (and thus errno) is live now; malloc's static recursive lock already works. Run
-	 * libc.ndl's constructors so picolibc's std-stream lock-init fires and stdio is locked.
-	 * Done AFTER set_thread_area because the constructors may touch errno/malloc. NOTE: this
-	 * runs BEFORE crt0 calls __nx_set_environ, so `environ` is still NULL here — do not add a
-	 * constructor that calls getenv(). */
 	__nx_run_ctors();
+}
+
+/* Legacy 0-arg entry: the ABI the PRE-EXISTING external ports (toybox/grep/vim/bash/... whose .nxe
+ * already bakes in an older crt0) call. Bare TCB only — those programs use no __thread data. Kept
+ * signature-stable so their crt0 keeps working without a rebuild. crt0 calls this before any libc
+ * work so errno is valid for the whole program. */
+void __nx_init_tls(void) { __nx_init_tls_bare(); }
+
+/* New entry: the current crt0 (user/crt064.S) passes the program's TLS template (per-program,
+ * defined by user-nx.ld — libc.ndl can't reference those symbols). If the program has __thread
+ * data (memsz>0), build a real TLS block so those variables resolve; otherwise fall back to the
+ * bare TCB. Separate from __nx_init_tls to preserve the legacy 0-arg ABI above. */
+void __nx_init_tls_tpl(void *tls_image, unsigned long tls_filesz,
+                       unsigned long tls_memsz, unsigned long tls_align) {
+	if (tls_memsz && __nx_init_main_tls(tls_image, tls_filesz, tls_memsz, tls_align)) {
+		__nx_run_ctors();   /* real program TLS installed (thread pointer + errno live) */
+		return;
+	}
+	__nx_init_tls_bare();
 }
