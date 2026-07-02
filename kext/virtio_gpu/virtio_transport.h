@@ -16,5 +16,6 @@ struct virtio_device *vt_create(unsigned char bus, unsigned char dev, unsigned c
 
 /* Service a (polled or INTx) interrupt: run vring callbacks for queues with new buffers. */
 void vt_interrupt(struct virtio_device *vdev);
+void vt_poll(struct virtio_device *vdev);   /* unconditional used-ring poll for the wait-pump */
 
 #endif /* _NANOS_VIRTIO_TRANSPORT_H */

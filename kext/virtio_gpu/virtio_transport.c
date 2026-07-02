@@ -155,6 +155,20 @@ void vt_interrupt(struct virtio_device *vdev) {
 			vring_interrupt(0, vt->vqs[i]);
 }
 
+/* Cooperative poll used by the wait-pump (lkpi_wait_pump -> entry_vq_poll). Unlike vt_interrupt,
+ * this does NOT gate on the read-to-clear ISR register: in a busy-poll a used-buffer completion
+ * can land in the window after the poll already cleared ISR, so the completion would never be
+ * harvested and the waiter (e.g. a full ctrl vq or a fence) would hang forever. Walking the used
+ * rings unconditionally is the correct polling model — vring_interrupt/virtqueue_get_buf simply
+ * find nothing when there is nothing new. (Read ISR too, to keep the level-triggered line clear.) */
+void vt_poll(struct virtio_device *vdev) {
+	struct vt_dev *vt = to_vt(vdev);
+	(void) readb(vt->mdev.isr);   /* clear the level-triggered ISR; result ignored */
+	for (unsigned i = 0; i < vt->nvqs; i++)
+		if (vt->vqs[i])
+			vring_interrupt(0, vt->vqs[i]);
+}
+
 /* Normally in virtio.c (the bus layer we don't lift): a debug check that a driver only
  * uses features it declared in its id_table. We bind the device directly, so it's a no-op. */
 void virtio_check_driver_offered_feature(const struct virtio_device *vdev, unsigned int fbit) {

@@ -2,11 +2,18 @@
 #define _LKPI_INTERVAL_TREE_GENERIC_H
 #include <linux/rbtree.h>
 #include <linux/rbtree_augmented.h>
-/* Simplified interval tree: ordered insert by START, linear iter for overlaps.
- * Also emits an (unused) augment-callbacks struct named ITPREFIX##_augment so
- * callers that reference it (drm_mm) link. Sufficient for small node sets. */
+/* Simplified interval tree: our own ITPREFIX##_insert does an ordered insert by START and the
+ * iterators do a linear overlap scan (sufficient for small node sets). BUT the augment-callbacks
+ * struct must be REAL: drm_mm.c does NOT use our _insert — its drm_mm_interval_tree_add_node
+ * calls rb_insert_augmented_cached(&ITPREFIX##_augment) directly, which invokes augment->rotate
+ * during rebalancing. A {0,0,0} struct there means a call through a NULL rotate pointer (#UD
+ * storm / hang the moment the tree first rotates — i.e. the first real 3D GEM allocation).
+ * Generate the proper max-subtree callbacks that maintain ITSUBTREE, exactly like upstream. */
+/* NOTE: force `static` (not ITSTATIC) on the callbacks — callers pass `static inline`, and
+ * `inline` on the const struct variable is meaningless (a warning). The struct is still emitted
+ * because drm_mm references it via rb_insert_augmented_cached. */
 #define INTERVAL_TREE_DEFINE(ITSTRUCT, ITRB, ITTYPE, ITSUBTREE, ITSTART, ITLAST, ITSTATIC, ITPREFIX) \
-ITSTATIC const struct rb_augment_callbacks ITPREFIX##_augment = { 0, 0, 0 }; \
+RB_DECLARE_CALLBACKS_MAX(static, ITPREFIX##_augment, ITSTRUCT, ITRB, ITTYPE, ITSUBTREE, ITLAST) \
 ITSTATIC void ITPREFIX##_insert(ITSTRUCT *node, struct rb_root_cached *root){ \
   struct rb_node **p=&root->rb_root.rb_node, *parent=0; \
   while(*p){ parent=*p; if(ITSTART(node) < ITSTART(rb_entry(parent,ITSTRUCT,ITRB))) p=&(*p)->rb_left; else p=&(*p)->rb_right; } \

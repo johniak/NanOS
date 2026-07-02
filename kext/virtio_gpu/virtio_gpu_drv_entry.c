@@ -76,7 +76,7 @@ static struct virtio_device *g_vdev;
 static void entry_vq_poll(void)
 {
 	if (g_vdev)
-		vt_interrupt(g_vdev);
+		vt_poll(g_vdev);   /* unconditional used-ring poll (see vt_poll) */
 }
 
 int nkext_init(void)
