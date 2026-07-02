@@ -967,6 +967,27 @@ git add user/glkms/ Makefile
 git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via AddFB2/SetCrtc"
 ```
 
+> **STATUS (2026-07-02, commit a70d9ce): guest side DONE, blocked on host 3D-scanout display.**
+> `glkms` builds (Mesa GBM+EGL+GLES2 closure via `mesa-port/build-glkms.sh`; new `make mesa/gles2info/
+> glkms` targets) and runs: `glkms_open` (GBM device + scanout surface + ES2 ctx) and `glkms_swap`
+> (`eglSwapBuffers`→`gbm_surface_lock_front_buffer`→`drmModeAddFB`→`drmModeSetCrtc`) all succeed —
+> serial `glkms: flip OK`. Getting a *visible* frame required three kernel/LinuxKPI fixes (all landed,
+> 2D smoke unregressed): `__drm_debug=0` (was a 0x1ff bring-up leftover flooding fbcon); a truthful
+> `held` flag on the UP `struct mutex` so `mutex_is_locked`/`drm_modeset_is_locked` stop firing
+> `WARN_ON` on every atomic commit; and suspending the `virtio_gpu_present.c` console mirror while a
+> userland client drives the CRTC (set on `MODE_SETCRTC`, cleared on release — like fbcon suspend
+> under a DRM master). **Open blocker:** with all that fixed, the host **kosmickrisp virgl fork does
+> not visually resolve a 3D/virgl resource bound as the KMS scanout** — `SET_SCANOUT(0, handle)` is
+> issued (`[drm] handle 0x3, crtc 1280x800+0+0`) but the frozen console stays instead of the gradient.
+> `glpix` (Task-6 raw oracle) hit the identical never-visually-confirmed symptom. Ruled out:
+> scanout-index mismatch, mirror fight, drm_debug spam, WARN flood, `blob=on,hostmem=256M`. The 2D
+> console/present path displays fine; only 3D-resource-as-scanout is unproven. Resolving it needs
+> either building/patching the QEMU fork from source (virgl `set_scanout`→`dpy_gl_scanout_texture`)
+> or forcing Mesa GBM blob allocation + guest blob negotiation. **Task 10 (nwm GL) is gated on this**
+> — the compositor reuses `glkms_init.c` verbatim, so it needs the same 3D scanout to reach screen.
+> Visual oracle = macOS `screencapture` of the cocoa window (gl=es monitor screendump can't read the
+> ANGLE scanout).
+
 ---
 
 ### Task 10: nwm GL backend (`nw_compose_gl.c`) + GL smoke gate
