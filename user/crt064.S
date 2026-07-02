@@ -15,6 +15,12 @@
 [EXTERN __nx_tls_filesz]
 [EXTERN __nx_tls_memsz]
 [EXTERN __nx_tls_align_sym]
+; Global-constructor list bounds (arch/x86_64/user-nx.ld). Run before main so C++ static objects and
+; __attribute__((constructor)) functions initialize — without this a program's ctors never run.
+[EXTERN __nx_init_array_start]
+[EXTERN __nx_init_array_end]
+[EXTERN __nx_ctors_start]
+[EXTERN __nx_ctors_end]
 _start:
     xor rbp, rbp
     ; Capture argc/argv/envp from the entry stack into callee-saved regs BEFORE touching rsp
@@ -42,6 +48,40 @@ _start:
     call __nx_set_environ
     mov rdi, [r13]                  ; argv[0]
     call __nx_set_progname
+    ; Run global constructors before main (TLS/environ/progname are already live above, so ctors
+    ; may use libc). Both symbol bounds and the stored pointers are rebased by mknx. rbx/r15 are
+    ; callee-saved so the ctors preserve them (and argc/argv/envp in r12/r13/r14). rsp stays
+    ; 16-aligned across each call. Guard against 0/-1 sentinels in case a terminator is present.
+    ; .init_array runs in FORWARD order:
+    mov rbx, __nx_init_array_start
+    mov r15, __nx_init_array_end
+.ctor_init_loop:
+    cmp rbx, r15
+    jae .ctor_init_done
+    mov rax, [rbx]
+    add rbx, 8
+    test rax, rax
+    jz .ctor_init_loop
+    cmp rax, -1
+    je .ctor_init_loop
+    call rax
+    jmp .ctor_init_loop
+.ctor_init_done:
+    ; legacy .ctors run in REVERSE order (highest address first):
+    mov rbx, __nx_ctors_end
+    mov r15, __nx_ctors_start
+.ctor_ctors_loop:
+    cmp rbx, r15
+    jbe .ctor_ctors_done
+    sub rbx, 8
+    mov rax, [rbx]
+    test rax, rax
+    jz .ctor_ctors_loop
+    cmp rax, -1
+    je .ctor_ctors_loop
+    call rax
+    jmp .ctor_ctors_loop
+.ctor_ctors_done:
     mov rdi, r12                    ; argc
     mov rsi, r13                    ; argv
     mov rdx, r14                    ; envp
