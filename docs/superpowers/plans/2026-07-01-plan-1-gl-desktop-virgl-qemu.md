@@ -976,17 +976,28 @@ git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via 
 > `held` flag on the UP `struct mutex` so `mutex_is_locked`/`drm_modeset_is_locked` stop firing
 > `WARN_ON` on every atomic commit; and suspending the `virtio_gpu_present.c` console mirror while a
 > userland client drives the CRTC (set on `MODE_SETCRTC`, cleared on release — like fbcon suspend
-> under a DRM master). **Open blocker:** with all that fixed, the host **kosmickrisp virgl fork does
-> not visually resolve a 3D/virgl resource bound as the KMS scanout** — `SET_SCANOUT(0, handle)` is
-> issued (`[drm] handle 0x3, crtc 1280x800+0+0`) but the frozen console stays instead of the gradient.
-> `glpix` (Task-6 raw oracle) hit the identical never-visually-confirmed symptom. Ruled out:
-> scanout-index mismatch, mirror fight, drm_debug spam, WARN flood, `blob=on,hostmem=256M`. The 2D
-> console/present path displays fine; only 3D-resource-as-scanout is unproven. Resolving it needs
-> either building/patching the QEMU fork from source (virgl `set_scanout`→`dpy_gl_scanout_texture`)
-> or forcing Mesa GBM blob allocation + guest blob negotiation. **Task 10 (nwm GL) is gated on this**
-> — the compositor reuses `glkms_init.c` verbatim, so it needs the same 3D scanout to reach screen.
-> Visual oracle = macOS `screencapture` of the cocoa window (gl=es monitor screendump can't read the
-> ANGLE scanout).
+> under a DRM master). **Blocker CONFIRMED = host-fork limitation (2026-07-02, valid oracle).** Ran Fable's diagnosis plan
+> with host instrumentation (`-d guest_errors -trace "virtio_gpu*" -D log` + `VREND_DEBUG=all`) and a
+> **real macOS `screencapture` of the actual QEMU cocoa window** (viewed the PNG — it shows the frozen
+> text console, so the capture is valid; the gl=es monitor `screendump` is NOT). The host receives a
+> **flawless, zero-error** command stream for the 3D path: glpix issues `res_create_3d(1280x800) →
+> ctx_submit(magenta CLEAR) → set_scanout(id0,res) → res_flush(res)` — no `illegal resource`, no
+> `RESP_ERR`, clean ids (the earlier "res-3 id-collision"/"host-rejects" theories are trace-disproven).
+> The **2D console (res 2) displays through the IDENTICAL `set_scanout`+`res_flush` machinery**, so the
+> cocoa gl=es backend does implement `dpy_gl_scanout_texture`. And `glkms` — a real continuous
+> double-buffered **fragment-shader draw** (which Metal must materialize, not a fast-clearable CLEAR) —
+> is **also frozen**. A real guest bug was found+fixed en route (glpix raced SETCRTC ahead of the
+> EXECBUFFER clear fence; added a blocking `DRM_IOCTL_VIRTGPU_WAIT` barrier in `user/glpix/glpix.c` —
+> trace confirms the clear now retires before scanout, but the visual is unchanged, so the race was not
+> the display bug). **Conclusion: the kosmickrisp virgl fork does not present a virgl 3D
+> context-rendered resource as a KMS scanout on cocoa gl=es** — host-side, outside NanOS; the guest
+> DRM/virtio-gpu path is fully correct. **Task 10 (nwm GL) is gated on this** (reuses `glkms_init.c`
+> verbatim). Options (user's call): (a) report upstream to the startergo tap with the trace; (b) build/
+> patch the fork from source to trace `virgl_cmd_set_scanout`→`dpy_gl_scanout_texture` for 3D resources;
+> (c) an interim 2D-present bridge — but GL render→CPU-readback also returns zero on this fork (same
+> likely ANGLE-deferral root cause), so a naive `glReadPixels` bridge won't work; the CPU-composited nwm
+> desktop already displays via the 2D scanout, which is the shipping state. Diagnosis oracle = macOS
+> `screencapture` of the cocoa window (gl=es monitor `screendump` cannot read the ANGLE scanout).
 
 ---
 

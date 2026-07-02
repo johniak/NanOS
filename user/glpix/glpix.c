@@ -108,6 +108,18 @@ int main(void)
 	if (ioctl(fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &eb)) return die("EXECBUFFER clear");
 	printf("glpix: host-render (clear magenta) submitted\n");
 
+	/* 3b. WAIT for the GPU clear to actually land in the resource BEFORE we scan it out.
+	 * Host-side trace proved the bug: without this, SET_SCANOUT + RESOURCE_FLUSH race ahead of
+	 * the EXECBUFFER's completion fence, so the (single) flush presents the resource while it is
+	 * still empty and no later flush ever repaints it. A blocking VIRTGPU_WAIT (flags 0) blocks
+	 * until the resource's last submitted command retires — mirrors what Mesa does before present. */
+	{
+		struct drm_virtgpu_3d_wait w; memset(&w, 0, sizeof w);
+		w.handle = rc.bo_handle; w.flags = 0;   /* 0 = block (VIRTGPU_WAIT_NOWAIT would poll) */
+		if (ioctl(fd, DRM_IOCTL_VIRTGPU_WAIT, &w)) return die("VIRTGPU_WAIT (render barrier)");
+		printf("glpix: host-render complete (wait OK)\n");
+	}
+
 	/* 4. scan the RENDERED resource out. ADDFB wraps the GEM bo as a KMS framebuffer; SETCRTC
 	 * binds it to the crtc, and the unmodified KMS path issues SET_SCANOUT + RESOURCE_FLUSH so
 	 * the host resolves the rendered contents to the display — no guest CPU readback anywhere. */
