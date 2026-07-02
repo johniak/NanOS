@@ -322,6 +322,14 @@ TEST_CASE("SynthFs SK_CHARDEV routes read/write/ioctl/mmapInfo to the device") {
 	CHECK(p == 0xABC000u);
 	CHECK(l == 0x1000u);
 
+	// fstat/stat must report a CHARACTER device (S_IFCHR), not a regular file: callers gate on it
+	// (gbm_create_device() rejects the fd via !S_ISCHR(st_mode)). 0x2000 == S_IFCHR, 0xF000 == S_IFMT.
+	FileStat cst;
+	REQUIRE(fs.stat("/dev/fb0", cst) == 0);
+	CHECK((cst.mode & 0xF000u) == 0x2000u);
+	CHECK((cst.mode & 0777u) == 0666u);
+	CHECK(cst.type == NODE_OTHER);
+
 	// /dev/fb0 shows up in the /dev listing.
 	List<DirEntry> e;
 	REQUIRE(fs.readdir("/dev", e) == 0);

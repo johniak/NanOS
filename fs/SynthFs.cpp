@@ -885,6 +885,13 @@ int SynthFs::stat(String path, FileStat& out) {
 		out.type = NODE_DIR;
 		out.size = 0;
 		out.mode = 0x4000 | (n->perms & 0777);
+	} else if (n->kind == SK_CHARDEV) {
+		// A char-device node (/dev/dri/renderD128, /dev/random, ...) must report S_IFCHR, not
+		// S_IFREG — callers gate on it: e.g. gbm_create_device() rejects the fd with EINVAL
+		// unless fstat() says S_ISCHR. 0x2000 == S_IFCHR.
+		out.type = NODE_OTHER;
+		out.size = 0;
+		out.mode = 0x2000 | (n->perms & 0777);
 	} else {
 		out.type = NODE_FILE;
 		out.size = (n->kind == SK_STATIC) ? n->len : 0;
