@@ -805,6 +805,12 @@ QEMU_CPU64 ?= -cpu qemu64
 # own flags; this only affects `run64`.)
 NCPU64     ?= 4
 QEMU_SMP64 ?= -accel tcg,thread=multi -smp $(NCPU64)
+# Cocoa display for the interactive run64. QEMU 11.0 made the macOS cocoa backend HiDPI/Retina-aware:
+# it now maps 1 guest pixel -> 1 physical pixel, so on a Retina panel the whole window (bootloader
+# text included) shows at half physical size and everything looks tiny. `zoom-to-fit=on` restores the
+# old behaviour — the guest scales to fill the window, so you can drag/maximise it to a comfortable
+# size. Override with QEMU_DISPLAY64= to drop it (e.g. on a non-Retina host or for screendumps).
+QEMU_DISPLAY64 ?= -display cocoa,zoom-to-fit=on
 
 run: image
 	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
@@ -980,7 +986,7 @@ image64:
 	$(DOCKER_RUN) make ARCH=x86_64 _image64
 
 run64: image64
-	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(NIC_NET)
+	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
 # GL/virgl interactive run — like `run64`, but with GPU-accelerated OpenGL ES. Stock homebrew QEMU
 # has no virgl, so `run64` cannot show GL; this points at the kosmickrisp fork (virtio-gpu-gl →
@@ -994,7 +1000,7 @@ QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-s
 # surface and the virtio-gpu scanout — the actual desktop — never appears. virtio-gpu-gl-pci has no
 # VGA part, so the virtio-gpu scanout IS the display and the desktop shows. (A/B-proven: with
 # virtio-vga-gl the window is black; with virtio-gpu-gl-pci the full nwm desktop composites.)
-QEMU_GL_VGA ?= -device virtio-gpu-gl-pci -display cocoa,gl=es
+QEMU_GL_VGA ?= -device virtio-gpu-gl-pci -display cocoa,gl=es,zoom-to-fit=on
 # No NIC by default: the kosmickrisp fork is built WITHOUT the slirp ('user') network backend, so
 # passing NIC_NET aborts it ("network backend 'user' is not compiled into this binary"). GL bring-up
 # needs no network. To add one anyway, build the fork with slirp and run `make run64-gl QEMU_GL_NET='...'`.
