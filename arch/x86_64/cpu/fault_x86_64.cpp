@@ -25,6 +25,11 @@ void faultHandler(kernel::Registers* r) {
         if (r->int_no == 14) { kernel::Console::write(" cr2="); kernel::Console::writeHex((unsigned long) kernel::readCr2()); }
         kernel::Console::write(" rip=");
         kernel::Console::writeHex((unsigned long) r->rip);
+        // rsp too: on a NULL indirect call (`call *0`) rip is 0, but [rsp] (read out-of-band with a
+        // debugger/addr2line) is the caller site. We print only the register, never deref it here —
+        // a process with a corrupt rsp must not fault the kernel from inside the fault handler.
+        kernel::Console::write(" rsp=");
+        kernel::Console::writeHex((unsigned long) r->rsp);
         if (kernel::Process* cp = kernel::ProcTable::current()) {
             kernel::Console::write(" proc="); kernel::Console::write(cp->comm);
         }

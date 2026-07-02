@@ -32,9 +32,13 @@ SECTIONS
   /* Sizes as ABSOLUTE (base-independent) constants so crt0 loads them as plain immediates — never
      as a runtime difference of two relocated addresses, which mknx could rebase inconsistently when
      a program loads at a base other than 0x800000. Only __nx_tls_image is a real (rebased) address
-     (the memcpy source); memsz/filesz/align are constants. */
-  __nx_tls_filesz   = ABSOLUTE(__nx_tls_edata - __nx_tls_image);
-  __nx_tls_memsz    = ABSOLUTE(__nx_tls_end   - __nx_tls_image);
+     (the memcpy source); memsz/filesz/align are constants.
+     Use SIZEOF(.tbss), NOT (__nx_tls_end - __nx_tls_image): the location counter `.` does not advance
+     through a NOBITS/NOLOAD .tbss, so the subtraction would drop the entire .tbss (all zero-init
+     __thread vars — e.g. Mesa's _egl_TLS/_glapi_tls_Context) and report memsz == filesz. That under-
+     sizes the runtime TLS block so every var past .tdata lands in unallocated memory. */
+  __nx_tls_filesz   = ABSOLUTE(SIZEOF(.tdata));
+  __nx_tls_memsz    = ABSOLUTE(SIZEOF(.tdata) + SIZEOF(.tbss));
   __nx_tls_align_sym = ABSOLUTE(MAX(ALIGNOF(.tdata), ALIGNOF(.tbss)));
   /* Stored image size (everything before bss); used as NxHeader.imageSize. */
   __nx_image_size = __bss_start - 0x800000;

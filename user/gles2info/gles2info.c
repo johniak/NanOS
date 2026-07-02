@@ -9,8 +9,17 @@
  *   gles2info: clear-readback OK    the FBO cleared to magenta and readback confirmed it
  *
  * On plain (non-GL) QEMU there is no virgl device → no-display / no-config, exit 1 (softpipe is
- * disabled in the port, so there is no CPU fallback here — that is expected and fine). */
+ * disabled in the port, so there is no CPU fallback here — that is expected and fine).
+ *
+ * Device path: GBM/fd-direct, NOT surfaceless. We open /dev/dri/renderD128 ourselves and hand its
+ * fd to gbm_create_device, then eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR). This bypasses Mesa's
+ * surfaceless device enumeration (which walks sysfs via drmGetDevices2 — NanOS has no sysfs) and
+ * drives the fd-direct driver-load path: loader_get_driver_for_fd -> drmGetVersion -> "virtio_gpu"
+ * -> the statically-linked gallium-virgl megadriver. It is also the path Task 9's GBM compositor
+ * uses, so the oracle exercises the real stack. */
 #include <stdio.h>
+#include <fcntl.h>     /* open, O_RDWR */
+#include <gbm.h>       /* gbm_create_device — fd-direct EGL platform */
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
@@ -22,10 +31,18 @@ void nx_bind_std_streams(void);
 int main(void)
 {
     nx_bind_std_streams();
-    EGLDisplay d = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, 0);
-    if (d == EGL_NO_DISPLAY || !eglInitialize(d, 0, 0)) { printf("gles2info: no-display\n"); return 1; }
-    static const EGLint cfg_attr[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                                       EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_NONE };
+    int fd = open("/dev/dri/renderD128", O_RDWR);
+    if (fd < 0) { printf("gles2info: no-node (/dev/dri/renderD128)\n"); return 1; }
+    struct gbm_device *gbm = gbm_create_device(fd);
+    if (!gbm) { printf("gles2info: no-gbm\n"); return 1; }
+    EGLDisplay d = eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, gbm, 0);
+    if (d == EGL_NO_DISPLAY) { printf("gles2info: no-display\n"); return 1; }
+    if (!eglInitialize(d, 0, 0)) { printf("gles2info: init-failed (egl 0x%x)\n", eglGetError()); return 1; }
+    /* No EGL_SURFACE_TYPE constraint: this oracle renders to an off-screen FBO under a surfaceless
+     * context (eglMakeCurrent with EGL_NO_SURFACE via EGL_KHR_surfaceless_context), so it needs no
+     * pbuffer/window surface. The GBM/DRM platform exposes EGL_WINDOW_BIT configs, not EGL_PBUFFER_BIT,
+     * so requiring pbuffer here would (wrongly) match zero configs. */
+    static const EGLint cfg_attr[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
     EGLConfig cfg; EGLint n = 0;
     if (!eglChooseConfig(d, cfg_attr, &cfg, 1, &n) || !n) { printf("gles2info: no-config\n"); return 1; }
     eglBindAPI(EGL_OPENGL_ES_API);
