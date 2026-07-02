@@ -401,6 +401,25 @@ httpd: bin/libc.ndl bin/libc.ndl.a
 # target + the LP64/non-PIC small-model cflags + the nx-dllimport.h data-import shim) and NX_LP64=1.
 # The in-tree x86_64 crt0/nxhdr/mknx the toolchain default-links are refreshed first (like ping).
 # i686 is unchanged (generic `gcc` target, absolute relocs, no shim).
+# ---- libdrm 2.4.123 (virtgpu-only, static) — the GL stack's DRM userspace (Task 7) ----
+# x86_64 only. nanos-port's meson build type hardcodes the i686 nanos-cross.meson, so this port
+# drives meson directly via build.sh with an x86_64 cross file (cross-nanos64.ini). Installs
+# libdrm.a + headers into the x86_64-nanos sysroot for the Mesa port (Task 8) to consume.
+LIBDRM_PORT := $(SDK_WORK)/libdrm-port
+libdrm: bin/libc.ndl bin/libc.ndl.a
+	@test -f "$(LIBDRM_PORT)/build.sh" || { echo "libdrm port not found at $(LIBDRM_PORT) (fetch libdrm-2.4.123 there)"; exit 1; }
+	$(NXPORT_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/x86_64-nanos/include/"
+	cp kernel/SyscallNr.h            "$(SDK_TC)/x86_64-nanos/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/x86_64-nanos/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/x86_64-nanos/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/x86_64-nanos/lib/libc.ndl"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(LIBDRM_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
+	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh /work/port/build.sh
+	@echo "libdrm.a + headers installed into $(SDK_TC)/x86_64-nanos (for the Mesa port)"
+
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
 ifeq ($(ARCH),x86_64)
 OPENSSL_TRIPLE  := x86_64-nanos
@@ -757,7 +776,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020

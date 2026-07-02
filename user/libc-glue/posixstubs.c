@@ -385,3 +385,11 @@ int fsetxattr(int fd, const char* n, const void* v, size_t s, int f) { (void)fd;
  * so sudo proceeds — the memory simply stays as mapped. */
 #include <sys/mman.h>
 int mprotect(void* addr, size_t len, int prot) { (void) addr; (void) len; (void) prot; return 0; }
+
+/* open_memstream: a GNU growable-buffer output stream. picolibc's tinystdio has no custom-stream
+ * primitive (no fopencookie/funopen), so a faithful growable FILE* cannot be built here. Report
+ * "unsupported" honestly (NULL + ENOSYS). The only consumers in our stack are libdrm's cosmetic
+ * drmGetFormatModifierName* helpers, which already return NULL when the stream can't be created;
+ * they are never on the virgl/Mesa render path. */
+#include <stdio.h>
+FILE *open_memstream(char **ptr, size_t *sizeloc) { (void) ptr; (void) sizeloc; errno = ENOSYS; return NULL; }
