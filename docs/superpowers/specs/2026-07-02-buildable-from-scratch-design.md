@@ -36,7 +36,7 @@ macOS działa jak dotychczas (build i tak jest w kontenerze). **Windows: nie bud
 3. **`nanos-sdk-work` degraduje się do jednorazowego, odtwarzalnego katalogu build.** Nic cennego nie ma prawa tam mieszkać.
 4. **Kolejność: najpierw porządkowanie (Plan 1), potem instrukcja/world (Plan 2)** — pisanie BUILDING.md przeciwko układowi, który zaraz się zmieni, to podwójna robota; ratunek przepisów portów jest pilny (single point of failure na jednym Macu).
 5. **Zakres `make world`:** toolchain SDK + wszystkie porty + NetSurf + stos GL (libdrm+Mesa) jako flagowany pod-target; bez nap.
-6. **Brama końcowa („clean-machine build" à la Microsoft):** test świeżej maszyny — czysta VM Ubuntu: clone → bootstrap → world → `verify64` zielony. Opcjonalnie CI (GitHub Actions), by egzekwować stale.
+6. **Brama końcowa („clean-machine build" à la Microsoft):** test świeżej maszyny — czysta instalacja Ubuntu: clone → bootstrap → world → `verify64` zielony. Maszyną bramy i buildów jest dedykowany serwer x86_64 użytkownika (i9-13900K/32 GB), który potem zostaje self-hosted runnerem CI (build rdzenia per push + nightly `world`+`verify64`) i mirrorem pinowanych tarballi źródeł (`NANOS_MIRROR` w nanos-fetch).
 
 ## Plan 1 — Porządkowanie (manifest + bootstrap)
 

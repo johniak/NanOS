@@ -356,15 +356,129 @@ Zgłoś użytkownikowi: wynik bramy, czasy, co zostało nieprzetestowane (GL na 
 
 ---
 
-### Task 6 (opcjonalny, za zgodą użytkownika): CI — GitHub Actions build rdzenia
+### Task 6: Serwer buildowy (i9-13900K, 32 GB) — provisioning + rola clean-machine
+
+Użytkownik ma dedykowany serwer x86_64 (i9-13900K, 24C/32T, 32 GB RAM). Role: (a) główna maszyna ciężkich buildów, (b) host bramy clean-machine z Task 5 (VM na serwerze zamiast VM na Macu — natywne amd64, bez emulacji), (c) self-hosted runner CI (Task 7), (d) mirror tarballi (Task 8).
+
+**Files:**
+- Modify: `/Users/johniak/Projects/NanOS/BUILDING.md` (sekcja „Build server", 10-15 linii)
+
+- [ ] **Step 1: Provisioning (wykonuje użytkownik lub agent przez SSH — ustal dostęp z użytkownikiem)**
+
+Ubuntu Server 24.04 LTS (spójnie z BUILDING.md i debianowym kontenerem builda). Potem dokładnie sekcja „Prerequisites per OS" z BUILDING.md:
+
+```bash
+sudo apt update && sudo apt install -y git docker.io qemu-system-x86 ovmf python3 make qemu-kvm
+sudo usermod -aG docker,kvm $USER   # re-login po tym
+# dysk: sprawdź >=200 GB wolnego na /var/lib/docker + katalogi robocze (docker images + SDK_WORK + VMs)
+df -h /var/lib/docker /home
+```
+
+- [ ] **Step 2: Pierwszy pełny przebieg wg BUILDING.md — to JEST wykonanie bramy z Task 5**
+
+Na serwerze, dosłownie wg TL;DR: clone → `./scripts/bootstrap.sh` → `make image64` → `make smoke-x86_64` → `make world` → `make verify64`. Serwer jest świeżą maszyną linuksową, więc ten przebieg realizuje Task 5 Step 2–3 (protokół spisz tak samo). Do bramy „czystości" użyj kontenera/VM na serwerze, jeśli hostowi doinstalowano już coś ponad listę prerequisites (`multipass launch -n nanos-clean -c 8 -m 16G -d 80G 24.04`).
+
+- [ ] **Step 3: Zanotuj czasy + dopisz sekcję „Build server" do BUILDING.md**
+
+Treść: adres/rola serwera (bez sekretów), jak odpalić zdalny build (`ssh <server> 'cd NanOS && make world'`), uwaga o KVM: gate'y (`verify64`/smoke) celowo zostają na `-accel tcg,thread=multi` (parytet z macOS i determinizm wyników — NIE zmieniaj tego w Makefile); KVM wolno używać tylko do interaktywnego `run64` na serwerze przez ręczne nadpisanie QEMU flags.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add BUILDING.md && git commit -m "docs: build-server section (provisioning, remote world builds, TCG-for-gates rule)"
+```
+
+---
+
+### Task 7: CI na self-hosted runnerze (serwer z Task 6)
 
 **Files:**
 - Create: `/Users/johniak/Projects/NanOS/.github/workflows/build.yml`
 
-Zakres świadomie mały (world w CI to godziny + prywatne repa): tylko rdzeń. Workflow: ubuntu-latest, `docker build -t nanos-build docker/` z cache (`docker/build-push-action` + gha cache), `make image64`, `make test64`, artefakt `disk/image64-grub2.img`. **Przed implementacją zapytaj użytkownika**, czy chce CI (koszt minut Actions przy 30-60 min buildzie toolchainu bez cache'a; z warm cache ~10 min).
+Self-hosted runner rozwiązuje problem kosztu (ciepły cache Dockera → build rdzenia ~10 min zamiast 30-60). **Uwaga bezpieczeństwa:** self-hosted runner tylko dla prywatnych repo i bez odpalania workflow z forków (repo settings → Actions → „Require approval for all outside collaborators").
+
+- [ ] **Step 1: Zarejestruj runnera na serwerze**
+
+GitHub → repo NanOS → Settings → Actions → Runners → „New self-hosted runner" (linux/x64) — wykonaj wyświetlone komendy (`config.sh --url https://github.com/johniak/NanOS --token …`), potem jako usługa:
+
+```bash
+cd ~/actions-runner && sudo ./svc.sh install && sudo ./svc.sh start
+```
+
+- [ ] **Step 2: Workflow**
+
+```yaml
+name: build
+on:
+  push: {branches: [main]}
+  workflow_dispatch: {}
+  schedule: [{cron: "0 3 * * *"}]   # nightly: pełny world
+jobs:
+  core:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make docker-image      # no-op przy ciepłym cache
+      - run: make image64
+      - run: make test64
+      - uses: actions/upload-artifact@v4
+        with: {name: image64, path: disk/image64-grub2.img, retention-days: 7}
+  world:
+    if: github.event_name != 'push'   # nightly/manual only — pełny build jest długi
+    needs: core
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/bootstrap.sh   # siblings już sklonowane na serwerze -> "ok:" + no-op
+      - run: make world
+      - run: make verify64
+```
+
+Dopasuj: bootstrap na runnerze potrzebuje dostępu git do repo-rodzeństwa (deploy keys albo https+PAT w `~/.git-credentials` runnera — ustal z użytkownikiem); `NANOS_ROOT`/`SDK_WORK` wskaż na stałe katalogi robocze runnera (env w workflow), żeby cache portów przeżywał między jobami.
+
+- [ ] **Step 3: Zielony przebieg + commit**
+
+Odpal `workflow_dispatch`, sprawdź oba joby. Commit: `ci: core build per push + nightly world/verify64 on the self-hosted runner`.
+
+---
+
+### Task 8: Mirror tarballi źródeł na serwerze + fallback w nanos-fetch
+
+**Files:**
+- Modify: `~/Projects/nanos-sdk/port/nanos-fetch` (obsługa `NANOS_MIRROR`)
+- Modify: `~/Projects/nanos-sdk/ports/README.md` (sekcja mirror)
+
+Polisa na znikające upstreamy (sourceforge/sourceware/matt.ucc): wszystkie pinowane tarballe leżą też na serwerze; `nanos-fetch` próbuje najpierw mirror (szybciej, LAN), potem kanoniczny URL. SHA256 i tak weryfikuje każdą kopię, więc mirror niczego nie osłabia.
+
+- [ ] **Step 1: Katalog + serwowanie na serwerze**
+
+```bash
+sudo mkdir -p /srv/nanos-dist && sudo chown $USER /srv/nanos-dist
+# wypełnij z istniejącego cache po pierwszym `make world` (Task 6): cp $SDK_WORK/dist/* /srv/nanos-dist/
+docker run -d --restart unless-stopped --name nanos-dist -p 8090:80 \
+  -v /srv/nanos-dist:/usr/share/nginx/html:ro nginx:alpine
+```
+
+- [ ] **Step 2: Fallback w nanos-fetch**
+
+W miejscu pobierania tarballa zamień pojedynczy `curl` na:
+
+```sh
+if [ ! -f "$TB" ]; then
+  ok=
+  [ -n "${NANOS_MIRROR:-}" ] && curl -fL -o "$TB" "$NANOS_MIRROR/$(basename "$URL")" && ok=1 || true
+  [ -n "$ok" ] || curl -fL -o "$TB" "$URL"
+fi
+```
+
+(SHA256-check zostaje bez zmian tuż za tym.) Test: `NANOS_MIRROR=http://<server>:8090 nanos-fetch wget --work /tmp/sdkwork-mirror --force` — w logu pobranie z mirrora; z ubitym mirrorem — fallback na URL.
+
+- [ ] **Step 3: Commit + push nanos-sdk**
+
+`port: nanos-fetch — NANOS_MIRROR fallback for pinned source tarballs` + dopisek w ports/README.md i BUILDING.md (env `NANOS_MIRROR`).
 
 ---
 
 ## Kolejność i zależności
 
-Task 1 → 2 (world potrzebuje sdk-toolchain) → 3 i 4 równolegle → 5 (brama; wykonuje docs z 4 na Linuksie i testuje 3) → 6 opcjonalnie. Wszystko po ukończeniu Planu 1.
+Task 1 → 2 (world potrzebuje sdk-toolchain) → 3 i 4 równolegle → 5+6 (serwer JEST maszyną bramy clean-machine; Task 6 Step 2 wykonuje Task 5) → 7 → 8. Wszystko po ukończeniu Planu 1.
