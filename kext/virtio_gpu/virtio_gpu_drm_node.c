@@ -59,6 +59,21 @@ static struct node_client *client_get(int pid, int node)
 		struct drm_file *f = drm_file_alloc(minor);
 		if (IS_ERR_OR_NULL(f))
 			return 0;
+		/* Mirror drm_open_helper(): a primary-node open must become DRM master when none
+		 * exists. Without this drm_is_current_master() is false, so drm_mode_getconnector()
+		 * SKIPS the forced fill_modes() probe (connector->modes stays empty -> count_modes=0)
+		 * and every DRM_MASTER ioctl (SETCRTC/ADDFB/page-flip) returns -EACCES. The kernel
+		 * mirror-fb present path never runs a KMS probe, so this forced probe is the ONLY thing
+		 * that populates connector->modes for userland KMS clients (glkms/glpix/drmtest).
+		 * drm_file_free() (node_release) already calls drm_master_release() for primary clients. */
+		if (drm_is_primary_client(f)) {
+			int mret = drm_master_open(f);
+			if (mret) {
+				knx_log("virtio_gpu: drm_master_open failed on /dev/dri/card0\n");
+				drm_file_free(f);
+				return 0;
+			}
+		}
 		g_cli[free_i].pid = pid;
 		g_cli[free_i].file = f;
 		g_cli[free_i].shim.private_data = f;   /* what drm_ioctl() reads */
