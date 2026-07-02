@@ -491,25 +491,41 @@ Docelowy workflow użytkownika: edycja + `make run64`/GUI na Macu, ciężkie bui
 - Consumes: serwer po Task 6 (bootstrap zrobiony, siblings + SDK_WORK żyją na serwerze).
 - Produces: `scripts/remote-build.sh [cel]` — domyślnie `image64`; `remote-build.sh world` dla pełnego builda; po powrocie obrazu lokalne `make run64` działa bez żadnego builda na Macu.
 
+**Wielu użytkowników / wiele gałęzi — trzy hazardy współdzielonego serwera i jak je skrypt rozwiązuje:**
+1. **Kolizja drzew:** katalog builda jest per użytkownik (własne konto SSH → własny `$HOME`) i per GAŁĄŹ (slug z `git branch --show-current`) → `~/build/nanos-<gałąź>`. Dwie gałęzie = dwa katalogi z osobnymi ciepłymi cache'ami przyrostowymi.
+2. **Wyścig na sysroocie SDK:** cele portów przy KAŻDYM buildzie wpisują `libc.ndl`/`crt0.o`/nagłówki z checkoutu do `$(SDK_WORK)/toolchain` — współdzielony `SDK_WORK` między gałęziami to korupcja buildów. Dlatego każdy katalog builda ma WŁASNY `SDK_WORK=$RDIR/sdk-work` (koszt: ~2 GB i jednorazowe `make sdk-toolchain` per katalog — tanio, bo to ekstrakcja z obrazu, a `world` robi to samo).
+3. **Cele odpalające QEMU** (`verify64`, `smoke-*`, `test64` z gate'ami, `run*`): skrypty smoke sprzątają przez `pkill -9 -f "qemu-system-…"` — ubiłyby cudzego QEMU — i używają stałych portów hostfwd. Dlatego te cele idą pod GLOBALNYM lockiem serwera (`flock /tmp/nanos-qemu.lock`) — najwyżej chwilę poczekasz w kolejce; zwykłe buildy mają tylko lock per katalog.
+
+Obrazy Dockera (`nanos-build`, `nanos-sdk-dev`) i mirror tarballi są bezpiecznie współdzielone (są tylko-do-odczytu z perspektywy builda).
+
 - [ ] **Step 1: Napisz skrypt**
 
 ```sh
 #!/bin/sh
 # remote-build.sh — build on the build server, run on this machine.
-# Rsyncs the working tree (uncommitted changes included) to the server, runs make there,
-# and pulls the disk image back, so a local `make run64` boots the fresh build.
-# Env: NANOS_BUILD_HOST=user@server (required), NANOS_BUILD_DIR (default ~/build/NanOS).
+# Rsyncs the working tree (uncommitted changes included) to a per-user, per-branch server
+# dir, runs make there with a per-dir SDK_WORK, and pulls the disk image back, so a local
+# `make run64` boots the fresh build. Concurrency: plain builds lock their own dir; targets
+# that launch QEMU (verify64/smoke-*/test64/run*) take a server-global lock, because the
+# smoke scripts pkill qemu by name and bind fixed hostfwd ports.
+# Env: NANOS_BUILD_HOST=user@server (required), NANOS_BUILD_DIR (override the derived dir).
 # Usage: scripts/remote-build.sh [make-target]      # default: image64; e.g. world, verify64
 set -eu
 HOST=${NANOS_BUILD_HOST:?set NANOS_BUILD_HOST=user@server}
-RDIR=${NANOS_BUILD_DIR:-build/NanOS}
 TARGET=${1:-image64}
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+BRANCH=$(git -C "$HERE" branch --show-current 2>/dev/null || echo detached)
+SLUG=$(printf %s "${BRANCH:-detached}" | tr -c 'A-Za-z0-9._\n-' '-')
+RDIR=${NANOS_BUILD_DIR:-build/nanos-$SLUG}
 # push the tree (incl. .git — cheap after the first sync); never touch server-side artifacts
-rsync -az --delete \
-  --exclude '/bin/' --exclude '/disk/' --exclude '.DS_Store' \
+rsync -az --delete --mkpath \
+  --exclude '/bin/' --exclude '/disk/' --exclude '/sdk-work/' --exclude '.DS_Store' \
   "$HERE/" "$HOST:$RDIR/"
-ssh "$HOST" "cd $RDIR && make $TARGET"
+case "$TARGET" in
+  verify64|smoke-*|test64|run*) LOCK="flock /tmp/nanos-qemu.lock" ;;   # QEMU targets: global
+  *)                            LOCK="flock .build.lock" ;;            # builds: per-dir
+esac
+ssh "$HOST" "cd $RDIR && SDK_WORK=\$PWD/sdk-work $LOCK make $TARGET"
 case "$TARGET" in image64|world|world-gl)
   mkdir -p "$HERE/disk"
   rsync -az "$HOST:$RDIR/disk/image64-grub2.img" "$HERE/disk/"
@@ -517,7 +533,7 @@ case "$TARGET" in image64|world|world-gl)
 esac
 ```
 
-`chmod +x scripts/remote-build.sh`. Uwagi dla wykonawcy: `--delete` z `--exclude '/bin/'`/`'/disk/'` zostawia serwerowe artefakty w spokoju (nie kasuje ich mimo braku po stronie Maca); cele smoke/verify64 wykonują się w całości na serwerze (headless, serial) — nic nie wraca poza kodem wyjścia.
+`chmod +x scripts/remote-build.sh`. Uwagi dla wykonawcy: `--delete` z wykluczeniami `/bin/`, `/disk/`, `/sdk-work/` zostawia serwerowe artefakty w spokoju (nie kasuje ich, mimo że nie istnieją po stronie Maca); jeśli rsync na macOS nie zna `--mkpath`, zastąp go `ssh "$HOST" "mkdir -p $RDIR"` przed rsynciem; przy pierwszym buildzie portów w nowym katalogu trzeba raz zrobić `scripts/remote-build.sh sdk-toolchain` (albo po prostu `world`, który robi to sam); cele smoke/verify64 wykonują się w całości na serwerze (headless, serial) — nic nie wraca poza kodem wyjścia. Slug gałęzi trzymaj w zgodzie z tym, co zrobi `tr` (np. `feat/linuxkpi-virtio-gpu` → `feat-linuxkpi-virtio-gpu`).
 
 - [ ] **Step 2: Test pełnej pętli z Maca**
 
@@ -525,6 +541,9 @@ esac
 export NANOS_BUILD_HOST=<user@serwer>
 scripts/remote-build.sh image64 && make run64          # desktop wstaje z obrazu zbudowanego na serwerze
 scripts/remote-build.sh verify64                        # gate'y zdalnie, wynik w terminalu Maca
+# izolacja gałęzi: z drugiego checkoutu/gałęzi odpal build równolegle —
+# ssh <serwer> ls build/    → osobne katalogi nanos-<gałąź-1>, nanos-<gałąź-2>, żaden build nie psuje drugiego
+# globalny lock QEMU: odpal verify64 z dwóch terminali naraz → drugi czeka na flock, oba kończą zielono
 ```
 
 Zmierz i zanotuj w BUILDING.md czas `remote-build.sh image64` po drobnej edycji (oczekiwanie: rsync sekundy + przyrostowy build na i9 znacznie szybszy niż lokalny docker na Macu).
