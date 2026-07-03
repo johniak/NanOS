@@ -967,7 +967,8 @@ git add user/glkms/ Makefile
 git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via AddFB2/SetCrtc"
 ```
 
-> **STATUS (2026-07-03): host 3D-scanout SOLVED from source; blocker re-bisected to a GUEST Mesa draw no-op.**
+> **STATUS (2026-07-03): host 3D-scanout SOLVED; GL pipeline PROVEN (glkms displays a gradient); sole
+> remaining bug = guest→host vertex-buffer upload reads zero.**
 > The earlier "host-fork limitation" conclusion (2026-07-02) is **partly overturned**. Built the fork
 > from source (QEMU v10.1.0 + the tap's texture-borrowing patch + virglrenderer 1.3.0, all in
 > `$(SDK_WORK)/qemu-fork-build` + `virgl-fork-build`) and found the host non-present was **three real
@@ -989,30 +990,40 @@ git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via 
 > present a virgl 3D-rendered resource as KMS scanout. Fixes saved in
 > `$(SDK_WORK)/qemu-fork-build/nanos-fixes/*.modified`.
 >
-> **The remaining blocker is guest-side and newly bisected (2026-07-03):** with the host fixed, `glkms`
-> is still black — but **not** for a host reason. Ruled out along the way: (a) the console mirror fight —
-> `virtio_gpu_present_set_suspended` **does** engage on every `MODE_SETCRTC` (logged "mirror SUSPENDED",
-> zero "present_flush RUNNING" during the hold); (b) a GBM-overwrites-Metal wiring bug — `alloc_texture`
-> SCDBG shows `gbm_bo=0x0`, `final_egl == metal_egl`, so `gr->gl_id` **is** bound to the Metal EGLImage.
-> The decisive test: change `glkms`'s per-frame `glClearColor` to **magenta** — the window then shows
-> **solid magenta** (isolated-window corners `(234,51,247)`), i.e. the whole `glkms` EGL-window-surface →
-> gbm → scanout → Metal → cocoa **present path works for a CLEAR**. But the gradient **fragment-shader
-> draw never appears** (window stays the clear colour; corners are uniform, not the gradient's
-> blue/red/green/yellow) and the host logs **no** shader-compile/link/draw error (`glsl_level=130`,
-> ANGLE GLES 3.0). **So: Mesa `glClear` renders+presents over virgl, but Mesa `glDrawArrays` is a silent
-> no-op.** That — not the scanout path — is what blocks a real GL desktop (nwm composites with draws).
-> A VBO (vs the client-side vertex array) did not change it. This is the focused next target and is
-> guest-side (Mesa gallium-virgl draw pipeline / virglrenderer draw execution), tractable without touching
-> the host.
+> **PIPELINE PROVEN — `glkms` now DISPLAYS a real GL-rendered gradient (2026-07-03).** The earlier
+> "Mesa `glDrawArrays` is a silent no-op" framing is **overturned**: the draw runs and presents. Switching
+> `glkms` to an **attribute-less ES3 draw** — a fullscreen triangle generated from `gl_VertexID`, so **no
+> vertex buffer is bound** — makes the two-axis fragment-shader gradient fill the whole QEMU window
+> (isolated-window corners `BL≈(12,14,123)`, `BR≈(222,52,127)`, `TR≈(243,247,144)`; the FS
+> `vec4(v_uv.x,v_uv.y,0.5,1)` clearly ran per-pixel). So vertex-shader → rasteriser → fragment-shader →
+> gbm-scanout → Metal → cocoa is **fully functional** end-to-end over virgl on NanOS.
+>
+> **The one remaining bug is precisely isolated: the guest→host VERTEX-BUFFER data upload lands as zeros.**
+> Instrumenting virglrenderer proved it: for a 24-byte `glBufferData` VBO the transfer **does** reach the
+> host (`vrend_renderer_transfer_write_iov`, `target=GL_ARRAY_BUFFER`, `w=24`, one iov, host addr set), but
+> the bytes read back from the guest iov are **all zero** (`[BUFDBG]`/`[TWDBG]` both read `0.00×6` where
+> `{-1,-1,3,-1,-1,3}` was written). Result: all three vertices collapse to `(0,0)` → a degenerate triangle →
+> the buffer-sourced draw produces no fragments *even in the guest's own `glReadPixels`*, while the
+> host draw call itself is error-free (`fbstatus=COMPLETE`, `vp=[0,0,1280,800]`, no scissor/cull/depth,
+> pre/post `GLerr=0`). Neither client-side arrays nor an explicit `glBufferData` VBO changed it (same zeros),
+> and it is **not** the ANGLE map-read: the zeros are seen at the transfer's guest-iov source, before any
+> ANGLE buffer storage. **Root cause is guest-side buffer-resource backing** (LinuxKPI virtio_gpu GEM/shmem
+> allocation + `RESOURCE_ATTACH_BACKING`, or a Mesa buffer map returning a bounce page): the page the host
+> reads via the resource iov is not the page the guest CPU wrote its vertex data to. This is the focused
+> next fix and is tractable without touching the host. (The kernel fb0-mirror texture path is what makes the
+> 2D desktop display today; buffer resources take a different backing path that reads zero.)
 >
 > **Build-flow gotcha (cost real cycles):** `make image64` does **not** rebuild `glkms` — it only copies
 > the existing `bin/glkms.nxe` into the image. Editing `user/glkms/*.c` requires `make glkms` FIRST (Docker
-> + `mesa-port/build-glkms.sh`), then `make image64` to package. (Same for `gles2info`/`mesa`.)
+> + `mesa-port/build-glkms.sh`), then `make image64` to package. (Same for `gles2info`/`mesa`.) Also: the
+> kernel fb0 mirror floods the host with 1280×800 texture transfers from boot — any bounded host-side
+> transfer log must exclude the big texture or the buffer transfer never fits in the budget.
 >
 > **Valid display oracle:** an *isolated* macOS `screencapture` of just the QEMU window rectangle
 > (AXPosition/AXSize → `screencapture -R`), analysed for the expected colour. Full-screen captures and the
 > gl=es monitor `screendump` are both invalid (desktop contamination / cannot read the ANGLE-Metal scanout).
-> **Task 10 (nwm GL) stays gated** on the Mesa-draw fix (it reuses `glkms_init.c` and draws geometry).
+> **Task 10 (nwm GL) is unblocked in principle** (the pipeline works) but needs the guest buffer-upload fix,
+> because nwm composites arbitrary geometry from vertex buffers (not attribute-less fullscreen triangles).
 
 ---
 

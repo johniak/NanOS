@@ -72,7 +72,7 @@ static int egl_pick_config(struct glkms *g)
 {
 	static const EGLint attr[] = {
 		EGL_SURFACE_TYPE,    EGL_WINDOW_BIT,
-		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
 		EGL_RED_SIZE,   8,
 		EGL_GREEN_SIZE, 8,
 		EGL_BLUE_SIZE,  8,
@@ -128,7 +128,7 @@ int glkms_open(struct glkms *g)
 	if (g->esurf == EGL_NO_SURFACE) { printf("glkms: eglCreateWindowSurface failed (0x%x)\n", eglGetError()); goto fail; }
 
 	{
-		static const EGLint ctx_attr[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+		static const EGLint ctx_attr[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
 		g->ctx = eglCreateContext(g->dpy, g->cfg, EGL_NO_CONTEXT, ctx_attr);
 	}
 	if (g->ctx == EGL_NO_CONTEXT) { printf("glkms: eglCreateContext failed (0x%x)\n", eglGetError()); goto fail; }

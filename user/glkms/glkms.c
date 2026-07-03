@@ -23,14 +23,23 @@
 /* nx_stream_bridge.c binds libc.ndl's stdio streams to the plain globals Mesa/libdrm reference. */
 void nx_bind_std_streams(void);
 
+/* ES3 attribute-less fullscreen triangle: vertices come from gl_VertexID, so NO
+ * vertex buffer is touched. Isolates the render/present pipeline from the (broken)
+ * guest->host buffer-backing upload. */
 static const char *VS =
-	"attribute vec2 p;\n"
-	"varying vec2 v_uv;\n"
-	"void main(){ v_uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }\n";
+	"#version 300 es\n"
+	"out vec2 v_uv;\n"
+	"void main(){\n"
+	"  vec2 p = vec2((gl_VertexID==1) ? 3.0 : -1.0, (gl_VertexID==2) ? 3.0 : -1.0);\n"
+	"  v_uv = p * 0.5 + 0.5;\n"
+	"  gl_Position = vec4(p, 0.0, 1.0);\n"
+	"}\n";
 static const char *FS =
+	"#version 300 es\n"
 	"precision mediump float;\n"
-	"varying vec2 v_uv;\n"
-	"void main(){ gl_FragColor = vec4(v_uv.x, v_uv.y, 0.5, 1.0); }\n";
+	"in vec2 v_uv;\n"
+	"out vec4 o_col;\n"
+	"void main(){ o_col = vec4(v_uv.x, v_uv.y, 0.5, 1.0); }\n";
 
 static GLuint compile(GLenum type, const char *src)
 {
@@ -74,7 +83,6 @@ int main(int argc, char **argv)
 	GLuint prog = glCreateProgram();
 	glAttachShader(prog, v);
 	glAttachShader(prog, f);
-	glBindAttribLocation(prog, 0, "p");
 	glLinkProgram(prog);
 	GLint lok = 0;
 	glGetProgramiv(prog, GL_LINK_STATUS, &lok);
@@ -86,10 +94,9 @@ int main(int argc, char **argv)
 	}
 	glUseProgram(prog);
 
-	/* one fullscreen triangle covering the viewport (clip-space, no VBO needed) */
-	static const float tri[] = { -1.f, -1.f,  3.f, -1.f,  -1.f, 3.f };
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, tri);
+	/* Attribute-less: gl_VertexID drives the fullscreen triangle (see VS). No vertex
+	 * buffer is bound — this deliberately avoids the guest->host buffer-backing upload
+	 * that lands as zeros on NanOS, to prove the render/present pipeline itself works. */
 	glViewport(0, 0, g.mode_w, g.mode_h);
 
 	int flipped = 0;
@@ -98,6 +105,12 @@ int main(int argc, char **argv)
 		glClear(GL_COLOR_BUFFER_BIT);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		if (glGetError() != GL_NO_ERROR) { printf("glkms: GL error during draw\n"); return 1; }
+		if (i == 0) {
+			unsigned char px[4] = {0,0,0,0};
+			glReadPixels(g.mode_w/2, g.mode_h/2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+			printf("glkms: readback center rgba=%d,%d,%d,%d (gl_err=0x%x)\n",
+			       px[0], px[1], px[2], px[3], glGetError());
+		}
 		if (glkms_swap(&g) != 0) { printf("glkms: swap failed at frame %d\n", i); return 1; }
 		if (!flipped) { printf("glkms: flip OK\n"); flipped = 1; }
 	}
