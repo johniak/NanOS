@@ -1069,7 +1069,12 @@ QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-s
 # surface and the virtio-gpu scanout — the actual desktop — never appears. virtio-gpu-gl-pci has no
 # VGA part, so the virtio-gpu scanout IS the display and the desktop shows. (A/B-proven: with
 # virtio-vga-gl the window is black; with virtio-gpu-gl-pci the full nwm desktop composites.)
-QEMU_GL_VGA ?= -device virtio-gpu-gl-pci -display cocoa,gl=es,zoom-to-fit=on
+# `-vga none` is REQUIRED for the GL scanout to reach cocoa: without it QEMU still adds a default
+# `-vga std` device, which claims graphic console idx 0 while virtio-gpu-gl-pci scans out on idx 1;
+# cocoa binds idx 0, so dpy_gl_scanout_texture is dropped (con != listener con) and the 3D frame
+# never displays. `-vga none` makes the GPU console idx 0 and the unmodified dispatch path fires.
+# (Isolated-window screencapture A/B-proven with the from-source fork; see plan-1 STATUS, 2026-07-03.)
+QEMU_GL_VGA ?= -device virtio-gpu-gl-pci -vga none -display cocoa,gl=es,zoom-to-fit=on
 # No NIC by default: the kosmickrisp fork is built WITHOUT the slirp ('user') network backend, so
 # passing NIC_NET aborts it ("network backend 'user' is not compiled into this binary"). GL bring-up
 # needs no network. To add one anyway, build the fork with slirp and run `make run64-gl QEMU_GL_NET='...'`.

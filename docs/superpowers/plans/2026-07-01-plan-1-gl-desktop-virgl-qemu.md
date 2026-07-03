@@ -967,37 +967,52 @@ git add user/glkms/ Makefile
 git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via AddFB2/SetCrtc"
 ```
 
-> **STATUS (2026-07-02, commit a70d9ce): guest side DONE, blocked on host 3D-scanout display.**
-> `glkms` builds (Mesa GBM+EGL+GLES2 closure via `mesa-port/build-glkms.sh`; new `make mesa/gles2info/
-> glkms` targets) and runs: `glkms_open` (GBM device + scanout surface + ES2 ctx) and `glkms_swap`
-> (`eglSwapBuffers`→`gbm_surface_lock_front_buffer`→`drmModeAddFB`→`drmModeSetCrtc`) all succeed —
-> serial `glkms: flip OK`. Getting a *visible* frame required three kernel/LinuxKPI fixes (all landed,
-> 2D smoke unregressed): `__drm_debug=0` (was a 0x1ff bring-up leftover flooding fbcon); a truthful
-> `held` flag on the UP `struct mutex` so `mutex_is_locked`/`drm_modeset_is_locked` stop firing
-> `WARN_ON` on every atomic commit; and suspending the `virtio_gpu_present.c` console mirror while a
-> userland client drives the CRTC (set on `MODE_SETCRTC`, cleared on release — like fbcon suspend
-> under a DRM master). **Blocker CONFIRMED = host-fork limitation (2026-07-02, valid oracle).** Ran Fable's diagnosis plan
-> with host instrumentation (`-d guest_errors -trace "virtio_gpu*" -D log` + `VREND_DEBUG=all`) and a
-> **real macOS `screencapture` of the actual QEMU cocoa window** (viewed the PNG — it shows the frozen
-> text console, so the capture is valid; the gl=es monitor `screendump` is NOT). The host receives a
-> **flawless, zero-error** command stream for the 3D path: glpix issues `res_create_3d(1280x800) →
-> ctx_submit(magenta CLEAR) → set_scanout(id0,res) → res_flush(res)` — no `illegal resource`, no
-> `RESP_ERR`, clean ids (the earlier "res-3 id-collision"/"host-rejects" theories are trace-disproven).
-> The **2D console (res 2) displays through the IDENTICAL `set_scanout`+`res_flush` machinery**, so the
-> cocoa gl=es backend does implement `dpy_gl_scanout_texture`. And `glkms` — a real continuous
-> double-buffered **fragment-shader draw** (which Metal must materialize, not a fast-clearable CLEAR) —
-> is **also frozen**. A real guest bug was found+fixed en route (glpix raced SETCRTC ahead of the
-> EXECBUFFER clear fence; added a blocking `DRM_IOCTL_VIRTGPU_WAIT` barrier in `user/glpix/glpix.c` —
-> trace confirms the clear now retires before scanout, but the visual is unchanged, so the race was not
-> the display bug). **Conclusion: the kosmickrisp virgl fork does not present a virgl 3D
-> context-rendered resource as a KMS scanout on cocoa gl=es** — host-side, outside NanOS; the guest
-> DRM/virtio-gpu path is fully correct. **Task 10 (nwm GL) is gated on this** (reuses `glkms_init.c`
-> verbatim). Options (user's call): (a) report upstream to the startergo tap with the trace; (b) build/
-> patch the fork from source to trace `virgl_cmd_set_scanout`→`dpy_gl_scanout_texture` for 3D resources;
-> (c) an interim 2D-present bridge — but GL render→CPU-readback also returns zero on this fork (same
-> likely ANGLE-deferral root cause), so a naive `glReadPixels` bridge won't work; the CPU-composited nwm
-> desktop already displays via the 2D scanout, which is the shipping state. Diagnosis oracle = macOS
-> `screencapture` of the cocoa window (gl=es monitor `screendump` cannot read the ANGLE scanout).
+> **STATUS (2026-07-03): host 3D-scanout SOLVED from source; blocker re-bisected to a GUEST Mesa draw no-op.**
+> The earlier "host-fork limitation" conclusion (2026-07-02) is **partly overturned**. Built the fork
+> from source (QEMU v10.1.0 + the tap's texture-borrowing patch + virglrenderer 1.3.0, all in
+> `$(SDK_WORK)/qemu-fork-build` + `virgl-fork-build`) and found the host non-present was **three real
+> macOS-cocoa-GL bugs**, now fixed:
+> - **GAP 1 — QEMU never set `VIRGL_RENDERER_NATIVE_SHARE_TEXTURE` on macOS** (only under the Windows/
+>   D3D11 branch), so virglrenderer never gave scanout resources a Metal texture. Fixed: macOS branch in
+>   `virtio_gpu_virgl_init` (`hw/display/virtio-gpu-virgl.c`).
+> - **GAP 2 — console mismatch, and it needs NO source patch.** The default `-vga std` device creates
+>   graphic console idx 0 *alongside* `virtio-gpu-gl-pci` (idx 1); cocoa binds idx 0, the GPU scans out
+>   on idx 1, so `dpy_gl_scanout_texture` is dropped (`con != dcl->con`). **Fix = add `-vga none`** to the
+>   QEMU command line — the GPU becomes idx 0, cocoa binds it, the unmodified dispatch path fires. (The
+>   earlier `NANOS_RELAX_CON` console.c hack is retired.) Landed in `QEMU_GL_VGA` (Makefile).
+> - **GAP 3 — cocoa bound a foreign GL id** from virglrenderer's non-shared context (black). Fixed:
+>   cocoa imports the resource's Metal texture (`d3d_tex2d`) as an EGLImage via
+>   `EGL_METAL_TEXTURE_ANGLE` and samples that (`ui/cocoa.m`).
+> With those three, **`glpix` displays full magenta on the cocoa window** — proven with an *isolated*
+> `screencapture` of only the QEMU window rectangle (corners all `(234,51,247)`; earlier full-screen
+> captures were contaminated by the host desktop and are not a valid oracle). So the host **does**
+> present a virgl 3D-rendered resource as KMS scanout. Fixes saved in
+> `$(SDK_WORK)/qemu-fork-build/nanos-fixes/*.modified`.
+>
+> **The remaining blocker is guest-side and newly bisected (2026-07-03):** with the host fixed, `glkms`
+> is still black — but **not** for a host reason. Ruled out along the way: (a) the console mirror fight —
+> `virtio_gpu_present_set_suspended` **does** engage on every `MODE_SETCRTC` (logged "mirror SUSPENDED",
+> zero "present_flush RUNNING" during the hold); (b) a GBM-overwrites-Metal wiring bug — `alloc_texture`
+> SCDBG shows `gbm_bo=0x0`, `final_egl == metal_egl`, so `gr->gl_id` **is** bound to the Metal EGLImage.
+> The decisive test: change `glkms`'s per-frame `glClearColor` to **magenta** — the window then shows
+> **solid magenta** (isolated-window corners `(234,51,247)`), i.e. the whole `glkms` EGL-window-surface →
+> gbm → scanout → Metal → cocoa **present path works for a CLEAR**. But the gradient **fragment-shader
+> draw never appears** (window stays the clear colour; corners are uniform, not the gradient's
+> blue/red/green/yellow) and the host logs **no** shader-compile/link/draw error (`glsl_level=130`,
+> ANGLE GLES 3.0). **So: Mesa `glClear` renders+presents over virgl, but Mesa `glDrawArrays` is a silent
+> no-op.** That — not the scanout path — is what blocks a real GL desktop (nwm composites with draws).
+> A VBO (vs the client-side vertex array) did not change it. This is the focused next target and is
+> guest-side (Mesa gallium-virgl draw pipeline / virglrenderer draw execution), tractable without touching
+> the host.
+>
+> **Build-flow gotcha (cost real cycles):** `make image64` does **not** rebuild `glkms` — it only copies
+> the existing `bin/glkms.nxe` into the image. Editing `user/glkms/*.c` requires `make glkms` FIRST (Docker
+> + `mesa-port/build-glkms.sh`), then `make image64` to package. (Same for `gles2info`/`mesa`.)
+>
+> **Valid display oracle:** an *isolated* macOS `screencapture` of just the QEMU window rectangle
+> (AXPosition/AXSize → `screencapture -R`), analysed for the expected colour. Full-screen captures and the
+> gl=es monitor `screendump` are both invalid (desktop contamination / cannot read the ANGLE-Metal scanout).
+> **Task 10 (nwm GL) stays gated** on the Mesa-draw fix (it reuses `glkms_init.c` and draws geometry).
 
 ---
 
