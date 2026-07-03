@@ -182,10 +182,19 @@ static GLuint g_scene_tex = 0, g_scene_fbo = 0;/* offscreen scene: compose here,
 static GLuint g_blurA = 0, g_blurB = 0;        /* screen-sized ping-pong textures */
 static GLuint g_fboA = 0, g_fboB = 0;          /* g_fboA<-g_blurA, g_fboB<-g_blurB, attached at init */
 
-/* per-window content textures + their allocated size (recreated on resize) */
-static GLuint   g_win_tex[NW_MAX_WINDOWS];
+/* per-window content textures + their allocated size (recreated on resize). DOUBLE-BUFFERED (fork
+ * fix for the typing garble): on this ANGLE-Metal fork a texture upload lands asynchronously and the
+ * guest glFinish does not actually wait for the host transfer to complete, so sampling a texture the
+ * SAME frame it is uploaded tears (a mix of old+new bytes — invisible for static content, garbage for
+ * a window whose content changes every frame like a live terminal, and it can smear into neighbours as
+ * overlapping async uploads race). Fix: keep two buffers per window; each frame sample the buffer that
+ * was uploaded on the PREVIOUS frame (its transfer has since landed) and upload the new content into
+ * the OTHER buffer. We therefore never sample a texture being written this frame. Costs one frame of
+ * latency (imperceptible) + 2× content texture memory. */
+static GLuint   g_win_tex[NW_MAX_WINDOWS][2];
 static int      g_win_tw[NW_MAX_WINDOWS], g_win_th[NW_MAX_WINDOWS];
-static unsigned g_win_gen[NW_MAX_WINDOWS];     /* last frame_gen uploaded per slot; 0 = never */
+static unsigned g_win_gen[NW_MAX_WINDOWS];     /* content version last uploaded per slot; 0 = never */
+static int      g_win_par[NW_MAX_WINDOWS];     /* buffer index to UPLOAD into this frame (sample ^1) */
 /* the CPU chrome overlay surface (screen-sized) */
 static uint32_t *g_chrome_px = 0;
 static struct nw_surface g_chrome_surf;
@@ -324,14 +333,17 @@ int nw_gl_init(int screen_w, int screen_h)
 	return 0;
 }
 
-/* ensure a texture handle is (re)allocated to at least w×h; *tw/*th track the current size.
- * Returns 1 if it (re)allocated (caller must re-upload — the new storage is uninitialised). */
-static int ensure_tex(GLuint *t, int *tw, int *th, int w, int h)
+/* ensure BOTH double-buffered content textures for window idx are (re)allocated to w×h; g_win_tw/th
+ * track the current size. Returns 1 if it (re)allocated (caller must upload into BOTH buffers — the
+ * new storage is uninitialised, and the sample buffer is otherwise garbage for the first frame). */
+static int ensure_win_tex(int idx, int w, int h)
 {
-	if (*t && *tw == w && *th == h) return 0;
-	if (*t) glDeleteTextures(1, t);
-	*t = make_tex(w, h, 0);
-	*tw = w; *th = h;
+	if (g_win_tex[idx][0] && g_win_tw[idx] == w && g_win_th[idx] == h) return 0;
+	for (int b = 0; b < 2; b++) {
+		if (g_win_tex[idx][b]) glDeleteTextures(1, &g_win_tex[idx][b]);
+		g_win_tex[idx][b] = make_tex(w, h, 0);
+	}
+	g_win_tw[idx] = w; g_win_th[idx] = h;
 	return 1;
 }
 
@@ -428,25 +440,33 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			int dark = (w->title[0] == '\x01');
 			float alpha = (dark ? GL_DARK_ALPHA : GL_WIN_ALPHA) / 255.0f;
 
-			/* Upload this window's cached frame render as its content texture. Two forces shape this:
-			 * (1) a SINGLE upload of a window texture lands garbled on this fork (a top-band transfer
-			 *     glitch); only repeated re-uploads settle to a clean image — so when NOT interacting we
-			 *     re-upload every frame, exactly as the pre-GPU path did (cheap: the desktop is idle
-			 *     between events, and this masks the glitch the way the wallpaper's glTexImage2D+glFinish
-			 *     can't afford per window);
-			 * (2) during a drag/resize NO window is re-rendered (a move changes only x/y), so we skip the
-			 *     upload entirely — the resident texture is reused and a drag frame uploads ZERO window
-			 *     bytes. A window whose content genuinely changed mid-interaction (frame_gen bumped) is
-			 *     still refreshed. */
+			/* Upload this window's cached frame render into its content texture, DOUBLE-BUFFERED so we
+			 * never sample a texture we are writing this frame (see the g_win_tex comment — the fork's
+			 * async upload + early-returning glFinish tears write-while-read, which is what garbled a live
+			 * terminal while typing). Each frame:
+			 *   up   = g_win_par[idx]      the buffer we upload the NEW content into
+			 *   show = up ^ 1              the buffer uploaded LAST frame (its transfer has landed) — sampled
+			 * Then flip parity so next frame samples what we uploaded this frame. Upload gating unchanged:
+			 *   - NOT interacting → refresh every frame (cheap; desktop idle between events);
+			 *   - during a drag/resize a move changes only x/y (frame_gen static) → skip the upload, so a
+			 *     drag frame still uploads ZERO window bytes and stays smooth. A window whose content
+			 *     genuinely changed mid-interaction (frame_gen bumped) is still refreshed.
+			 * On (re)allocation both buffers are filled so the first sampled frame isn't uninitialised. */
+			int up = g_win_par[idx], show = up ^ 1;
 			glActiveTexture(GL_TEXTURE0);
-			ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh);
-			glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
-			if (!interacting || g_win_gen[idx] != w->frame_gen) {
+			int realloced = ensure_win_tex(idx, fw, fh);
+			if (realloced || !interacting || g_win_gen[idx] != w->frame_gen) {
+				glBindTexture(GL_TEXTURE_2D, g_win_tex[idx][up]);
 				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
-				glFinish();                       /* fence: the fork glitches one un-fenced texture
-				                                   * transfer per frame (the wallpaper needs this too) */
+				glFinish();
+				if (realloced) {                  /* first frame: seed the sample buffer too */
+					glBindTexture(GL_TEXTURE_2D, g_win_tex[idx][show]);
+					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+					glFinish();
+				}
 				g_win_gen[idx] = w->frame_gen;
 			}
+			g_win_par[idx] = show;                    /* next frame uploads into what we sample now */
 
 			int glass = (w->glass && !g_no_glass);
 			if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
@@ -455,7 +475,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			glUseProgram(p_win.id);
 			glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_blurB);  /* backdrop (unit 1) */
 			glUniform1i(u_win_backdrop, 1);
-			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
+			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx][show]);
 			glUniform1i(u_win_content, 0);
 			glUniform2f(u_win_bd_scale, (float) fw / g_sw, (float) fh / g_sh);
 			glUniform1f(u_win_glass, glass ? 1.0f : 0.0f);
@@ -542,9 +562,11 @@ void nw_gl_wallpaper_changed(void) { g_wall_dirty = 1; }
 
 void nw_gl_shutdown(void)
 {
-	for (int i = 0; i < NW_MAX_WINDOWS; i++)
-		if (g_win_tex[i]) { glDeleteTextures(1, &g_win_tex[i]); g_win_tex[i] = 0; g_win_tw[i] = g_win_th[i] = 0;
-			g_win_gen[i] = 0; }
+	for (int i = 0; i < NW_MAX_WINDOWS; i++) {
+		for (int b = 0; b < 2; b++)
+			if (g_win_tex[i][b]) { glDeleteTextures(1, &g_win_tex[i][b]); g_win_tex[i][b] = 0; }
+		g_win_tw[i] = g_win_th[i] = 0; g_win_gen[i] = 0; g_win_par[i] = 0;
+	}
 	g_chrome_ready = 0; g_wall_dirty = 1;
 	if (g_blurA)  { glDeleteTextures(1, &g_blurA);  g_blurA = 0; }
 	if (g_blurB)  { glDeleteTextures(1, &g_blurB);  g_blurB = 0; }
