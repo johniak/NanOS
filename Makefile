@@ -489,6 +489,34 @@ glkms: bin/libc.ndl bin/libc.ndl.a
 	cp "$(MESA_PORT)/glkms.nxe" $(BINFOLDER)glkms.nxe
 	@echo "glkms.nxe -> $(BINFOLDER)glkms.nxe"
 
+# nwm-gl.nxe — Task 10: the nanowm compositor with the GL ES present backend (nw_compose_gl.c)
+# compiled in (-DNWM_GL) and linked against the same Mesa .a closure as glkms. The in-tree nwm.nxe
+# stays a pure-CPU program (verify64 untouched); nwm-gl.nxe supersedes it on a GL-capable boot and
+# falls back to the CPU compositor at runtime (NWM_NO_GL / no DRM node). The NanOS tree is mounted
+# read-only so the link script compiles every nwm TU straight from source (no per-file staging).
+nwm-gl: bin/libc.ndl bin/libc.ndl.a
+	@test -f "$(MESA_PORT)/build-nwm-gl.sh" || { echo "build-nwm-gl.sh not found in $(MESA_PORT)"; exit 1; }
+	@test -f "$(SDK_TC)/x86_64-nanos/lib/libgbm.a" || { echo "run 'make mesa' first"; exit 1; }
+	$(GLAPP_STAGE)
+	cp arch/x86_64/user-nx.ld "$(MESA_PORT)/user-nx.ld"
+	docker run --rm \
+	  -v "$(SDK_TC)":/work/toolchain -v "$(MESA_PORT)":/work/port -v "$(CURDIR)":/work/nanos:ro \
+	  -e PATH="$(MESA_DOCKER_PATH)" \
+	  -w /work/port nanos-sdk-dev:latest sh /work/port/build-nwm-gl.sh
+	cp "$(MESA_PORT)/nwm-gl.nxe" $(BINFOLDER)nwm-gl.nxe
+	@echo "nwm-gl.nxe -> $(BINFOLDER)nwm-gl.nxe"
+
+# image64-gl — a GL desktop image: a byte copy of image64-grub2.img with /nanos/bin/nwm.nxe
+# swapped for the Mesa-linked nwm-gl.nxe (Task 10). verify64 keeps using the untouched image64
+# (original CPU nwm.nxe); the GL scripts/smoke gate use this one. Cheap: copy + one debugfs write.
+IMAGE64_GL_GRUB2=disk/image64-gl-grub2.img
+IMAGE64_GL_GRUB2_PART=$(IMAGE64_GL_GRUB2)?offset=69206016
+image64-gl: nwm-gl
+	@test -f $(IMAGE64_GRUB2) || { echo "run 'make image64' first"; exit 1; }
+	cp $(IMAGE64_GRUB2) $(IMAGE64_GL_GRUB2)
+	printf "rm /nanos/bin/nwm.nxe\nwrite $(BINFOLDER)nwm-gl.nxe /nanos/bin/nwm.nxe\nset_inode_field /nanos/bin/nwm.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GL_GRUB2_PART)"
+	@echo "image64-gl -> $(IMAGE64_GL_GRUB2) (nwm = GL present backend)"
+
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
 ifeq ($(ARCH),x86_64)
 OPENSSL_TRIPLE  := x86_64-nanos
@@ -845,7 +873,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa gles2info glkms   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa gles2info glkms nwm-gl   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
