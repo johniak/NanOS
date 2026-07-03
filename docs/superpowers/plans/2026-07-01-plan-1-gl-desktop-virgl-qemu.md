@@ -967,8 +967,24 @@ git add user/glkms/ Makefile
 git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via AddFB2/SetCrtc"
 ```
 
-> **STATUS (2026-07-03): host 3D-scanout SOLVED; GL pipeline PROVEN (glkms displays a gradient); sole
-> remaining bug = guest→host vertex-buffer upload reads zero.**
+> **STATUS (2026-07-03): DONE — full GL pipeline works over virgl. glkms renders its gradient from a
+> real vertex buffer; host 3D-scanout SOLVED; the guest→host buffer-upload bug is FIXED at root cause
+> (32-bit mmap-offset truncation in libc-glue, commit de98534).**
+>
+> **ROOT-CAUSE FIX (de98534):** the libc-glue `mmap` wrapper passed the offset through
+> `sys5(int,…,int e)`, casting `off_t` to `int`. DRM GEM fake mmap offsets are ≥ `0x100000000` (the vma
+> manager allocates from `DRM_FILE_PAGE_OFFSET_START` = `1<<20` pages), so the high bits were stripped —
+> `0x1003e8000` reached the kernel as `0x3e8000`. `drm_vma_offset_exact_lookup` then missed (page 1000 vs
+> 1049576), `SYS_mmap` silently fell back to **anonymous zero pages**, and every Mesa vertex/index/uniform
+> upload went to throwaway memory while the resource backing the host reads over virgl stayed zero.
+> Buffer-sourced draws collapsed to a degenerate primitive → rendered nothing (which had masqueraded as a
+> "Mesa draw no-op"). Fix: a dedicated `sys_mmap` passes the offset 64-bit-wide (x86_64 r8). Bisected with
+> kernel `node_mmap_offset` logging (`vnode=MISS` → `vnode=OK` after the fix) + a virglrenderer
+> `transfer_write_iov` byte dump (host now reads `00 00 80 bf 00 00 80 bf 00 00 40 40` = -1,-1,3).
+> `glkms` uses an ES3 `in vec2 p` shader sourcing a real `GL_ARRAY_BUFFER`; the gradient fills the window.
+> **Task 10 (nwm GL) is unblocked** — arbitrary vertex-buffer geometry now uploads correctly.
+>
+> --- earlier findings (host fixes; still valid) ---
 > The earlier "host-fork limitation" conclusion (2026-07-02) is **partly overturned**. Built the fork
 > from source (QEMU v10.1.0 + the tap's texture-borrowing patch + virglrenderer 1.3.0, all in
 > `$(SDK_WORK)/qemu-fork-build` + `virgl-fork-build`) and found the host non-present was **three real
