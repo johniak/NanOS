@@ -23,11 +23,14 @@ struct nw_surface;   /* user/libnw/nw_gfx.h — the wallpaper (and the CPU chrom
  * (state cleaned up) on any failure so the caller can use the CPU path. */
 int  nw_gl_init(int screen_w, int screen_h);
 
-/* Composite one frame on the GPU from the server's window list (each window's cached `frame`
- * render) over `wall` (the wallpaper), with GPU glass blur, CPU chrome overlay, and the cursor, then
- * scan it out (glkms_swap). Returns 0 on success; -1 on any GL/KMS error (caller falls back to CPU).
- * The caller must run nw_render_dirty_frames() first so every window's `frame` is current. */
-int  nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall);
+/* Present one frame. When scene_dirty is nonzero, recompose the cursor-free desktop on the GPU from
+ * the server's window list (each window's cached `frame` render) over `wall` (the wallpaper), with
+ * GPU glass blur and the CPU chrome overlay, into the offscreen scene; the caller must have run
+ * nw_render_dirty_frames() first. When scene_dirty is 0 (a bare cursor move) the scene is reused as-is
+ * — skipping the whole TCG-expensive composite. Either way the scene is blitted to the display with
+ * the cursor drawn on top at its live position, then scanned out (glkms_swap). Returns 0 on success;
+ * -1 on any GL/KMS error (caller falls back to CPU). */
+int  nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int scene_dirty);
 
 /* Build the cursor texture from the CPU arrow bitmap (once). Call after nw_gl_init succeeds. */
 void nw_gl_build_cursor(void);

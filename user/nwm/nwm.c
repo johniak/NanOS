@@ -533,6 +533,7 @@ static void present_gl(void)
 		return;
 	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
 		return;                                  /* nothing changed */
+	int scene_dirty = S.dirty;                   /* 0 => bare cursor move: reuse the scene, cheap present */
 	if (S.dirty) {
 		nw_render_dirty_frames(&S);              /* refresh any window whose content/focus changed */
 		S.frame_ctr++;
@@ -540,7 +541,7 @@ static void present_gl(void)
 		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it (the GPU redraws the whole frame) */
 		S.dirty = 0;
 	}
-	if (nw_gl_frame(&S, &g_wall_surf) != 0) {
+	if (nw_gl_frame(&S, &g_wall_surf, scene_dirty) != 0) {
 		printf("nwm: GL backend disabled, CPU fallback\n");
 		nw_gl_shutdown();
 		g_gl = 0;

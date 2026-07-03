@@ -373,90 +373,87 @@ static void blur_backdrop(int wx, int wy, int fw, int fh)
 	BLUR_MARK("done");
 }
 
-int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall)
+int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int scene_dirty)
 {
 	if (!g_ok) return -1;
 
-	/* wallpaper texture (uploaded once; re-upload is cheap and covers a settings reload) */
-	if (!g_wall_tex && wall) g_wall_tex = make_tex(wall->w, wall->h, wall->px);
-	else if (wall) { glBindTexture(GL_TEXTURE_2D, g_wall_tex);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, wall->w, wall->h, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
+	/* Recompose the desktop into the CURSOR-FREE offscreen scene only when something other than the
+	 * pointer changed. A bare cursor move skips this whole (TCG-expensive) Mesa composite + blur +
+	 * upload path and just re-presents g_scene_tex with the cursor at its new spot — so the pointer
+	 * stays smooth even though a GPU-swapped buffer has no cheap partial update. */
+	if (scene_dirty) {
+		/* wallpaper texture (uploaded once; re-upload is cheap and covers a settings reload) */
+		if (!g_wall_tex && wall) g_wall_tex = make_tex(wall->w, wall->h, wall->px);
+		else if (wall) { glBindTexture(GL_TEXTURE_2D, g_wall_tex);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, wall->w, wall->h, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
 
-	glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* compose into the offscreen scene */
-	glViewport(0, 0, g_sw, g_sh);
-	glDisable(GL_BLEND);
-	glClearColor(0.f, 0.f, 0.f, 1.f);
-	glClear(GL_COLOR_BUFFER_BIT);
+		glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* compose into the offscreen scene */
+		glViewport(0, 0, g_sw, g_sh);
+		glDisable(GL_BLEND);
+		glClearColor(0.f, 0.f, 0.f, 1.f);
+		glClear(GL_COLOR_BUFFER_BIT);
 
-	/* wallpaper, opaque */
-	if (g_wall_tex) {
-		glUseProgram(p_tex.id); glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, g_wall_tex); glUniform1i(u_tex_tex, 0);
-		quad(&p_tex, 0, 0, (float) g_sw, (float) g_sh);
-	}
+		/* wallpaper, opaque */
+		if (g_wall_tex) {
+			glUseProgram(p_tex.id); glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, g_wall_tex); glUniform1i(u_tex_tex, 0);
+			quad(&p_tex, 0, 0, (float) g_sw, (float) g_sh);
+		}
 
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	/* windows back-to-front (same z-order walk as nw_compose_scene) */
-	for (int z = 0; z < s->zn; z++) {
-		int idx = s->zorder[z];
-		const struct nw_window *w = &s->win[idx];
-		if (!w->used || w->minimized || !w->frame) continue;
-		int fw = frame_w(w), fh = frame_h(w);
-		int dark = (w->title[0] == '\x01');
-		float alpha = (dark ? GL_DARK_ALPHA : GL_WIN_ALPHA) / 255.0f;
+		/* windows back-to-front (same z-order walk as nw_compose_scene) */
+		for (int z = 0; z < s->zn; z++) {
+			int idx = s->zorder[z];
+			const struct nw_window *w = &s->win[idx];
+			if (!w->used || w->minimized || !w->frame) continue;
+			int fw = frame_w(w), fh = frame_h(w);
+			int dark = (w->title[0] == '\x01');
+			float alpha = (dark ? GL_DARK_ALPHA : GL_WIN_ALPHA) / 255.0f;
 
-		/* upload this window's cached frame render as its content texture */
-		ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh);
-		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+			/* upload this window's cached frame render as its content texture */
+			ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh);
+			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
 
-		int glass = (w->glass && !g_no_glass);
-		if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
-			blur_backdrop(w->x, w->y, fw, fh);   /* leaves us back on g_scene_fbo, full viewport, blend on */
+			int glass = (w->glass && !g_no_glass);
+			if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
+				blur_backdrop(w->x, w->y, fw, fh);   /* leaves us back on g_scene_fbo, full viewport, blend on */
 
-		glUseProgram(p_win.id);
-		glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_blurB);  /* backdrop (unit 1) */
-		glUniform1i(u_win_backdrop, 1);
-		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
-		glUniform1i(u_win_content, 0);
-		glUniform2f(u_win_bd_scale, (float) fw / g_sw, (float) fh / g_sh);
-		glUniform1f(u_win_glass, glass ? 1.0f : 0.0f);
-		glUniform1f(u_win_alpha, alpha);
-		glUniform2f(u_win_size, (float) fw, (float) fh);
-		glUniform1f(u_win_radius, (float) g_radius);
-		glUniform3f(u_win_border, GL_BORDER_RGB);
-		quad(&p_win, (float) w->x, (float) w->y, (float) fw, (float) fh);
-	}
+			glUseProgram(p_win.id);
+			glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_blurB);  /* backdrop (unit 1) */
+			glUniform1i(u_win_backdrop, 1);
+			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
+			glUniform1i(u_win_content, 0);
+			glUniform2f(u_win_bd_scale, (float) fw / g_sw, (float) fh / g_sh);
+			glUniform1f(u_win_glass, glass ? 1.0f : 0.0f);
+			glUniform1f(u_win_alpha, alpha);
+			glUniform2f(u_win_size, (float) fw, (float) fh);
+			glUniform1f(u_win_radius, (float) g_radius);
+			glUniform3f(u_win_border, GL_BORDER_RGB);
+			quad(&p_win, (float) w->x, (float) w->y, (float) fw, (float) fh);
+		}
 
-	/* modal desktop-dim (auth): a full-screen translucent black quad over the windows */
-	if (s->auth_open) {
-		glUseProgram(p_solid.id);
-		glUniform4f(u_solid_color, 0.f, 0.f, 0.f, 130.0f / 255.0f);
-		quad(&p_solid, 0, 0, (float) g_sw, (float) g_sh);
-	}
+		/* modal desktop-dim (auth): a full-screen translucent black quad over the windows */
+		if (s->auth_open) {
+			glUseProgram(p_solid.id);
+			glUniform4f(u_solid_color, 0.f, 0.f, 0.f, 130.0f / 255.0f);
+			quad(&p_solid, 0, 0, (float) g_sw, (float) g_sh);
+		}
 
-	/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on black */
-	nw_compose_chrome(s, &g_chrome_surf);
-	glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
-	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_sw, g_sh, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
-	glUseProgram(p_keyed.id);
-	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
-	glUniform1i(u_key_tex, 0);
-	glUniform3f(u_key_key, 0.f, 0.f, 0.f);   /* key out black (untouched overlay) */
-	quad(&p_keyed, 0, 0, (float) g_sw, (float) g_sh);
-
-	/* cursor: a small keyed quad (magenta key) */
-	if (g_cursor_tex) {
+		/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on black */
+		nw_compose_chrome(s, &g_chrome_surf);
+		glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_sw, g_sh, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
 		glUseProgram(p_keyed.id);
-		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_cursor_tex);
+		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
 		glUniform1i(u_key_tex, 0);
-		glUniform3f(u_key_key, 1.f, 0.f, 1.f);   /* magenta key (sampled space) */
-		quad(&p_keyed, (float) s->cursor_x, (float) s->cursor_y, (float) NW_CURSOR_W, (float) NW_CURSOR_H);
+		glUniform3f(u_key_key, 0.f, 0.f, 0.f);   /* key out black (untouched overlay) */
+		quad(&p_keyed, 0, 0, (float) g_sw, (float) g_sh);
 	}
 
-	/* blit the composed offscreen scene to the default framebuffer (the GBM/EGL surface) and swap */
+	/* present: blit the (cursor-free) scene to the default framebuffer, then draw the cursor on top */
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, (int) g_kms.mode_w, (int) g_kms.mode_h);
 	glDisable(GL_BLEND);
@@ -464,6 +461,15 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall)
 	glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_scene_tex);
 	glUniform1i(u_blit_tex, 0);
 	quad(&p_blit, 0, 0, (float) g_sw, (float) g_sh);
+
+	/* cursor: a small keyed quad (magenta key discarded) — drawn per present at the live position */
+	if (g_cursor_tex) {
+		glUseProgram(p_keyed.id);
+		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_cursor_tex);
+		glUniform1i(u_key_tex, 0);
+		glUniform3f(u_key_key, 1.f, 0.f, 1.f);   /* magenta key (sampled space) */
+		quad(&p_keyed, (float) s->cursor_x, (float) s->cursor_y, (float) NW_CURSOR_W, (float) NW_CURSOR_H);
+	}
 
 	if (glGetError() != GL_NO_ERROR) return -1;
 	return glkms_swap(&g_kms);
