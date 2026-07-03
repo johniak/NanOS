@@ -17,6 +17,7 @@ void dma_resv_unlock(struct dma_resv*);
 int  dma_resv_reserve_fences(struct dma_resv*, unsigned);
 void dma_resv_add_fence(struct dma_resv*, struct dma_fence*, enum dma_resv_usage);
 long dma_resv_wait_timeout(struct dma_resv*, enum dma_resv_usage, bool, long);
+bool dma_resv_test_signaled(struct dma_resv*, enum dma_resv_usage);
 #ifdef __cplusplus
 }
 #endif
@@ -24,10 +25,11 @@ long dma_resv_wait_timeout(struct dma_resv*, enum dma_resv_usage, bool, long);
 #define dma_resv_assert_held(r) do{}while(0)
 #endif
 
-#ifndef _LKPI_DMA_RESV_EXTRA
-#define _LKPI_DMA_RESV_EXTRA
-static inline bool dma_resv_test_signaled(struct dma_resv *r, enum dma_resv_usage u){ (void)r;(void)u; return true; }
-#endif
+/* dma_resv_test_signaled is a REAL function (kpi_fence.c). It was once an always-true inline
+ * stub here — that lie made VIRTGPU_WAIT(NOWAIT) report every buffer idle, so Mesa's virgl
+ * winsys recycled transfer-staging buffers while the host was still consuming them (the GL
+ * desktop's cross-window texture shred under changing content). Busy checks must consult the
+ * tracked fence. */
 
 #ifndef _LKPI_DMA_RESV_USAGE
 #define _LKPI_DMA_RESV_USAGE
@@ -42,5 +44,7 @@ static inline void dma_resv_lock_slow(struct dma_resv *r, struct ww_acquire_ctx 
 
 #ifndef _LKPI_DMA_RESV_SINGLETON
 #define _LKPI_DMA_RESV_SINGLETON
-static inline int dma_resv_get_singleton(struct dma_resv *r, enum dma_resv_usage u, struct dma_fence **f){ (void)r;(void)u; *f=0; return 0; }
+/* Return the tracked fence (referenced), not an unconditional NULL: prepare_fb/plane commit
+ * uses this to wait for a buffer's producer before scanning it out. */
+static inline int dma_resv_get_singleton(struct dma_resv *r, enum dma_resv_usage u, struct dma_fence **f){ (void)u; *f = (r && r->fences) ? dma_fence_get((struct dma_fence *)r->fences) : 0; return 0; }
 #endif

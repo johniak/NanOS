@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/errno.h>
+#include <linux/jiffies.h>
 
 /* The global ww_class every dma_resv shares (declared extern in <linux/ww_mutex.h>). */
 struct ww_class reservation_ww_class = { 0 };
@@ -147,20 +148,30 @@ int dma_fence_add_callback(struct dma_fence *f, struct dma_fence_cb *cb,
 
 long dma_fence_wait_timeout(struct dma_fence *f, bool intr, long timeout)
 {
-	long left = timeout;
+	unsigned long start;
 	(void)intr;
 	if (!f)
 		return timeout;
 	if (f->ops && f->ops->wait && f->ops->wait != (void *)0)
 		return f->ops->wait(f, intr, timeout);
+	/* The deadline is real time (jiffies, 1 ms each), not spin iterations: a pause+pump
+	 * iteration is tens of nanoseconds, so counting iterations against a jiffies-denominated
+	 * timeout would expire ~10^4 times too early and turn honest waits into spurious -EBUSY. */
+	start = lkpi_jiffies();
 	while (!dma_fence_is_signaled(f)) {
 		if (lkpi_fence_poll_hook)
 			lkpi_fence_poll_hook();
 		__asm__ __volatile__("pause");
-		if (timeout != MAX_SCHEDULE_TIMEOUT && --left <= 0)
+		if (timeout != MAX_SCHEDULE_TIMEOUT &&
+		    (long)(lkpi_jiffies() - start) >= timeout)
 			return 0;	/* timed out */
 	}
-	return left > 0 ? left : 1;
+	if (timeout == MAX_SCHEDULE_TIMEOUT)
+		return timeout;
+	{
+		long left = timeout - (long)(lkpi_jiffies() - start);
+		return left > 0 ? left : 1;
+	}
 }
 
 long dma_fence_wait(struct dma_fence *f, bool intr)
@@ -231,11 +242,14 @@ void dma_resv_unlock(struct dma_resv *r) { ww_mutex_unlock(&r->lock); }
 
 int dma_resv_reserve_fences(struct dma_resv *r, unsigned num) { (void)r; (void)num; return 0; }
 
+unsigned long lkpi_resv_fence_adds;   /* NWDBG: proves execbuffer fences land on BO resvs */
+
 void dma_resv_add_fence(struct dma_resv *r, struct dma_fence *f, enum dma_resv_usage usage)
 {
 	(void)usage;
 	if (!r)
 		return;
+	lkpi_resv_fence_adds++;
 	if (r->fences)
 		dma_fence_put((struct dma_fence *)r->fences);
 	r->fences = dma_fence_get(f);
@@ -247,6 +261,38 @@ long dma_resv_wait_timeout(struct dma_resv *r, enum dma_resv_usage usage, bool i
 	if (r && r->fences)
 		return dma_fence_wait_timeout((struct dma_fence *)r->fences, intr, timeout);
 	return timeout;
+}
+
+bool dma_resv_test_signaled(struct dma_resv *r, enum dma_resv_usage usage)
+{
+	/* NWDBG telemetry: prove the busy path is exercised (calls / no-fence / busy results). */
+	static unsigned long nwdbg_calls, nwdbg_nofence, nwdbg_busy;
+	bool sig;
+	(void)usage;
+	nwdbg_calls++;
+	if (!r || !r->fences) {
+		nwdbg_nofence++;
+		if ((nwdbg_calls & 0x3ff) == 1)
+			printk("lkpi resv_test: calls=%lu nofence=%lu busy=%lu\n",
+			       nwdbg_calls, nwdbg_nofence, nwdbg_busy);
+		return true;
+	}
+	/* NOWAIT busy-polls (DRM_IOCTL_VIRTGPU_WAIT) are how Mesa's virgl winsys decides a
+	 * transfer-staging buffer may be recycled. We never wire the INTx line, so harvest the
+	 * used ring once here — otherwise a completion that already arrived stays unobserved
+	 * and every poll reports busy. The former always-true stub here let Mesa overwrite
+	 * staging the host had not yet consumed: the GL desktop's cross-window texture shred. */
+	if (lkpi_fence_poll_hook)
+		lkpi_fence_poll_hook();
+	sig = dma_fence_is_signaled((struct dma_fence *)r->fences);
+	if (!sig)
+		nwdbg_busy++;
+	if ((nwdbg_calls & 0x3ff) == 1) {
+		extern unsigned long lkpi_resv_fence_adds;
+		printk("lkpi resv_test: calls=%lu nofence=%lu busy=%lu adds=%lu\n",
+		       nwdbg_calls, nwdbg_nofence, nwdbg_busy, lkpi_resv_fence_adds);
+	}
+	return sig;
 }
 
 /* ---- dma_buf (prime export path; not on the scanout hot path) ----------------------- */

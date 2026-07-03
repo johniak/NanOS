@@ -33,6 +33,7 @@
 #include "nw_gfx.h"          /* struct nw_surface */
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <GLES2/gl2.h>
 
 /* ---- window geometry (mirror nw_compose.c's frame_w/frame_h) ---------------------------------- */
@@ -455,13 +456,37 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			int up = g_win_par[idx], show = up ^ 1;
 			glActiveTexture(GL_TEXTURE0);
 			int realloced = ensure_win_tex(idx, fw, fh);
+			/* NWM_GL_SOLID=1 — D1 discriminator: upload an idx-keyed flat colour instead of
+			 * w->frame (same traffic, same gating). Windows keeping their own solid colour under
+			 * a terminal flood exonerates the whole GL transport; mixed/garbled colours convict it. */
+			static int gl_solid = -1;
+			static uint32_t *solid_px;
+			if (gl_solid < 0) {
+				gl_solid = getenv("NWM_GL_SOLID") ? 1 : 0;
+				if (!gl_solid) {                     /* guest knob: marker file in the image */
+					int mfd = open("/disks/main/nanos/nwm-solid", O_RDONLY);
+					if (mfd >= 0) { gl_solid = 1; close(mfd); }
+				}
+			}
+			const uint32_t *up_src = w->frame;
+			if (gl_solid) {
+				static const uint32_t cols[8] = {
+					0xff2222ee, 0xff22cc22, 0xffee2222, 0xff22cccc,
+					0xffcc22cc, 0xffcccc22, 0xffeeeeee, 0xff222222 };
+				if (!solid_px) solid_px = (uint32_t *) malloc((size_t) 2048 * 2048 * 4);
+				if (solid_px) {
+					uint32_t c = cols[idx & 7];
+					for (long i = 0; i < (long) fw * fh; i++) solid_px[i] = c;
+					up_src = solid_px;
+				}
+			}
 			if (realloced || !interacting || g_win_gen[idx] != w->frame_gen) {
 				glBindTexture(GL_TEXTURE_2D, g_win_tex[idx][up]);
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, up_src);
 				glFinish();
 				if (realloced) {                  /* first frame: seed the sample buffer too */
 					glBindTexture(GL_TEXTURE_2D, g_win_tex[idx][show]);
-					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, up_src);
 					glFinish();
 				}
 				g_win_gen[idx] = w->frame_gen;

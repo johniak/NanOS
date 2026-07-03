@@ -3,7 +3,11 @@
 #include <linux/fs.h>
 struct fd { struct file *file; unsigned int flags; };
 static inline struct file *fget(unsigned int fd){ (void)fd; return 0; }
-static inline void fput(struct file *f){ (void)f; }
+/* fput is REAL (kpi_misc.c): dropping a GEM object's shmem backing must free its pages.
+ * As an inline no-op, GEM backing pages were never freed — the kernel heap exhausted under
+ * the GL desktop's staging churn and the allocator aliased live buffers (the cross-window
+ * texture corruption under a terminal flood). */
+void fput(struct file *f);
 static inline void fdput(struct fd f){ (void)f; }
 #endif
 

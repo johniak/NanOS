@@ -40,6 +40,8 @@ struct task_struct *lkpi_current = &lkpi_current_task;
 
 /* ---- shmem page provider (gem_shmem backing store) ---------------------------------- */
 
+static unsigned long lkpi_shmem_setups, lkpi_shmem_releases;
+
 struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags)
 {
 	struct file *f;
@@ -47,6 +49,10 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 	struct address_space *m;
 	unsigned long npages = (unsigned long)((size + PAGE_SIZE - 1) / PAGE_SIZE);
 	(void)name; (void)flags;
+	lkpi_shmem_setups++;
+	if ((lkpi_shmem_setups & 0x3f) == 0)
+		printk("lkpi shmem: setups=%lu releases=%lu\n",
+		       lkpi_shmem_setups, lkpi_shmem_releases);
 	if (!npages)
 		npages = 1;
 
@@ -101,6 +107,7 @@ void lkpi_shmem_release(struct file *f)
 	struct address_space *m;
 	if (!f || !f->f_mapping)
 		return;
+	lkpi_shmem_releases++;
 	m = f->f_mapping;
 	if (m->pages) {
 		if (m->nrpages && m->pages[0])
@@ -110,6 +117,16 @@ void lkpi_shmem_release(struct file *f)
 	kfree(m->host);
 	kfree(m);
 	kfree(f);
+}
+
+/* The last reference to a GEM object's backing file is dropped by drm_gem_object_release()
+ * via fput() — this is where the pages actually die. The virtio_gpu driver defers this to
+ * the RESOURCE_UNREF response callback, and the ctrl queue is processed in order, so the
+ * host has always consumed any pending transfer from these pages by the time we free them.
+ * Files without a mapping (sync/anon stubs) fall through harmlessly inside the release. */
+void fput(struct file *f)
+{
+	lkpi_shmem_release(f);
 }
 
 /* ---- seq_file (debug/sysfs output sink) --------------------------------------------- */
