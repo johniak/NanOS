@@ -28,9 +28,19 @@ int  nw_gl_init(int screen_w, int screen_h);
  * GPU glass blur and the CPU chrome overlay, into the offscreen scene; the caller must have run
  * nw_render_dirty_frames() first. When scene_dirty is 0 (a bare cursor move) the scene is reused as-is
  * — skipping the whole TCG-expensive composite. Either way the scene is blitted to the display with
- * the cursor drawn on top at its live position, then scanned out (glkms_swap). Returns 0 on success;
- * -1 on any GL/KMS error (caller falls back to CPU). */
-int  nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int scene_dirty);
+ * the cursor drawn on top at its live position, then scanned out (glkms_swap).
+ *
+ * A move-only frame uploads ZERO texture bytes: window content re-uploads only when its frame_gen
+ * changed, the wallpaper only when nw_gl_wallpaper_changed() flagged it, and when `interacting` is
+ * nonzero (a drag/resize is live) the chrome overlay is neither re-rendered nor re-uploaded — the
+ * panel/taskbar can't change mid-drag, so the resident chrome texture is reused as-is.
+ * Returns 0 on success; -1 on any GL/KMS error (caller falls back to CPU). */
+int  nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int scene_dirty,
+                 int interacting);
+
+/* Mark the wallpaper texture stale so the next frame re-uploads it (call after a settings reload
+ * repaints the wallpaper into the same buffer). Cheap; safe before init. */
+void nw_gl_wallpaper_changed(void);
 
 /* Build the cursor texture from the CPU arrow bitmap (once). Call after nw_gl_init succeeds. */
 void nw_gl_build_cursor(void);

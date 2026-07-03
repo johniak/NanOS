@@ -541,12 +541,38 @@ static void present_gl(void)
 		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it (the GPU redraws the whole frame) */
 		S.dirty = 0;
 	}
-	if (nw_gl_frame(&S, &g_wall_surf, scene_dirty) != 0) {
+	/* A drag/resize is live → the panel/taskbar can't change: nw_gl_frame skips the chrome
+	 * re-render+upload. Combined with per-window & per-wallpaper upload gating, a drag frame
+	 * uploads zero texture bytes. */
+	int interacting = (S.drag_win >= 0 || S.resize_win >= 0);
+
+	/* Frame-time telemetry (always on, serial): a dragged frame on TCG+virgl must stay < 25 ms. */
+	struct timespec t0, t1;
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	int rc = nw_gl_frame(&S, &g_wall_surf, scene_dirty, interacting);
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+	if (rc != 0) {
 		printf("nwm: GL backend disabled, CPU fallback\n");
 		nw_gl_shutdown();
 		g_gl = 0;
 		g_force_full = 1;                        /* next present() (CPU) repaints the whole screen */
 		return;
+	}
+	{
+		/* Separate the averages by frame class: a cursor-only frame is trivially cheap and would
+		 * hide the number that matters. `dirty` = full recompose (worst case: a clock tick re-renders
+		 * + re-uploads chrome). `drag` = recompose while interacting (skips every upload) — the frame
+		 * the user feels; its avg must stay < 25 ms on TCG+virgl. */
+		long us = ((long) t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_nsec - t0.tv_nsec) / 1000;
+		static long gl_n, gl_dus, gl_dn, gl_gus, gl_gn;
+		gl_n++;
+		if (scene_dirty) { gl_dus += us; gl_dn++; if (interacting) { gl_gus += us; gl_gn++; } }
+		if (gl_n >= 30) {
+			printf("nwm-gl: 30 frames | dirty %ld avg %ldms | drag %ld avg %ldms\n",
+			       gl_dn, gl_dn ? gl_dus / gl_dn / 1000 : 0,
+			       gl_gn, gl_gn ? gl_gus / gl_gn / 1000 : 0);
+			gl_n = gl_dus = gl_dn = gl_gus = gl_gn = 0;
+		}
 	}
 	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
@@ -696,6 +722,9 @@ static void refresh_wallpaper(void)
 		if (!load_wallpaper(g_wall, g_xres, g_yres))
 			nw_render_wallpaper(&g_wall_surf);
 	}
+#ifdef NWM_GL
+	if (g_gl) nw_gl_wallpaper_changed();       /* the GL backend re-uploads the wallpaper next frame */
+#endif
 }
 
 /* ---- virtual-terminal ownership (Linux VT_SETMODE process mode) ----------------------------

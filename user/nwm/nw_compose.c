@@ -301,6 +301,11 @@ static void draw_taskbar(const struct nw_server *s, const struct nw_surface *bac
  * (the shell, and tests) run this before nw_compose_scene so the cached frames are current;
  * a move (x/y change) leaves frames clean, so dragging recomposites from the cache with no
  * chrome/content re-render. Windows without a frame buffer are left to the live path below. */
+/* Monotonic render generation. Every actual frame re-render stamps the window with a globally
+ * unique value, so the GL compositor's per-window "last uploaded gen" can never coincidentally
+ * match a different window that happens to reuse the same slot index. */
+static unsigned g_render_gen;
+
 void nw_render_dirty_frames(struct nw_server *s)
 {
 	for (int i = 0; i < NW_MAX_WINDOWS; i++) {
@@ -312,6 +317,7 @@ void nw_render_dirty_frames(struct nw_server *s)
 		nw_surface_noclip(&fs);
 		draw_window_to(&fs, w, (i == s->focus), 0, 0);   /* window-local: origin (0,0) */
 		w->frame_dirty = 0;
+		w->frame_gen = ++g_render_gen;                   /* mark the content texture stale for the GPU */
 	}
 }
 
@@ -503,12 +509,14 @@ static void draw_chrome(const struct nw_server *s, const struct nw_surface *back
 }
 
 /* Render ONLY the chrome (panel/taskbar/dropdown/modals) into `overlay`, cleared to the transparent
- * key colour 0x000000 (the GL compositor keys that out). The GPU composites the windows + glass +
- * blur itself and draws this overlay last; the modal desktop-dim is a GPU quad, so it is omitted
- * here (dim=0). */
+ * key colour MAGENTA 0xff00ff (the GL compositor keys that out). Magenta, NOT black: the desktop
+ * chrome is dark-themed, so keying on black would punch see-through holes through every genuinely
+ * black chrome pixel (shadows, dark text, icon strokes). Magenta never occurs in the UI. The GPU
+ * composites the windows + glass + blur itself and draws this overlay last; the modal desktop-dim is
+ * a GPU quad, so it is omitted here (dim=0). */
 void nw_compose_chrome(const struct nw_server *s, const struct nw_surface *overlay)
 {
-	nw_fill_rect(overlay, 0, 0, overlay->w, overlay->h, 0x000000);   /* transparent key */
+	nw_fill_rect(overlay, 0, 0, overlay->w, overlay->h, 0xff00ff);   /* transparent key (magenta) */
 	draw_chrome(s, overlay, 0);
 }
 

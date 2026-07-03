@@ -183,11 +183,14 @@ static GLuint g_blurA = 0, g_blurB = 0;        /* screen-sized ping-pong texture
 static GLuint g_fboA = 0, g_fboB = 0;          /* g_fboA<-g_blurA, g_fboB<-g_blurB, attached at init */
 
 /* per-window content textures + their allocated size (recreated on resize) */
-static GLuint g_win_tex[NW_MAX_WINDOWS];
-static int    g_win_tw[NW_MAX_WINDOWS], g_win_th[NW_MAX_WINDOWS];
-/* the CPU chrome overlay surface (screen-sized), uploaded each frame */
+static GLuint   g_win_tex[NW_MAX_WINDOWS];
+static int      g_win_tw[NW_MAX_WINDOWS], g_win_th[NW_MAX_WINDOWS];
+static unsigned g_win_gen[NW_MAX_WINDOWS];     /* last frame_gen uploaded per slot; 0 = never */
+/* the CPU chrome overlay surface (screen-sized) */
 static uint32_t *g_chrome_px = 0;
 static struct nw_surface g_chrome_surf;
+static int g_chrome_ready = 0;                  /* the chrome texture holds at least one real render */
+static int g_wall_dirty  = 1;                   /* the wallpaper texture must be (re)uploaded */
 
 static GLuint compile(GLenum type, const char *src)
 {
@@ -321,13 +324,15 @@ int nw_gl_init(int screen_w, int screen_h)
 	return 0;
 }
 
-/* ensure a texture handle is (re)allocated to at least w×h; *tw/*th track the current size */
-static void ensure_tex(GLuint *t, int *tw, int *th, int w, int h)
+/* ensure a texture handle is (re)allocated to at least w×h; *tw/*th track the current size.
+ * Returns 1 if it (re)allocated (caller must re-upload — the new storage is uninitialised). */
+static int ensure_tex(GLuint *t, int *tw, int *th, int w, int h)
 {
-	if (*t && *tw == w && *th == h) return;
+	if (*t && *tw == w && *th == h) return 0;
 	if (*t) glDeleteTextures(1, t);
 	*t = make_tex(w, h, 0);
 	*tw = w; *th = h;
+	return 1;
 }
 
 /* Serial trace of each GL call in blur_backdrop — the oracle while the fork-hang is being chased
@@ -382,14 +387,20 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 	 * upload path and just re-presents g_scene_tex with the cursor at its new spot — so the pointer
 	 * stays smooth even though a GPU-swapped buffer has no cheap partial update. */
 	if (scene_dirty) {
-		/* wallpaper texture, re-uploaded per (scene-dirty) frame. Two fork quirks pin this shape:
-		 * (1) the re-upload must use glTexImage2D (full realloc), NOT glTexSubImage2D — the partial-
-		 *     update path garbled the top band of the texture on the ANGLE-Metal fork; and
-		 * (2) it must stay PER-FRAME — uploading the wallpaper only once left the compose failing to
-		 *     materialize chrome+windows on this fork (the per-frame upload is load-bearing sync). */
-		if (!g_wall_tex && wall) g_wall_tex = make_tex(wall->w, wall->h, wall->px);
-		else if (wall) { glBindTexture(GL_TEXTURE_2D, g_wall_tex);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, wall->w, wall->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
+		/* Wallpaper: (re)upload ONLY when it first appears or actually changes (settings reload flags
+		 * g_wall_dirty via nw_gl_wallpaper_changed), NEVER per frame — a per-frame 4 MB re-upload was
+		 * both a drag-time upload-storm cost AND the corruptor of the top "white band" (each re-upload
+		 * raced the host's read of the previous frame's transfer). glFinish after the single upload so
+		 * the transfer completes before the composite samples it — that missing fence is what the old
+		 * per-frame upload accidentally papered over. glTexImage2D (full realloc), not glTexSubImage2D:
+		 * the partial-update path garbles the top rows on this ANGLE-Metal fork. */
+		if (wall && (!g_wall_tex || g_wall_dirty)) {
+			if (!g_wall_tex) g_wall_tex = make_tex(wall->w, wall->h, wall->px);
+			else { glBindTexture(GL_TEXTURE_2D, g_wall_tex);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, wall->w, wall->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
+			glFinish();
+			g_wall_dirty = 0;
+		}
 
 		glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* compose into the offscreen scene */
 		glViewport(0, 0, g_sw, g_sh);
@@ -416,10 +427,18 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			int dark = (w->title[0] == '\x01');
 			float alpha = (dark ? GL_DARK_ALPHA : GL_WIN_ALPHA) / 255.0f;
 
-			/* upload this window's cached frame render as its content texture */
-			ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh);
-			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+			/* Upload this window's cached frame render as its content texture — but ONLY when the
+			 * content actually changed since our last upload (w->frame_gen bumped by a re-render) or
+			 * the texture was just (re)allocated. A window MOVE re-renders nothing, so a drag frame
+			 * uploads ZERO window bytes; the resident texture is reused. */
+			glActiveTexture(GL_TEXTURE0);
+			if (ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh))
+				g_win_gen[idx] = w->frame_gen - 1;      /* new storage is empty — force the upload below */
+			glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
+			if (g_win_gen[idx] != w->frame_gen) {
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+				g_win_gen[idx] = w->frame_gen;
+			}
 
 			int glass = (w->glass && !g_no_glass);
 			if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
@@ -446,14 +465,21 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			quad(&p_solid, 0, 0, (float) g_sw, (float) g_sh);
 		}
 
-		/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on black */
-		nw_compose_chrome(s, &g_chrome_surf);
-		glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_sw, g_sh, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
+		/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on MAGENTA (not black —
+		 * a black key would punch holes through the dark UI). Re-render + re-upload the full-screen
+		 * overlay ONLY when NOT interacting: during a drag/resize the panel & taskbar can't change, so
+		 * we reuse the resident chrome texture (zero CPU render, zero 4 MB upload). Always upload once
+		 * so the very first frame — or a drag that begins before any idle frame — has real chrome. */
+		if (!interacting || !g_chrome_ready) {
+			nw_compose_chrome(s, &g_chrome_surf);
+			glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_sw, g_sh, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
+			g_chrome_ready = 1;
+		}
 		glUseProgram(p_keyed.id);
 		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
 		glUniform1i(u_key_tex, 0);
-		glUniform3f(u_key_key, 0.f, 0.f, 0.f);   /* key out black (untouched overlay) */
+		glUniform3f(u_key_key, 1.f, 0.f, 1.f);   /* key out magenta (untouched overlay) */
 		quad(&p_keyed, 0, 0, (float) g_sw, (float) g_sh);
 	}
 
@@ -496,10 +522,14 @@ void nw_gl_build_cursor(void)
 
 void nw_gl_set_radius(int radius) { if (radius >= 0 && radius <= 20) g_radius = radius; }
 
+void nw_gl_wallpaper_changed(void) { g_wall_dirty = 1; }
+
 void nw_gl_shutdown(void)
 {
 	for (int i = 0; i < NW_MAX_WINDOWS; i++)
-		if (g_win_tex[i]) { glDeleteTextures(1, &g_win_tex[i]); g_win_tex[i] = 0; g_win_tw[i] = g_win_th[i] = 0; }
+		if (g_win_tex[i]) { glDeleteTextures(1, &g_win_tex[i]); g_win_tex[i] = 0; g_win_tw[i] = g_win_th[i] = 0;
+			g_win_gen[i] = 0; }
+	g_chrome_ready = 0; g_wall_dirty = 1;
 	if (g_blurA)  { glDeleteTextures(1, &g_blurA);  g_blurA = 0; }
 	if (g_blurB)  { glDeleteTextures(1, &g_blurB);  g_blurB = 0; }
 	if (g_fboA)   { glDeleteFramebuffers(1, &g_fboA); g_fboA = 0; }

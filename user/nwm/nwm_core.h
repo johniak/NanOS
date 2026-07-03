@@ -80,6 +80,10 @@ struct nw_window {
 	                        * shell allocates it. NULL = render straight to the scene (host path). */
 	int       frame_dirty; /* the cached frame is stale and must be re-rendered. Set on content
 	                        * commit, focus change and create; a move (x/y) does NOT set it.   */
+	unsigned  frame_gen;   /* bumped (to a global monotonic value) every time `frame` is actually
+	                        * re-rendered. The GL compositor re-uploads this window's content
+	                        * texture only when its cached gen differs — a move re-renders nothing,
+	                        * so a drag frame uploads ZERO window bytes.                        */
 	uint8_t   glass;       /* 1 => this window gets a blurred backdrop (default for all)      */
 	uint8_t   type;        /* enum nw_win_type; default NW_WIN_NORMAL                         */
 	uint32_t *bd_blur;     /* per-window LO-RES blurred backdrop cache (caller-allocated)     */
