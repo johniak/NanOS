@@ -26,6 +26,9 @@
 #include "nwui_png.h"             /* decode the branded wallpaper.png at runtime (toolkit decoder) */
 #include "nw_settings.h"          /* desktop preferences (blur/transparency) from settings.yaml */
 #include "nw_settings_path.h"     /* per-user prefs file in $HOME (writable by the desktop user) */
+#ifdef NWM_GL
+#include "nw_compose_gl.h"        /* Task 10: GL ES present backend (Mesa-linked build only) */
+#endif
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
 #include "open/nwspawn.h"         /* the AF_UNIX launch socket `open` connects to */
 #include <sys/socket.h>
@@ -79,6 +82,9 @@ static int g_wakefd[2] = { -1, -1 };      /* self-pipe so VT signals wake the po
 static int g_spawnfd = -1;                /* AF_UNIX listen socket: `open` requests app launches     */
 static int g_started = 0;                 /* have we spawned the desktop yet? (once, on first own)  */
 static volatile int g_force_full = 0;     /* next present() must repaint the WHOLE screen (after acquire) */
+#ifdef NWM_GL
+static int g_gl = 0;                       /* GL present backend live (Task 10); 0 => CPU fb0 path */
+#endif
 static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
 static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
 static struct nw_surface g_bd_surf;
@@ -515,8 +521,53 @@ static void cursor_restore_scene(void)  /* g_cur_save -> g_scene[cursor box] */
 		       g_cur_save + (size_t) r * NW_CURSOR_W, (size_t) w * 4);
 }
 
+#ifdef NWM_GL
+/* GL present path (Task 10): compose the scene with the CPU compositor exactly as the fb0 path
+ * does, then upload+scan it out via GL/KMS instead of blitting to /dev/fb0. Bakes the cursor into
+ * the scene per frame (there is no cheap overlay on a GPU-swapped buffer) and restores it, so
+ * g_scene stays cursor-free. Any GL/KMS failure disables the backend and reverts to CPU for the
+ * session. */
+static void present_gl(void)
+{
+	if (!g_own)
+		return;
+	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
+		return;                                  /* nothing changed */
+	if (S.dirty) {
+		nw_render_dirty_frames(&S);              /* refresh any window whose content/focus changed */
+		nw_surface_noclip(&g_scene_surf);        /* GL uploads the whole texture: no damage scissor */
+		nw_surface_noclip(&g_scratch_surf);
+		S.frame_ctr++;
+		g_bdc.frame_ctr = S.frame_ctr;
+		g_bdc.drag_win  = S.drag_win;
+		g_bdc.rebuild_budget = 2;                /* NW_BD_REBUILD_K: max non-priority rebuilds/frame */
+		g_bdc.bd = g_blur_on ? &g_bd_surf : 0;   /* blur disabled -> classic flat-tint glass */
+		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf, &g_bdc);
+		int dx, dy, dw, dh;
+		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it (we present the whole frame) */
+		S.dirty = 0;
+	}
+	/* Bake the cursor, present, restore the clean scene. */
+	cursor_save_scene();
+	nw_draw_cursor(&g_scene_surf, S.cursor_x, S.cursor_y);
+	int rc = nw_gl_frame(&g_scene_surf);
+	cursor_restore_scene();
+	if (rc != 0) {
+		printf("nwm: GL backend disabled, CPU fallback\n");
+		nw_gl_shutdown();
+		g_gl = 0;
+		g_force_full = 1;                        /* next present() (CPU) repaints the whole screen */
+		return;
+	}
+	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
+}
+#endif /* NWM_GL */
+
 static void present(void)
 {
+#ifdef NWM_GL
+	if (g_gl) { present_gl(); return; }
+#endif
 	if (!g_own)
 		return;                                  /* another VT owns the framebuffer — never touch it */
 	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
@@ -740,6 +791,17 @@ int main(void)
 	refresh_wallpaper();                       /* render the wallpaper per the chosen mode */
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
 	g_fb_surf.stride = (int) (g_pitch / 4); nw_surface_noclip(&g_fb_surf);
+
+#ifdef NWM_GL
+	/* Task 10: try the GL ES present backend (card0 + GBM + EGL). NWM_NO_GL=1 or no DRM node
+	 * (plain QEMU) => stay on the CPU fb0 path. The scene is composed identically either way. */
+	if (!getenv("NWM_NO_GL") && nw_gl_init((int) g_xres, (int) g_yres) == 0) {
+		g_gl = 1;
+		printf("nwm: GL compositor active\n");
+	} else {
+		printf("nwm: GL compositor unavailable, CPU compositor active\n");
+	}
+#endif
 
 	int in0 = open("/dev/input0", O_RDONLY | O_NONBLOCK);
 	int in1 = open("/dev/input1", O_RDONLY | O_NONBLOCK);
