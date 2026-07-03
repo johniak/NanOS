@@ -1126,6 +1126,24 @@ run64-gl: image64
 	$(QEMU_GL) $(QEMU_CPU64) -accel tcg,thread=multi -smp 1 $(QEMU_MEM) \
 	    -drive file=$(IMAGE64_GRUB2),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
 
+# run64-gl-desktop — boot the GPU-NATIVE desktop (image64-gl = nwm-gl.nxe) on the virgl fork, so the
+# WHOLE compositor runs on the GPU: window textures + the two-pass Gaussian GLASS BLUR as a real GL
+# shader, scanned out via GBM+EGL+KMS. This differs from `run64-gl`, which boots the plain image64
+# (CPU compositor, software blur, shown through the 2D scanout). Same QEMU config (QEMU_GL_VGA =
+# virtio-gpu-gl-pci + -vga none + zoom-to-fit, -smp 1) — only the image differs. After boot: switch
+# to the graphical VT (Ctrl+Alt+F7) and log in (e.g. jan/jan); apps take a moment to paint under TCG.
+# Serial: `nw_gl: GPU compositor init ok` + `nwm: GL compositor active`. Knobs (boot env): NWM_NO_GLASS=1
+# opaque, NWM_GL_TRACE=1 blur brackets.
+.PHONY: run64-gl-desktop
+run64-gl-desktop: image64-gl
+	@test -x "$(QEMU_GL)" || { echo "run64-gl-desktop: no virgl QEMU at $(QEMU_GL) — build the kosmickrisp fork or set QEMU_GL=..."; exit 1; }
+	@command -v brew >/dev/null 2>&1 && for keg in libepoxy angle virglrenderer; do \
+	  d="$$(brew --prefix startergo/$$keg/$$keg 2>/dev/null)/lib"; \
+	  [ -d "$$d" ] && for l in "$$d"/*.dylib; do codesign --force --sign - "$$l" >/dev/null 2>&1; done; \
+	done; true
+	$(QEMU_GL) $(QEMU_CPU64) -accel tcg,thread=multi -smp 1 $(QEMU_MEM) \
+	    -drive file=$(IMAGE64_GL_GRUB2),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
+
 # Headless GL proof — boot on the virgl fork, log in, run `gles2info`, print the GL markers to this
 # terminal (no cocoa window, no clicking). Success = `renderer=virgl`. The GL-composited desktop is
 # a separate unbuilt milestone; this proves only the unmodified-Mesa → virgl → ANGLE → Metal path.
