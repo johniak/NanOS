@@ -349,28 +349,39 @@ static void blur_backdrop(int wx, int wy, int fw, int fh)
 {
 	if (g_blur_trace < 0) g_blur_trace = getenv("NWM_GL_TRACE") ? 1 : 0;
 	const float STEP = 2.5f;                  /* per-tap spread (window px) → a soft, glass-like blur */
+	const float uw = (float) fw / g_sw, uh = (float) fh / g_sh;   /* the corner's uv extent */
 	BLUR_MARK("enter");
 	glDisable(GL_BLEND);                                            BLUR_MARK("blend-off");
 	glUseProgram(p_blur.id);                                        BLUR_MARK("use-prog");
 	glActiveTexture(GL_TEXTURE0);
 	glUniform1i(u_blur_tex, 0);
-	glViewport(0, 0, fw, fh);                 /* both passes draw into the lower-left corner */
+	glUniform2f(u_blur_uvsize, uw, uh);
+	glViewport(0, 0, fw, fh);                 /* every pass draws into the lower-left corner */
 
 	/* pass 1 (H): window sub-region of g_scene_tex (y-flipped: scene tex is bottom-up in the FBO) */
 	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);                      BLUR_MARK("bind-fboA");
 	glBindTexture(GL_TEXTURE_2D, g_scene_tex);                      BLUR_MARK("bind-scene-tex");
 	glUniform2f(u_blur_uv0, (float) wx / g_sw, 1.0f - (float) (wy + fh) / g_sh);
-	glUniform2f(u_blur_uvsize, (float) fw / g_sw, (float) fh / g_sh);
 	glUniform2f(u_blur_dir, STEP / g_sw, 0.0f);
-	draw_full_quad();                                              BLUR_MARK("draw-H");
+	draw_full_quad();                                              BLUR_MARK("draw-H1");
 
 	/* pass 2 (V): the corner of g_blurA → g_fboB */
 	glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);                      BLUR_MARK("bind-fboB");
 	glBindTexture(GL_TEXTURE_2D, g_blurA);                          BLUR_MARK("bind-blurA");
 	glUniform2f(u_blur_uv0, 0.0f, 0.0f);
-	glUniform2f(u_blur_uvsize, (float) fw / g_sw, (float) fh / g_sh);
 	glUniform2f(u_blur_dir, 0.0f, STEP / g_sh);
-	draw_full_quad();                                              BLUR_MARK("draw-V");
+	draw_full_quad();                                              BLUR_MARK("draw-V1");
+
+	/* pass 3 (H) + pass 4 (V): a SECOND separable Gaussian on the corner (g_blurB→g_fboA→g_fboB),
+	 * widening the blur to match the CPU glass. Still zero attachment churn — the FBOs are pre-bound. */
+	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);
+	glBindTexture(GL_TEXTURE_2D, g_blurB);
+	glUniform2f(u_blur_dir, STEP / g_sw, 0.0f);
+	draw_full_quad();                                              BLUR_MARK("draw-H2");
+	glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);
+	glBindTexture(GL_TEXTURE_2D, g_blurA);
+	glUniform2f(u_blur_dir, 0.0f, STEP / g_sh);
+	draw_full_quad();                                              BLUR_MARK("draw-V2");
 
 	glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* back to the offscreen scene target */
 	glViewport(0, 0, g_sw, g_sh);
@@ -378,7 +389,8 @@ static void blur_backdrop(int wx, int wy, int fw, int fh)
 	BLUR_MARK("done");
 }
 
-int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int scene_dirty)
+int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int scene_dirty,
+                int interacting)
 {
 	if (!g_ok) return -1;
 
