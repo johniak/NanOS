@@ -671,14 +671,36 @@ static inline int sys5(int nr, int a, int b, int c, int d, int e) {
 	return r;
 }
 
+/* 5-arg syscall with a FULL 64-bit final argument (x86_64 r8). mmap needs this: DRM GEM fake
+ * mmap offsets are >= 0x100000000 (the DRM vma manager allocates from DRM_FILE_PAGE_OFFSET_START
+ * = 1<<20 pages), so casting the offset to int (the old bug) stripped the high bits and the
+ * kernel's drm_vma_offset lookup missed — the mapping silently fell back to anonymous zero pages,
+ * so guest GPU-buffer writes never reached the resource backing (virgl draws rendered nothing). */
+static inline long sys_mmap(int nr, long a, long b, long c, long d, long e) {
+#if defined(__x86_64__)
+	long rr;
+	register long r10 __asm__("r10") = d;
+	register long r8  __asm__("r8")  = e;
+	__asm__ __volatile__("syscall" : "=a"(rr)
+		: "a"((long) nr), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+		: "rcx", "r11", "memory");
+	return rr;
+#else
+	int r;
+	__asm__ __volatile__("int $0x80"
+		: "=a"(r) : "a"(nr), "b"((int)a), "c"((int)b), "d"((int)c), "S"((int)d), "D"((int)e) : "memory");
+	return r;
+#endif
+}
+
 /* mmap(2): pass length/prot/flags/fd/offset to the kernel. Supports device mappings
- * (e.g. /dev/fb0), anonymous mappings (fd < 0), and file-backed mappings (regular-file fd,
- * eagerly loaded). `addr` is advisory and ignored (the kernel picks the VA). Returns
- * MAP_FAILED ((void*)-1) on error. */
+ * (e.g. /dev/fb0, DRM GEM BOs), anonymous mappings (fd < 0), and file-backed mappings
+ * (regular-file fd, eagerly loaded). `addr` is advisory and ignored (the kernel picks the VA).
+ * The offset is passed 64-bit-wide (see sys_mmap). Returns MAP_FAILED ((void*)-1) on error. */
 void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
 	(void) addr; (void) flags;
-	int r = sys5(SYS_mmap2, (int) length, prot, flags, fd, (int) offset);
-	if (r < 0) { errno = -r; return (void*) -1; }
+	long r = sys_mmap(SYS_mmap2, (long) length, prot, flags, fd, (long) offset);
+	if (r < 0 && r >= -4095) { errno = (int) -r; return (void*) -1; }
 	return (void*) r;
 }
 
