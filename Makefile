@@ -509,13 +509,15 @@ nwm-gl: bin/libc.ndl bin/libc.ndl.a
 # image64-gl — a GL desktop image: a byte copy of image64-grub2.img with /nanos/bin/nwm.nxe
 # swapped for the Mesa-linked nwm-gl.nxe (Task 10). verify64 keeps using the untouched image64
 # (original CPU nwm.nxe); the GL scripts/smoke gate use this one. Cheap: copy + one debugfs write.
+# The debugfs write runs INSIDE the nanos-build container ($(DOCKER_RUN)) — like the main image64
+# build — so it does not depend on e2fsprogs being on the host PATH (keg-only on macOS).
 IMAGE64_GL_GRUB2=disk/image64-gl-grub2.img
 IMAGE64_GL_GRUB2_PART=$(IMAGE64_GL_GRUB2)?offset=69206016
 image64-gl: nwm-gl
 	@test -f $(IMAGE64_GRUB2) || { echo "run 'make image64' first"; exit 1; }
 	cp $(IMAGE64_GRUB2) $(IMAGE64_GL_GRUB2)
-	printf "rm /nanos/bin/nwm.nxe\nwrite $(BINFOLDER)nwm-gl.nxe /nanos/bin/nwm.nxe\nset_inode_field /nanos/bin/nwm.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GL_GRUB2_PART)"
-	@echo "image64-gl -> $(IMAGE64_GL_GRUB2) (nwm = GL present backend)"
+	$(DOCKER_RUN) sh -c 'printf "rm /nanos/bin/nwm.nxe\nwrite $(BINFOLDER)nwm-gl.nxe /nanos/bin/nwm.nxe\nset_inode_field /nanos/bin/nwm.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GL_GRUB2_PART)"'
+	@echo "image64-gl -> $(IMAGE64_GL_GRUB2) (nwm = GPU-native GL compositor)"
 
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
 ifeq ($(ARCH),x86_64)
