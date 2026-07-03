@@ -995,6 +995,13 @@ smoke-vt: image64
 smoke-virtio-gpu: image64
 	bash scripts/smoke-virtio-gpu.sh
 
+# `smoke-virtio-gpu-gl` is the Task-10 GL desktop gate: nwm's GL ES present backend composites the
+# desktop and scans it out via GBM+EGL+KMS (glkms) instead of blitting /dev/fb0. It needs the virgl
+# fork QEMU AND a macOS windowed GUI (cocoa gl=es / ANGLE→Metal — no headless path), so it is a
+# DEVELOPER gate (run on your Mac), NOT part of headless verify64; it SKIPs cleanly without the fork.
+smoke-virtio-gpu-gl: image64-gl
+	bash scripts/smoke-virtio-gpu-gl.sh
+
 # `smoke-sqlite` is the SQLite-port gate: it boots TWICE on the same image and proves the real
 # sqlite3 CLI creates a database on the read-write ext /disks/main AND that it survives a reboot
 # (3 rows persist; a second insert makes 6). Requires `make ARCH=x86_64 sqlite` + image64 first.
