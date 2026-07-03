@@ -395,13 +395,54 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 		 * the transfer completes before the composite samples it — that missing fence is what the old
 		 * per-frame upload accidentally papered over. glTexImage2D (full realloc), not glTexSubImage2D:
 		 * the partial-update path garbles the top rows on this ANGLE-Metal fork. */
+		int any_upload = 0;
 		if (wall && (!g_wall_tex || g_wall_dirty)) {
 			if (!g_wall_tex) g_wall_tex = make_tex(wall->w, wall->h, wall->px);
 			else { glBindTexture(GL_TEXTURE_2D, g_wall_tex);
 				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, wall->w, wall->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
-			glFinish();
 			g_wall_dirty = 0;
+			any_upload = 1;
 		}
+
+		/* ---- UPLOAD PRE-PASS ----------------------------------------------------------------------
+		 * Every texture upload happens HERE, up-front, before any framebuffer is bound. On this fork a
+		 * texture transfer that is interleaved with FBO-binding churn (the blur ping-pong switches
+		 * g_fboA/g_fboB/g_scene_fbo) gets garbled or dropped — that is why a single window upload done
+		 * inside the old compose loop stuck garbled/blank, while the wallpaper (uploaded before the
+		 * loop) was always clean. So: upload the wallpaper + every CHANGED window's content + the chrome
+		 * overlay, then ONE glFinish, and only then bind an FBO and compose.
+		 *
+		 * Uploads are gated on frame_gen: only a window whose content actually changed is re-uploaded,
+		 * so typing in the Terminal re-uploads the Terminal alone and never disturbs Files/Settings, and
+		 * a drag (which re-renders nothing) uploads zero window bytes. */
+		for (int z = 0; z < s->zn; z++) {
+			int idx = s->zorder[z];
+			const struct nw_window *w = &s->win[idx];
+			if (!w->used || w->minimized || !w->frame) continue;
+			int fw = frame_w(w), fh = frame_h(w);
+			glActiveTexture(GL_TEXTURE0);
+			if (ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh))
+				g_win_gen[idx] = w->frame_gen - 1;      /* new storage — force the upload */
+			if (g_win_gen[idx] != w->frame_gen) {
+				glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
+				g_win_gen[idx] = w->frame_gen;
+				any_upload = 1;
+			}
+		}
+		/* chrome overlay (panel/taskbar/dropdowns/modals) — CPU-rendered into g_chrome_px, keyed on
+		 * BLACK (its transparent fill). Black, NOT magenta: a magenta key smeared the panel/taskbar AA
+		 * edges (which blend toward the key colour) across the window bodies. Re-render + re-upload only
+		 * when NOT interacting (a drag can't change the panel/taskbar → reuse the resident texture);
+		 * always once so the first frame is real. */
+		if (!interacting || !g_chrome_ready) {
+			nw_compose_chrome(s, &g_chrome_surf);
+			glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_sw, g_sh, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
+			g_chrome_ready = 1;
+			any_upload = 1;
+		}
+		if (any_upload) glFinish();       /* ONE fence for every upload above, before any FBO/blur churn */
 
 		glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* compose into the offscreen scene */
 		glViewport(0, 0, g_sw, g_sh);
@@ -419,7 +460,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		/* windows back-to-front (same z-order walk as nw_compose_scene) */
+		/* ---- COMPOSE windows back-to-front — textures are already resident; only blur + draw here --- */
 		for (int z = 0; z < s->zn; z++) {
 			int idx = s->zorder[z];
 			const struct nw_window *w = &s->win[idx];
@@ -427,26 +468,6 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			int fw = frame_w(w), fh = frame_h(w);
 			int dark = (w->title[0] == '\x01');
 			float alpha = (dark ? GL_DARK_ALPHA : GL_WIN_ALPHA) / 255.0f;
-
-			/* Upload this window's cached frame render as its content texture. Two forces shape this:
-			 * (1) a SINGLE upload of a window texture lands garbled on this fork (a top-band transfer
-			 *     glitch); only repeated re-uploads settle to a clean image — so when NOT interacting we
-			 *     re-upload every frame, exactly as the pre-GPU path did (cheap: the desktop is idle
-			 *     between events, and this masks the glitch the way the wallpaper's glTexImage2D+glFinish
-			 *     can't afford per window);
-			 * (2) during a drag/resize NO window is re-rendered (a move changes only x/y), so we skip the
-			 *     upload entirely — the resident texture is reused and a drag frame uploads ZERO window
-			 *     bytes. A window whose content genuinely changed mid-interaction (frame_gen bumped) is
-			 *     still refreshed. */
-			glActiveTexture(GL_TEXTURE0);
-			ensure_tex(&g_win_tex[idx], &g_win_tw[idx], &g_win_th[idx], fw, fh);
-			glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
-			if (!interacting || g_win_gen[idx] != w->frame_gen) {
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, w->frame);
-				glFinish();                       /* fence: the fork glitches one un-fenced texture
-				                                   * transfer per frame (the wallpaper needs this too) */
-				g_win_gen[idx] = w->frame_gen;
-			}
 
 			int glass = (w->glass && !g_no_glass);
 			if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
@@ -473,29 +494,11 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			quad(&p_solid, 0, 0, (float) g_sw, (float) g_sh);
 		}
 
-		/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on BLACK (the transparent
-		 * fill). Black, NOT magenta: a magenta key was tried (to stop black UI pixels keying out) but it
-		 * flooded the window bodies with magenta — the panel/taskbar are drawn with soft AA edges that
-		 * blend toward the key colour, and those near-key blends survive a magenta key while a black key
-		 * (matching the actual dark UI) drops them. Re-render + re-upload the
-		 * full-screen overlay ONLY when NOT interacting: during a drag/resize the panel & taskbar can't
-		 * change, so we reuse the resident chrome texture (zero CPU render, zero 4 MB upload). Always
-		 * upload once so the first frame — or a drag that begins before any idle frame — has real chrome. */
-		if (!interacting || !g_chrome_ready) {
-			nw_compose_chrome(s, &g_chrome_surf);
-			glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
-			/* glTexImage2D + glFinish, same fenced recipe as the wallpaper/windows: an un-fenced
-			 * glTexSubImage2D can land the fork's one-per-frame transfer glitch on the chrome's top
-			 * band, and because a drag FREEZES the chrome (no re-upload), that garbled panel would then
-			 * persist for the whole drag. */
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_sw, g_sh, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
-			glFinish();
-			g_chrome_ready = 1;
-		}
+		/* chrome overlay drawn last (texture uploaded in the pre-pass), black-keyed */
 		glUseProgram(p_keyed.id);
 		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
 		glUniform1i(u_key_tex, 0);
-		glUniform3f(u_key_key, 0.f, 0.f, 0.f);   /* key out black (untouched overlay + shadows) */
+		glUniform3f(u_key_key, 0.f, 0.f, 0.f);   /* key out black (transparent overlay fill) */
 		quad(&p_keyed, 0, 0, (float) g_sw, (float) g_sh);
 	}
 
