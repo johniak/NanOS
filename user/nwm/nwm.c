@@ -522,11 +522,11 @@ static void cursor_restore_scene(void)  /* g_cur_save -> g_scene[cursor box] */
 }
 
 #ifdef NWM_GL
-/* GL present path (Task 10): compose the scene with the CPU compositor exactly as the fb0 path
- * does, then upload+scan it out via GL/KMS instead of blitting to /dev/fb0. Bakes the cursor into
- * the scene per frame (there is no cheap overlay on a GPU-swapped buffer) and restores it, so
- * g_scene stays cursor-free. Any GL/KMS failure disables the backend and reverts to CPU for the
- * session. */
+/* GPU-native present path (Task 10): refresh the per-window frame caches, then let the GL backend
+ * composite the desktop ON THE GPU (wallpaper + window textures + GPU glass blur + CPU chrome
+ * overlay + cursor) and scan it out via GL/KMS — no CPU scene composite, no /dev/fb0 blit. The whole
+ * frame is redrawn each present (there is no cheap damage/overlay on a GPU-swapped buffer). Any
+ * GL/KMS failure disables the backend and reverts to the CPU compositor for the session. */
 static void present_gl(void)
 {
 	if (!g_own)
@@ -535,24 +535,12 @@ static void present_gl(void)
 		return;                                  /* nothing changed */
 	if (S.dirty) {
 		nw_render_dirty_frames(&S);              /* refresh any window whose content/focus changed */
-		nw_surface_noclip(&g_scene_surf);        /* GL uploads the whole texture: no damage scissor */
-		nw_surface_noclip(&g_scratch_surf);
 		S.frame_ctr++;
-		g_bdc.frame_ctr = S.frame_ctr;
-		g_bdc.drag_win  = S.drag_win;
-		g_bdc.rebuild_budget = 2;                /* NW_BD_REBUILD_K: max non-priority rebuilds/frame */
-		g_bdc.bd = g_blur_on ? &g_bd_surf : 0;   /* blur disabled -> classic flat-tint glass */
-		nw_compose_scene(&S, &g_scene_surf, &g_scratch_surf, &g_wall_surf, &g_bdc);
 		int dx, dy, dw, dh;
-		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it (we present the whole frame) */
+		nw_take_damage(&S, &dx, &dy, &dw, &dh);  /* consume it (the GPU redraws the whole frame) */
 		S.dirty = 0;
 	}
-	/* Bake the cursor, present, restore the clean scene. */
-	cursor_save_scene();
-	nw_draw_cursor(&g_scene_surf, S.cursor_x, S.cursor_y);
-	int rc = nw_gl_frame(&g_scene_surf);
-	cursor_restore_scene();
-	if (rc != 0) {
+	if (nw_gl_frame(&S, &g_wall_surf) != 0) {
 		printf("nwm: GL backend disabled, CPU fallback\n");
 		nw_gl_shutdown();
 		g_gl = 0;
@@ -804,6 +792,8 @@ int main(void)
 	 * (plain QEMU) => stay on the CPU fb0 path. The scene is composed identically either way. */
 	if (!getenv("NWM_NO_GL") && nw_gl_init((int) g_xres, (int) g_yres) == 0) {
 		g_gl = 1;
+		nw_gl_build_cursor();
+		nw_gl_set_radius(g_set.corner_radius);
 		printf("nwm: GL compositor active\n");
 	} else {
 		printf("nwm: GL compositor unavailable, CPU compositor active\n");

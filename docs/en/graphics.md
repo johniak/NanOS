@@ -164,16 +164,27 @@ The shim and vendored source are listed in [linuxkpi.md](linuxkpi.md) §8; the d
 
 ## 9. GL desktop present (virgl, `nwm-gl`)
 
-Beside the CPU path above, nwm has an OpenGL-ES **present backend** (`user/nwm/nw_compose_gl.c`, Plan 1
-Task 10). The mature CPU compositor still renders the scene — wallpaper, glass windows with blur,
-rounded corners, focus ring, cursor — into `g_scene`; the GL backend then uploads that scene as one
-full-screen `GL_RGBA` texture (drawn from a real `GL_ARRAY_BUFFER` quad, `.bgr`-swizzled for NanOS's
-`0x00RRGGBB` pixels) and scans it out through the canonical Linux GPU path — a GBM scanout surface +
-EGL ES context (`user/glkms/glkms_init.c`), `eglSwapBuffers` → `drmModeSetCrtc` — instead of blitting
-`/dev/fb0`. The host GPU (virglrenderer → ANGLE → Metal on QEMU; i915 on the Dell) resolves the
-rendered buffer to scanout, so there is no CPU readback. Reusing the CPU scene guarantees pixel
-parity; moving per-window compositing and the Gaussian blur onto the GPU is the documented follow-on
-that grows inside `nw_gl_frame`.
+Beside the CPU path above, nwm has an OpenGL-ES **GPU-native compositor** (`user/nwm/nw_compose_gl.c`,
+Plan 1 Task 10). It composites the desktop on the GPU: the wallpaper and each window's cached content
+(`w->frame`) are textures (`.bgr`-swizzled for NanOS's `0x00RRGGBB` pixels); every glass window gets a
+**real GPU two-pass separable Gaussian blur** of the scene beneath it, which the window shader samples
+under a rounded-corner mask at the per-window body alpha. The desktop chrome (top panel, taskbar, open
+dropdown, Run/Auth modals) is the one thing kept on the CPU 2D toolkit — `nw_compose_chrome` renders it
+into a transparent black-keyed overlay that the GPU draws last; the cursor is a keyed quad and the modal
+desktop-dim is a GPU quad. The composited frame is scanned out through the canonical Linux GPU path — a
+GBM scanout surface + EGL ES context (`user/glkms/glkms_init.c`), `eglSwapBuffers` → `drmModeSetCrtc` —
+so there is no CPU readback and no `/dev/fb0` blit. The host GPU (virglrenderer → ANGLE → Metal on QEMU;
+i915 on the Dell) resolves the buffer to scanout.
+
+**Fork rule (blur without hanging).** The kosmickrisp ANGLE→Metal QEMU fork deadlocks on **mid-frame FBO
+attachment churn** — re-creating or re-attaching a render target inside a frame is a Metal render-pass
+boundary the texture-borrow patch synchronizes on, and it hangs (same host-quirk family as its
+`glReadPixels`-returns-zero). So the blur ping-pong textures **and** their FBOs are allocated once and
+attached once at init (`g_blurA/g_fboA`, `g_blurB/g_fboB`, screen-sized); each window blurs into an
+`fw×fh` sub-viewport corner of those fixed targets — never `glTexImage2D`/`glFramebufferTexture2D`
+mid-frame. Sampling a just-rendered texture mid-frame is fine; only attachment churn was the problem.
+Knobs: `NWM_NO_GLASS=1` forces opaque windows (always reachable), `NWM_GL_TRACE=1` prints a per-call
+serial bracket in `blur_backdrop`; an incomplete blur FBO auto-falls back to opaque glass.
 
 All hooks live under `#ifdef NWM_GL`, so the in-tree `nwm.nxe` is a pure-CPU program (unchanged). The
 GL-capable compositor is a **separate** Mesa-linked binary: `make nwm-gl` (Docker, `build-nwm-gl.sh`
@@ -191,7 +202,7 @@ intentionally not in headless `verify64`.
 
 | Path | What |
 |---|---|
-| `user/nwm/nw_compose_gl.{c,h}` | nwm GL ES present backend (`nw_gl_init/frame/shutdown/active`) |
+| `user/nwm/nw_compose_gl.{c,h}` | nwm GPU-native GL ES compositor (windows + GPU glass blur + CPU chrome overlay) |
 | `user/glkms/glkms_init.{c,h}` | shared GBM+EGL+KMS present sequence (also the glkms oracle) |
 | `nanos-sdk-work/mesa-port/build-nwm-gl.sh` | Docker link of `nwm-gl.nxe` against the Mesa `.a` closure |
 | `scripts/smoke-virtio-gpu-gl.sh` | the GL desktop gate (developer/GUI, SKIPs without the fork) |

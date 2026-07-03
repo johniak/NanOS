@@ -59,6 +59,12 @@ void nw_render_wallpaper(const struct nw_surface *dst);
 /* Draw the arrow cursor at (x,y) onto `dst` (e.g. directly onto the framebuffer surface). */
 void nw_draw_cursor(const struct nw_surface *dst, int x, int y);
 
+/* Render ONLY the chrome (top panel, taskbar, open dropdown, Run/Auth modals) into `overlay`,
+ * which is cleared to the transparent key colour 0x000000. Used by the GL compositor
+ * (nw_compose_gl.c), which composites the windows + glass + blur on the GPU and draws this overlay
+ * last; the modal desktop-dim is drawn by the GPU (so it is omitted here). */
+void nw_compose_chrome(const struct nw_server *s, const struct nw_surface *overlay);
+
 /* Scene + cursor in one call (used by host tests / the simple path). */
 void nw_compose(const struct nw_server *s, const struct nw_surface *back);
 

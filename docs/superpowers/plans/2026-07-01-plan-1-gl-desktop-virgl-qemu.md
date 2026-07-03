@@ -985,10 +985,29 @@ git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via 
 > (needs the fork QEMU + a macOS cocoa GUI; gl=es scanout is unreadable by the monitor screendump),
 > SKIPs cleanly without the fork, so it is intentionally NOT in headless verify64.
 >
-> **Documented follow-on (NOT this task):** GPU-native per-window compositing + two-pass Gaussian
-> blur (the Step-1/2 shader zoo) grows inside `nw_gl_frame` without touching nwm.c. The present
-> backend proves the whole guest→host path at desktop scale first, exactly as glkms proved it for the
-> oracle triangle. Reusing the CPU scene guarantees pixel parity in the meantime.
+> **GPU-NATIVE COMPOSITOR — DONE (2026-07-03):** `nw_compose_gl.c` now composites the desktop ON THE
+> GPU — wallpaper + per-window content textures + a **REAL GPU two-pass separable Gaussian blur** of
+> each glass window's backdrop (sampled from the offscreen scene texture, blurred in FBOs, sampled by
+> the window shader under a rounded-corner mask at the per-window body alpha). Chrome (panel/taskbar/
+> dropdowns/Run+Auth modals) is CPU-rendered into a transparent black-keyed overlay (`nw_compose_chrome`
+> in nw_compose.c) and drawn last; cursor is a keyed quad; the modal desktop-dim is a GPU quad.
+> **VERIFIED** on the fork QEMU: full glass desktop (Files + Settings + Terminal), 45,473 distinct
+> colours, wallpaper+windows visibly frosted through the glass, no hang, no corruption. `present_gl`
+> (nwm.c) calls `nw_gl_frame(&S, &g_wall_surf)` after `nw_render_dirty_frames`.
+>
+> **THE FORK RULE (why the blur used to hang — Fable dx, fixed in nw_compose_gl.c):** the kosmickrisp
+> ANGLE→Metal fork **deadlocks on mid-frame FBO attachment churn**. The old blur re-created the blur
+> textures (`glTexImage2D`) and re-attached them onto one shared FBO (`glFramebufferTexture2D`) every
+> frame → hang (same class as its glReadPixels-returns-zero / res-2 borrow quirks; every attachment
+> change is a Metal render-pass boundary the borrow patch synchronizes on). **Fix:** allocate the blur
+> ping-pong textures + FBOs **ONCE at init, attach ONCE** (`g_blurA/g_fboA`, `g_blurB/g_fboB`,
+> screen-sized); each window blurs into a `fw×fh` **sub-viewport corner** of those fixed targets — no
+> gen/alloc/attach mid-frame. Mid-frame render→sample of a just-rendered texture is FINE; only
+> attachment churn was the poison. Rule for the next GL feature (liquid-glass shader): **allocate at
+> init, attach once, sub-viewport for smaller regions.** Knobs: `NWM_NO_GLASS=1` (opaque, always
+> reachable), `NWM_GL_TRACE=1` (per-call serial brackets in `blur_backdrop`); FBO-incomplete auto-falls
+> back to opaque. Deferred (Fable Phase C, follow-up): a CPU-blurred-wallpaper glass tier as an extra
+> safety net for hosts where even sub-viewport blur breaks — not needed on this fork.
 >
 > **e1000e note (unrelated to GL):** `make verify64`'s `smoke-e1000e` (ping round-trip to the SLIRP
 > gateway under TCG MSI) is a PRE-EXISTING environmental flake, A/B-proven independent of the Plan-1

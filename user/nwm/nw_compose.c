@@ -378,6 +378,8 @@ static int build_backdrop_ex(const struct nw_surface *back, const struct nw_back
 	return 1;
 }
 
+static void draw_chrome(const struct nw_server *s, const struct nw_surface *back, int dim);
+
 void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
                       const struct nw_surface *scratch, const struct nw_surface *wall,
                       const struct nw_backdrop_ctx *bdc)
@@ -431,6 +433,15 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 			draw_window_to(back, w, focused, w->x, w->y);     /* simple/host path: opaque, square */
 		}
 	}
+	draw_chrome(s, back, 1);
+}
+
+/* Chrome = everything above the windows: the top panel, taskbar, open dropdown, and the Run/Auth
+ * modals. Split out so the GL compositor (nw_compose_gl.c) can render it into a transparent overlay
+ * (dim=0: the GPU draws the modal desktop-dim itself as a full-screen quad, so the overlay stays
+ * transparent outside the actual chrome). The CPU scene path calls it with dim=1. */
+static void draw_chrome(const struct nw_server *s, const struct nw_surface *back, int dim)
+{
 	draw_panel(s, back);
 	draw_taskbar(s, back);
 	draw_menu_dropdown(s, back);                  /* the open menu, above the windows */
@@ -451,7 +462,7 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 	}
 
 	if (s->auth_open) {                           /* the system authentication dialog, above all */
-		nw_blend_rect(back, 0, 0, s->screen_w, s->screen_h, 0x000000, 130);   /* dim the desktop */
+		if (dim) nw_blend_rect(back, 0, 0, s->screen_w, s->screen_h, 0x000000, 130); /* dim desktop */
 		int x, y, w, h; nw_auth_rect(s, &x, &y, &w, &h);
 		nw_fill_round(back, x + 6, y + 8, w, h, 16, 0x000000, 70);            /* drop shadow */
 		nw_fill_round(back, x, y, w, h, 16, 0xf4f6fa, 255);                   /* panel body */
@@ -489,6 +500,16 @@ void nw_compose_scene(const struct nw_server *s, const struct nw_surface *back,
 			nw_text(back, bx + (bw - lw) / 2, by + (bh - NW_FONT_H) / 2, lbl, ink);
 		}
 	}
+}
+
+/* Render ONLY the chrome (panel/taskbar/dropdown/modals) into `overlay`, cleared to the transparent
+ * key colour 0x000000 (the GL compositor keys that out). The GPU composites the windows + glass +
+ * blur itself and draws this overlay last; the modal desktop-dim is a GPU quad, so it is omitted
+ * here (dim=0). */
+void nw_compose_chrome(const struct nw_server *s, const struct nw_surface *overlay)
+{
+	nw_fill_rect(overlay, 0, 0, overlay->w, overlay->h, 0x000000);   /* transparent key */
+	draw_chrome(s, overlay, 0);
 }
 
 void nw_compose(const struct nw_server *s, const struct nw_surface *back)

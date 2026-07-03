@@ -165,15 +165,26 @@ Shim i vendorowane źródła wymienia [linuxkpi.md](linuxkpi.md) §8; glue specy
 
 ## 9. Pulpit GL (virgl, `nwm-gl`)
 
-Obok ścieżki CPU nwm ma **backend prezentacji** OpenGL-ES (`user/nwm/nw_compose_gl.c`, Plan 1
-Zadanie 10). Dojrzały kompozytor CPU wciąż renderuje scenę — tapetę, szklane okna z blurem,
-zaokrąglone rogi, ramkę fokusu, kursor — do `g_scene`; backend GL wgrywa tę scenę jako jedną
-pełnoekranową teksturę `GL_RGBA` (rysowaną z prawdziwego quada `GL_ARRAY_BUFFER`, swizzle `.bgr`
-dla pikseli `0x00RRGGBB` NanOS-a) i wypuszcza ją na scanout kanoniczną ścieżką GPU Linuksa — GBM +
-kontekst EGL ES (`user/glkms/glkms_init.c`), `eglSwapBuffers` → `drmModeSetCrtc` — zamiast blitować
-`/dev/fb0`. Host-GPU (virglrenderer → ANGLE → Metal w QEMU; i915 na Dellu) rozwiązuje bufor na
-scanout, bez odczytu przez CPU. Reużycie sceny CPU gwarantuje parytet pikselowy; przeniesienie
-kompozycji per-okno i blura Gaussa na GPU to udokumentowany follow-on rosnący w `nw_gl_frame`.
+Obok ścieżki CPU nwm ma **kompozytor natywnie GPU** OpenGL-ES (`user/nwm/nw_compose_gl.c`, Plan 1
+Zadanie 10). Komponuje pulpit na GPU: tapeta i zawartość każdego okna (cache `w->frame`) to tekstury
+(swizzle `.bgr` dla pikseli `0x00RRGGBB` NanOS-a); każde szklane okno dostaje **prawdziwy dwuprzebiegowy
+blur Gaussa na GPU** sceny pod spodem, który shader okna próbkuje pod maską zaokrąglonych rogów przy
+alfa ciała okna. Chrome pulpitu (górny panel, pasek zadań, otwarte menu, modale Run/Auth) to jedyna
+rzecz zostawiona na toolkicie 2D CPU — `nw_compose_chrome` renderuje je do przezroczystej nakładki
+kluczowanej na czerni, rysowanej na końcu; kursor to kluczowany quad, a modalne przyciemnienie pulpitu
+to quad GPU. Skomponowana klatka idzie na scanout kanoniczną ścieżką GPU Linuksa — GBM + kontekst EGL ES
+(`user/glkms/glkms_init.c`), `eglSwapBuffers` → `drmModeSetCrtc` — bez odczytu przez CPU i bez blitu
+`/dev/fb0`. Host-GPU (virglrenderer → ANGLE → Metal w QEMU; i915 na Dellu) rozwiązuje bufor na scanout.
+
+**Reguła forka (blur bez zawiechy).** Fork kosmickrisp ANGLE→Metal zawiesza się na **przełączaniu
+podpięcia FBO w środku klatki** — re-tworzenie/re-podpinanie render-targetu w klatce to granica
+render-passu Metala, na której patch pożyczania tekstur się synchronizuje i wiesza (ta sama rodzina
+kwirków co `glReadPixels`-zwraca-zero). Dlatego tekstury ping-pong blura **i** ich FBO są alokowane i
+podpięte **raz przy init** (`g_blurA/g_fboA`, `g_blurB/g_fboB`, pełnoekranowe); każde okno robi blur do
+narożnika `fw×fh` (sub-viewport) tych stałych celów — nigdy `glTexImage2D`/`glFramebufferTexture2D` w
+klatce. Próbkowanie właśnie-wyrenderowanej tekstury w klatce jest OK; problemem było tylko przełączanie
+podpięcia. Pokrętła: `NWM_NO_GLASS=1` wymusza okna nieprzezroczyste, `NWM_GL_TRACE=1` drukuje bracket
+per-wywołanie w `blur_backdrop`; niekompletny FBO blura auto-spada do szkła nieprzezroczystego.
 
 Wszystkie haki są pod `#ifdef NWM_GL`, więc in-tree `nwm.nxe` to czysty program CPU (bez zmian).
 Wariant GL to **osobny** binarny, linkowany z Mesą: `make nwm-gl` (Docker, `build-nwm-gl.sh` w
@@ -186,6 +197,6 @@ forka, celowo poza headless `verify64`.
 
 | Ścieżka | Co |
 |---|---|
-| `user/nwm/nw_compose_gl.{c,h}` | backend prezentacji GL ES nwm (`nw_gl_init/frame/shutdown/active`) |
+| `user/nwm/nw_compose_gl.{c,h}` | natywnie GPU kompozytor GL ES nwm (okna + blur szkła na GPU + nakładka chrome CPU) |
 | `user/glkms/glkms_init.{c,h}` | wspólna sekwencja GBM+EGL+KMS (też oracle glkms) |
 | `scripts/smoke-virtio-gpu-gl.sh` | gate pulpitu GL (developerski, SKIPuje bez forka) |
