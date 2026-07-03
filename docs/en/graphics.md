@@ -159,3 +159,39 @@ The shim and vendored source are listed in [linuxkpi.md](linuxkpi.md) §8; the d
 | `kext/virtio_gpu/virtio_gpu_present.c` | scanout 0 setup + `/dev/fb0` bridge + per-frame present |
 | `kernel/KernelExports.cpp` | `knx_fb_set_backing` / `knx_fb_start_present` / `knx_boot_fb` |
 | `scripts/smoke-virtio-gpu.sh` | the QEMU display gate (in `verify64`) |
+
+---
+
+## 9. GL desktop present (virgl, `nwm-gl`)
+
+Beside the CPU path above, nwm has an OpenGL-ES **present backend** (`user/nwm/nw_compose_gl.c`, Plan 1
+Task 10). The mature CPU compositor still renders the scene — wallpaper, glass windows with blur,
+rounded corners, focus ring, cursor — into `g_scene`; the GL backend then uploads that scene as one
+full-screen `GL_RGBA` texture (drawn from a real `GL_ARRAY_BUFFER` quad, `.bgr`-swizzled for NanOS's
+`0x00RRGGBB` pixels) and scans it out through the canonical Linux GPU path — a GBM scanout surface +
+EGL ES context (`user/glkms/glkms_init.c`), `eglSwapBuffers` → `drmModeSetCrtc` — instead of blitting
+`/dev/fb0`. The host GPU (virglrenderer → ANGLE → Metal on QEMU; i915 on the Dell) resolves the
+rendered buffer to scanout, so there is no CPU readback. Reusing the CPU scene guarantees pixel
+parity; moving per-window compositing and the Gaussian blur onto the GPU is the documented follow-on
+that grows inside `nw_gl_frame`.
+
+All hooks live under `#ifdef NWM_GL`, so the in-tree `nwm.nxe` is a pure-CPU program (unchanged). The
+GL-capable compositor is a **separate** Mesa-linked binary: `make nwm-gl` (Docker, `build-nwm-gl.sh`
+in `nanos-sdk-work/mesa-port`, the source tree mounted read-only) → `nwm-gl.nxe`, installed by
+`make image64-gl` (a byte copy of `image64-grub2.img` with `/nanos/bin/nwm.nxe` swapped for
+`nwm-gl.nxe`). At runtime it falls back to the CPU compositor on `NWM_NO_GL=1`, a missing DRM node
+(plain QEMU), or any GL/KMS error — logging `nwm: GL compositor active` or `... unavailable ...`.
+
+Gate: `scripts/smoke-virtio-gpu-gl.sh` (`make smoke-virtio-gpu-gl`) boots `image64-gl` on the virgl
+fork QEMU, logs in on F7, and asserts `virgl 3D negotiated` + `glkms: mode WxH` + `nwm: GL compositor
+active` (no `GL backend disabled`/PANIC) plus a cocoa-window distinct-colour count. It needs the fork
+QEMU **and** a macOS cocoa GUI (the `gl=es`/ANGLE→Metal scanout has no headless path and the monitor
+`screendump` cannot read it), so it is a developer gate — it SKIPs cleanly without the fork and is
+intentionally not in headless `verify64`.
+
+| Path | What |
+|---|---|
+| `user/nwm/nw_compose_gl.{c,h}` | nwm GL ES present backend (`nw_gl_init/frame/shutdown/active`) |
+| `user/glkms/glkms_init.{c,h}` | shared GBM+EGL+KMS present sequence (also the glkms oracle) |
+| `nanos-sdk-work/mesa-port/build-nwm-gl.sh` | Docker link of `nwm-gl.nxe` against the Mesa `.a` closure |
+| `scripts/smoke-virtio-gpu-gl.sh` | the GL desktop gate (developer/GUI, SKIPs without the fork) |

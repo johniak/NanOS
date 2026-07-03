@@ -967,9 +967,33 @@ git add user/glkms/ Makefile
 git commit -m "glkms: GBM+EGL+KMS present path — GL frames on the scanout via AddFB2/SetCrtc"
 ```
 
-> **STATUS (2026-07-03): DONE — full GL pipeline works over virgl. glkms renders its gradient from a
-> real vertex buffer; host 3D-scanout SOLVED; the guest→host buffer-upload bug is FIXED at root cause
-> (32-bit mmap-offset truncation in libc-glue, commit de98534).**
+> **STATUS (2026-07-03): PLAN COMPLETE — Tasks 1–10 all DONE. The nwm GL desktop composites and
+> scans out through GBM+EGL+KMS (glkms) on the virgl fork QEMU.**
+>
+> **TASK 10 DONE:** `nw_compose_gl.{c,h}` — nwm's GL ES present backend. The mature CPU compositor
+> renders the scene (glass, blur, rounded corners, focus, cursor) into `g_scene` exactly as before;
+> on the GL build nwm uploads that scene as a full-screen `GL_RGBA` texture (a real `GL_ARRAY_BUFFER`
+> quad, `.bgr` swizzle for NanOS's 0x00RRGGBB) and scans it out via `glkms_swap` (eglSwapBuffers →
+> drmModeSetCrtc) instead of blitting `/dev/fb0`. All hooks are under `#ifdef NWM_GL`, so the in-tree
+> `nwm.nxe` is preprocessor-identical (verify64 untouched). Built as a SEPARATE Mesa-linked
+> `nwm-gl.nxe` (`make nwm-gl`, Docker `build-nwm-gl.sh` in SDK_WORK, source tree mounted read-only) +
+> `image64-gl` (byte copy of image64 with nwm.nxe→nwm-gl.nxe). Runtime fallback to the CPU compositor
+> on `NWM_NO_GL=1`, a missing DRM node, or any GL/KMS error. **VERIFIED** on the fork QEMU: serial
+> `virgl 3D negotiated` + `glkms: mode 1280x800` + `nwm: GL compositor active`, no `GL backend
+> disabled`/PANIC, and a cocoa-window screencapture of **25,151 distinct colours** (the full glass
+> desktop). Gate: `scripts/smoke-virtio-gpu-gl.sh` (`make smoke-virtio-gpu-gl`) — a DEVELOPER gate
+> (needs the fork QEMU + a macOS cocoa GUI; gl=es scanout is unreadable by the monitor screendump),
+> SKIPs cleanly without the fork, so it is intentionally NOT in headless verify64.
+>
+> **Documented follow-on (NOT this task):** GPU-native per-window compositing + two-pass Gaussian
+> blur (the Step-1/2 shader zoo) grows inside `nw_gl_frame` without touching nwm.c. The present
+> backend proves the whole guest→host path at desktop scale first, exactly as glkms proved it for the
+> oracle triangle. Reusing the CPU scene guarantees pixel parity in the meantime.
+>
+> **e1000e note (unrelated to GL):** `make verify64`'s `smoke-e1000e` (ping round-trip to the SLIRP
+> gateway under TCG MSI) is a PRE-EXISTING environmental flake, A/B-proven independent of the Plan-1
+> work (rebuilding libc with the OLD mmap wrapper reproduces it identically). Do NOT re-debug it as a
+> regression of this branch. Every other verify64 gate is green.
 >
 > **ROOT-CAUSE FIX (de98534):** the libc-glue `mmap` wrapper passed the offset through
 > `sys5(int,…,int e)`, casting `off_t` to `int`. DRM GEM fake mmap offsets are ≥ `0x100000000` (the vma

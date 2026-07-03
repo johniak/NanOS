@@ -160,3 +160,32 @@ Shim i vendorowane źródła wymienia [linuxkpi.md](linuxkpi.md) §8; glue specy
 | `kext/virtio_gpu/virtio_gpu_present.c` | konfiguracja scanoutu 0 + most `/dev/fb0` + prezentacja co klatkę |
 | `kernel/KernelExports.cpp` | `knx_fb_set_backing` / `knx_fb_start_present` / `knx_boot_fb` |
 | `scripts/smoke-virtio-gpu.sh` | gate wyświetlania w QEMU (w `verify64`) |
+
+---
+
+## 9. Pulpit GL (virgl, `nwm-gl`)
+
+Obok ścieżki CPU nwm ma **backend prezentacji** OpenGL-ES (`user/nwm/nw_compose_gl.c`, Plan 1
+Zadanie 10). Dojrzały kompozytor CPU wciąż renderuje scenę — tapetę, szklane okna z blurem,
+zaokrąglone rogi, ramkę fokusu, kursor — do `g_scene`; backend GL wgrywa tę scenę jako jedną
+pełnoekranową teksturę `GL_RGBA` (rysowaną z prawdziwego quada `GL_ARRAY_BUFFER`, swizzle `.bgr`
+dla pikseli `0x00RRGGBB` NanOS-a) i wypuszcza ją na scanout kanoniczną ścieżką GPU Linuksa — GBM +
+kontekst EGL ES (`user/glkms/glkms_init.c`), `eglSwapBuffers` → `drmModeSetCrtc` — zamiast blitować
+`/dev/fb0`. Host-GPU (virglrenderer → ANGLE → Metal w QEMU; i915 na Dellu) rozwiązuje bufor na
+scanout, bez odczytu przez CPU. Reużycie sceny CPU gwarantuje parytet pikselowy; przeniesienie
+kompozycji per-okno i blura Gaussa na GPU to udokumentowany follow-on rosnący w `nw_gl_frame`.
+
+Wszystkie haki są pod `#ifdef NWM_GL`, więc in-tree `nwm.nxe` to czysty program CPU (bez zmian).
+Wariant GL to **osobny** binarny, linkowany z Mesą: `make nwm-gl` (Docker, `build-nwm-gl.sh` w
+`nanos-sdk-work/mesa-port`) → `nwm-gl.nxe`, instalowany przez `make image64-gl`. Runtime-fallback do
+CPU przy `NWM_NO_GL=1`, braku węzła DRM (czyste QEMU) lub dowolnym błędzie GL/KMS.
+
+Gate: `scripts/smoke-virtio-gpu-gl.sh` (`make smoke-virtio-gpu-gl`) — bramka developerska (wymaga
+fork-QEMU virgl **i** GUI cocoa; scanout `gl=es`/ANGLE→Metal nie ma ścieżki headless), SKIPuje bez
+forka, celowo poza headless `verify64`.
+
+| Ścieżka | Co |
+|---|---|
+| `user/nwm/nw_compose_gl.{c,h}` | backend prezentacji GL ES nwm (`nw_gl_init/frame/shutdown/active`) |
+| `user/glkms/glkms_init.{c,h}` | wspólna sekwencja GBM+EGL+KMS (też oracle glkms) |
+| `scripts/smoke-virtio-gpu-gl.sh` | gate pulpitu GL (developerski, SKIPuje bez forka) |
