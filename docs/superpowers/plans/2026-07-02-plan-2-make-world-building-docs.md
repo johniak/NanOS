@@ -18,6 +18,23 @@
 - macOS pozostaje wspierany; Windows tylko jako jedna linia w docs („użyj WSL2 + instrukcja linuksowa"). 
 - Gałąź robocza w NanOS: `feat/make-world` (od gałęzi z Planem 1 lub od main po jego merge'u).
 
+## Podział ról: co odpalam na MacBooku, co na serwerze
+
+Docelowy workflow po wykonaniu tego planu (ta sama tabela MUSI trafić do BUILDING.md — Task 4):
+
+| Czynność | Gdzie | Jak |
+|---|---|---|
+| Edycja kodu, git, IDE | MacBook | jak dotąd |
+| Build rdzenia / portów w pętli deweloperskiej | **serwer** | `scripts/remote-build.sh [image64]` (Task 9); lokalny `make image64` na Macu dalej działa, tylko wolniej |
+| Uruchamianie i klikanie w desktop (`make run64`) | MacBook | obraz wraca z serwera automatycznie po remote-build |
+| GL/virgl (`scripts/run64-gl.sh`) | MacBook | kosmickrisp QEMU (gałąź Darwin); gałąź Linux czeka na maszynę z GUI |
+| Pełny build wszystkiego (`make world`) | **serwer** | `scripts/remote-build.sh world` |
+| Gate'y (`verify64`, `smoke-*`) | **serwer** (headless, pod globalnym lockiem) | `scripts/remote-build.sh verify64`; na Macu nadal możliwe lokalnie przed pushem |
+| CI: build rdzenia per push/PR + nightly `world`+`verify64` | **serwer** (self-hosted runner) | automat, Task 7 |
+| Brama clean-machine | **serwer** (świeża VM na nim) | Task 6 Step 2 |
+| Mirror tarballi źródeł | **serwer** | nginx na :8090, Task 8 |
+| Test na realnym sprzęcie (Dell Latitude) | fizycznie u Ciebie | obraz na USB — jak dotąd |
+
 ## Fakty zebrane 2026-07-02 (nie odkrywaj ponownie)
 
 - Makefile jest dwustronny: strona HOST (bez `/etc/nanos-build`) opakowuje wszystko w `docker run nanos-build`; strona KONTENER (`Makefile:1044+`) kompiluje naprawdę. Obraz `nanos-build` z `docker/Dockerfile` ma toolchainy `i686-elf`/`x86_64-elf` + picolibc + Limine + mtools/e2fsprogs/parted — składanie obrazu dysku jest w 100% linuksowe.
@@ -289,6 +306,11 @@ Struktura obowiązkowa (pisz zwięźle, komendy dosłowne; sekcje w tej kolejno�
    [make <port> dla pojedynczego; make world dla wszystkiego; gdzie żyją przepisy
    (nanos-sdk/ports/<name>) i jak edytować port: edit recipe -> nanos-fetch --force -> make <port>]
 
+## Where to run what (laptop vs build server)
+   [przenieś tabelę „Podział ról" z nagłówka tego planu — dosłownie, z komendami;
+   plus: export NANOS_BUILD_HOST=user@server w ~/.zshrc i codzienna pętla
+   edit -> scripts/remote-build.sh -> make run64]
+
 ## GL / virgl (experimental)
    [scripts/run64-gl.sh; Linux: distro qemu wystarcza; macOS: kosmickrisp setup — link do
    komentarza w skrypcie; stan: 3D-submit w toku (feat/linuxkpi-virtio-gpu)]
@@ -411,6 +433,7 @@ cd ~/actions-runner && sudo ./svc.sh install && sudo ./svc.sh start
 name: build
 on:
   push: {branches: [main]}
+  pull_request: {}                  # pre-merge validation — CI ma łapać złamany build ZANIM wejdzie do main
   workflow_dispatch: {}
   schedule: [{cron: "0 3 * * *"}]   # nightly: pełny world
 jobs:
@@ -493,7 +516,7 @@ Docelowy workflow użytkownika: edycja + `make run64`/GUI na Macu, ciężkie bui
 
 **Wielu użytkowników / wiele gałęzi — trzy hazardy współdzielonego serwera i jak je skrypt rozwiązuje:**
 1. **Kolizja drzew:** katalog builda jest per użytkownik (własne konto SSH → własny `$HOME`) i per GAŁĄŹ (slug z `git branch --show-current`) → `~/build/nanos-<gałąź>`. Dwie gałęzie = dwa katalogi z osobnymi ciepłymi cache'ami przyrostowymi.
-2. **Wyścig na sysroocie SDK:** cele portów przy KAŻDYM buildzie wpisują `libc.ndl`/`crt0.o`/nagłówki z checkoutu do `$(SDK_WORK)/toolchain` — współdzielony `SDK_WORK` między gałęziami to korupcja buildów. Dlatego każdy katalog builda ma WŁASNY `SDK_WORK=$RDIR/sdk-work` (koszt: ~2 GB i jednorazowe `make sdk-toolchain` per katalog — tanio, bo to ekstrakcja z obrazu, a `world` robi to samo).
+2. **Wyścig na sysroocie SDK:** cele portów przy KAŻDYM buildzie wpisują `libc.ndl`/`crt0.o`/nagłówki z checkoutu do `$(SDK_WORK)/toolchain` — współdzielony `SDK_WORK` między gałęziami to korupcja buildów. Dlatego każdy katalog builda ma WŁASNY `SDK_WORK=$RDIR/sdk-work` (koszt: ~2 GB i jednorazowe `make sdk-toolchain` per katalog — tanio, bo to ekstrakcja z obrazu, a `world` robi to samo). **DŁUG TECHNICZNY (nie naprawiaj w tym planie, nie utrwalaj jako wzorca):** zgodnie ze sztuką sysroot powinien być niemutowalnym inputem — docelowa naprawa to przekazywanie bitów z checkoutu (libc/crt0/nagłówki libc-glue) jako osobnego overlaya do nanos-port zamiast wpisywania ich do drzewa toolchainu; per-katalogowy `SDK_WORK` to świadome obejście do czasu tej zmiany.
 3. **Cele odpalające QEMU** (`verify64`, `smoke-*`, `test64` z gate'ami, `run*`): skrypty smoke sprzątają przez `pkill -9 -f "qemu-system-…"` — ubiłyby cudzego QEMU — i używają stałych portów hostfwd. Dlatego te cele idą pod GLOBALNYM lockiem serwera (`flock /tmp/nanos-qemu.lock`) — najwyżej chwilę poczekasz w kolejce; zwykłe buildy mają tylko lock per katalog.
 
 Obrazy Dockera (`nanos-build`, `nanos-sdk-dev`) i mirror tarballi są bezpiecznie współdzielone (są tylko-do-odczytu z perspektywy builda).

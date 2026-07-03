@@ -377,36 +377,47 @@ cd ~/Projects/nanos-sdk && git add port/nanos-fetch ports/README.md && git commi
 ```toml
 # NanOS ecosystem manifest — sibling repos cloned next to this checkout by scripts/bootstrap.sh.
 # Override the checkout root with NANOS_ROOT (default: parent directory of this repo).
+#
+# rev: "" = track the branch tip (day-to-day mode). Set a full SHA to PIN the exact revision
+# this NanOS commit is known to work with (do this before tags/releases and whenever a
+# cross-repo interface changes — the industry norm: Android repo / west pin revisions).
+# The key must be present in every block (the parser is deliberately dumb).
 
 [[repo]]
 name = "nanos-sdk"
 url = "git@github.com:johniak/nanos-sdk.git"
 branch = "main"
+rev = ""
 
 [[repo]]
 name = "bash-nanos"
 url = "git@github.com:johniak/bash-nanos.git"
 branch = "master"
+rev = ""
 
 [[repo]]
 name = "vim-nanos"
 url = "git@github.com:johniak/vim-nanos.git"
 branch = "master"
+rev = ""
 
 [[repo]]
 name = "ncurses-nanos"
 url = "git@github.com:johniak/ncurses-nanos.git"
 branch = "master"
+rev = ""
 
 [[repo]]
 name = "netsurf-nanos"
 url = "git@github.com:johniak/netsurf-nanos.git"
 branch = "main"
+rev = ""
 
 [[repo]]
 name = "sqlite-nanos"
 url = "git@github.com:johniak/sqlite-nanos.git"
 branch = "main"
+rev = ""
 ```
 
 **Sprawdź gałęzie faktycznie używane** (`git -C ~/Projects/<repo> branch --show-current`) i wpisz realne wartości; powyższe to szablon. `sqlite-nanos` dopiero powstanie w Task 6 — wpisz i tak (bootstrap toleruje 404 z ostrzeżeniem do czasu wykonania Task 6).
@@ -430,12 +441,18 @@ docker info >/dev/null 2>&1 || { echo "docker daemon not running"; exit 1; }
 command -v qemu-system-x86_64 >/dev/null || echo "WARN: qemu-system-x86_64 not found — builds work, 'make run64'/smokes won't (install qemu)"
 
 echo "== sibling repos -> $ROOT =="
-# flat-toml parse: emit "name url branch" per [[repo]] block
-awk -F'"' '/^name/{n=$2} /^url/{u=$2} /^branch/{b=$2; print n, u, b}' "$HERE/manifest.toml" |
-while read -r name url branch; do
-  if [ -d "$ROOT/$name/.git" ]; then echo "  ok: $name"; else
-    echo "  clone: $name ($branch)"
-    git clone --branch "$branch" "$url" "$ROOT/$name" || echo "  WARN: clone failed for $name — fix access and re-run"
+# flat-toml parse: emit "name url branch rev" per [[repo]] block (rev key is mandatory, may be "")
+awk -F'"' '/^name/{n=$2} /^url/{u=$2} /^branch/{b=$2} /^rev/{print n, u, b, $2}' "$HERE/manifest.toml" |
+while read -r name url branch rev; do
+  if [ -d "$ROOT/$name/.git" ]; then
+    if [ -n "$rev" ] && [ "$(git -C "$ROOT/$name" rev-parse HEAD)" != "$rev" ]; then
+      echo "  WARN: $name is not at the pinned rev $rev (leaving your checkout alone — sync manually)"
+    else echo "  ok: $name"; fi
+  else
+    echo "  clone: $name (${rev:-$branch})"
+    if git clone --branch "$branch" "$url" "$ROOT/$name"; then
+      [ -n "$rev" ] && git -C "$ROOT/$name" checkout --quiet "$rev"
+    else echo "  WARN: clone failed for $name — fix access and re-run"; fi
   fi
 done
 
