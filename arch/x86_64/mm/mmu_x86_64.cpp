@@ -194,7 +194,10 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 
 uint32_t mmuSpaceDirPhys(AddressSpace* s) { return (uint32_t) s->impl.directoryPhys(); }
 
-uint32_t mmuMapUserFb(AddressSpace* s, uint64_t fbPhys, uint32_t bytes) {
+uint32_t mmuFbBase() { return (uint32_t) VA_FB_BASE; }
+uint32_t mmuFbMax()  { return (uint32_t) VA_FB_MAX; }
+
+int mmuMapUserFbAt(AddressSpace* s, uint32_t va, uint64_t fbPhys, uint32_t bytes) {
 	uint64_t base = fbPhys & kernel::PAGE_MASK;
 	uint64_t off = fbPhys - base;
 	uint64_t len = (off + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;
@@ -202,10 +205,22 @@ uint32_t mmuMapUserFb(AddressSpace* s, uint64_t fbPhys, uint32_t bytes) {
 	// the kernel directory (the process PML4's user windows do NOT identity-map all RAM).
 	uint64_t saved = kernel::readCr3();
 	kernel::loadCr3(g_kernelDirPhys);
-	bool ok = s->impl.mapRange(VA_FB_BASE, base, len,
+	bool ok = s->impl.mapRange(va, base, len,
 			kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_USER);
 	kernel::loadCr3(saved);
-	return ok ? (uint32_t) (VA_FB_BASE + off) : 0;
+	return ok ? 0 : -1;
+}
+
+void mmuUnmapUserFb(AddressSpace* s, uint32_t va, uint32_t bytes) {
+	uint64_t end = (uint64_t) va + ((bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK);
+	uint64_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	for (uint64_t a = va; a < end; a += 0x1000)
+		s->impl.unmap(a);
+	// The mapped frames belong to the device / GEM object — clear the PTEs and flush every
+	// CPU's stale translation, but never hand the frames to the frame allocator here.
+	arch::smpTlbShootdown(s->impl.directoryPhys());
+	kernel::loadCr3(saved);
 }
 
 uint32_t mmuUserHeapBase() { return (uint32_t) VA_HEAP_BASE; }

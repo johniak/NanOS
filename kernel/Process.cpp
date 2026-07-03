@@ -166,6 +166,8 @@ Process* ProcTable::alloc(int parent) {
 			p->starttime = (unsigned) Scheduler::ticks();
 			p->mmapNext = 0;         // lazily set to arch::mmuMmapBase() on first mmap
 			p->mmapFreeCount = 0;    // empty reclaim list (no munmap'd ranges yet)
+			p->fbNext = 0;           // device/GEM window: same lazy init + empty reclaim
+			p->fbFreeCount = 0;
 			p->execed = false;
 			p->task = 0;
 			p->space = 0;

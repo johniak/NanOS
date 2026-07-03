@@ -77,10 +77,18 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src);
 // Physical address of a space's page directory (the CR3 value for entering it).
 uint32_t mmuSpaceDirPhys(AddressSpace*);
 
-// Map a framebuffer's physical region into a process address space at a fixed user VA
-// (above RAM, separate from the 1 MiB user window), present+writable+user. Returns the
-// user virtual address of the framebuffer, or 0 on failure. Used by mmap of /dev/fb0.
-uint32_t mmuMapUserFb(AddressSpace*, uint64_t fbPhys, uint32_t bytes);   // fbPhys 64-bit: real HW LFB >4 GiB
+// Device/GEM mmap window (fb0 LFB, DRM GEM BOs). The dispatch allocates each mapping its
+// OWN page-aligned VA inside [mmuFbBase, mmuFbMax) (bump + free-list per process, like the
+// anon window) — a single fixed VA would silently remap on every mmap, so all previously
+// returned pointers would alias the newest object's pages (the GL cross-window shred bug).
+// mmuMapUserFbAt maps fbPhys (page-rounded around any sub-page offset) at `va`,
+// present+writable+user; returns 0 on success, -1 on failure. mmuUnmapUserFb drops the
+// PTEs and flushes every CPU's TLB but NEVER frees the frames: the physical range belongs
+// to the device or GEM object, not to this window.
+uint32_t mmuFbBase();
+uint32_t mmuFbMax();
+int  mmuMapUserFbAt(AddressSpace*, uint32_t va, uint64_t fbPhys, uint32_t bytes);   // fbPhys 64-bit: real HW LFB >4 GiB
+void mmuUnmapUserFb(AddressSpace*, uint32_t va, uint32_t bytes);
 
 // Growable anonymous user heap (the brk/sbrk region). It lives at a fixed high VA,
 // above RAM and the framebuffer window, so it is independent of the 4 MiB user window.

@@ -131,6 +131,8 @@ int execProgram(Vfs* vfs, const char* path) {
 	initBrk(ProcTable::current());
 	ProcTable::current()->mmapNext = 0;          // fresh image -> empty mmap window
 	ProcTable::current()->mmapFreeCount = 0;     // and no stale reclaim ranges
+	ProcTable::current()->fbNext = 0;            // device/GEM window likewise starts empty
+	ProcTable::current()->fbFreeCount = 0;
 	ProcTable::setCommand(ProcTable::current(), argv, 1);
 	// init (this process) is the console's controlling session leader: seed the console's
 	// foreground process group with its pgrp, exactly as a tty's pgrp is set when a session
@@ -272,6 +274,8 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	initBrk(p);                              // fresh image -> empty heap
 	p->mmapNext = 0;                         // fresh image -> empty mmap window (don't inherit the
 	p->mmapFreeCount = 0;                    // old image's bump pointer / stale reclaim ranges)
+	p->fbNext = 0;                           // device/GEM window likewise starts empty
+	p->fbFreeCount = 0;
 	ProcTable::setCommand(p, argv, argc);
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
 	sigExecReset(caller->sig, p->psig);      // caught handlers -> default across exec (calling thread)
@@ -314,6 +318,9 @@ int forkProcess(arch::TrapFrame* tf) {
 	// starts EMPTY (zeroed by alloc) — the parent's freed holes are just unallocated VA the
 	// child will bump past, never stale entries pointing into the child's own space.
 	child->mmapNext = parent->mmapNext;
+	// Same story for the device/GEM window: mmuCopyAddressSpace duplicated the mapped PDEs,
+	// so the child resumes the bump pointer; its reclaim list starts empty (zeroed by alloc).
+	child->fbNext = parent->fbNext;
 	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
 	child->cred = parent->cred;                // inherit credentials
 	child->sys->setCred(&child->cred);         // point at the CHILD's canonical Process::cred

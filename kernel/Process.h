@@ -110,6 +110,15 @@ struct Process {
 	MmapFree mmapFree[NMMAPFREE];
 	int      mmapFreeCount;
 
+	// Device/GEM mmap window (mmuFbBase..mmuFbMax): same bump + first-fit reclaim scheme as
+	// the anon window above, but for mappings of device/GEM physical ranges (fb0 LFB, DRM
+	// GEM BOs). Each mmap gets its OWN VA — Mesa holds tens of BO maps concurrently, and a
+	// single fixed VA would alias every cached pointer onto the newest object's pages (the
+	// GL cross-window shred bug). munmap here drops PTEs only; frames stay device-owned.
+	unsigned fbNext;
+	MmapFree fbFree[NMMAPFREE];
+	int      fbFreeCount;
+
 	// Sessions + process groups (job control). A new process is its own group+session
 	// leader; fork inherits both; setpgid/setsid change them. The tty's foreground process
 	// group (TIOCSPGRP) is the one that receives terminal-generated signals (Ctrl+C).

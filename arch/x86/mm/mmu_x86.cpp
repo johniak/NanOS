@@ -180,8 +180,10 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 
 uint32_t mmuSpaceDirPhys(AddressSpace* s) { return s->impl.directoryPhys(); }
 
-uint32_t mmuMapUserFb(AddressSpace* s, uint64_t fbPhys, uint32_t bytes) {
-	const uint32_t FB_USER_VA = 0x58000000;   // 1.375 GiB: above RAM, outside every other window
+uint32_t mmuFbBase() { return 0x58000000; }               // 1.375 GiB: above RAM, outside every other window
+uint32_t mmuFbMax()  { return 0x58000000 + 0x4000000; }   // +64 MiB
+
+int mmuMapUserFbAt(AddressSpace* s, uint32_t va, uint64_t fbPhys, uint32_t bytes) {
 	// i686 physical space is 32-bit; the 64-bit contract just narrows here.
 	uint32_t base = (uint32_t) fbPhys & kernel::PAGE_MASK;
 	uint32_t off = (uint32_t) fbPhys - base;
@@ -192,10 +194,21 @@ uint32_t mmuMapUserFb(AddressSpace* s, uint64_t fbPhys, uint32_t bytes) {
 	// (the CR3 reload makes the new PTEs live).
 	uint32_t saved = kernel::readCr3();
 	kernel::loadCr3(g_kernelDirPhys);
-	bool ok = s->impl.mapRange(FB_USER_VA, base, len,
+	bool ok = s->impl.mapRange(va, base, len,
 			kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_USER);
 	kernel::loadCr3(saved);
-	return ok ? FB_USER_VA + off : 0;
+	return ok ? 0 : -1;
+}
+
+void mmuUnmapUserFb(AddressSpace* s, uint32_t va, uint32_t bytes) {
+	uint32_t end = va + ((bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK);
+	uint32_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	for (uint32_t a = va; a < end; a += 0x1000)
+		s->impl.unmap(a);
+	// Device/GEM-owned frames: clear PTEs only, never free them. Uniprocessor i686 — the
+	// CR3 restore below flushes the TLB.
+	kernel::loadCr3(saved);
 }
 
 uint32_t mmuUserHeapBase() { return NX_BRK_BASE; }

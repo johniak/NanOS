@@ -893,8 +893,28 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 			uint64_t phys = 0; unsigned dlen = 0;
 			if (g_sys->mmapAt(fd, offset, &phys, &dlen) >= 0) {   // offset 0 -> mmapInfo (fb0)
 				unsigned want = (length && length < dlen) ? length : dlen;
-				unsigned va = arch::mmuMapUserFb(space, phys, want);   // phys is 64-bit: real HW LFB sits >4 GiB
-				ret = va ? (long) va : -12;   // -ENOMEM
+				// Every device/GEM mapping gets its OWN VA in the fb window (bump + first-fit
+				// reclaim, mirroring the anon window below). Mesa keeps tens of GEM BO maps
+				// alive at once; mapping them all at one fixed VA remapped the window on every
+				// mmap, so every cached pointer aliased the newest BO's pages — windows read
+				// each other's pixels (the GL cross-window shred).
+				unsigned pgoff = (unsigned) (phys & 0xFFFu);
+				unsigned bytes = (pgoff + want + 0xFFFu) & ~0xFFFu;
+				if (bytes == 0) { ret = -22; break; }   // -EINVAL: round-up overflow
+				if (p->fbNext == 0)
+					p->fbNext = arch::mmuFbBase();
+				unsigned va;
+				int fi = kernel::mmapFreeFind(p->fbFree, p->fbFreeCount, bytes);
+				if (fi >= 0) {
+					va = kernel::mmapFreeCarve(p->fbFree, &p->fbFreeCount, fi, bytes);
+				} else {
+					if (p->fbNext + bytes > arch::mmuFbMax()) { ret = -12; break; }   // window full
+					va = p->fbNext;
+					p->fbNext = va + bytes;
+				}
+				// On failure the carved/bumped VA leaks — same accepted trade-off as the anon path.
+				ret = (arch::mmuMapUserFbAt(space, va, phys, want) == 0)   // phys is 64-bit: real HW LFB sits >4 GiB
+					? (long) (va + pgoff) : -12;   // -ENOMEM
 				break;
 			}
 		}
@@ -944,6 +964,25 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		// past 4 GiB — either would slip past the window bounds check and append a bogus giant
 		// free-list entry. Linux returns EINVAL for length 0, so this matches.
 		if (len == 0 || addr + len < addr) { ret = -22; break; }   // -EINVAL: overflow / wrap
+		// Device/GEM window: really unmap (Mesa munmaps every GEM BO it destroys — without
+		// this the finite fb window can never be reused and a stale mapping would keep
+		// pointing at pages the GEM object has since returned to the kernel heap). PTEs are
+		// dropped and the VA recycled, but the frames are device-owned — NEVER freed here.
+		unsigned fbb = arch::mmuFbBase(), fbt = arch::mmuFbMax();
+		if (addr >= fbb && addr < fbt) {
+			if (addr + len > fbt) { ret = -22; break; }   // -EINVAL: straddles the window top
+			Process* fp = ProcTable::current();
+			arch::mmuUnmapUserFb((arch::AddressSpace*) fp->space, addr, len);
+			if (!kernel::mmapFreeAdd(fp->fbFree, &fp->fbFreeCount, Process::NMMAPFREE, addr, len)) {
+				static bool fbWarned = false;
+				if (!fbWarned) {
+					fbWarned = true;
+					Console::writeLine("munmap: fb free-list full, leaking device VA");
+				}
+			}
+			ret = 0;
+			break;
+		}
 		unsigned base = arch::mmuMmapBase(), top = arch::mmuMmapMax();
 		if (addr < base || addr >= top || addr + len > top) { ret = 0; break; }  // outside: no-op
 		Process* p = ProcTable::current();
