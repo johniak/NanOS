@@ -509,14 +509,15 @@ static void draw_chrome(const struct nw_server *s, const struct nw_surface *back
 }
 
 /* Render ONLY the chrome (panel/taskbar/dropdown/modals) into `overlay`, cleared to the transparent
- * key colour MAGENTA 0xff00ff (the GL compositor keys that out). Magenta, NOT black: the desktop
- * chrome is dark-themed, so keying on black would punch see-through holes through every genuinely
- * black chrome pixel (shadows, dark text, icon strokes). Magenta never occurs in the UI. The GPU
- * composites the windows + glass + blur itself and draws this overlay last; the modal desktop-dim is
- * a GPU quad, so it is omitted here (dim=0). */
+ * key colour 0x000000 (the GL compositor keys that out). Black — NOT magenta — is deliberate: the
+ * window drop-shadows draw_chrome paints blend against this key colour, and only a BLACK key lets a
+ * shadow (dark over black → still ~black) fall inside the key threshold and vanish; a magenta key
+ * turns those shadow-over-key blends into visible magenta smears across the window footprints. The
+ * GPU composites the windows + glass + blur itself and draws this overlay last; the modal desktop-dim
+ * is a GPU quad, so it is omitted here (dim=0). */
 void nw_compose_chrome(const struct nw_server *s, const struct nw_surface *overlay)
 {
-	nw_fill_rect(overlay, 0, 0, overlay->w, overlay->h, 0xff00ff);   /* transparent key (magenta) */
+	nw_fill_rect(overlay, 0, 0, overlay->w, overlay->h, 0x000000);   /* transparent key (black) */
 	draw_chrome(s, overlay, 0);
 }
 
