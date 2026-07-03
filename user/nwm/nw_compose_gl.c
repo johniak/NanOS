@@ -382,10 +382,14 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 	 * upload path and just re-presents g_scene_tex with the cursor at its new spot — so the pointer
 	 * stays smooth even though a GPU-swapped buffer has no cheap partial update. */
 	if (scene_dirty) {
-		/* wallpaper texture (uploaded once; re-upload is cheap and covers a settings reload) */
+		/* wallpaper texture, re-uploaded per (scene-dirty) frame. Two fork quirks pin this shape:
+		 * (1) the re-upload must use glTexImage2D (full realloc), NOT glTexSubImage2D — the partial-
+		 *     update path garbled the top band of the texture on the ANGLE-Metal fork; and
+		 * (2) it must stay PER-FRAME — uploading the wallpaper only once left the compose failing to
+		 *     materialize chrome+windows on this fork (the per-frame upload is load-bearing sync). */
 		if (!g_wall_tex && wall) g_wall_tex = make_tex(wall->w, wall->h, wall->px);
 		else if (wall) { glBindTexture(GL_TEXTURE_2D, g_wall_tex);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, wall->w, wall->h, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, wall->w, wall->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, wall->px); }
 
 		glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* compose into the offscreen scene */
 		glViewport(0, 0, g_sw, g_sh);
