@@ -756,8 +756,15 @@ static void start_desktop(void)
 	present();                                /* first frame: desktop + cursor */
 }
 
+#ifdef NWM_GL
+void nx_bind_std_streams(void);   /* nx_stream_bridge.c: bind stdout/stderr from libc.ndl __imp_ slots */
+#endif
+
 int main(void)
 {
+#ifdef NWM_GL
+	nx_bind_std_streams();   /* before any printf: Mesa/libdrm C++ TUs reference the stream globals */
+#endif
 	int fbfd = open("/dev/fb0", O_RDWR);
 	if (fbfd < 0) { printf("nwm: no /dev/fb0\n"); return 1; }
 	struct fb_var var; struct fb_fix fix;
