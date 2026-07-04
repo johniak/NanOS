@@ -41,6 +41,25 @@ extern "C" void  knx_thread_stop(void *) {}
 extern "C" void  knx_thread_yield(void) {}
 extern "C" void  knx_thread_msleep(unsigned) {}
 extern "C" void  knx_run_after_scheduler(void (*fn)(void)) { if (fn) fn(); }
+// knx_file_read stand-in for the request_firmware doctest: a single settable fake file. The test
+// registers a path+blob via lkpi_test_set_file, then request_firmware resolves that exact path.
+static const char* g_fakePath = 0;
+static const void* g_fakeData = 0;
+static unsigned long g_fakeSize = 0;
+extern "C" void lkpi_test_set_file(const char* path, const void* data, unsigned long size) {
+	g_fakePath = path; g_fakeData = data; g_fakeSize = size;
+}
+extern "C" int knx_file_read(const char* path, void* buf, unsigned long max, unsigned long* out_len) {
+	if (!g_fakePath || !path) return -2;
+	const char* a = path; const char* b = g_fakePath;
+	while (*a && *a == *b) { a++; b++; }
+	if (*a != *b) return -2;                          // path mismatch -> ENOENT
+	if (!buf) { if (out_len) *out_len = g_fakeSize; return 0; }
+	unsigned long n = g_fakeSize < max ? g_fakeSize : max;
+	for (unsigned long i = 0; i < n; i++) ((char*)buf)[i] = ((const char*)g_fakeData)[i];
+	if (out_len) *out_len = n;
+	return 0;
+}
 // kpi_fence.c (not in the host test) normally provides this; the wq test doesn't need the pump hook.
 extern "C" void  lkpi_set_wq_pump(void (*)(void)) {}
 

@@ -80,8 +80,26 @@ faithful kernel. Three choices matter and differ from mainline:
   `dma_fence_wait` spin and call a pump hook that services the device, with **bounded** timeouts so a
   lost completion can't hang boot.
 
-A faithful RCU / MM / threaded-workqueue / real-IRQ implementation is future work. Until a driver
-needs true concurrency, the cooperative model is the right amount of shim.
+Real-IRQ delivery (`request_irq` over MSI/MSI-X), async workqueues + timers (worker kthreads), and a
+real RCU grace period now exist (the i915 bring-up needed them):
+
+- **RCU:** `rcu_read_lock/unlock` are no-ops, and that is *correct*, not a stopgap. NanOS uses
+  deferred preemption — a task in kernel mode is never switched out except at a voluntary
+  `schedule()`, and RCU readers never call one, so a reader cannot be preempted mid-critical-section.
+  `synchronize_rcu()` is a **real grace period** (`Scheduler::rcuSynchronize`): it blocks until every
+  other online CPU has context-switched or gone idle since the call began (either proves that CPU
+  holds no pre-existing reader). UP is a barrier; the host doctest harness degrades to `smp_mb()`.
+- **Shrinker:** the registry is real (alloc/link/unlink/free), but reclaim is **not wired** into
+  NanOS memory pressure — a boot notice states `lkpi: shrinker registered (reclaim not wired)`.
+  i915 bring-up on an 8-16 GiB machine does not depend on reclaim; wiring the OOM path is a follow-on.
+- **io_mapping:** maps an MMIO aperture over `knx_map_mmio`. Write-combining needs PAT/MTRR control,
+  which the kernel does not expose, so mappings are uncached (`lkpi: io_mapping UC (no PAT)`) — a
+  perf follow-on, not a correctness gap.
+- **request_firmware:** reads `/nanos/firmware/<name>` via the VFS; absent blobs return `-ENOENT`,
+  which Gen9 i915 tolerates (no GuC/HuC/DMC on that gen).
+
+A faithful MM (reclaim-driven shrinker) and WC io_mapping remain future work. Until a driver needs
+more, the cooperative model with these upgrades is the right amount of shim.
 
 ---
 

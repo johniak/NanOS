@@ -10,9 +10,14 @@ namespace kernel {
 
 class SynthFs;
 struct CharDevice;
+class Vfs;
 
 // Wire the SynthFs root used by knx_add_input_dev (called once from Kernel::start).
 void kernelExportsInit(SynthFs* root);
+
+// Wire the VFS that knx_file_read reads through (firmware blobs etc.). Call from Kernel::start
+// before loadAllKexts, with the same Vfs the kext loader uses.
+void kernelExportsSetVfs(Vfs* vfs);
 
 // Spawn the framebuffer present thread if a display kext registered one (knx_fb_set_backing /
 // knx_fb_start_present). Call from Kernel::start AFTER Scheduler::init().

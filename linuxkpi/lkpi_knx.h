@@ -42,6 +42,12 @@ void           knx_thread_yield(void);
 void           knx_thread_msleep(unsigned ms);   /* idle worker/timer sleep (no busy-yield) */
 /* Run fn() once after the scheduler is up (worker/timer kthreads defer their spawn here). */
 void           knx_run_after_scheduler(void (*fn)(void));
+/* Read a whole file through the kernel VFS (request_firmware). buf==0 -> report size in *out_len.
+ * Returns 0 on success, <0 (ENOENT/unreadable) otherwise; sets *out_len to the bytes read. */
+int            knx_file_read(const char *path, void *buf, unsigned long max, unsigned long *out_len);
+/* Real RCU grace period: block until every other online CPU has passed a quiescent state
+ * (LinuxKPI synchronize_rcu). On UP this is a barrier. See Scheduler::rcuSynchronize. */
+void           knx_rcu_synchronize(void);
 /* adopt a kext-owned framebuffer as the system fb: builds /dev/fb0 (+ VT console if the
  * bootloader gave none) and runs a present thread calling `flush` periodically. */
 void           knx_fb_set_backing(unsigned long long phys, unsigned int pitch, unsigned int w,

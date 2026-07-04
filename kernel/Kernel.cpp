@@ -516,6 +516,7 @@ void Kernel::start() {
 	// Load kernel modules (nkext) from /nanos/kext — the PS/2 keyboard + mouse drivers live
 	// here, NOT in the kernel image. Each registers its IRQ + /dev node from its nkext_init().
 	okBegin("Loading kernel modules /nanos/kext");
+	kernelExportsSetVfs(vfs);   // knx_file_read (request_firmware) reads through this VFS
 	loadAllKexts(vfs, "/disks/main/nanos/kext");
 	okEnd();
 

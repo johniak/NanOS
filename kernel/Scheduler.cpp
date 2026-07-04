@@ -8,6 +8,7 @@
 #include "Spinlock.h"         // g_rqLock: the dedicated runqueue lock (the BKL was retired in 15f)
 #include <arch/smp.h>         // smpThisCpu / SMP_MAX_CPUS: per-CPU current + the switch handoff
 #include "vt/VtManager.h"     // VT release-timeout aging (forces a non-acking graphics owner off)
+#include "Console.h"          // rcuSynchronize() defensive timeout notice
 
 namespace kernel {
 
@@ -54,6 +55,10 @@ static inline void  setCurTask(Task* t) { g_curTask[arch::smpThisCpu()] = t; }
 
 static volatile unsigned g_ticks = 0;
 static unsigned g_ctxt = 0;   // total context switches performed (for /proc/stat ctxt)
+// Per-CPU context-switch count. Each CPU bumps only its own slot (under g_rqLock, indexed by
+// smpThisCpu()), so no extra synchronization is needed; rcuSynchronize() reads other CPUs' slots
+// (volatile, monotonic) to detect that each has passed a quiescent state since a grace period began.
+static volatile unsigned g_ctxtPerCpu[arch::SMP_MAX_CPUS] = { 0 };
 static unsigned g_load[3] = { 0, 0, 0 };   // 1/5/15-min load, fixed-point FSHIFT=11
 
 // Linux load-average decay (FSHIFT=11, FIXED_1=2048; the 5-second EXP_1/5/15 constants).
@@ -306,6 +311,7 @@ void Scheduler::schedule() {
 		return;                                   // nothing else to run on this CPU
 	}
 	g_ctxt++;                                     // an actual context switch (for /proc/stat)
+	g_ctxtPerCpu[cpu]++;                          // RCU: this CPU just quiesced (see rcuSynchronize)
 	g_slice[cpu] = 0;                             // the newly-scheduled task gets a fresh quantum
 	next->state = TASK_RUNNING;                   // claim it for THIS cpu
 	next->runningCpu = cpu;
@@ -411,6 +417,65 @@ void Scheduler::onTickLocal(bool fromUser) {
 }
 
 unsigned Scheduler::contextSwitches() { return g_ctxt; }
+
+unsigned Scheduler::cpuContextSwitches(int cpu) {
+	if (cpu < 0 || cpu >= arch::SMP_MAX_CPUS) return 0;
+	return g_ctxtPerCpu[cpu];
+}
+
+// Pure grace-period predicate (host-tested): every online CPU other than the caller's own has
+// either context-switched since the snapshot (now != snap) or is idle right now (definitionally
+// outside any RCU read-side section). See rcuSynchronize for why a switch/idle is a quiescent state.
+bool Scheduler::rcuGraceDone(const unsigned* snap, const unsigned* now, const bool* idleNow,
+		const bool* online, int n, int selfCpu) {
+	for (int c = 0; c < n; c++) {
+		if (c == selfCpu || !online[c]) continue;
+		if (now[c] == snap[c] && !idleNow[c])
+			return false;
+	}
+	return true;
+}
+
+// Real RCU grace period. NanOS uses deferred preemption: a task in kernel mode is only ever
+// switched out at a voluntary schedule() (never mid-instruction — see docs/en/scheduler.md), and
+// RCU readers never call one, so a reader cannot be preempted mid-critical-section. Hence a CPU
+// that has performed one context switch since the call began (or is sitting in its idle task) can
+// hold no pre-existing reader. We snapshot the per-CPU switch counts and block (yielding a tick at
+// a time) until every other online CPU has switched or gone idle. UP: the caller is the only CPU,
+// so no concurrent reader can exist — a compiler/memory barrier suffices.
+void Scheduler::rcuSynchronize() {
+	int ncpu = arch::smpCpuCount();
+	if (ncpu <= 1) { __asm__ __volatile__("" ::: "memory"); return; }
+
+	int self = arch::smpThisCpu();
+	unsigned snap[arch::SMP_MAX_CPUS];
+	bool online[arch::SMP_MAX_CPUS];
+	for (int c = 0; c < arch::SMP_MAX_CPUS; c++) {
+		online[c] = (c < ncpu);
+		snap[c]   = g_ctxtPerCpu[c];
+	}
+
+	// Bound the wait defensively: every NanOS kernel thread reaches a scheduling point promptly
+	// (workqueue/timer workers msleep, user tasks return to ring 3, idle CPUs are quiescent), so
+	// this never fires in practice — it only guarantees bring-up liveness if a CPU wedges.
+	const unsigned deadline = g_ticks + 2000u;   // ~2 s at 1 kHz
+	for (;;) {
+		unsigned now[arch::SMP_MAX_CPUS];
+		bool idleNow[arch::SMP_MAX_CPUS];
+		for (int c = 0; c < arch::SMP_MAX_CPUS; c++) {
+			now[c]     = g_ctxtPerCpu[c];
+			Task* t    = g_curTask[c];
+			idleNow[c] = t && t->isIdle;
+		}
+		if (rcuGraceDone(snap, now, idleNow, online, arch::SMP_MAX_CPUS, self))
+			return;
+		if ((int)(g_ticks - deadline) >= 0) {
+			Console::write("lkpi: rcu grace period timed out (proceeding)\n");
+			return;
+		}
+		sleepUntil(g_ticks + 1);   // let the other CPUs reach their scheduling points
+	}
+}
 
 void Scheduler::loadAvg(unsigned out[3]) {
 	for (int i = 0; i < 3; i++)

@@ -49,3 +49,31 @@ hang + reboot). Both are documented in `docs/en/real-hw-gpu.md` (created in Task
 
 These constants parameterize Tasks 7–8 (KMS + execbuf). Fallback state after this session: firmware
 framebuffer console (read-only PCI log — nothing binds the GPU).
+
+## Tasks 2–4 — LinuxKPI upgrades (QEMU-proven, runtime lands on the Dell)
+
+Phase A brings the KPI surface i915 needs. All are built + host-tested + QEMU-gated; the i915
+*runtime* paths are exercised only on the Dell (Phase B), so QEMU proves compile/link/boot, not the
+i915 code path itself.
+
+- **Task 2 — real IRQs.** `request_irq` over MSI/MSI-X (`kernel/MsiRouter.cpp` single-vector MSI-X;
+  `linuxkpi/kpi_irq.c`). QEMU: virtio-gpu delivers a real MSI to the shim handler (`smoke-kpi-irq`).
+- **Task 3 — kthreads + async workqueues + timers** (`linuxkpi/kpi_kthread.c`). QEMU: inline→async
+  work, real worker kthreads, desktop intact (`smoke-kpi-wq`).
+- **Task 4 — firmware / io_mapping / shrinker / RCU.**
+  - `request_firmware` reads `/nanos/firmware/<name>` (new export `knx_file_read`); `/nanos/firmware`
+    + README staged into the image. Missing blob → `-ENOENT` (Gen9 needs none). Host doctests.
+  - `io_mapping` over `knx_map_mmio`, **UC** fallback (no PAT/MTRR in the kernel) with a boot notice.
+    *Dell caveat:* `knx_map_mmio` is a 32-bit-phys ABI — if the real GMADR aperture BAR sits above
+    4 GiB the base truncates; widening the knx MMIO ABI is a Phase-B item.
+  - Shrinker registry is real but **reclaim is not wired** (`lkpi: shrinker registered (reclaim not
+    wired)`). Host doctests for alloc/register/free.
+  - `synchronize_rcu` is a **real grace period** (`Scheduler::rcuSynchronize`, per-CPU switch
+    counters): waits for every other online CPU to context-switch or go idle. Justified against the
+    deferred-preemption model (readers can't be preempted mid-section). UP = barrier. Host doctests
+    for the pure predicate (`Scheduler::rcuGraceDone`).
+  - QEMU: `virtio_gpu.nkext` links the new objects and loads with all imports resolved
+    (`smoke-virtio-gpu` green — `loadKextImage` fails loud on any unresolved import).
+
+  **Dell-runtime-pending for Task 4:** actual firmware blobs (if any DMC is shipped), WC vs UC on the
+  aperture, whether the GMADR BAR needs the 64-bit MMIO ABI, and RCU under real multi-CPU i915 load.

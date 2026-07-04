@@ -1,8 +1,18 @@
 /*
- * linuxkpi/include/linux/rcupdate.h — RCU for the shim: no real grace periods. The driver
- * runs cooperatively; readers and the updater do not preempt mid-critical-section in the
- * ways RCU guards against here, so read-side markers are plain and synchronize_rcu() is a
- * barrier. (Sufficient for the single-GPU bring-up; revisit if a hot RCU path appears.)
+ * linuxkpi/include/linux/rcupdate.h — RCU for the shim.
+ *
+ * Read side (rcu_read_lock/unlock) is a no-op, and this is CORRECT, not a stopgap: NanOS uses
+ * deferred preemption (docs/en/scheduler.md) — a task in kernel mode is never switched out except
+ * at a voluntary schedule(), and every LinuxKPI/i915 code path (including RCU read-side sections)
+ * runs in kernel mode. An RCU reader contains no schedule() (readers must not sleep), so it can
+ * never be preempted mid-critical-section. Disabling preemption is therefore redundant.
+ *
+ * Update side (synchronize_rcu) is a REAL grace period now that SMP is live: with multiple CPUs an
+ * updater on one CPU must wait for pre-existing readers on the others to finish. Given the read-side
+ * invariant above, a CPU that has context-switched (or gone idle) since the call began holds no such
+ * reader — so knx_rcu_synchronize (Scheduler::rcuSynchronize) blocks until every other online CPU
+ * has done so. On UP it is a barrier (the caller is the only CPU). Under the host doctest harness
+ * there is no scheduler, so it degrades to a memory barrier.
  */
 #ifndef _LINUXKPI_LINUX_RCUPDATE_H
 #define _LINUXKPI_LINUX_RCUPDATE_H
@@ -14,10 +24,17 @@
 #define rcu_read_unlock()      do {} while (0)
 #define rcu_read_lock_bh()     do {} while (0)
 #define rcu_read_unlock_bh()   do {} while (0)
-#define synchronize_rcu()      smp_mb()
+
+#ifdef NANOS_HOST_TEST
+#define synchronize_rcu()           smp_mb()
 #define synchronize_rcu_expedited() smp_mb()
+#else
+void knx_rcu_synchronize(void);   /* kexports.def; real grace period (Scheduler::rcuSynchronize) */
+#define synchronize_rcu()           knx_rcu_synchronize()
+#define synchronize_rcu_expedited() knx_rcu_synchronize()
+#endif
 #define call_rcu(head, func)   ((func)(head))
-#define rcu_barrier()          smp_mb()
+#define rcu_barrier()          synchronize_rcu()
 
 #define rcu_dereference(p)             READ_ONCE(p)
 #define rcu_dereference_protected(p, c) (p)

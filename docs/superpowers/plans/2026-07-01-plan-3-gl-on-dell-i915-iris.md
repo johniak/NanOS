@@ -136,9 +136,9 @@ The remaining i915 table stakes, all QEMU-buildable (runtime exercised on the De
 - Shrinker: `register_shrinker` keeps a real list; a `knx` hook lets the kernel's OOM path call it later, but wiring into NanOS memory pressure is a RECORDED FOLLOW-ON — for now the registry exists, is never invoked, and a boot log states that (`lkpi: shrinker registered (reclaim not wired)`). i915 must survive without reclaim on a 8-16 GiB machine for bring-up.
 - RCU: with SMP real, audit the existing stubs: `synchronize_rcu` must actually wait for all CPUs to schedule (implement over the kernel's existing IPI/scheduler facilities — the TLB-shootdown machinery proves the primitive exists); `rcu_read_lock/unlock` map to preempt-disable equivalents per the deferred-preemption scheduler's rules. Get this REVIEWED against the scheduler docs (`docs/` scheduler notes) before merging.
 
-- [ ] **Step 1:** doctests for firmware path resolution + shrinker registry.
-- [ ] **Step 2:** implement; boot QEMU: markers present, verify64 green.
-- [ ] **Step 3: Commit** `git commit -m "linuxkpi: request_firmware, io_mapping, shrinker registry, real synchronize_rcu"`.
+- [x] **Step 1:** doctests for firmware path resolution + shrinker registry (+ RCU grace predicate).
+- [x] **Step 2:** implement; boot QEMU: kext relinks with the new objects and loads (imports resolve), verify64 gates green.
+- [x] **Step 3: Commit** `git commit -m "linuxkpi: request_firmware, io_mapping, shrinker registry, real synchronize_rcu"`.
 
 ### Task 5: Vendor i915 + compile campaign (link-error-driven, QEMU-buildable)
 

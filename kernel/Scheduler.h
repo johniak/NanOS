@@ -59,6 +59,19 @@ public:
 	static void onTickLocal(bool fromUser);        // SMP: an AP's LAPIC tick — local quantum only
 	static void apEnter();                         // SMP: an AP enters the scheduler as its idle task
 	static unsigned contextSwitches();             // total context switches (for /proc/stat ctxt)
+	static unsigned cpuContextSwitches(int cpu);   // per-CPU switch count (RCU quiescence tracking)
+	// Real RCU grace period (LinuxKPI synchronize_rcu). Blocks the caller until every OTHER online
+	// CPU has passed through a quiescent state — one that cannot occur inside an RCU read-side
+	// section, because NanOS's deferred-preemption scheduler never switches a task in kernel mode
+	// except at a voluntary schedule() (and RCU readers never call one). A CPU has quiesced once it
+	// has context-switched since the call began OR is observed running its idle task. UP is a
+	// barrier (the caller is the only CPU; no concurrent reader can exist).
+	static void rcuSynchronize();
+	// Pure predicate (host-tested): has the grace period elapsed given the per-CPU switch-count
+	// snapshot `snap`, the current counts `now`, whether each CPU is idle right now, which CPUs are
+	// online, and the caller's own CPU index (skipped — it can't switch while running this).
+	static bool rcuGraceDone(const unsigned* snap, const unsigned* now, const bool* idleNow,
+			const bool* online, int n, int selfCpu);
 	static void loadAvg(unsigned out[3]);          // 1/5/15-min load in hundredths (/proc/loadavg)
 	static void preempt();                         // resched if flagged (called on ret-to-ring3)
 	static void yield() { schedule(); }

@@ -1,5 +1,7 @@
 #include "KernelExports.h"
 #include "SynthFs.h"
+#include "Vfs.h"            // knx_file_read: read firmware blobs through the VFS
+#include "String.h"         // Vfs::read takes a String path
 #include "CharDevice.h"
 #include "Console.h"
 #include "Scheduler.h"
@@ -26,9 +28,11 @@
 namespace kernel {
 
 static SynthFs* g_root = 0;
+static Vfs* g_kexVfs = 0;     // the VFS knx_file_read reads firmware blobs through
 static int g_nextInput = 1;   // /dev/input0 is the kernel-side keyboard evdev; modules get >=1
 
 void kernelExportsInit(SynthFs* root) { g_root = root; }
+void kernelExportsSetVfs(Vfs* vfs) { g_kexVfs = vfs; }
 
 // LAPIC accessors (arch/x86_64/cpu/lapic_x86_64.cpp) used by knx_register_msi below.
 uint8_t lapicId();
@@ -52,6 +56,26 @@ void* knx_malloc(unsigned n)              { return malloc(n); }
 void  knx_free(void* p)                   { free(p); }
 void  knx_log(const char* s)              { Console::write(s); }
 unsigned long long knx_uptime_us(void)    { return (unsigned long long) Scheduler::ticks() * 1000ull; }
+
+// Read a whole file through the VFS (the same path the kext/init loaders use). With buf==0, report
+// the file size in *out_len and return 0 (so a caller can size a buffer, then read). Otherwise copy
+// up to `max` bytes into buf and set *out_len to the bytes read. Returns 0 on success, <0 on error
+// (-2 = ENOENT/unreadable). Used by request_firmware; firmware blobs are optional on Gen9 i915.
+int knx_file_read(const char* path, void* buf, unsigned long max, unsigned long* out_len) {
+	if (!g_kexVfs || !path) return -2;
+	String p((char*) path);
+	FileStat st;
+	if (g_kexVfs->stat(p, st) < 0) return -2;
+	if (!buf) { if (out_len) *out_len = st.size; return 0; }
+	unsigned want = st.size < max ? st.size : (unsigned) max;
+	int n = g_kexVfs->read(p, want, 0, buf);
+	if (n < 0) return -2;
+	if (out_len) *out_len = (unsigned long) n;
+	return 0;
+}
+
+// Real RCU grace period (LinuxKPI synchronize_rcu). See Scheduler::rcuSynchronize.
+void knx_rcu_synchronize(void)            { Scheduler::rcuSynchronize(); }
 
 // Register a device IRQ-line handler. The module sees an opaque frame (void*); arch's
 // IrqHandler takes its TrapFrame*, same calling convention, so the cast is safe.
