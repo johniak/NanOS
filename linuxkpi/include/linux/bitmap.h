@@ -33,4 +33,12 @@ static inline int  bitmap_andnot(unsigned long *dst, const unsigned long *a, con
 static inline int  bitmap_and(unsigned long *dst, const unsigned long *a, const unsigned long *b, unsigned nbits){ unsigned n=LKPI_BITS_TO_LONGS(nbits); unsigned long r=0; for(unsigned i=0;i<n;i++){ dst[i]=a[i]&b[i]; r|=dst[i]; } return r!=0; }
 /* Pack a u32 array into an unsigned-long bitmap (LP64: two u32 per long). */
 static inline void bitmap_from_arr32(unsigned long *bitmap, const u32 *buf, unsigned nbits){ unsigned nw32=(nbits+31)/32; unsigned nl=LKPI_BITS_TO_LONGS(nbits); for(unsigned i=0;i<nl;i++){ unsigned long lo=buf[2*i]; unsigned long hi=(2*i+1<nw32)?(unsigned long)buf[2*i+1]:0UL; bitmap[i]=lo|(hi<<32); } }
+/* a ⊆ b over nbits? (every set bit of a is set in b) */
+static inline int bitmap_subset(const unsigned long *a, const unsigned long *b, unsigned nbits){ unsigned n=LKPI_BITS_TO_LONGS(nbits); for(unsigned i=0;i<n;i++) if(a[i] & ~b[i]) return 0; return 1; }
+/* a ∩ b non-empty over nbits? */
+static inline int bitmap_intersects(const unsigned long *a, const unsigned long *b, unsigned nbits){ unsigned n=LKPI_BITS_TO_LONGS(nbits); for(unsigned i=0;i<n;i++) if(a[i] & b[i]) return 1; return 0; }
+static inline int bitmap_equal(const unsigned long *a, const unsigned long *b, unsigned nbits){ unsigned n=LKPI_BITS_TO_LONGS(nbits); for(unsigned i=0;i<n;i++) if(a[i]!=b[i]) return 0; return 1; }
+/* shift the whole bitmap right by `shift` bits (bit-serial; nbits is small in i915 use). */
+static inline void bitmap_shift_right(unsigned long *dst, const unsigned long *src, unsigned shift, unsigned nbits){ for(unsigned i=0;i<nbits;i++){ unsigned s=i+shift; int v = (s<nbits) ? (int)((src[s/(8*sizeof(long))]>>(s%(8*sizeof(long))))&1UL) : 0; if(v) dst[i/(8*sizeof(long))] |= 1UL<<(i%(8*sizeof(long))); else dst[i/(8*sizeof(long))] &= ~(1UL<<(i%(8*sizeof(long)))); } }
+static inline void bitmap_shift_left(unsigned long *dst, const unsigned long *src, unsigned shift, unsigned nbits){ for(unsigned i=nbits;i-- >0;){ int s=(int)i-(int)shift; int v = (s>=0) ? (int)((src[s/(8*(int)sizeof(long))]>>(s%(8*(int)sizeof(long))))&1UL) : 0; if(v) dst[i/(8*sizeof(long))] |= 1UL<<(i%(8*sizeof(long))); else dst[i/(8*sizeof(long))] &= ~(1UL<<(i%(8*sizeof(long)))); } }
 #endif

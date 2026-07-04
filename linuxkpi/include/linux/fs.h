@@ -66,6 +66,11 @@ struct file_system_type {
 };
 static inline void kill_anon_super(struct super_block *sb){ (void)sb; }
 static inline int init_pseudo(struct fs_context *fc, unsigned long magic){ (void)fc;(void)magic; return 0; }
+/* get_fs_type: look up a registered filesystem by name. i915 uses it to find "tmpfs" for its gemfs
+ * mount; NanOS has no tmpfs registry, so it returns NULL and i915 falls back to the default shmem. */
+static inline struct file_system_type *get_fs_type(const char *name){ (void)name; return 0; }
+static inline struct vfsmount *kern_mount(struct file_system_type *t){ (void)t; return 0; }
+static inline void kern_unmount(struct vfsmount *m){ (void)m; }
 static inline int simple_pin_fs(struct file_system_type *t, struct vfsmount **m, int *count){ (void)t;(void)m;(void)count; return 0; }
 static inline void simple_release_fs(struct vfsmount **m, int *count){ (void)m;(void)count; }
 static inline struct inode *alloc_anon_inode(struct super_block *sb){ (void)sb; return 0; }

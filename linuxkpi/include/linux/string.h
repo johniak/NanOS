@@ -104,4 +104,8 @@ static inline char *strim(char *s){
 	e[1]=0; return s;
 }
 static inline char *skip_spaces(const char *s){ while(*s==' '||*s=='\t') s++; return (char*)s; }
+/* sscanf/vsscanf: declared here (real impl in the C runtime / kpi); i915 uses them only on the
+ * debugfs write path, off the display bring-up path. */
+int sscanf(const char *buf, const char *fmt, ...);
+int vsscanf(const char *buf, const char *fmt, __builtin_va_list ap);
 #endif

@@ -68,6 +68,12 @@ static inline int get_count_order(unsigned int count) { return count <= 1 ? 0 : 
 static inline unsigned long find_next_bit(const unsigned long *a, unsigned long sz, unsigned long st){ for(unsigned long i=st;i<sz;i++) if(test_bit(i,a)) return i; return sz; }
 static inline unsigned long find_first_bit(const unsigned long *a, unsigned long sz){ return find_next_bit(a,sz,0); }
 #define for_each_set_bit(bit,addr,size) for((bit)=find_first_bit((addr),(size)); (bit)<(size); (bit)=find_next_bit((addr),(size),(bit)+1))
+static inline unsigned long find_next_zero_bit(const unsigned long *a, unsigned long sz, unsigned long st){ for(unsigned long i=st;i<sz;i++) if(!test_bit(i,a)) return i; return sz; }
+static inline unsigned long find_first_zero_bit(const unsigned long *a, unsigned long sz){ return find_next_zero_bit(a,sz,0); }
+#define for_each_clear_bit(bit,addr,size) for((bit)=find_first_zero_bit((addr),(size)); (bit)<(size); (bit)=find_next_zero_bit((addr),(size),(bit)+1))
+/* conditional bit set/clear: __assign_bit(nr, addr, value). */
+static inline void __assign_bit(long nr, volatile unsigned long *addr, int value){ if(value) __set_bit(nr,addr); else __clear_bit(nr,addr); }
+static inline void assign_bit(long nr, volatile unsigned long *addr, int value){ if(value) set_bit(nr,addr); else clear_bit(nr,addr); }
 #endif
 
 #ifndef _LKPI_BITOPS_UNLOCK

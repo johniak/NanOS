@@ -79,4 +79,5 @@ static inline void print_hex_dump_debug(const char*a,int b,int c,int d,const voi
 #define pr_info_once(fmt, ...)  ({ static int __w; if(!__w){ __w=1; printk(fmt, ##__VA_ARGS__); } (void)0; })
 #define pr_err_once(fmt, ...)   ({ static int __w; if(!__w){ __w=1; printk(fmt, ##__VA_ARGS__); } (void)0; })
 #define pr_notice_once(fmt, ...) pr_info_once(fmt, ##__VA_ARGS__)
+static inline int hex_dump_to_buffer(const void *buf, size_t len, int rowsize, int groupsize, char *linebuf, size_t linebuflen, bool ascii){ (void)buf;(void)len;(void)rowsize;(void)groupsize;(void)ascii; if(linebuflen) linebuf[0]=0; return 0; }
 #endif

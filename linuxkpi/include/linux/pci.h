@@ -172,6 +172,17 @@ static inline int pci_bus_write_config_word(struct pci_bus *b, unsigned int devf
 	int sh = (where & 2) * 8; v = (v & ~(0xffffu << sh)) | ((u32)val << sh);
 	knx_pci_cfg_write32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3), v); return 0;
 }
+static inline int pci_bus_write_config_byte(struct pci_bus *b, unsigned int devfn, int where, u8 val) {
+	u32 v = knx_pci_cfg_read32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3));
+	int sh = (where & 3) * 8; v = (v & ~(0xffu << sh)) | ((u32)val << sh);
+	knx_pci_cfg_write32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3), v); return 0;
+}
+/* PCI resizable-BAR: report the size encoded by a rebar ctrl value as bytes (1MiB << index). */
+static inline unsigned long pci_rebar_bytes_to_size(unsigned long bytes){ unsigned long o = 20 /*1MiB*/; while ((1UL<<o) < bytes) o++; return o - 20; }
+static inline int pci_bus_alloc_resource(struct pci_bus *b, void *res, unsigned long size, unsigned long align, unsigned long min, unsigned long type, void *alignf, void *alignf_data){ (void)b;(void)res;(void)size;(void)align;(void)min;(void)type;(void)alignf;(void)alignf_data; return -6; }
+/* PCI_DEVICE(vend, dev): initialize a pci_device_id matching any subsystem/class. */
+#define PCI_DEVICE(vend, dev) .vendor = (vend), .device = (dev), .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
+#define PCI_DEVICE_CLASS(dev_class, dev_class_mask) .vendor = PCI_ANY_ID, .device = PCI_ANY_ID, .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID, .class = (dev_class), .class_mask = (dev_class_mask)
 
 /* Device lookup helpers. The shim probes only our single GPU (handed to it directly), so scans for
  * OTHER devices (bridges, ISA, another GPU) find nothing: return NULL. Callers treat NULL as absent. */

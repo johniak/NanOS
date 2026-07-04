@@ -91,6 +91,9 @@
 #endif
 
 static inline void __chk_user_ptr(const volatile void *p) { (void)p; }
+#ifndef __same_type
+#define __same_type(a, b) __builtin_types_compatible_p(__typeof__(a), __typeof__(b))
+#endif
 
 #endif /* __ASSEMBLY__ */
 #endif /* _LINUXKPI_LINUX_COMPILER_H */

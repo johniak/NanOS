@@ -74,6 +74,10 @@ static inline void hlist_del_init(struct hlist_node *n) { if (n->pprev) { hlist_
 #define hlist_for_each_entry(pos, head, member) \
 	for (pos = hlist_entry_safe((head)->first, __typeof__(*(pos)), member); \
 	     pos; pos = hlist_entry_safe((pos)->member.next, __typeof__(*(pos)), member))
+#define hlist_for_each_entry_safe(pos, n, head, member) \
+	for (pos = hlist_entry_safe((head)->first, __typeof__(*(pos)), member); \
+	     pos && ({ n = pos->member.next; 1; }); \
+	     pos = hlist_entry_safe(n, __typeof__(*(pos)), member))
 
 #endif /* _LINUXKPI_LINUX_LIST_H */
 

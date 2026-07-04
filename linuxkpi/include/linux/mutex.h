@@ -10,6 +10,8 @@
 struct mutex { raw_spinlock_t l; int held; };
 #define DEFINE_MUTEX(name) struct mutex name = { __RAW_SPIN_LOCK_INITIALIZER, 0 }
 static inline void mutex_init(struct mutex *m){ raw_spin_lock_init(&m->l); m->held = 0; }
+/* i915 initializes some mutexes via the lockdep-keyed __mutex_init(lock, name, key); ignore name/key. */
+#define __mutex_init(mutex, name, key) mutex_init(mutex)
 static inline void mutex_lock(struct mutex *m){ raw_spin_lock(&m->l); m->held = 1; }
 static inline void mutex_unlock(struct mutex *m){ m->held = 0; raw_spin_unlock(&m->l); }
 static inline int mutex_lock_interruptible(struct mutex *m){ raw_spin_lock(&m->l); m->held = 1; return 0; }

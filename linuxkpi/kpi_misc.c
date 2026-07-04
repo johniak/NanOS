@@ -97,6 +97,15 @@ struct folio *shmem_read_folio_gfp(struct address_space *mapping, unsigned long 
 	return (struct folio *)mapping->pages[index];
 }
 
+/* Same backing as shmem_read_folio_gfp, but returns the page (i915 gt/shmem_utils path). */
+struct page *shmem_read_mapping_page_gfp(struct address_space *mapping, unsigned long index, unsigned gfp)
+{
+	(void)gfp;
+	if (!mapping || !mapping->pages || index >= mapping->nrpages)
+		return 0;
+	return mapping->pages[index];
+}
+
 /* drm_gem unwind / shmem teardown: free the single contiguous backing block (= pages[0]). */
 void lkpi_shmem_release(struct file *f)
 {
@@ -139,6 +148,15 @@ int default_wake_function(struct wait_queue_entry *e, unsigned mode, int sync, v
 { (void)e; (void)mode; (void)sync; (void)key; return 1; }
 int autoremove_wake_function(struct wait_queue_entry *e, unsigned mode, int sync, void *key)
 { (void)mode; (void)sync; (void)key; if (e) list_del_init(&e->entry); return 1; }
+
+/* kobject_create_and_add: heap-allocate a bare kobject (no sysfs tree in the shim). */
+struct kobject *kobject_create_and_add(const char *name, struct kobject *parent)
+{
+	struct kobject *k = (struct kobject *)kzalloc(sizeof(*k), 0);
+	if (k) { k->name = name; k->parent = parent; }
+	return k;
+}
+void kobject_put(struct kobject *k) { kfree(k); }
 
 /* ---- sysfs string helpers ----------------------------------------------------------- */
 

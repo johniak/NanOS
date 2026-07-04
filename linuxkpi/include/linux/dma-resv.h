@@ -66,6 +66,10 @@ static inline void dma_resv_iter_end(struct dma_resv_iter *c){ (void)c; }
 static inline struct dma_fence *dma_resv_iter_first(struct dma_resv_iter *c){ c->index=0; c->fence = (c->obj && c->obj->fences) ? (struct dma_fence*)c->obj->fences : 0; return c->fence; }
 static inline struct dma_fence *dma_resv_iter_next(struct dma_resv_iter *c){ c->fence=0; return 0; }
 static inline bool dma_resv_iter_is_restarted(struct dma_resv_iter *c){ return c->index==0; }
+/* usage of the fence currently under the cursor. */
+static inline enum dma_resv_usage dma_resv_iter_usage(struct dma_resv_iter *c){ return c->fence_usage; }
+/* the ww_acquire_ctx that locked this reservation; the shim has no ww context, so NULL. */
+static inline struct ww_acquire_ctx *dma_resv_locking_ctx(struct dma_resv *obj){ (void)obj; return 0; }
 #define dma_resv_for_each_fence(cursor, obj, usage, fence) \
 	for (dma_resv_iter_begin(cursor, obj, usage), fence = dma_resv_iter_first(cursor); fence; fence = dma_resv_iter_next(cursor))
 #define dma_resv_for_each_fence_unlocked(cursor, fence) \

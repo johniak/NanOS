@@ -15,5 +15,9 @@ struct i2c_client { struct i2c_adapter *adapter; };
 #define I2C_M_NO_RD_ACK    0x0800
 #define I2C_M_RECV_LEN     0x0400
 static inline int i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n){ (void)a;(void)m;(void)n; return -1; }
+/* __i2c_transfer is the unlocked form; the shim's adapter has no real bus, so both fail alike. */
+static inline int __i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n){ (void)a;(void)m;(void)n; return -1; }
+static inline void i2c_del_adapter(struct i2c_adapter *a){ (void)a; }
+static inline int i2c_add_adapter(struct i2c_adapter *a){ (void)a; return 0; }
 static inline void *i2c_get_adapdata(const struct i2c_adapter *a){ return a->algo_data; }
 #endif

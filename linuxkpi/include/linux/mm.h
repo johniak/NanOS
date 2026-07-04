@@ -52,6 +52,7 @@ void  free_pages_exact(void *virt, size_t size);
 
 /* alloc_page/__get_free_page return page-aligned memory via the same allocator. */
 static inline struct page *alloc_page(gfp_t gfp) { return (struct page *)alloc_pages_exact(PAGE_SIZE, gfp); }
+static inline struct page *alloc_pages(gfp_t gfp, unsigned int order) { return (struct page *)alloc_pages_exact(PAGE_SIZE << order, gfp); }
 static inline void __free_page(struct page *p) { free_pages_exact((void *)p, PAGE_SIZE); }
 static inline unsigned long __get_free_page(gfp_t gfp) { return (unsigned long)alloc_pages_exact(PAGE_SIZE, gfp); }
 static inline unsigned long __get_free_pages(gfp_t gfp, unsigned int order) { return (unsigned long)alloc_pages_exact(PAGE_SIZE << order, gfp); }
@@ -98,4 +99,58 @@ static inline unsigned long invalidate_mapping_pages(struct address_space *m, un
 #ifndef _LKPI_MM_COW
 #define _LKPI_MM_COW
 static inline int is_cow_mapping(unsigned long flags){ (void)flags; return 0; }
+#endif
+
+#ifndef _LKPI_MM_PAGE_X
+#define _LKPI_MM_PAGE_X
+/* page dirty/flags: the shim's page cache has no writeback, so "dirty" is a bookkeeping no-op that
+ * reports the page was newly dirtied. NanOS RAM is never high memory (single flat map). */
+static inline int set_page_dirty(struct page *p){ (void)p; return 1; }
+static inline int PageHighMem(const struct page *p){ (void)p; return 0; }
+static inline int PageReserved(const struct page *p){ (void)p; return 0; }
+/* PFN rounding of a byte count/address. */
+#ifndef PFN_UP
+#define PFN_UP(x)   (((x) + PAGE_SIZE - 1) >> PAGE_SHIFT)
+#define PFN_DOWN(x) ((x) >> PAGE_SHIFT)
+#define PFN_PHYS(x) ((phys_addr_t)(x) << PAGE_SHIFT)
+#define PHYS_PFN(x) ((unsigned long)((x) >> PAGE_SHIFT))
+#endif
+/* free order-N pages: the shim frees single pages; callers pass order 0 here. */
+static inline void __free_pages(struct page *p, unsigned int order){ (void)order; __free_page(p); }
+/* swap accounting: no swap on NanOS, so nothing is reclaimable this way. */
+static inline long get_nr_swap_pages(void){ return 0; }
+/* pagefault_disable/enable bracket a no-fault region; the shim's flat map never faults, so no-op. */
+static inline void pagefault_disable(void){ }
+static inline void pagefault_enable(void){ }
+/* vm_mmap/call_mmap: the in-kernel KMS path never mmaps a shmem file into a user VMA in the shim,
+ * so these report "not mapped" (0/-ENODEV). shmem GEM objects are accessed via kmap, not mmap. */
+struct file; struct vm_area_struct;
+static inline unsigned long vm_mmap(struct file *f, unsigned long addr, unsigned long len, unsigned long prot, unsigned long flag, unsigned long off){ (void)f;(void)addr;(void)len;(void)prot;(void)flag;(void)off; return 0; }
+static inline int call_mmap(struct file *f, struct vm_area_struct *vma){ (void)f;(void)vma; return -19; }
+/* page refcount: single flat allocator with no per-page refcount — get/put are inert. */
+static inline void get_page(struct page *p){ (void)p; }
+static inline void put_page(struct page *p){ (void)p; }
+/* VMA protection/flags bits (subset i915 references). */
+#ifndef VM_READ
+#define VM_READ    0x00000001
+#define VM_WRITE   0x00000002
+#define VM_EXEC    0x00000004
+#define VM_SHARED  0x00000008
+#define VM_MAYWRITE 0x00000020
+#define VM_IO      0x00004000
+#define VM_PFNMAP  0x00000400
+#define VM_DONTEXPAND 0x00040000
+#define VM_DONTDUMP   0x04000000
+#define VM_MIXEDMAP   0x10000000
+#endif
+static inline void vma_set_file(struct vm_area_struct *vma, struct file *file){ (void)vma;(void)file; }
+/* fs_reclaim lockdep annotations: bracket a "may enter reclaim" region. No lockdep here → no-ops. */
+static inline void fs_reclaim_acquire(gfp_t gfp){ (void)gfp; }
+static inline void fs_reclaim_release(gfp_t gfp){ (void)gfp; }
+/* VMA_ITERATOR/for_each_vma: i915 userptr walks a mm's VMAs. NanOS drives KMS in-kernel with no user
+ * VMA graph to walk, so the iterator starts empty (loops execute zero times). */
+struct vma_iterator { int _unused; };
+#define VMA_ITERATOR(name, mm, addr) struct vma_iterator name = { 0 }
+#define for_each_vma(vmi, vma) for ((vma) = 0; (vma); )
+#define for_each_vma_range(vmi, vma, end) for ((vma) = 0; (vma); )
 #endif

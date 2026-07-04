@@ -8,6 +8,14 @@
 #include <linux/types.h>
 #include <lkpi_knx.h>
 
+/* PAT (page attribute table) is not exposed to the shim; write-combining is handled by ioremap_wc
+ * directly, so i915 can treat PAT as available (its WC-mapping path is a no-op cost here). */
+static inline bool pat_enabled(void){ return true; }
+/* MTRR write-combine add/del: NanOS maps device BARs WC via ioremap_wc already, so these succeed
+ * with a positive handle and free is a no-op. */
+static inline int arch_phys_wc_add(unsigned long base, unsigned long size){ (void)base;(void)size; return 0; }
+static inline void arch_phys_wc_del(int handle){ (void)handle; }
+static inline unsigned long arch_phys_wc_index(int handle){ (void)handle; return 0; }
 static inline void *ioremap(phys_addr_t phys, unsigned long size) { return knx_map_mmio((unsigned)phys, (unsigned)size); }
 static inline void *ioremap_wc(phys_addr_t phys, unsigned long size) { return knx_map_mmio((unsigned)phys, (unsigned)size); }
 static inline void *ioremap_cache(phys_addr_t phys, unsigned long size) { return knx_map_mmio((unsigned)phys, (unsigned)size); }

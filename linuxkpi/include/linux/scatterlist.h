@@ -129,3 +129,10 @@ int sg_alloc_table_from_pages_segment(struct sg_table *sgt, struct page **pages,
 #define for_each_sgtable_dma_page(sgt, dpiter, pgoffset) for((dpiter)->base.sg=(sgt)->sgl,(dpiter)->base.sg_pgoffset=(pgoffset); (dpiter)->base.sg; (dpiter)->base.sg=sg_next((dpiter)->base.sg))
 #define sg_page_iter_dma_address(piter) sg_dma_address((piter)->base.sg)
 #endif
+
+#ifndef _LKPI_SG_FOLIO
+#define _LKPI_SG_FOLIO
+struct folio;
+/* sg_set_folio: a folio is a single page in the shim, so this is sg_set_page over the folio's page. */
+static inline void sg_set_folio(struct scatterlist *sg, struct folio *folio, size_t len, size_t offset){ sg_set_page(sg, (struct page *)folio, (unsigned int)len, (unsigned int)offset); }
+#endif

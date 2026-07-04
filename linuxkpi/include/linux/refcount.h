@@ -8,6 +8,7 @@
 #define _LINUXKPI_LINUX_REFCOUNT_H
 
 #include <linux/atomic.h>   /* refcount_t (field .r) + set/read/inc/dec_and_test/inc_not_zero */
+#include <linux/spinlock.h> /* refcount_dec_and_lock_irqsave takes a spinlock on the zero transition */
 
 #ifndef REFCOUNT_INIT
 #define REFCOUNT_INIT(n) { .r = ATOMIC_INIT(n) }
@@ -21,6 +22,13 @@ static inline bool refcount_add_not_zero(int i, refcount_t *r)
 	if (!atomic_read(&r->r)) return false;
 	atomic_add(i, &r->r);
 	return true;
+}
+
+/* refcount_dec_and_lock_irqsave: drop the ref, and if it reaches 0 take `lock` (saving IRQ state).
+ * Mirrors kref_put_lock; deferred-preemption kernel makes the ordering here trivially safe. */
+static inline bool refcount_dec_and_lock_irqsave(refcount_t *r, spinlock_t *lock, unsigned long *flags) {
+	if (atomic_dec_and_test(&r->r)) { spin_lock_irqsave(lock, *flags); return true; }
+	return false;
 }
 
 #endif /* _LINUXKPI_LINUX_REFCOUNT_H */

@@ -199,6 +199,12 @@ long dma_fence_wait(struct dma_fence *f, bool intr)
 	return dma_fence_wait_timeout(f, intr, MAX_SCHEDULE_TIMEOUT);
 }
 
+/* Default ->wait callback: identical to the generic timeout wait (spin until signaled). */
+long dma_fence_default_wait(struct dma_fence *f, bool intr, long timeout)
+{
+	return dma_fence_wait_timeout(f, intr, timeout);
+}
+
 u64 dma_fence_context_alloc(unsigned num)
 {
 	static u64 ctr = 1;

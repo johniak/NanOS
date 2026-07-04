@@ -17,6 +17,9 @@ struct delayed_work { struct work_struct work; struct timer_list timer; struct w
 #define INIT_WORK(w,f)         do{ (w)->func=(f); INIT_LIST_HEAD(&(w)->entry); (w)->pending=0; }while(0)
 #define INIT_DELAYED_WORK(w,f) do{ (w)->work.func=(f); INIT_LIST_HEAD(&(w)->work.entry); (w)->work.pending=0; (w)->wq=0; INIT_LIST_HEAD(&(w)->timer.entry); (w)->timer.lkpi_linked=0; }while(0)
 #define INIT_WORK_ONSTACK(w,f) INIT_WORK(w,f)
+#define INIT_DELAYED_WORK_ONSTACK(w,f) INIT_DELAYED_WORK(w,f)
+#define WQ_UNBOUND_MAX_ACTIVE 512
+#define WQ_MAX_ACTIVE 512
 
 /* Async workqueues (kpi_kthread.c): each queue has one worker kthread (spawned once the scheduler is
  * up); before that, and under a forced LKPI_WQ_INLINE build, queue_work runs the work inline. */

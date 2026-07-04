@@ -76,3 +76,15 @@ static inline int dma_fence_signal_timestamp(struct dma_fence *f, ktime_t t){ (v
 #define _LKPI_FENCE_SETERR
 static inline void dma_fence_set_error(struct dma_fence *f, int error){ if (f) f->error = error; }
 #endif
+
+#ifndef _LKPI_FENCE_SIGNALLING
+#define _LKPI_FENCE_SIGNALLING
+/* begin/end_signalling bracket a "may not allocate/lock" critical section for lockdep. No lockdep in
+ * the shim, so they're no-ops (begin returns a cookie that end takes back). */
+static inline bool dma_fence_begin_signalling(void){ return false; }
+static inline void dma_fence_end_signalling(bool cookie){ (void)cookie; }
+/* enable_sw_signaling forces ->enable_signaling; the shim signals synchronously, so it's a no-op. */
+static inline void dma_fence_enable_sw_signaling(struct dma_fence *fence){ (void)fence; }
+/* default ->wait implementation: spin until signaled (bounded by the caller's timeout in jiffies). */
+long dma_fence_default_wait(struct dma_fence *fence, bool intr, long timeout);
+#endif

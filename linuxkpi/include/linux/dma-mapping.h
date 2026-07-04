@@ -93,4 +93,11 @@ static inline int dma_map_sgtable(struct device *d, struct sg_table *s, enum dma
 	return 0;
 }
 static inline void dma_unmap_sgtable(struct device *d, struct sg_table *s, enum dma_data_direction dir, unsigned long a){ (void)d;(void)s;(void)dir;(void)a; }
+/* dma_map_sg_attrs: identity-map each scatterlist entry (bus addr = phys addr), return the count. */
+static inline int dma_map_sg_attrs(struct device *d, struct scatterlist *sgl, int nents, enum dma_data_direction dir, unsigned long attrs){
+	struct scatterlist *sg; int i; (void)d;(void)dir;(void)attrs;
+	for_each_sg(sgl, sg, nents, i) { sg->dma_address = sg_phys(sg); sg->dma_length = sg->length; }
+	return nents;
+}
+static inline void dma_unmap_sg_attrs(struct device *d, struct scatterlist *sgl, int nents, enum dma_data_direction dir, unsigned long attrs){ (void)d;(void)sgl;(void)nents;(void)dir;(void)attrs; }
 #endif
