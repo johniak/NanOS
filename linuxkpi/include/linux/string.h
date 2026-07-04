@@ -77,3 +77,17 @@ unsigned long simple_strtoul(const char*, char**, unsigned);
 static inline void strtomem_pad(void *dest, const char *src, char pad){ (void)pad; size_t i=0; char *d=(char*)dest; while(src[i]){d[i]=src[i];i++;} }
 static inline int mem_is_zero(const void *s, size_t n){ const unsigned char *p=(const unsigned char*)s; for(size_t i=0;i<n;i++) if(p[i]) return 0; return 1; }
 #endif
+
+#ifndef _LKPI_STRING_X5
+#define _LKPI_STRING_X5
+/* word-granular memset variants (i915 fills PTE/ring pages with them) */
+static inline void *memset32(u32 *s, u32 v, size_t count){ for(size_t i=0;i<count;i++) s[i]=v; return s; }
+static inline void *memset64(u64 *s, u64 v, size_t count){ for(size_t i=0;i<count;i++) s[i]=v; return s; }
+/* first byte != v within n (Linux memchr_inv), or NULL if all bytes equal v */
+static inline void *memchr_inv(const void *p, int v, size_t n){ const unsigned char *s=(const unsigned char*)p; for(size_t i=0;i<n;i++) if(s[i]!=(unsigned char)v) return (void*)&s[i]; return 0; }
+/* strsep: split *sp at any delimiter, advancing *sp past it (returns the token, NUL-terminated).
+ * kext-only: glibc's <string.h> already declares strsep (non-static) on the host test path. */
+#ifndef NANOS_HOST_TEST
+static inline char *strsep(char **sp, const char *delim){ char *s=*sp, *t; if(!s) return 0; for(t=s;*t;t++){ const char *d; for(d=delim;*d;d++) if(*t==*d){ *t=0; *sp=t+1; return s; } } *sp=0; return s; }
+#endif
+#endif

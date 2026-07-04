@@ -12,6 +12,10 @@
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
+/* <drm/drm_print.h> (pulled by nearly every i915 file) only forward-declares struct seq_file, yet
+ * i915's debugfs show() handlers dereference m->private. drm_print.h includes THIS header, so routing
+ * the full struct seq_file definition through here completes it everywhere it is used. */
+#include <linux/seq_file.h>
 #include <linux/compiler.h>
 #include <linux/printk.h>
 #include <linux/slab.h>

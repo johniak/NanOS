@@ -12,6 +12,7 @@
 
 #include <linux/types.h>
 #include <linux/device.h>
+#include <linux/pci_ids.h>   /* PCI_VENDOR_ID_INTEL etc. (Linux's pci.h pulls the ID list too) */
 #include <linux/io.h>
 #include <linux/mod_devicetable.h>
 #include <linux/errno.h>
@@ -101,6 +102,29 @@ static inline int pci_read_config_dword(struct pci_dev *d, int where, u32 *val) 
 static inline int pci_write_config_dword(struct pci_dev *d, int where, u32 val) {
 	knx_pci_cfg_write32(d->nbus, d->ndev, d->nfunc, (unsigned char)where, val); return 0;
 }
+/* word/byte config writes: read-modify-write the containing dword (config space is dword-addressed). */
+static inline int pci_write_config_word(struct pci_dev *d, int where, u16 val) {
+	u32 v = knx_pci_cfg_read32(d->nbus, d->ndev, d->nfunc, (unsigned char)(where & ~3));
+	int sh = (where & 2) * 8; v = (v & ~(0xffffu << sh)) | ((u32)val << sh);
+	knx_pci_cfg_write32(d->nbus, d->ndev, d->nfunc, (unsigned char)(where & ~3), v); return 0;
+}
+static inline int pci_write_config_byte(struct pci_dev *d, int where, u8 val) {
+	u32 v = knx_pci_cfg_read32(d->nbus, d->ndev, d->nfunc, (unsigned char)(where & ~3));
+	int sh = (where & 3) * 8; v = (v & ~(0xffu << sh)) | ((u32)val << sh);
+	knx_pci_cfg_write32(d->nbus, d->ndev, d->nfunc, (unsigned char)(where & ~3), v); return 0;
+}
+/* refcount put on a pci_dev: the shim doesn't refcount pci_dev handles, so this is a no-op. */
+static inline void pci_dev_put(struct pci_dev *d) { (void)d; }
+/* Option-ROM mapping: unused on the KMS path (VBT comes from the OpRegion/ACPI, not the PCI ROM BAR). */
+static inline void __iomem *pci_map_rom(struct pci_dev *d, size_t *size) { (void)d; if (size) *size = 0; return 0; }
+static inline void pci_unmap_rom(struct pci_dev *d, void __iomem *rom) { (void)d; (void)rom; }
+/* Standard BAR resource index range (Linux keeps these in an enum in <linux/pci.h>). */
+#ifndef PCI_STD_RESOURCES
+#define PCI_STD_RESOURCES    0
+#define PCI_STD_RESOURCE_END 5
+#define PCI_STD_NUM_BARS     6
+#define PCI_ROM_RESOURCE     6
+#endif
 
 static inline unsigned long pci_resource_start(struct pci_dev *d, int n) { return knx_pci_bar(d->nbus, d->ndev, d->nfunc, n); }
 static inline unsigned long pci_resource_len(struct pci_dev *d, int n)   { return knx_pci_bar_size(d->nbus, d->ndev, d->nfunc, n); }

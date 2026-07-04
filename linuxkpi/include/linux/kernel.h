@@ -35,6 +35,8 @@
 #ifndef NANOS_HOST_TEST
 #define min(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a < _b ? _a : _b; })
 #define max(a, b) ({ __typeof__(a) _a = (a); __typeof__(b) _b = (b); _a > _b ? _a : _b; })
+#define min3(a, b, c) min(min(a, b), c)
+#define max3(a, b, c) max(max(a, b), c)
 #define clamp(v, lo, hi) max(lo, min(v, hi))
 #define swap(a, b) ({ __typeof__(a) __t = (a); (a) = (b); (b) = __t; })
 #define abs(x) ({ __typeof__(x) __x = (x); __x < 0 ? -__x : __x; })

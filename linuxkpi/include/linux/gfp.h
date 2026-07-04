@@ -22,6 +22,9 @@
 #define __GFP_COMP        ((gfp_t)0x800u)
 #define __GFP_NOFAIL      ((gfp_t)0x1000u)
 #define __GFP_RETRY_MAYFAIL ((gfp_t)0x2000u)
+#define __GFP_RECLAIMABLE ((gfp_t)0x4000u)
+#define __GFP_ACCOUNT     ((gfp_t)0x8000u)
+#define __GFP_NOMEMALLOC  ((gfp_t)0x10000u)
 
 #define GFP_KERNEL        ((gfp_t)0u)
 #define GFP_ATOMIC        ((gfp_t)0u)

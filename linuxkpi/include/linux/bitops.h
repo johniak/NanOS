@@ -75,3 +75,8 @@ static inline int test_and_set_bit_lock(long nr, volatile unsigned long *addr){ 
 static inline __s64 sign_extend64(__u64 value, int index){ int shift = 63 - index; return (__s64)(value << shift) >> shift; }
 static inline __s32 sign_extend32(__u32 value, int index){ int shift = 31 - index; return (__s32)(value << shift) >> shift; }
 #endif
+
+/* The bitmap_* family lives in <linux/bitmap.h>. i915 files reach it transitively through bitops.h
+ * (they include <linux/bitops.h>, not bitmap.h), matching Linux's include graph. Pulled AFTER the
+ * guard above closes so bitmap.h sees the fully-defined bit ops it builds on. */
+#include <linux/bitmap.h>

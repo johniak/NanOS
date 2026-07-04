@@ -9,8 +9,17 @@
 #include <linux/types.h>
 #include <linux/gfp.h>
 #include <linux/string.h>   /* the inline kmemdup/memdup_user helpers below use memcpy */
+#include <linux/poison.h>   /* POISON_INUSE etc.; Linux's slab.h pulls poison.h, and i915 reaches the
+                             * poison bytes only through slab.h (they don't include poison.h directly) */
 #ifndef NANOS_HOST_TEST
 #include <linux/mm.h>   /* slab pulls mm in mainline; gives page helpers to .c that only include slab.h */
+#endif
+
+/* Zero-size allocation sentinel (Linux slab): kmalloc(0) returns ZERO_SIZE_PTR, a non-NULL pointer
+ * that faults on deref but is safe to kfree. i915 compares alloc results against it. */
+#ifndef ZERO_SIZE_PTR
+#define ZERO_SIZE_PTR ((void *)16)
+#define ZERO_OR_NULL_PTR(x) ((unsigned long)(x) <= (unsigned long)ZERO_SIZE_PTR)
 #endif
 
 #ifdef __cplusplus

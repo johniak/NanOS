@@ -68,3 +68,23 @@ static inline void atomic_set_release(atomic_t *v, int i){ __atomic_store_n(&v->
 static inline int atomic_inc_not_zero(atomic_t *v){ return atomic_add_unless(v, 1, 0); }
 static inline int atomic_read_acquire(const atomic_t *v){ return __atomic_load_n(&v->counter, __ATOMIC_ACQUIRE); }
 #endif
+
+#ifndef _LKPI_ATOMIC_BITOPS
+#define _LKPI_ATOMIC_BITOPS
+static inline void atomic_and(int i, atomic_t *v)    { __atomic_and_fetch(&v->counter, i, __ATOMIC_SEQ_CST); }
+static inline void atomic_or(int i, atomic_t *v)     { __atomic_or_fetch(&v->counter, i, __ATOMIC_SEQ_CST); }
+static inline void atomic_andnot(int i, atomic_t *v) { __atomic_and_fetch(&v->counter, ~i, __ATOMIC_SEQ_CST); }
+/* Generic try_cmpxchg on a plain lvalue (i915 uses it outside atomic_t): CAS *ptr from *oldp to new,
+ * writing the seen value back to *oldp on failure; returns true on success. */
+#define try_cmpxchg(ptr, oldp, newv) __atomic_compare_exchange_n((ptr), (oldp), (newv), 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
+/* Decrement; if it hit zero, take the (irqsave) lock and return 1, else leave it unlocked, return 0. */
+#define atomic_dec_and_lock_irqsave(v, lock, flags) \
+	({ int __adl = atomic_dec_and_test(v); if (__adl) spin_lock_irqsave((lock), (flags)); __adl; })
+
+/* atomic_long_t == atomic64_t on our LP64 target. */
+typedef atomic64_t atomic_long_t;
+static inline long atomic_long_read(const atomic_long_t *v){ return atomic64_read(v); }
+static inline void atomic_long_set(atomic_long_t *v, long i){ atomic64_set(v, i); }
+static inline void atomic_long_inc(atomic_long_t *v){ atomic64_inc(v); }
+static inline void atomic_long_add(long i, atomic_long_t *v){ (void)atomic64_add_return(i, v); }
+#endif

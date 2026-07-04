@@ -1,4 +1,6 @@
 /* stub: linux/debugfs.h */
+#include <linux/seq_file.h>   /* debugfs producers write into a seq_file; i915's *_debugfs.c reach the
+                               * full struct seq_file (seq_printf etc.) only through this header. */
 
 #ifndef _LKPI_DEBUGFS_REGSET
 #define _LKPI_DEBUGFS_REGSET
