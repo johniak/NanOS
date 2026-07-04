@@ -118,6 +118,7 @@ static inline int PageReserved(const struct page *p){ (void)p; return 0; }
 #define _PAGE_PAT  (1UL << 7)
 #define _PAGE_PRESENT (1UL << 0)
 #define _PAGE_RW      (1UL << 1)
+#define _PAGE_CACHE_MASK  (_PAGE_PWT | _PAGE_PCD)
 #endif
 #ifndef PFN_UP
 #define PFN_UP(x)   (((x) + PAGE_SIZE - 1) >> PAGE_SHIFT)
@@ -154,6 +155,20 @@ static inline void put_page(struct page *p){ (void)p; }
 #define VM_MIXEDMAP   0x10000000
 #endif
 static inline void vma_set_file(struct vm_area_struct *vma, struct file *file){ (void)vma;(void)file; }
+/* Minimal x86 PTE primitives for i915_mm.c (remap_io_mapping). The shim's apply_to_page_range is a
+ * stub that does not walk page tables (it never invokes the callback), so the pte helpers below are
+ * only needed to satisfy the callback bodies' types; GEM userspace-mmap fault-in is a documented
+ * follow-on (KMS-first bring-up drives the display without a user GEM mmap fault path). */
+typedef struct { unsigned long pte; } pte_t;
+struct mm_struct;
+static inline pte_t pfn_pte(unsigned long pfn, pgprot_t prot){ pte_t p; p.pte = (pfn << PAGE_SHIFT) | (unsigned long)prot; return p; }
+static inline pte_t pte_mkspecial(pte_t pte){ return pte; }
+static inline unsigned long pte_pfn(pte_t pte){ return pte.pte >> PAGE_SHIFT; }
+static inline void set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pte){ (void)mm;(void)addr; if(ptep) *ptep = pte; }
+typedef int (*pte_fn_t)(pte_t *pte, unsigned long addr, void *data);
+static inline int apply_to_page_range(struct mm_struct *mm, unsigned long addr, unsigned long size, pte_fn_t fn, void *data){ (void)mm;(void)addr;(void)size;(void)fn;(void)data; return 0; }
+static inline int zap_vma_ptes(struct vm_area_struct *vma, unsigned long address, unsigned long size){ (void)vma;(void)address;(void)size; return 0; }
+static inline void flush_cache_range(struct vm_area_struct *vma, unsigned long start, unsigned long end){ (void)vma;(void)start;(void)end; }
 /* fs_reclaim lockdep annotations: bracket a "may enter reclaim" region. No lockdep here → no-ops. */
 static inline void fs_reclaim_acquire(gfp_t gfp){ (void)gfp; }
 static inline void fs_reclaim_release(gfp_t gfp){ (void)gfp; }

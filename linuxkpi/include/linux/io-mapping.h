@@ -22,6 +22,7 @@ struct io_mapping {
 	resource_size_t base;      /* physical base of the aperture */
 	unsigned long   size;      /* aperture length in bytes */
 	void __iomem   *iomem;     /* cached whole-aperture mapping (NULL until first map) */
+	pgprot_t        prot;      /* page protection for aperture mappings (i915_mm remap path) */
 };
 
 struct io_mapping *io_mapping_init_wc(struct io_mapping *iomap, resource_size_t base,
