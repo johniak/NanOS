@@ -121,4 +121,13 @@ static inline int dev_is_pci(struct device *dev) { (void)dev; return 1; }
 static inline int pci_is_vga(struct pci_dev *d) { (void)d; return 0; }
 #define dev_is_removable(dev) (false)
 
+
+/* PCI power states (intel_opregion references pci_power_t). */
+typedef int pci_power_t;
+#define PCI_D0     0
+#define PCI_D1     1
+#define PCI_D2     2
+#define PCI_D3hot  3
+#define PCI_D3cold 4
+#define PCI_POWER_ERROR (-1)
 #endif /* _LINUXKPI_LINUX_PCI_H */

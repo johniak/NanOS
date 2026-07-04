@@ -52,3 +52,6 @@ static inline u64 nsecs_to_jiffies(u64 n) {
 #define _LKPI_JIFFIES_NS64
 static inline u64 nsecs_to_jiffies64(u64 n){ return n / 1000000ull; }
 #endif
+#ifndef MAX_JIFFY_OFFSET
+#define MAX_JIFFY_OFFSET ((~0UL >> 1) - 1)   /* i915_utils.h clamps timeouts against this */
+#endif

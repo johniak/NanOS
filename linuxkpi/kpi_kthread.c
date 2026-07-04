@@ -134,6 +134,23 @@ void flush_work(struct work_struct *w) {
 	}
 }
 
+/* Flush a delayed_work: if its timer is still armed, fire the work immediately (cancel the delay),
+ * then wait for the underlying work to complete. Returns true if work was pending. */
+bool flush_delayed_work(struct delayed_work *dw) {
+	bool was_pending = false;
+	if (!dw) return false;
+	if (dw->timer.lkpi_linked) {           /* delay not yet elapsed: run now */
+		del_timer(&dw->timer);
+		if (dw->wq) queue_work(dw->wq, &dw->work);
+		else        schedule_work(&dw->work);
+		was_pending = true;
+	}
+	if (dw->work.pending || work_is_running(&dw->work))
+		was_pending = true;
+	flush_work(&dw->work);
+	return was_pending;
+}
+
 void flush_workqueue(struct workqueue_struct *q) {
 	if (!q) q = system_wq;
 	if (!q) return;

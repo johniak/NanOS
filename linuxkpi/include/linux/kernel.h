@@ -134,3 +134,18 @@ static inline const char *str_enabled_disabled(bool v){ return v?"enabled":"disa
 #define SHRT_MAX 32767
 #define SHRT_MIN (-32768)
 #endif
+
+#ifndef _LKPI_ADD_TAINT
+#define _LKPI_ADD_TAINT
+#define TAINT_WARN 9
+#define LOCKDEP_NOW_UNRELIABLE 0
+#define LOCKDEP_STILL_OK 1     /* i915_utils.h uses add_taint(t, LOCKDEP_STILL_OK); co-locate here */
+static inline void add_taint(unsigned flag, int lockdep_ok){ (void)flag; (void)lockdep_ok; }
+
+#ifndef _LKPI_TYPEOF_MEMBER
+#define _LKPI_TYPEOF_MEMBER
+#ifndef typeof_member
+#define typeof_member(T, m) __typeof__(((T *)0)->m)
+#endif
+#endif
+#endif

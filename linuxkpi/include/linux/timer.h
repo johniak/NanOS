@@ -2,6 +2,7 @@
 #define _LKPI_TIMER_H
 #include <linux/types.h>
 #include <linux/list.h>
+#include <linux/seqlock.h>   /* i915 engine/scheduler types reach seqcount_t only transitively */
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -17,6 +18,7 @@ void add_timer(struct timer_list *t);
 int  del_timer(struct timer_list *t);
 int  del_timer_sync(struct timer_list *t);
 int  timer_delete_sync(struct timer_list *t);
+static inline int timer_pending(const struct timer_list *t){ return t->lkpi_linked; }
 #ifdef __cplusplus
 }
 #endif

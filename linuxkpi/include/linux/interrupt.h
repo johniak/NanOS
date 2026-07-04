@@ -29,8 +29,36 @@ int  lkpi_irq_bind_msi(unsigned bus, unsigned dev, unsigned func);
  * also the doctest entry point. */
 void lkpi_irq_dispatch(int irq);
 
-struct tasklet_struct { void (*func)(unsigned long); unsigned long data; };
-static inline void tasklet_schedule(struct tasklet_struct *t){ if(t->func)t->func(t->data); }
+enum { TASKLET_STATE_SCHED, TASKLET_STATE_RUN };
+struct tasklet_struct {
+	struct tasklet_struct *next;
+	unsigned long state;
+	int count;                    /* atomic in Linux; single-threaded bring-up -> plain int */
+	bool use_callback;
+	union {
+		void (*func)(unsigned long data);
+		void (*callback)(struct tasklet_struct *t);
+	};
+	unsigned long data;
+};
+static inline void tasklet_schedule(struct tasklet_struct *t){
+	if (!t) return;
+	if (t->use_callback) { if (t->callback) t->callback(t); }
+	else                 { if (t->func) t->func(t->data); }
+}
+/* Cooperative bring-up: a tasklet runs inline on schedule, so it is never "locked" — trylock always
+ * succeeds and the unlock/wait paths are no-ops (used by i915 execlists submission). */
+static inline int  tasklet_trylock(struct tasklet_struct *t){ (void)t; return 1; }
+static inline void tasklet_unlock(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_unlock_wait(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_unlock_spin_wait(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_hi_schedule(struct tasklet_struct *t){ tasklet_schedule(t); }
+static inline void tasklet_enable(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_disable(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_kill(struct tasklet_struct *t){ (void)t; }
+/* Bottom-half / softirq disable: cooperative kernel never runs softirqs concurrently -> no-ops. */
+static inline void local_bh_disable(void){}
+static inline void local_bh_enable(void){}
 #ifdef __cplusplus
 }
 #endif

@@ -64,4 +64,6 @@ static inline unsigned long find_first_bit(const unsigned long *a, unsigned long
 static inline void clear_bit_unlock(long nr, volatile unsigned long *addr){ __atomic_fetch_and(&addr[BIT_WORD(nr)], ~BIT_MASK(nr), __ATOMIC_RELEASE); }
 static inline void __clear_bit_unlock(long nr, volatile unsigned long *addr){ clear_bit_unlock(nr,addr); }
 static inline int test_and_set_bit_lock(long nr, volatile unsigned long *addr){ return test_and_set_bit(nr,addr); }
+static inline __s64 sign_extend64(__u64 value, int index){ int shift = 63 - index; return (__s64)(value << shift) >> shift; }
+static inline __s32 sign_extend32(__u32 value, int index){ int shift = 31 - index; return (__s32)(value << shift) >> shift; }
 #endif

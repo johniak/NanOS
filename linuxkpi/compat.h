@@ -219,3 +219,8 @@ struct seq_file;
 #define _LKPI_SEQ_WRITE
 static inline int seq_write(struct seq_file *m, const void *data, unsigned long len){ (void)m;(void)data;(void)len; return 0; }
 #endif
+
+#ifndef _LKPI_CPU_RELAX
+#define _LKPI_CPU_RELAX
+static inline void cpu_relax(void) { __asm__ __volatile__("pause" ::: "memory"); }
+#endif

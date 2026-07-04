@@ -1,6 +1,8 @@
 #ifndef _LKPI_I2C_H
 #define _LKPI_I2C_H
 #include <linux/device.h>
+#include <linux/workqueue.h>   /* drm_dp_helper.h embeds work_struct/delayed_work and reaches the
+                                * full definitions only through <linux/i2c.h> (mirrors upstream) */
 struct i2c_adapter { char name[48]; void *algo_data; struct device dev; };
 struct i2c_msg { unsigned short addr, flags, len; unsigned char *buf; };
 struct i2c_client { struct i2c_adapter *adapter; };

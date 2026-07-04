@@ -54,4 +54,5 @@ void lkpi_set_wq_pump(void (*fn)(void));   /* kpi_fence.c: register the wait-pum
 #ifdef __cplusplus
 }
 #endif
+bool flush_delayed_work(struct delayed_work *dw);
 #endif

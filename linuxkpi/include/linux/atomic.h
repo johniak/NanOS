@@ -64,4 +64,7 @@ static inline int refcount_inc_not_zero(refcount_t *r){ return atomic_add_unless
 #ifndef _LKPI_ATOMIC_FETCH_INC
 #define _LKPI_ATOMIC_FETCH_INC
 static inline int atomic_fetch_inc(atomic_t *v){ return atomic_fetch_add(1, v); }
+static inline void atomic_set_release(atomic_t *v, int i){ __atomic_store_n(&v->counter, i, __ATOMIC_RELEASE); }
+static inline int atomic_inc_not_zero(atomic_t *v){ return atomic_add_unless(v, 1, 0); }
+static inline int atomic_read_acquire(const atomic_t *v){ return __atomic_load_n(&v->counter, __ATOMIC_ACQUIRE); }
 #endif

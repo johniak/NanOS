@@ -53,6 +53,8 @@ static inline void sg_assign_page(struct scatterlist *sg, struct page *page) {
 
 static inline int sg_is_chain(struct scatterlist *sg) { return !!(sg->page_link & SG_CHAIN); }
 static inline int sg_is_last(struct scatterlist *sg)  { return !!(sg->page_link & SG_END); }
+static inline struct scatterlist *sg_chain_ptr(struct scatterlist *sg)
+{ return (struct scatterlist *)(sg->page_link & ~(SG_CHAIN | SG_END)); }
 
 static inline void sg_mark_end(struct scatterlist *sg) {
 	sg->page_link |= SG_END;

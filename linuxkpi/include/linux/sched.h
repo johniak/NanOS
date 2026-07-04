@@ -1,9 +1,11 @@
 #ifndef _LKPI_SCHED_H
 #define _LKPI_SCHED_H
 #include <linux/types.h>
+#include <linux/timer.h>   /* i915_utils.h reaches timer_pending() only through <linux/sched.h> */
 #define TASK_RUNNING 0
 #define TASK_INTERRUPTIBLE 1
 #define TASK_UNINTERRUPTIBLE 2
+#define TASK_NORMAL (TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE)
 struct task_struct { int pid; const char *comm; void *mm; void *knx; };
 extern struct task_struct *lkpi_current;
 #define current (lkpi_current)
@@ -40,4 +42,10 @@ static inline int task_pid_vnr(struct task_struct *t){ (void)t; return 0; }
 #ifndef _LKPI_SCHED_WAKE
 #define _LKPI_SCHED_WAKE
 static inline int wake_up_process(struct task_struct *t){ (void)t; return 0; }
+#endif
+
+#ifndef _LKPI_SCHED_TIMEOUT
+#define _LKPI_SCHED_TIMEOUT
+static inline long schedule_timeout_uninterruptible(long t){ (void)t; return 0; }
+static inline long schedule_timeout_interruptible(long t){ (void)t; return 0; }
 #endif
