@@ -173,5 +173,9 @@ int nkext_init(void)
 	 * ioctls simply return errors there. */
 	virtio_gpu_drm_node_init(vdev);
 
+	/* 6) Now that the vqs exist and the device is DRIVER_OK, wire its MSI-X to a shim irq (Task 2).
+	 * The used-ring poll stays the harvester; this proves request_irq -> MSI end-to-end on QEMU. */
+	vt_enable_msi(vdev);
+
 	return 0;
 }

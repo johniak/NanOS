@@ -997,6 +997,12 @@ smoke-vt: image64
 smoke-virtio-gpu: image64
 	bash scripts/smoke-virtio-gpu.sh
 
+# `smoke-kpi-irq` is the LinuxKPI real-interrupt gate (i915 plan Task 2): boots virtio-gpu as the
+# only display and asserts the device's interrupt runs through request_irq -> MSI-X (MsiRouter MSI-X
+# + kpi_irq + vt_enable_msi), delivering a real MSI to the handler while the poll stays a watchdog.
+smoke-kpi-irq: image64
+	bash scripts/smoke-kpi-irq.sh
+
 # `smoke-virtio-gpu-gl` is the Task-10 GL desktop gate: nwm's GL ES present backend composites the
 # desktop and scans it out via GBM+EGL+KMS (glkms) instead of blitting /dev/fb0. It needs the virgl
 # fork QEMU AND a macOS windowed GUI (cocoa gl=es / ANGLE→Metal — no headless path), so it is a
@@ -1050,7 +1056,7 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-virtio-gpu smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-virtio-gpu smoke-kpi-irq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
 	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
@@ -2516,7 +2522,8 @@ $(BINFOLDER)i219.nkext: $(KEXT_GLUE) $(BINFOLDER)i219.o $(BINFOLDER)i219_phy.o $
 LINUXKPI_OBJS=$(BINFOLDER)kpi_slab.o $(BINFOLDER)kpi_print.o $(BINFOLDER)kpi_idr.o \
   $(BINFOLDER)kpi_sort.o $(BINFOLDER)kpi_time.o $(BINFOLDER)kpi_string.o \
   $(BINFOLDER)kpi_mm.o $(BINFOLDER)kpi_dma.o $(BINFOLDER)kpi_pci.o \
-  $(BINFOLDER)kpi_sg.o $(BINFOLDER)kpi_fence.o $(BINFOLDER)kpi_misc.o
+  $(BINFOLDER)kpi_sg.o $(BINFOLDER)kpi_fence.o $(BINFOLDER)kpi_misc.o \
+  $(BINFOLDER)kpi_irq.o
 # Vendored Linux virtio core objects (built from external/linux-6.12 via the rules above).
 VIRTIO_CORE_OBJS=$(BINFOLDER)virtio_ring.o $(BINFOLDER)virtio_pci_modern_dev.o
 # Vendored Linux lib helpers (red-black trees, list sort).
@@ -2670,7 +2677,7 @@ TEST_MODULES+= drivers/UsbMscBlockDevice.cpp    # MI BlockDevice adapter over US
 TEST_MODULES+= kernel/PartitionTable.cpp        # MI MBR+GPT root-partition discovery
 # LinuxKPI shim — pure primitives (compiled as C++ by g++; kept C-valid for the kext).
 # Not in COV_PATTERNS (not gated), just compiled + exercised by tests/test_linuxkpi_*.
-TEST_MODULES+= linuxkpi/kpi_slab.c linuxkpi/kpi_print.c linuxkpi/kpi_idr.c linuxkpi/kpi_sort.c linuxkpi/kpi_time.c
+TEST_MODULES+= linuxkpi/kpi_slab.c linuxkpi/kpi_print.c linuxkpi/kpi_idr.c linuxkpi/kpi_sort.c linuxkpi/kpi_time.c linuxkpi/kpi_irq.c
 # lcov patterns selecting the modules whose coverage is gated (String is support).
 COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/Cred.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Acpi.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nw_settings.*" "*/nwm_core.*" "*/nw_compose.*" "*/nw_backdrop.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/MsiRouter.*" "*/lapic_x86_64.*" "*/e1000_core.*" "*/i219_phy.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*" "*/UsbCore.*" "*/UsbHid.*" "*/UsbMsc.*" "*/UsbMscBlockDevice.*" "*/PartitionTable.*" "*/GdtBase.*"
 COV_INFO=/tmp/cov.info

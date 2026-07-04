@@ -1,10 +1,12 @@
 /*
  * linuxkpi/include/linux/spinlock.h — spinlocks for the shim.
  *
- * A test-and-set lock via GCC atomics. NOTE: spin_lock_irqsave currently does NOT disable
- * local interrupts (no knx cli/sti export yet); it is added in P1.3 when the virtio IRQ
- * handler is wired (needed for IRQ-vs-thread mutual exclusion on the vq). Single-threaded
- * bring-up is correct as-is.
+ * The lock itself is a UP-cooperative NO-OP (see __lk_acquire below). What makes _irqsave real:
+ * on the target it saves RFLAGS and CLIs, so a hard-IRQ handler (the MSI wired in Task 2) cannot
+ * preempt a critical section on the same CPU — the textbook UP IRQ-vs-thread exclusion. The plain
+ * lock stays a no-op so the cooperative vq pump can re-enter the driver under a "held" lock without
+ * self-deadlock. (This is single-core-correct: the virtio-gpu/DRM kext only ever runs on -smp 1;
+ * true cross-CPU exclusion for real-HW SMP is a Phase-B concern, flagged in the i915 plan.)
  */
 #ifndef _LINUXKPI_LINUX_SPINLOCK_H
 #define _LINUXKPI_LINUX_SPINLOCK_H
@@ -38,17 +40,35 @@ static inline void spin_unlock(spinlock_t *l) { __lk_release(&l->rlock.lock); }
 static inline int  spin_trylock(spinlock_t *l) { return __lk_try(&l->rlock.lock); }
 static inline void spin_lock_bh(spinlock_t *l)   { __lk_acquire(&l->rlock.lock); }
 static inline void spin_unlock_bh(spinlock_t *l) { __lk_release(&l->rlock.lock); }
-static inline void spin_lock_irq(spinlock_t *l)   { __lk_acquire(&l->rlock.lock); }
-static inline void spin_unlock_irq(spinlock_t *l) { __lk_release(&l->rlock.lock); }
 static inline int  spin_is_locked(spinlock_t *l) { return l->rlock.lock; }
 
-#define spin_lock_irqsave(l, flags)      do { (flags) = 0; spin_lock(l); } while (0)
-#define spin_unlock_irqrestore(l, flags) do { (void)(flags); spin_unlock(l); } while (0)
+/* Save RFLAGS + CLI (kext); no-op on the host doctest build (can't/needn't touch RFLAGS there). */
+#ifdef NANOS_HOST_TEST
+static inline unsigned long __lkpi_irq_save(void) { return 0; }
+static inline void __lkpi_irq_restore(unsigned long f) { (void)f; }
+#else
+static inline unsigned long __lkpi_irq_save(void) {
+	unsigned long f;
+	__asm__ __volatile__("pushfq; popq %0; cli" : "=r"(f) : : "memory");
+	return f;
+}
+static inline void __lkpi_irq_restore(unsigned long f) {
+	__asm__ __volatile__("pushq %0; popfq" : : "r"(f) : "memory", "cc");
+}
+#endif
+
+/* Plain _irq stays a no-op: only the balanced _irqsave/_irqrestore pair disables IRQs, so we never
+ * leak a CLI (spin_unlock_irq has no matching saved-flags to restore). */
+static inline void spin_lock_irq(spinlock_t *l)   { __lk_acquire(&l->rlock.lock); }
+static inline void spin_unlock_irq(spinlock_t *l) { __lk_release(&l->rlock.lock); }
+
+#define spin_lock_irqsave(l, flags)      do { (flags) = __lkpi_irq_save(); spin_lock(l); } while (0)
+#define spin_unlock_irqrestore(l, flags) do { spin_unlock(l); __lkpi_irq_restore(flags); } while (0)
 
 static inline void raw_spin_lock(raw_spinlock_t *l)   { __lk_acquire(&l->lock); }
 static inline void raw_spin_unlock(raw_spinlock_t *l) { __lk_release(&l->lock); }
-#define raw_spin_lock_irqsave(l, flags)      do { (flags) = 0; raw_spin_lock(l); } while (0)
-#define raw_spin_unlock_irqrestore(l, flags) do { (void)(flags); raw_spin_unlock(l); } while (0)
+#define raw_spin_lock_irqsave(l, flags)      do { (flags) = __lkpi_irq_save(); raw_spin_lock(l); } while (0)
+#define raw_spin_unlock_irqrestore(l, flags) do { raw_spin_unlock(l); __lkpi_irq_restore(flags); } while (0)
 
 /* assert helpers used by some Linux code */
 #define assert_spin_locked(l) do {} while (0)

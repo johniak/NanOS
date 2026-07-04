@@ -43,11 +43,42 @@ TEST_CASE("msiSetup uses single-vector MSI even when MSI-X is also present (sing
 	CHECK(g_table[0] == 0u);            // MSI-X table left untouched
 }
 
-TEST_CASE("msiSetup returns MSI_NONE for an MSI-X-only device (caller falls back to INTx)") {
+TEST_CASE("msiSetup programs single-vector MSI-X for an MSI-X-only device (QEMU virtio-pci)") {
+	memset(g_cfg, 0, sizeof g_cfg);
+	memset(g_table, 0, sizeof g_table);
+	g_cfg[0x06] = 0x10;                        // capabilities-list present
+	g_cfg[0x34] = 0x50;                        // cap ptr -> 0x50
+	g_cfg[0x50] = 0x11; g_cfg[0x51] = 0x00;    // MSI-X cap (id 0x11), no next
+	// Table BIR/Offset @cap+4 (0x54): BIR 0, offset 0.
+	g_cfg[0x54] = 0x00; g_cfg[0x55] = 0x00; g_cfg[0x56] = 0x00; g_cfg[0x57] = 0x00;
+	// BAR0 @0x10: a 32-bit memory BAR at 0xF0000000 (low 4 bits are flags -> masked off).
+	g_cfg[0x10] = 0x00; g_cfg[0x11] = 0x00; g_cfg[0x12] = 0x00; g_cfg[0x13] = 0xF0;
+
+	MsiEnv env;
+	env.cfgRead = fcRead; env.cfgWrite = fcWrite; env.mapMmio = fMap;
+	env.allocVector = fAlloc; env.lapicId = fId;
+
+	MsiResult r = msiSetup(env, 0, 0, 0);
+	CHECK(r.kind == MSI_KIND_MSIX);
+	CHECK(r.vector == 0x71);
+	CHECK(r.capOff == 0x50);
+	// Table entry 0 programmed: addr(lapicId 3), addr-hi 0, data=vector, vector-control unmasked.
+	CHECK(g_table[0] == 0xFEE03000u);
+	CHECK(g_table[1] == 0u);
+	CHECK(g_table[2] == 0x71u);
+	CHECK((g_table[3] & 0x1u) == 0u);          // entry unmasked
+	uint16_t mc; memcpy(&mc, &g_cfg[0x52], 2);
+	CHECK((mc & 0x8000) != 0);                 // MSI-X Enable
+	CHECK((mc & 0x4000) == 0);                 // Function Mask cleared
+}
+
+TEST_CASE("msiSetup returns MSI_NONE for an I/O-BAR MSI-X table (must be MMIO)") {
 	memset(g_cfg, 0, sizeof g_cfg);
 	g_cfg[0x06] = 0x10;
 	g_cfg[0x34] = 0x50;
-	g_cfg[0x50] = 0x11; g_cfg[0x51] = 0x00;   // MSI-X only, no MSI cap
+	g_cfg[0x50] = 0x11; g_cfg[0x51] = 0x00;
+	g_cfg[0x54] = 0x00;                        // BIR 0, offset 0
+	g_cfg[0x10] = 0x01;                        // BAR0 is an I/O BAR (bit0 set) -> reject
 	MsiEnv env;
 	env.cfgRead = fcRead; env.cfgWrite = fcWrite; env.mapMmio = fMap;
 	env.allocVector = fAlloc; env.lapicId = fId;

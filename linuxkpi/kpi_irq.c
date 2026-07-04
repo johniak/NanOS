@@ -1,0 +1,130 @@
+/*
+ * linuxkpi/kpi_irq.c — request_irq / request_threaded_irq / free_irq over the kernel's MSI
+ * facility (knx_register_msi from kexports.def).
+ *
+ * Model: a small descriptor table. lkpi_irq_bind_msi() reserves a slot, hands its index (offset by
+ * LKPI_IRQ_BASE) back as the "irq number", and points the kernel MSI trampoline at this file's
+ * dispatch. A driver then request_irq()s that number to install its handler — exactly the Linux
+ * ordering (pci_alloc_irq_vectors → request_irq). When the device raises its MSI, the kernel
+ * trampoline calls knx's registered handler → lkpi_irq_dispatch() → the driver's handler.
+ *
+ * Interim (until Task 3's async workqueues): request_threaded_irq's thread_fn runs INLINE right
+ * after the hard handler returns IRQ_WAKE_THREAD. Every device we bring up here (virtio-gpu) uses a
+ * hard-only handler, so this is correct; Task 3 moves thread_fn onto a dedicated irq thread.
+ */
+#include <linux/interrupt.h>
+#include "lkpi_knx.h"
+
+#define LKPI_IRQ_BASE  32          /* shim irq numbers start here (avoid legacy GSI/PIC confusion) */
+#define LKPI_IRQ_MAX   16          /* enough for the handful of MSI devices we bring up */
+
+struct lkpi_irq_desc {
+	irq_handler_t handler;
+	irq_handler_t thread_fn;
+	void         *dev;
+	unsigned      bound;           /* 1 = an MSI is bound to this slot */
+	unsigned long fires;
+};
+
+static struct lkpi_irq_desc g_irq[LKPI_IRQ_MAX];
+static unsigned long        g_total_fires;
+
+static struct lkpi_irq_desc *desc_of(int irq) {
+	int i = irq - LKPI_IRQ_BASE;
+	if (i < 0 || i >= LKPI_IRQ_MAX)
+		return 0;
+	return &g_irq[i];
+}
+
+/* knx_log takes a string; build "<pfx><n><sfx>" into a small stack buffer. */
+static void lkpi_log_num(const char *pfx, unsigned n, const char *sfx) {
+	char buf[64];
+	int i = 0;
+	for (const char *p = pfx; *p && i < 40; p++) buf[i++] = *p;
+	char num[12];
+	int j = 0;
+	if (n == 0) num[j++] = '0';
+	while (n && j < 11) { num[j++] = (char)('0' + n % 10); n /= 10; }
+	while (j > 0 && i < 52) buf[i++] = num[--j];
+	for (const char *p = sfx; *p && i < 63; p++) buf[i++] = *p;
+	buf[i] = 0;
+	knx_log(buf);
+}
+
+int request_irq(unsigned int irq, irq_handler_t h, unsigned long flags,
+                const char *name, void *dev) {
+	(void)flags; (void)name;
+	struct lkpi_irq_desc *d = desc_of((int)irq);
+	if (!d)
+		return -1;                 /* invalid irq number (Linux: -EINVAL) */
+	d->handler   = h;
+	d->thread_fn = 0;
+	d->dev       = dev;
+	return 0;
+}
+
+int request_threaded_irq(unsigned int irq, irq_handler_t h, irq_handler_t thread_fn,
+                         unsigned long flags, const char *name, void *dev) {
+	(void)flags; (void)name;
+	struct lkpi_irq_desc *d = desc_of((int)irq);
+	if (!d)
+		return -1;
+	d->handler   = h;              /* may be NULL: threaded-only (default primary wakes the thread) */
+	d->thread_fn = thread_fn;
+	d->dev       = dev;
+	return 0;
+}
+
+const void *free_irq(unsigned int irq, void *dev) {
+	struct lkpi_irq_desc *d = desc_of((int)irq);
+	if (!d)
+		return 0;
+	(void)dev;
+	/* We cannot un-route the MSI (no knx unregister export), but clearing the handlers makes any
+	 * further dispatch a no-op — the used-ring poll remains the harvester. Idempotent: a double
+	 * free_irq just clears an already-clear slot. */
+	d->handler   = 0;
+	d->thread_fn = 0;
+	d->dev       = 0;
+	return 0;
+}
+
+void lkpi_irq_dispatch(int irq) {
+	struct lkpi_irq_desc *d = desc_of(irq);
+	if (!d)
+		return;
+	if (!d->handler && !d->thread_fn)
+		return;                    /* no handler installed yet (spurious early MSI) — ignore */
+	d->fires++;
+	if (++g_total_fires == 1)
+		knx_log("lkpi: irq fired>0\n");   /* smoke assertion: an MSI reached a request_irq handler */
+
+	irqreturn_t r = IRQ_WAKE_THREAD;      /* h==NULL means "always wake the thread" (Linux default) */
+	if (d->handler)
+		r = d->handler(irq, d->dev);
+	if (r == IRQ_WAKE_THREAD && d->thread_fn)
+		d->thread_fn(irq, d->dev);        /* interim inline; Task 3 moves this to an irq thread */
+}
+
+/* The kernel MSI trampoline (knx_register_msi's handler) forwards here with ctx = the irq number. */
+static void lkpi_msi_trampoline(void *ctx) {
+	lkpi_irq_dispatch((int)(long)ctx);
+}
+
+int lkpi_irq_bind_msi(unsigned bus, unsigned dev, unsigned func) {
+	int slot = -1;
+	for (int i = 0; i < LKPI_IRQ_MAX; i++) {
+		if (!g_irq[i].bound && !g_irq[i].handler) { slot = i; break; }
+	}
+	if (slot < 0)
+		return -1;
+	int irq = LKPI_IRQ_BASE + slot;
+	g_irq[slot].bound = 1;
+	if (knx_register_msi((unsigned char)bus, (unsigned char)dev, (unsigned char)func,
+	                     lkpi_msi_trampoline, (void *)(long)irq) < 0) {
+		g_irq[slot].bound = 0;
+		return -1;                 /* no MSI/MSI-X on this function — caller stays poll/INTx */
+	}
+	lkpi_log_num("lkpi: irq ", (unsigned)irq, " bound (msi)\n");
+	return irq;
+}

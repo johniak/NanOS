@@ -28,6 +28,10 @@ void* calloc(size_t a, size_t b) { return __builtin_calloc(a, b); }
 extern "C" void *knx_malloc(unsigned n) { return __builtin_malloc(n); }
 extern "C" void  knx_free(void *p) { __builtin_free(p); }
 extern "C" void  knx_log(const char *s) { (void)s; }
+// MSI registration stub: kpi_irq.c's lkpi_irq_bind_msi references it; the irq-table doctest
+// exercises request_irq/free_irq/dispatch directly and never needs a real MSI, so return failure.
+extern "C" int knx_register_msi(unsigned char, unsigned char, unsigned char,
+                                void (*)(void *), void *) { return -1; }
 
 // Arch console sink stand-in: route glyphs to stdout, ignore cursor/clear.
 namespace arch {

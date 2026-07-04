@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/cache.h>
+#include <linux/interrupt.h>
 #include "lkpi_knx.h"
 #include "virtio_transport.h"
 
@@ -173,6 +174,36 @@ void vt_poll(struct virtio_device *vdev) {
  * uses features it declared in its id_table. We bind the device directly, so it's a no-op. */
 void virtio_check_driver_offered_feature(const struct virtio_device *vdev, unsigned int fbit) {
 	(void)vdev; (void)fbit;
+}
+
+/* Hard-IRQ handler for the device's MSI-X. The used-ring poll (vt_poll, driven by the present
+ * thread + the fence-wait pump) remains the harvester; this handler only proves the request_irq ->
+ * MSI path is live (kpi_irq counts the delivery and logs "irq fired>0"). Moving the vq harvest into
+ * IRQ context safely needs async workqueues + a real-lock pass — Task 3. So: acknowledge, no touch. */
+static irqreturn_t vt_msi_isr(int irq, void *dev) {
+	(void)irq; (void)dev;
+	return IRQ_HANDLED;
+}
+
+/* Wire the device's MSI-X to a shim irq (Task 2), proven on QEMU (virtio-pci exposes MSI-X only).
+ * Binds a vector, installs vt_msi_isr, then tells the device to raise MSI-X vector 0 for config
+ * events and the control queue (index 0). If the function has no MSI/MSI-X or the device can't spare
+ * a vector, we log and stay poll-only — the desktop renders either way. */
+void vt_enable_msi(struct virtio_device *vdev) {
+	struct vt_dev *vt = to_vt(vdev);
+	int irq = lkpi_irq_bind_msi(vt->pdev.nbus, vt->pdev.ndev, vt->pdev.nfunc);
+	if (irq < 0) {
+		knx_log("virtio_transport: no MSI/MSI-X; staying on the cooperative poll\n");
+		return;
+	}
+	request_irq((unsigned)irq, vt_msi_isr, 0, "virtio-gpu", vdev);
+	/* PCI MSI-X was enabled by msiSetup at bind time; now route config + ctrl vq -> table entry 0. */
+	if (vp_modern_config_vector(&vt->mdev, 0) == VIRTIO_MSI_NO_VECTOR ||
+	    vp_modern_queue_vector(&vt->mdev, 0, 0) == VIRTIO_MSI_NO_VECTOR) {
+		knx_log("virtio_transport: device declined MSI-X vector; poll remains the harvester\n");
+		return;
+	}
+	knx_log("virtio_transport: MSI-X routed (ctrl vq -> vector 0)\n");
 }
 
 struct virtio_device *vt_create(unsigned char bus, unsigned char dev, unsigned char func) {
