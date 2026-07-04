@@ -95,12 +95,8 @@ int nkext_init(void)
 	 * a normal / compositor run. */
 	{ extern unsigned long __drm_debug; __drm_debug = 0x0; }
 
-	/* 0) LinuxKPI async workqueues + timers: create the system queues and register the wait-pump
-	 * drain hook BEFORE any driver code (INIT_WORK/schedule_work). Runs inline until the scheduler
-	 * is up (workers spawn via knx_run_after_scheduler), so the cooperative probe is unaffected. */
-	lkpi_wq_init();
-
-	/* 0b) initialize DRM core (chrdev/class + drm_core_init_complete) before any probe */
+	/* 0) initialize DRM core (chrdev/class + drm_core_init_complete) before any probe. Any
+	 * workqueue use before lkpi_wq_init() falls back to inline (queue_work sees a NULL system_wq). */
 	__lkpi_modinit_drm_core_init();
 
 	/* 1) register the unmodified driver (stores &virtio_gpu_driver in g_virtio_drv) */
@@ -115,6 +111,12 @@ int nkext_init(void)
 		knx_log("virtio_gpu: no 1af4:1050 device (run QEMU with -device virtio-gpu-pci)\n");
 		return -1;
 	}
+
+	/* Device present: NOW bring up async workqueues + timers (system queues + wait-pump drain hook +
+	 * deferred worker spawn). Doing it here — not before the device check — means a boot with no
+	 * virtio-gpu (e.g. the VT/SMP smokes) never spawns GPU worker threads. Runs inline until the
+	 * scheduler is up, so the cooperative probe below is unaffected. */
+	lkpi_wq_init();
 	vdev = vt_create(bus, dev, func);
 	if (!vdev) {
 		knx_log("virtio_gpu: vt_create failed\n");
