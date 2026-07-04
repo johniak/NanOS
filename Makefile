@@ -961,6 +961,12 @@ coverage: test-image
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
+# `i915-probe` scores the i915 compile campaign (Task 5, Dell GPU plan): compile all 276 vendored
+# i915 objects against the LinuxKPI shim in Docker and report clean/total + the first-error clusters.
+# The in-container `_i915_probe` recipe (+ compile flags) lives in the container section.
+i915-probe: docker-image
+	$(DOCKER_RUN) make ARCH=x86_64 _i915_probe
+
 # `smoke-x86_64` is the MACHINE-DEPENDENT half host tests can't reach: build the x86_64 disk image
 # and boot it in QEMU headless, asserting the whole MD path came up with zero faults (long-mode,
 # GDT/IDT/paging, ATA+ext4 JBD2 write, e1000/net, scheduler, ring-3 fork/exec). Native QEMU on the
@@ -2501,6 +2507,20 @@ $(BINFOLDER)%.o: external/linux-6.12/drivers/gpu/drm/virtio/%.c
 $(BINFOLDER)%.o: external/linux-6.12/lib/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(LINUXKPI_CFLAGS) $(LINUXKPI_VINC) -MMD -MP -c $< -o $@
+
+# i915 (Task 5 of the Dell GPU plan): the vendored driver's own tree adds the module root to the
+# include path (`subdir-ccflags -I$(src)`) and defines I915. Flags reuse the kext build's
+# LINUXKPI_CFLAGS + DRM include tree so the campaign and the eventual kext link never drift.
+I915_SRC=external/linux-6.12/drivers/gpu/drm/i915
+I915_VINC=$(DRM_VINC) -I$(I915_SRC) -DI915
+$(BINFOLDER)i915/%.o: $(I915_SRC)/%.c
+	@mkdir -p $(@D)
+	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -MMD -MP -c $< -o $@
+# Compile-campaign scorer (in-container half): how many of the 276 vendored i915 objects build
+# against the shim. scripts/build-i915.sh keeps clean/total + the cluster map. The host-side
+# `i915-probe` wrapper (which runs this in Docker) lives in the HOST section next to test64.
+_i915_probe:
+	CC="$(CXX)" CFLAGS="$(LINUXKPI_CFLAGS) $(I915_VINC)" I915_BUILD_OUT="$(BINFOLDER)i915-build" bash scripts/build-i915.sh
 
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.
