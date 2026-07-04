@@ -260,6 +260,11 @@ void knx_thread_stop(void* handle) {
 // Yield the CPU (used by worker/timer loops between polls).
 void knx_thread_yield(void) { Scheduler::yield(); }
 
+// Sleep ~ms milliseconds (1 tick = 1 ms). An IDLE worker/timer thread must sleep, not spin-yield:
+// spin-yielding saturates the run queue and starves latency-sensitive work (VT redraw, input) — the
+// present thread sleeps the same way. A parked task consumes no CPU until its tick.
+void knx_thread_msleep(unsigned ms) { Scheduler::sleepUntil(Scheduler::ticks() + (ms ? ms : 1)); }
+
 // Register a callback to run once, AFTER the scheduler is up (kexts load pre-scheduler, so anything
 // that must spawn kernel threads — workqueue/timer workers — defers here, like the present thread).
 // Kernel::start calls runAfterSchedulerHooks() right after Scheduler::init + fbStartPresentThread.

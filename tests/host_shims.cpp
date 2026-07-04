@@ -39,6 +39,7 @@ extern "C" void *knx_thread_spawn(void (*)(void *), void *, const char *) { retu
 extern "C" int   knx_thread_should_stop(void) { return 0; }
 extern "C" void  knx_thread_stop(void *) {}
 extern "C" void  knx_thread_yield(void) {}
+extern "C" void  knx_thread_msleep(unsigned) {}
 extern "C" void  knx_run_after_scheduler(void (*fn)(void)) { if (fn) fn(); }
 // kpi_fence.c (not in the host test) normally provides this; the wq test doesn't need the pump hook.
 extern "C" void  lkpi_set_wq_pump(void (*)(void)) {}

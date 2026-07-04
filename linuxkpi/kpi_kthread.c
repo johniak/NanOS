@@ -168,7 +168,7 @@ static void wq_worker_body(void *arg) {
 	struct workqueue_struct *q = (struct workqueue_struct *)arg;
 	while (!knx_thread_should_stop()) {
 		if (!wq_run_one(q))
-			knx_thread_yield();     /* idle: give the CPU back (single-core-friendly) */
+			knx_thread_msleep(4);   /* idle: SLEEP (busy-yield would starve the run queue) */
 	}
 }
 
@@ -242,7 +242,7 @@ static void timer_thread_body(void *arg) {
 	(void)arg;
 	while (!knx_thread_should_stop()) {
 		timers_service();
-		knx_thread_yield();
+		knx_thread_msleep(4);   /* ~4 ms timer resolution; sleep so we don't hog the CPU */
 	}
 }
 

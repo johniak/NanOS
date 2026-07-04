@@ -39,6 +39,7 @@ void          *knx_thread_spawn(void (*fn)(void *), void *arg, const char *name)
 int            knx_thread_should_stop(void);
 void           knx_thread_stop(void *handle);
 void           knx_thread_yield(void);
+void           knx_thread_msleep(unsigned ms);   /* idle worker/timer sleep (no busy-yield) */
 /* Run fn() once after the scheduler is up (worker/timer kthreads defer their spawn here). */
 void           knx_run_after_scheduler(void (*fn)(void));
 /* adopt a kext-owned framebuffer as the system fb: builds /dev/fb0 (+ VT console if the
