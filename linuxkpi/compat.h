@@ -15,6 +15,12 @@ struct cpumask;
 struct device;
 struct device_node;
 struct fwnode_handle;
+/* lock_class_key: i915_sw_fence.h prototypes __i915_sw_fence_init with a `struct lock_class_key *`
+ * param, but i915_sw_fence.c doesn't pull <linux/lockdep.h> before defining it — without a
+ * file-scope tag, the .h prototype and the .c definition each declare it in their own parameter
+ * scope, so GCC sees two distinct incompatible types. A file-scope forward decl here (force-included
+ * everywhere) makes both refer to the same type. */
+struct lock_class_key;
 
 /* synchronize_rcu()/rcu markers are used by the vendored virtio_config.h before it would
  * transitively pull RCU; force-include keeps them available everywhere. */

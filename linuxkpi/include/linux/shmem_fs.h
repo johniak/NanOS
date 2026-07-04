@@ -4,6 +4,7 @@
 #include <linux/mm.h>
 #define VM_NORESERVE 0x00200000
 struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags);
+static inline struct file *shmem_file_setup_with_mnt(struct vfsmount *mnt, const char *name, loff_t size, unsigned long flags){ (void)mnt; return shmem_file_setup(name, size, flags); }
 struct folio *shmem_read_folio_gfp(struct address_space *mapping, unsigned long index, unsigned gfp);
 static inline void shmem_truncate_range(struct inode *i, loff_t a, loff_t b){ (void)i;(void)a;(void)b; }
 static inline int shmem_get_folio(struct inode *i, unsigned long idx, loff_t w, struct folio **fp, int sgp){ (void)i;(void)idx;(void)w;(void)sgp; *fp=0; return -1; }

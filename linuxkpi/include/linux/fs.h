@@ -28,7 +28,8 @@ struct address_space_operations {
 	int (*migrate_folio)(struct address_space *, struct folio *, struct folio *, int);
 };
 struct address_space { struct inode *host; struct page **pages; unsigned long nrpages; unsigned gfp_mask; const struct address_space_operations *a_ops; };
-static inline loff_t i_size_read(const struct inode *i){ (void)i; return 0; }
+static inline loff_t i_size_read(const struct inode *i){ (void)i; return i ? i->i_size : 0; }
+#define MAX_LFS_FILESIZE ((loff_t)0x7fffffffffffffffLL)
 extern loff_t noop_llseek(struct file *file, loff_t offset, int whence);
 #define FOP_UNSIGNED_OFFSET (1u<<5)
 static inline const struct file_operations *fops_get(const struct file_operations *f){ return f; }

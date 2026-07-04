@@ -45,6 +45,9 @@ static inline int clear_page_dirty_for_io(struct page *p){ (void)p; return 0; }
 #define _LKPI_KMAP_LOCAL_FOLIO
 static inline void *kmap_local_folio(struct folio *f, size_t offset){ return (char *)page_address((struct page *)f) + offset; }
 static inline size_t offset_in_folio(struct folio *f, unsigned long pos){ (void)f; return pos & (PAGE_SIZE - 1); }
+static inline void memcpy_to_folio(struct folio *f, size_t off, const void *src, size_t n){ memcpy((char *)page_address((struct page *)f)+off, src, n); }
+static inline void memcpy_from_folio(void *dst, struct folio *f, size_t off, size_t n){ memcpy(dst, (char *)page_address((struct page *)f)+off, n); }
+static inline void *kmap_local_folio_offset(struct folio *f, size_t off){ return (char *)page_address((struct page *)f)+off; }
 #ifndef _LKPI_KUNMAP_LOCAL
 #define _LKPI_KUNMAP_LOCAL
 static inline void kunmap_local(void *addr){ (void)addr; }

@@ -11,6 +11,11 @@ extern "C" {
 struct timer_list { struct list_head entry; unsigned long expires; void (*function)(struct timer_list*); unsigned long flags; int lkpi_linked; };
 #define from_timer(var,callback_timer,timer_fieldname) container_of(callback_timer, __typeof__(*var), timer_fieldname)
 #define timer_setup(t,fn,fl) do{ (t)->function=(fn); (t)->flags=(fl); INIT_LIST_HEAD(&(t)->entry); (t)->lkpi_linked=0; }while(0)
+#ifndef TIMER_IRQSAFE
+#define TIMER_IRQSAFE   0x00200000
+#define TIMER_DEFERRABLE 0x00080000
+#define TIMER_PINNED    0x00100000
+#endif
 /* Real deadline timers (kpi_kthread.c): a timer thread fires `function` once `expires` (jiffies=ms)
  * is reached. mod_timer arms/re-arms; del_timer(_sync) disarms. */
 int  mod_timer(struct timer_list *t, unsigned long expires);
@@ -18,6 +23,8 @@ void add_timer(struct timer_list *t);
 int  del_timer(struct timer_list *t);
 int  del_timer_sync(struct timer_list *t);
 int  timer_delete_sync(struct timer_list *t);
+static inline int timer_shutdown_sync(struct timer_list *t){ return del_timer_sync(t); }
+static inline int timer_delete(struct timer_list *t){ return del_timer(t); }
 static inline int timer_pending(const struct timer_list *t){ return t->lkpi_linked; }
 #ifdef __cplusplus
 }

@@ -32,7 +32,10 @@ long sysfs_emit(char *buf, const char *fmt, ...);
 long sysfs_emit_at(char *buf, int at, const char *fmt, ...);
 static inline int sysfs_create_bin_file(struct kobject *k, const struct bin_attribute *a){ (void)k;(void)a; return 0; }
 static inline void sysfs_remove_bin_file(struct kobject *k, const struct bin_attribute *a){ (void)k;(void)a; }
-#define ATTRIBUTE_GROUPS(name) static const struct attribute_group *name##_groups[] = { &name##_group, 0 }
+/* Canonical: define name_group from name_attrs, then the NULL-terminated name_groups[] pointing at it. */
+#define ATTRIBUTE_GROUPS(name) \
+	static const struct attribute_group name##_group = { .attrs = name##_attrs }; \
+	static const struct attribute_group *name##_groups[] = { &name##_group, 0 }
 static inline void sysfs_attr_init(struct attribute *a){ (void)a; }
 static inline int sysfs_create_group(struct kobject *k, const struct attribute_group *g){ (void)k;(void)g; return 0; }
 static inline void sysfs_remove_group(struct kobject *k, const struct attribute_group *g){ (void)k;(void)g; }

@@ -39,6 +39,8 @@ static inline void init_waitqueue_head(wait_queue_head_t *q) {
 	spin_lock_init(&q->lock);
 	INIT_LIST_HEAD(&q->head);
 }
+/* lockdep-keyed init form (i915_sw_fence); name/key are lockdep-only, ignored here. */
+#define __init_waitqueue_head(q, name, key) do { (void)(name); (void)(key); init_waitqueue_head(q); } while (0)
 
 #define __wake_up(q)  do { smp_mb(); } while (0)
 #define wake_up(q)                 __wake_up(q)
@@ -76,6 +78,10 @@ void lkpi_wait_pump(void);
 static inline void add_wait_queue(wait_queue_head_t *q, struct wait_queue_entry *e){ unsigned long f; spin_lock_irqsave(&q->lock,f); list_add(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
 static inline void add_wait_queue_exclusive(wait_queue_head_t *q, struct wait_queue_entry *e){ unsigned long f; spin_lock_irqsave(&q->lock,f); e->flags|=0x01/*WQ_FLAG_EXCLUSIVE*/; list_add_tail(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
 static inline void remove_wait_queue(wait_queue_head_t *q, struct wait_queue_entry *e){ unsigned long f; spin_lock_irqsave(&q->lock,f); list_del_init(&e->entry); spin_unlock_irqrestore(&q->lock,f); }
+/* __-prefixed variants: caller already holds q->lock (i915_sw_fence walks the queue under the lock). */
+static inline void __add_wait_queue(wait_queue_head_t *q, struct wait_queue_entry *e){ list_add(&e->entry,&q->head); }
+static inline void __add_wait_queue_entry_tail(wait_queue_head_t *q, struct wait_queue_entry *e){ list_add_tail(&e->entry,&q->head); }
+static inline void __remove_wait_queue(wait_queue_head_t *q, struct wait_queue_entry *e){ (void)q; list_del_init(&e->entry); }
 static inline void prepare_to_wait(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ (void)state; unsigned long f; spin_lock_irqsave(&q->lock,f); if(list_empty(&e->entry)) list_add(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
 static inline void prepare_to_wait_exclusive(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ (void)state; unsigned long f; spin_lock_irqsave(&q->lock,f); e->flags|=0x01; if(list_empty(&e->entry)) list_add_tail(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
 static inline long prepare_to_wait_event(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ prepare_to_wait(q,e,state); return 0; }
