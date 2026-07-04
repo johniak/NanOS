@@ -7,4 +7,9 @@
 static inline void *vmap(struct page **pages, unsigned count, unsigned long flags, pgprot_t prot){ (void)flags;(void)prot; return count?page_address(pages[0]):0; }
 static inline void vunmap(const void *addr){ (void)addr; }
 static inline void *vmap_pfn(unsigned long *pfns, unsigned count, pgprot_t prot){ (void)pfns;(void)count;(void)prot; return 0; }
+struct notifier_block;
+/* vmap-area purge notifier: i915 shrinker hooks it to drop cached vmaps under pressure. No vmalloc
+ * reclaim in the shim, so registration is inert. */
+static inline int register_vmap_purge_notifier(struct notifier_block *nb){ (void)nb; return 0; }
+static inline int unregister_vmap_purge_notifier(struct notifier_block *nb){ (void)nb; return 0; }
 #endif

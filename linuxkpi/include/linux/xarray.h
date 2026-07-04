@@ -3,11 +3,13 @@
 #include <linux/types.h>
 #include <linux/idr.h>
 #include <linux/spinlock.h>
-struct xarray { struct idr idr; spinlock_t lock; };
+struct xarray { struct idr idr; spinlock_t xa_lock; };
 #define DEFINE_XARRAY(name) struct xarray name
 #define XA_FLAGS_ALLOC 1
 #define XA_FLAGS_ALLOC1 2
-static inline void xa_init_flags(struct xarray *xa, unsigned f){ (void)f; idr_init(&xa->idr); spin_lock_init(&xa->lock); }
+#define XA_FLAGS_LOCK_IRQ 4
+#define XA_FLAGS_LOCK_BH  8
+static inline void xa_init_flags(struct xarray *xa, unsigned f){ (void)f; idr_init(&xa->idr); spin_lock_init(&xa->xa_lock); }
 static inline void xa_init(struct xarray *xa){ xa_init_flags(xa,0); }
 static inline void xa_destroy(struct xarray *xa){ idr_destroy(&xa->idr); }
 static inline void *xa_load(struct xarray *xa, unsigned long i){ return idr_find(&xa->idr,(int)i); }
@@ -22,8 +24,8 @@ static inline unsigned long xa_to_value(const void *e){ return (unsigned long)e 
 static inline bool xa_is_value(const void *e){ return (unsigned long)e & 1UL; }
 static inline bool xa_is_err(const void *e){ return false; }
 static inline bool xa_empty(struct xarray *xa){ return idr_is_empty(&xa->idr); }
-static inline void xa_lock(struct xarray *xa){ spin_lock(&xa->lock); }
-static inline void xa_unlock(struct xarray *xa){ spin_unlock(&xa->lock); }
+static inline void xa_lock(struct xarray *xa){ spin_lock(&xa->xa_lock); }
+static inline void xa_unlock(struct xarray *xa){ spin_unlock(&xa->xa_lock); }
 struct xa_limit; static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, struct xa_limit limit, unsigned gfp);
 #define xa_for_each(xa, index, entry) for(index=0; ((entry)=xa_load((xa),index))!=0 || (index) < (unsigned long)(xa)->idr.cap; index++) if((entry))
 #define xa_lock_irqsave(xa,f) do{ (f)=0; xa_lock(xa); }while(0)

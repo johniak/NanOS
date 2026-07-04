@@ -87,4 +87,9 @@ static inline void dma_fence_end_signalling(bool cookie){ (void)cookie; }
 static inline void dma_fence_enable_sw_signaling(struct dma_fence *fence){ (void)fence; }
 /* default ->wait implementation: spin until signaled (bounded by the caller's timeout in jiffies). */
 long dma_fence_default_wait(struct dma_fence *fence, bool intr, long timeout);
+/* i915_gem_execbuffer uses dma_fence_array_create/struct dma_fence_array via transitive includes in
+ * mainline; route it here (inside the guard, after struct dma_fence is defined) so the merge path is
+ * reachable. Inside the guard is essential: array.h re-includes dma-fence.h and on that re-entry this
+ * include is skipped, so no infinite include recursion. */
+#include <linux/dma-fence-array.h>
 #endif

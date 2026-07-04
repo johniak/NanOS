@@ -18,5 +18,14 @@ static inline void release_mem_region(unsigned long start, unsigned long n){ (vo
 #define IORESOURCE_BUSY    0x80000000
 #define IORESOURCE_SIZEALIGN 0x00020000
 #define IORESOURCE_PREFETCH 0x00002000
+#define IORESOURCE_MEM_64   0x00100000
+#define IORESOURCE_WINDOW   0x00200000
+#define IORESOURCE_IRQ      0x00000400
+#define IORESOURCE_DMA      0x00000800
+#define IORESOURCE_IRQ_HIGHEDGE 0x00000001
+#endif
+#ifndef DEFINE_RES_IRQ
+#define DEFINE_RES_IRQ(_irq) (struct resource){ .start=(_irq), .end=(_irq), .flags=IORESOURCE_IRQ }
+#define DEFINE_RES_IRQ_NAMED(_irq,_name) (struct resource){ .start=(_irq), .end=(_irq), .flags=IORESOURCE_IRQ }
 #endif
 #endif

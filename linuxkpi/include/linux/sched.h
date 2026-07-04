@@ -13,6 +13,8 @@ static inline void schedule(void){ __asm__ __volatile__("pause"); }
 static inline int signal_pending(struct task_struct *t){ (void)t; return 0; }
 static inline int signal_pending_state(unsigned int state, struct task_struct *t){ (void)state;(void)t; return 0; }
 static inline int fatal_signal_pending(struct task_struct *t){ (void)t; return 0; }
+/* deferred-preemption kernel: nothing marks a reschedule request during a kernel section. */
+static inline int need_resched(void){ return 0; }
 static inline void set_current_state(int s){ (void)s; }
 static inline void __set_current_state(int s){ (void)s; }
 #define cond_resched() 0

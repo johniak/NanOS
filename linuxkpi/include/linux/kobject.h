@@ -14,4 +14,11 @@ void kobject_put(struct kobject *k);
 static inline struct kobject *kobject_get(struct kobject *k){ return k; }
 static inline int kobject_init_and_add(struct kobject *k, const void *ktype, struct kobject *parent, const char *fmt, ...){ (void)k;(void)ktype;(void)parent;(void)fmt; return 0; }
 static inline void kobject_del(struct kobject *k){ (void)k; }
+/* kobj_type: release + sysfs_ops backing a kobject class (i915 gt sysfs_engines). */
+struct attribute;
+struct sysfs_ops { long (*show)(struct kobject*, struct attribute*, char*); long (*store)(struct kobject*, struct attribute*, const char*, unsigned long); };
+struct kobj_type { void (*release)(struct kobject*); const struct sysfs_ops *sysfs_ops; const struct attribute_group **default_groups; };
+extern const struct sysfs_ops kobj_sysfs_ops;
+static inline void kobject_init(struct kobject *k, const struct kobj_type *t){ (void)k;(void)t; }
+static inline int kobject_add(struct kobject *k, struct kobject *parent, const char *fmt, ...){ (void)k;(void)parent;(void)fmt; return 0; }
 #endif

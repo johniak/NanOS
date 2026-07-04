@@ -115,6 +115,7 @@ static inline int PageReserved(const struct page *p){ (void)p; return 0; }
 #define _PAGE_BIT_PCD 4
 #define _PAGE_PWT  (1UL << _PAGE_BIT_PWT)
 #define _PAGE_PCD  (1UL << _PAGE_BIT_PCD)
+#define _PAGE_PAT  (1UL << 7)
 #define _PAGE_PRESENT (1UL << 0)
 #define _PAGE_RW      (1UL << 1)
 #endif
@@ -182,6 +183,8 @@ static inline struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned lon
 static inline struct vm_area_struct *vma_lookup(struct mm_struct *mm, unsigned long addr){ (void)mm;(void)addr; return 0; }
 /* total RAM in pages: report a fixed large value (i915 sizes caches against it). */
 static inline unsigned long totalram_pages(void){ return 512UL * 1024 * 1024 / PAGE_SIZE; }
+/* the shim never runs in kswapd/reclaim context. */
+static inline int current_is_kswapd(void){ return 0; }
 #ifndef VM_FAULT_RETRY
 #define VM_FAULT_RETRY  0x000400
 #define VM_FAULT_NOPAGE 0x000100

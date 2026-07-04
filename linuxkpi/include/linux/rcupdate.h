@@ -35,6 +35,10 @@ void knx_rcu_synchronize(void);   /* kexports.def; real grace period (Scheduler:
 #endif
 #define call_rcu(head, func)   ((func)(head))
 #define rcu_barrier()          synchronize_rcu()
+#define cond_synchronize_rcu(oldstate)  synchronize_rcu()
+#define get_state_synchronize_rcu()     (0UL)
+#define start_poll_synchronize_rcu()    (0UL)
+#define poll_state_synchronize_rcu(s)   (true)
 
 #define rcu_dereference(p)             READ_ONCE(p)
 #define rcu_dereference_protected(p, c) (p)

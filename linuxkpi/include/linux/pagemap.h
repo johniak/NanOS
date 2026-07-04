@@ -34,4 +34,10 @@ static inline struct folio *page_folio(struct page *p){ return (struct folio*)p;
 static inline unsigned folio_batch_add(struct folio_batch *b, struct folio *f){ if(b->nr<16)b->folios[b->nr++]=f; return 16-b->nr; }
 static inline unsigned folio_batch_count(struct folio_batch *b){ return b->nr; }
 static inline unsigned folio_batch_space(struct folio_batch *b){ return 16-b->nr; }
+/* page-cache lookups: i915 shmem swap-out path. Backed by the lazily-populated shmem page array;
+ * the shim doesn't index by struct page here, so report "not present" (NULL) and callers re-fault. */
+static inline struct page *find_lock_page(struct address_space *mapping, unsigned long index){ (void)mapping;(void)index; return 0; }
+static inline struct page *find_get_page(struct address_space *mapping, unsigned long index){ (void)mapping;(void)index; return 0; }
+static inline void unlock_page(struct page *p){ (void)p; }
+static inline void lock_page(struct page *p){ (void)p; }
 #endif

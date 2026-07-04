@@ -108,4 +108,9 @@ static inline char *skip_spaces(const char *s){ while(*s==' '||*s=='\t') s++; re
  * debugfs write path, off the display bring-up path. */
 int sscanf(const char *buf, const char *fmt, ...);
 int vsscanf(const char *buf, const char *fmt, __builtin_va_list ap);
+/* strchrnul: like strchr but returns pointer to the terminating NUL (not NULL) if c not found.
+ * kext-only: glibc already declares strchrnul (non-static) on the host test path. */
+#ifndef NANOS_HOST_TEST
+static inline char *strchrnul(const char *s, int c){ while(*s && *s!=(char)c) s++; return (char*)s; }
+#endif
 #endif

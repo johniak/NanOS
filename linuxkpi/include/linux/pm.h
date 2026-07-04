@@ -11,6 +11,11 @@
 struct device;
 
 typedef struct pm_message { int event; } pm_message_t;
+#define PM_EVENT_ON       0x0000
+#define PM_EVENT_FREEZE   0x0001
+#define PM_EVENT_SUSPEND  0x0002
+#define PM_EVENT_HIBERNATE 0x0004
+#define PM_EVENT_RESUME   0x0010
 
 struct dev_pm_ops {
 	int (*prepare)(struct device *dev);

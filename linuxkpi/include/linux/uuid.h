@@ -7,6 +7,7 @@ typedef struct { unsigned char b[16]; } uuid_le;
  * perf sizes its OA-config uuid[] buffer with it. */
 #ifndef UUID_STRING_LEN
 #define UUID_STRING_LEN 36
+static inline bool uuid_is_valid(const char *uuid){ if(!uuid) return false; for(int i=0;i<36;i++){ char c=uuid[i]; if(i==8||i==13||i==18||i==23){ if(c!='-') return false; } else if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return false; } return uuid[36]==0; }
 #endif
 static inline void uuid_copy(uuid_t *d, const uuid_t *s){ memcpy(d,s,sizeof(*d)); }
 static inline void import_uuid(uuid_t *d, const unsigned char *s){ memcpy(d->b,s,16); }

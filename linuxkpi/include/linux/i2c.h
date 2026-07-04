@@ -14,6 +14,20 @@ struct i2c_client { struct i2c_adapter *adapter; };
 #define I2C_M_TEN       0x0010
 #define I2C_M_STOP      0x8000
 #define I2C_M_NOSTART   0x4000
+#ifndef I2C_NAME_SIZE
+#define I2C_NAME_SIZE 20
+#define I2C_FUNC_I2C            0x00000001
+#define I2C_FUNC_SMBUS_EMUL    0x0eff0008
+#define I2C_FUNC_10BIT_ADDR    0x00000002
+#define I2C_FUNC_NOSTART       0x00000010
+#define I2C_FUNC_SMBUS_READ_BLOCK_DATA  0x01000000
+#define I2C_FUNC_SMBUS_BLOCK_DATA       0x03000000
+#define I2C_FUNC_SMBUS_BYTE_DATA        0x000c0000
+#define I2C_FUNC_SMBUS_BLOCK_PROC_CALL  0x00008000
+#define I2C_FUNC_SMBUS_PROC_CALL        0x00800000
+#define I2C_FUNC_SMBUS_WRITE_BLOCK_DATA 0x02000000
+#define I2C_CLASS_DDC          (1<<3)
+#endif
 #define I2C_M_REV_DIR_ADDR 0x2000
 #define I2C_M_IGNORE_NAK   0x1000
 #define I2C_M_NO_RD_ACK    0x0800

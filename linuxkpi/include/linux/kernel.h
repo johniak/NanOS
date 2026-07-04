@@ -155,6 +155,9 @@ static inline int kstrtol(const char *s, unsigned int base, long *res){ long lon
 static inline int kstrtouint(const char *s, unsigned int base, unsigned int *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned int)v; return 0; }
 static inline int kstrtoint(const char *s, unsigned int base, int *res){ long long v; int r=kstrtoll(s,base,&v); if(r) return r; *res=(int)v; return 0; }
 static inline int kstrtou16(const char *s, unsigned int base, unsigned short *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned short)v; return 0; }
+static inline int kstrtou32(const char *s, unsigned int base, unsigned int *res){ return kstrtouint(s,base,res); }
+static inline int kstrtos32(const char *s, unsigned int base, int *res){ return kstrtoint(s,base,res); }
+static inline int kstrtou64(const char *s, unsigned int base, unsigned long long *res){ return kstrtoull(s,base,res); }
 static inline int kstrtou8(const char *s, unsigned int base, unsigned char *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned char)v; return 0; }
 static inline int kstrtobool(const char *s, bool *res){
 	if (!s) return -22;

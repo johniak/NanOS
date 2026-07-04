@@ -4,6 +4,10 @@
 #define USHRT_MAX 0xffffU
 #define LONG_MAX  __LONG_MAX__
 #define ULONG_MAX (~0UL)
+#define LONG_MIN  (-LONG_MAX - 1L)
+#define LLONG_MAX  __LONG_LONG_MAX__
+#define LLONG_MIN  (-LLONG_MAX - 1LL)
+#define ULLONG_MAX (~0ULL)
 #define PAGE_SIZE_LIMIT 0
 /* signed/unsigned fixed-width limits (Linux <linux/limits.h>). i915 clamps a few values to S16_MAX. */
 #ifndef S8_MAX

@@ -7,6 +7,7 @@ struct device;
 struct pwm_state { u64 period; u64 duty_cycle; unsigned polarity; bool enabled; };
 struct pwm_device { struct pwm_state state; };
 static inline bool pwm_enabled(struct pwm_device *p){ return p && p->state.enabled; }
+static inline bool pwm_is_enabled(struct pwm_device *p){ return p && p->state.enabled; }
 static inline void pwm_get_state(const struct pwm_device *p, struct pwm_state *s){ if(p&&s)*s=p->state; }
 static inline void pwm_init_state(const struct pwm_device *p, struct pwm_state *s){ if(p&&s)*s=p->state; }
 static inline int pwm_apply_might_sleep(struct pwm_device *p, const struct pwm_state *s){ if(p&&s)p->state=*s; return 0; }

@@ -214,6 +214,7 @@ static inline int pci_resource_n(struct pci_dev *dev) { (void)dev; return PCI_ST
 static inline int pci_resize_resource(struct pci_dev *dev, int bar, int size){ (void)dev;(void)bar;(void)size; return -95; }
 /* is a device matching this id table currently present? Only our GPU is; others are absent. */
 static inline int pci_dev_present(const struct pci_device_id *ids){ (void)ids; return 0; }
+static inline void pci_assign_unassigned_bus_resources(struct pci_bus *bus){ (void)bus; }
 /* resizable-BAR possible-size bitmask: BAR is fixed in the shim, so only the current size is offered. */
 static inline u32 pci_rebar_get_possible_sizes(struct pci_dev *dev, int bar){ (void)dev;(void)bar; return 0; }
 /* MSI enable: interrupts are wired by the kext's minimal LAPIC path (single vector), so report OK. */
@@ -221,9 +222,9 @@ static inline int pci_enable_msi(struct pci_dev *dev){ (void)dev; return 0; }
 static inline void pci_disable_msi(struct pci_dev *dev){ (void)dev; }
 /* pcibios_align_resource: identity alignment (return the requested start unchanged). */
 static inline unsigned long pcibios_align_resource(void *data, const struct resource *res, unsigned long size, unsigned long align){ (void)data;(void)res;(void)size;(void)align; return 0; }
-/* iterate a bus's window resources (shim bus has 4 slots, mostly NULL). */
-#define pci_bus_for_each_resource(bus, res) \
-	for (unsigned __i = 0; __i < 4 && ((res) = (bus)->resource[__i], 1); __i++)
+/* iterate a bus's window resources (shim bus has 4 slots, mostly NULL). i915 6.12 passes an index var. */
+#define pci_bus_for_each_resource(bus, res, i) \
+	for ((i) = 0; (i) < 4 && ((res) = (bus)->resource[(i)], 1); (i)++)
 #ifndef PCIBIOS_MIN_MEM
 #define PCIBIOS_MIN_MEM 0x100000
 #define PCIBIOS_MIN_IO  0x1000

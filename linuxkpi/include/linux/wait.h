@@ -81,6 +81,10 @@ static inline void prepare_to_wait_exclusive(wait_queue_head_t *q, struct wait_q
 static inline long prepare_to_wait_event(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ prepare_to_wait(q,e,state); return 0; }
 static inline void finish_wait(wait_queue_head_t *q, struct wait_queue_entry *e){ remove_wait_queue(q,e); }
 #define WQ_FLAG_EXCLUSIVE 0x01
+#define WQ_FLAG_WOKEN     0x02
+#define WQ_FLAG_BOOKMARK  0x04
+static inline long wait_woken(struct wait_queue_entry *e, unsigned mode, long timeout){ (void)e;(void)mode; return timeout; }
+static inline int woken_wake_function(struct wait_queue_entry *e, unsigned mode, int sync, void *key){ (void)e;(void)mode;(void)sync;(void)key; return 1; }
 
 #endif /* _LINUXKPI_LINUX_WAIT_H */
 
