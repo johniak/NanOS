@@ -205,7 +205,7 @@ Seven GL scripts share copy-pasted QEMU boot/login/capture logic, `capture-qemu-
 - **`lkpi resv_test`/`lkpi shmem` serial telemetry quieting** (`linuxkpi/kpi_fence.c`, `kpi_misc.c`): same territory conflict — do it right after the i915 Phase-A/B commits merge.
 - **GL damage/scissor optimization** (present currently redraws the full scene on any dirty): a perf feature, not a refactor; measure on the Dell first — TCG numbers won't transfer.
 - **Wallpaper cover-fit scaler → libnwui**: nice-to-have library extraction (`nwm.c:load_wallpaper` is generic bilinear scaling other apps could use); zero urgency.
-- **Merging nwm.nxe / nwm-gl.nxe into one binary**: intentionally NOT proposed — the split keeps verify64's image64 free of the Mesa closure; the runtime CPU fallback already unifies behaviour.
+- ~~**Merging nwm.nxe / nwm-gl.nxe into one binary**: intentionally NOT proposed — the split keeps verify64's image64 free of the Mesa closure; the runtime CPU fallback already unifies behaviour.~~ **Overridden by user decision 2026-07-04:** one nwm with a runtime capability probe IS the target — see `2026-07-04-nwm-unification.md` (executes after this plan's Task 1).
 
 ## Self-Review
 

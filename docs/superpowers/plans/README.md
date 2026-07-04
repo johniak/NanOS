@@ -87,6 +87,7 @@ Brak sterownika NVMe = bloker daily-drivera; ujęty w meta-planie długu (D1), p
 | [GL 3: i915/Iris na Dellu](2026-07-01-plan-3-gl-on-dell-i915-iris.md) | KPI-upgrade → i915 KMS → execbuf → iris | 🚧 faza A (IRQ/wq/fw ✅, kampania i915 0/276) |
 | [Dell GPU test log](2026-07-01-dell-gpu-test-log.md) | dziennik sesji na Dellu | 📓 |
 | [GL userspace refactor](2026-07-04-gl-userspace-refactor.md) | źródła-prawdy, settings na GL, FB-cache, tooling | ⬜ |
+| [Ujednolicenie nwm](2026-07-04-nwm-unification.md) | JEDEN nwm (runtime-probe sterownika GL), jeden obraz, koniec image64-gl | ⬜ |
 
 ## Build / odtwarzalność / dług
 
@@ -100,7 +101,7 @@ Brak sterownika NVMe = bloker daily-drivera; ujęty w meta-planie długu (D1), p
 
 ## Rekomendowana kolejność niezaczętych (spójna z meta-planem długu)
 
-1. **Reorg repo (K1)** → **`make world` (Plan 2)** → **GL refactor (T1-2 mogą iść równolegle z Planem 2)** → **Host macOS/Ubuntu** — jeden łańcuch odtwarzalności; po nim żadna wiedza nie żyje tylko na tym Macu.
+1. **Reorg repo (K1)** → **`make world` (Plan 2)** → **GL refactor (T1-2 mogą iść równolegle z Planem 2)** → **Ujednolicenie nwm** (po T1 refactoru; Task 1 sondy można zacząć od razu) → **Host macOS/Ubuntu** — jeden łańcuch odtwarzalności; po nim żadna wiedza nie żyje tylko na tym Macu.
 2. **ext-UB/kernel -O2 (K2)** — niezależny, duży zysk perf + bug poprawności.
 3. **i915 (w toku, osobna sesja)** — nie wchodzić jej w drogę; po merge'u dołożyć wyciszenie telemetrii lkpi i page-flip.
 4. Potem wg uznania: liquid-glass v2, Vulkan (po bramce), natywny GCC, NVMe (plan do napisania).
