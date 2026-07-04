@@ -205,6 +205,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/io.h>
 #include <linux/jump_label.h>
 #include <linux/file.h>
+#include <linux/module.h>    /* module_init/module_exit/MODULE_* — i915_module.c uses them with no direct include */
 
 #endif /* _LINUXKPI_COMPAT_H */
 

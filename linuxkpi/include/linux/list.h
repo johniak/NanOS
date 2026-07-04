@@ -127,3 +127,10 @@ static inline int list_empty_careful(const struct list_head *head){ struct list_
 #define list_first_or_null_rcu(ptr, type, member) \
 	({ struct list_head *__h = (ptr); __h->next != __h ? list_entry(__h->next, type, member) : (type*)0; })
 #endif
+
+#ifndef _LKPI_LIST_PREV
+#define _LKPI_LIST_PREV
+#define list_for_each_prev(pos, head) for ((pos) = (head)->prev; (pos) != (head); (pos) = (pos)->prev)
+#define list_for_each_prev_safe(pos, n, head) \
+	for ((pos) = (head)->prev, (n) = (pos)->prev; (pos) != (head); (pos) = (n), (n) = (pos)->prev)
+#endif

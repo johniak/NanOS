@@ -18,5 +18,12 @@ static inline int kref_get_unless_zero(struct kref *kref) {
 	while (c) { if (atomic_cmpxchg(&kref->refcount, c, c + 1) == c) return 1; c = atomic_read(&kref->refcount); }
 	return 0;
 }
+#include <linux/mutex.h>
+/* kref_put_lock: drop the ref, and if it hit zero take `lock` before calling release (which unlocks).
+ * The shim's mutex isn't reentrant-sensitive here; take it on the zero transition as Linux does. */
+static inline int kref_put_lock(struct kref *kref, void (*release)(struct kref *kref), struct mutex *lock) {
+	if (atomic_dec_and_test(&kref->refcount)) { mutex_lock(lock); release(kref); return 1; }
+	return 0;
+}
 
 #endif

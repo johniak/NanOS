@@ -19,8 +19,19 @@ typedef struct wait_queue_head {
 	struct list_head head;
 } wait_queue_head_t;
 
-struct wait_queue_entry { void *priv; struct list_head entry; };
+struct wait_queue_entry;
+/* wake callback: return non-zero if the entry was woken (autoremove_wake_function removes it). */
+typedef int (*wait_queue_func_t)(struct wait_queue_entry *wq_entry, unsigned mode, int flags, void *key);
+struct wait_queue_entry { unsigned int flags; void *priv; wait_queue_func_t func; struct list_head entry; };
 typedef struct wait_queue_entry wait_queue_entry_t;
+int autoremove_wake_function(struct wait_queue_entry *wq_entry, unsigned mode, int sync, void *key);
+int default_wake_function(struct wait_queue_entry *wq_entry, unsigned mode, int sync, void *key);
+static inline void init_waitqueue_entry(struct wait_queue_entry *e, void *task){ e->flags=0; e->priv=task; e->func=default_wake_function; INIT_LIST_HEAD(&e->entry); }
+static inline void init_wait_entry(struct wait_queue_entry *e, int flags){ e->flags=flags; e->priv=0; e->func=autoremove_wake_function; INIT_LIST_HEAD(&e->entry); }
+/* DEFINE_WAIT declares an on-stack entry whose wake callback auto-removes it from the queue. */
+#define DEFINE_WAIT_FUNC(name, function) \
+	struct wait_queue_entry name = { .flags = 0, .priv = 0, .func = (function), .entry = { &(name).entry, &(name).entry } }
+#define DEFINE_WAIT(name) DEFINE_WAIT_FUNC(name, autoremove_wake_function)
 
 #define DECLARE_WAIT_QUEUE_HEAD(name) wait_queue_head_t name = { { {0} }, { &(name).head, &(name).head } }
 
@@ -59,6 +70,17 @@ void lkpi_wait_pump(void);
 #define wait_event_killable_timeout(wq, condition, timeout)      __wait_event_to(wq, condition, timeout)
 
 #define might_sleep() do {} while (0)
+
+/* Queue membership. wake_up is a barrier (waiters spin on the condition), so these only maintain the
+ * list; the entry's ->func is invoked only if a caller walks the queue itself. */
+static inline void add_wait_queue(wait_queue_head_t *q, struct wait_queue_entry *e){ unsigned long f; spin_lock_irqsave(&q->lock,f); list_add(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
+static inline void add_wait_queue_exclusive(wait_queue_head_t *q, struct wait_queue_entry *e){ unsigned long f; spin_lock_irqsave(&q->lock,f); e->flags|=0x01/*WQ_FLAG_EXCLUSIVE*/; list_add_tail(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
+static inline void remove_wait_queue(wait_queue_head_t *q, struct wait_queue_entry *e){ unsigned long f; spin_lock_irqsave(&q->lock,f); list_del_init(&e->entry); spin_unlock_irqrestore(&q->lock,f); }
+static inline void prepare_to_wait(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ (void)state; unsigned long f; spin_lock_irqsave(&q->lock,f); if(list_empty(&e->entry)) list_add(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
+static inline void prepare_to_wait_exclusive(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ (void)state; unsigned long f; spin_lock_irqsave(&q->lock,f); e->flags|=0x01; if(list_empty(&e->entry)) list_add_tail(&e->entry,&q->head); spin_unlock_irqrestore(&q->lock,f); }
+static inline long prepare_to_wait_event(wait_queue_head_t *q, struct wait_queue_entry *e, int state){ prepare_to_wait(q,e,state); return 0; }
+static inline void finish_wait(wait_queue_head_t *q, struct wait_queue_entry *e){ remove_wait_queue(q,e); }
+#define WQ_FLAG_EXCLUSIVE 0x01
 
 #endif /* _LINUXKPI_LINUX_WAIT_H */
 

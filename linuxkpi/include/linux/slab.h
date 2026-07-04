@@ -22,6 +22,18 @@
 #define ZERO_OR_NULL_PTR(x) ((unsigned long)(x) <= (unsigned long)ZERO_SIZE_PTR)
 #endif
 
+/* kmem_cache creation flags — the shim's allocator ignores them (no per-cache tuning), but they must
+ * be defined so KMEM_CACHE(T, SLAB_HWCACHE_ALIGN | ...) and friends compile. */
+#ifndef SLAB_HWCACHE_ALIGN
+#define SLAB_HWCACHE_ALIGN   0x00002000u
+#define SLAB_RECLAIM_ACCOUNT 0x00020000u
+#define SLAB_TYPESAFE_BY_RCU 0x00080000u
+#define SLAB_POISON          0x00000800u
+#define SLAB_CACHE_DMA       0x00004000u
+#define SLAB_PANIC           0x00040000u
+#define SLAB_ACCOUNT         0x04000000u
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,6 +74,8 @@ static inline void *kmem_cache_zalloc(struct kmem_cache *c, gfp_t f){ return kza
 static inline void kmem_cache_free(struct kmem_cache *c, void *p){ (void)c; kfree(p); }
 static inline void *memdup_user(const void *src, size_t len){ void *p=kmalloc(len,0); if(p)memcpy(p,src,len); return p; }
 static inline void *vmemdup_user(const void *src, size_t len){ return memdup_user(src,len); }
+/* like memdup_user but NUL-terminates (for user strings of known length). */
+static inline void *memdup_user_nul(const void *src, size_t len){ char *p=(char*)kmalloc(len+1,0); if(p){ memcpy(p,src,len); p[len]=0; } return p; }
 #endif
 
 #ifndef _LKPI_SLAB_ALIGN
@@ -78,4 +92,14 @@ static inline void *kmalloc_node_track_caller(size_t n, gfp_t f, int node){ (voi
 static inline char *kstrdup_const(const char *s, gfp_t f){ return kstrdup(s,f); }
 static inline void *kmemdup(const void *src, size_t len, gfp_t f){ void *p=kmalloc(len,f); if(p)memcpy(p,src,len); return p; }
 static inline void *kvmemdup(const void *src, size_t len, gfp_t f){ return kmemdup(src,len,f); }
+static inline void *kmemdup_array(const void *src, size_t n, size_t size, gfp_t f){ return kmemdup(src, n*size, f); }
+#endif
+
+#ifndef _LKPI_SLAB_KMEM_CACHE
+#define _LKPI_SLAB_KMEM_CACHE
+/* KMEM_CACHE(struct T, flags): named cache sized/aligned for that struct (canonical kernel macro). */
+#define KMEM_CACHE(__struct, __flags) \
+	kmem_cache_create(#__struct, sizeof(struct __struct), __alignof__(struct __struct), (__flags), NULL)
+/* might_alloc() is a might_sleep()/lockdep annotation; no-op in the shim. */
+#define might_alloc(gfp) do { (void)(gfp); } while (0)
 #endif

@@ -91,3 +91,17 @@ static inline void *memchr_inv(const void *p, int v, size_t n){ const unsigned c
 static inline char *strsep(char **sp, const char *delim){ char *s=*sp, *t; if(!s) return 0; for(t=s;*t;t++){ const char *d; for(d=delim;*d;d++) if(*t==*d){ *t=0; *sp=t+1; return s; } } *sp=0; return s; }
 #endif
 #endif
+
+#ifndef _LKPI_STRING_X6
+#define _LKPI_STRING_X6
+/* strim: strip leading+trailing whitespace in place, return the trimmed start. */
+static inline char *strim(char *s){
+	char *e; if(!s) return s;
+	while(*s==' '||*s=='\t'||*s=='\n'||*s=='\r') s++;
+	if(!*s) return s;
+	e = s; while(*e) e++;
+	for(e--; e>s && (*e==' '||*e=='\t'||*e=='\n'||*e=='\r'); e--) ;
+	e[1]=0; return s;
+}
+static inline char *skip_spaces(const char *s){ while(*s==' '||*s=='\t') s++; return (char*)s; }
+#endif

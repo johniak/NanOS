@@ -122,6 +122,51 @@ static inline const char *str_on_off(bool v){ return v?"on":"off"; }
 static inline const char *str_enabled_disabled(bool v){ return v?"enabled":"disabled"; }
 #endif
 
+#ifndef _LKPI_KSTRTOX
+#define _LKPI_KSTRTOX
+/* imperative variant of str_enabled_disabled (i915 uses both). */
+static inline const char *str_enable_disable(bool v){ return v?"enable":"disable"; }
+/* Real base-aware unsigned parser (module params + debugfs writes). base 0 = autodetect 0x/decimal.
+ * Trailing newline is tolerated (echo into a debugfs file). Returns -EINVAL(22) on a bad digit. */
+static inline int kstrtoull(const char *s, unsigned int base, unsigned long long *res){
+	unsigned long long v = 0; bool any = false;
+	if (!s) return -22;
+	while (*s == ' ' || *s == '\t') s++;
+	if (base == 0) { if (s[0]=='0' && (s[1]=='x'||s[1]=='X')) { base=16; s+=2; } else base=10; }
+	else if (base == 16 && s[0]=='0' && (s[1]=='x'||s[1]=='X')) s += 2;
+	for (; *s && *s!='\n'; s++) {
+		unsigned d;
+		if (*s>='0'&&*s<='9') d = *s-'0';
+		else if (*s>='a'&&*s<='f') d = *s-'a'+10;
+		else if (*s>='A'&&*s<='F') d = *s-'A'+10;
+		else return -22;
+		if (d >= base) return -22;
+		v = v*base + d; any = true;
+	}
+	if (!any) return -22;
+	*res = v; return 0;
+}
+static inline int kstrtoll(const char *s, unsigned int base, long long *res){
+	if (s && *s=='-') { unsigned long long v; int r=kstrtoull(s+1,base,&v); if(r) return r; *res = -(long long)v; return 0; }
+	unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(long long)v; return 0;
+}
+static inline int kstrtoul(const char *s, unsigned int base, unsigned long *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned long)v; return 0; }
+static inline int kstrtol(const char *s, unsigned int base, long *res){ long long v; int r=kstrtoll(s,base,&v); if(r) return r; *res=(long)v; return 0; }
+static inline int kstrtouint(const char *s, unsigned int base, unsigned int *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned int)v; return 0; }
+static inline int kstrtoint(const char *s, unsigned int base, int *res){ long long v; int r=kstrtoll(s,base,&v); if(r) return r; *res=(int)v; return 0; }
+static inline int kstrtou16(const char *s, unsigned int base, unsigned short *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned short)v; return 0; }
+static inline int kstrtou8(const char *s, unsigned int base, unsigned char *res){ unsigned long long v; int r=kstrtoull(s,base,&v); if(r) return r; *res=(unsigned char)v; return 0; }
+static inline int kstrtobool(const char *s, bool *res){
+	if (!s) return -22;
+	switch (s[0]) {
+	case 'y': case 'Y': case '1': *res=true;  return 0;
+	case 'n': case 'N': case '0': *res=false; return 0;
+	case 'o': case 'O': *res=(s[1]=='n'||s[1]=='N'); return 0;
+	}
+	return -22;
+}
+#endif
+
 #ifndef _LKPI_KERNEL_MATH
 #define _LKPI_KERNEL_MATH
 #define DIV_ROUND_UP_ULL(n,d) DIV_ROUND_UP((unsigned long long)(n),(d))

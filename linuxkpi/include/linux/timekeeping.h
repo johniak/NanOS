@@ -10,6 +10,9 @@ static inline u64 ktime_get_raw_ns(void){ return knx_uptime_us()*1000ull; }
  * include above. i915_utils.h pulls ktime.h directly, which is why it moved there. */
 static inline u64 ktime_get_ns(void){ return knx_uptime_us()*1000ull; }
 static inline u64 ktime_get_mono_fast_ns(void){ return ktime_get_ns(); }
+#ifndef _LKPI_KTIME_BOOTTIME_NS
+#define _LKPI_KTIME_BOOTTIME_NS
 static inline u64 ktime_get_boottime_ns(void){ return ktime_get_ns(); }
+#endif
 static inline void ktime_get_ts64(struct timespec64 *ts){ u64 ns=ktime_get_ns(); ts->tv_sec=ns/1000000000ull; ts->tv_nsec=ns%1000000000ull; }
 #endif

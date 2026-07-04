@@ -88,3 +88,14 @@ static inline void atomic_long_set(atomic_long_t *v, long i){ atomic64_set(v, i)
 static inline void atomic_long_inc(atomic_long_t *v){ atomic64_inc(v); }
 static inline void atomic_long_add(long i, atomic_long_t *v){ (void)atomic64_add_return(i, v); }
 #endif
+
+#ifndef _LKPI_ATOMIC_CMPXCHG64
+#define _LKPI_ATOMIC_CMPXCHG64
+/* 64-bit cmpxchg on a plain memory location (i915 uses it on seqno/timestamp words). */
+#define cmpxchg64(ptr, oldv, newv) __sync_val_compare_and_swap((ptr), (oldv), (newv))
+/* atomic_try_cmpxchg(v, &old, new): CAS; on failure writes the seen value back into *old, returns bool. */
+static inline bool atomic_try_cmpxchg(atomic_t *v, int *oldp, int nv){ int o=*oldp; int prev=atomic_cmpxchg(v,o,nv); if(prev==o) return true; *oldp=prev; return false; }
+static inline bool atomic_long_try_cmpxchg(atomic_long_t *v, long *oldp, long nv){ return __atomic_compare_exchange_n(&v->counter, oldp, nv, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline bool atomic64_try_cmpxchg(atomic64_t *v, long *oldp, long nv){ return __atomic_compare_exchange_n(&v->counter, oldp, nv, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); }
+static inline long atomic64_cmpxchg(atomic64_t *v, long old, long nv){ __atomic_compare_exchange_n(&v->counter, &old, nv, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); return old; }
+#endif

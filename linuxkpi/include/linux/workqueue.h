@@ -58,4 +58,10 @@ void lkpi_set_wq_pump(void (*fn)(void));   /* kpi_fence.c: register the wait-pum
 }
 #endif
 bool flush_delayed_work(struct delayed_work *dw);
+/* ordered workqueue == single in-flight work: alloc_workqueue with max_active=1. */
+#define __WQ_ORDERED 0
+#define alloc_ordered_workqueue(fmt, flags, ...) alloc_workqueue((fmt), (flags), 1, ##__VA_ARGS__)
+#define delayed_work_pending(w) work_pending(&(w)->work)
+/* non-sync cancel: the shim runs work either inline or on a single worker, so cancel == cancel_sync. */
+#define cancel_work(w) cancel_work_sync(w)
 #endif

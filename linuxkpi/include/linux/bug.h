@@ -16,5 +16,7 @@
 #define WARN(cond, fmt, ...) ({ int __c = !!(cond); if (__c) printk(fmt, ##__VA_ARGS__); __c; })
 #define WARN_ONCE(cond, fmt, ...) ({ static int __w; int __c = !!(cond); if (__c && !__w) { __w = 1; printk(fmt, ##__VA_ARGS__); } __c; })
 #define WARN_ON_SMP(cond) WARN_ON(cond)
+/* ratelimited WARN: the shim has no rate limiter, so it behaves like a plain WARN. */
+#define WARN_RATELIMIT(cond, fmt, ...) WARN(cond, fmt, ##__VA_ARGS__)
 
 #endif /* _LINUXKPI_LINUX_BUG_H */

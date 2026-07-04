@@ -29,6 +29,14 @@ unsigned long lkpi_jiffies(void);
 #define time_after_eq(a, b)   ((long)((a) - (b)) >= 0)
 #define time_before_eq(a, b)  time_after_eq(b, a)
 #define time_in_range(a, b, c) (time_after_eq(a, b) && time_before_eq(a, c))
+/* 32-bit jiffies comparison (i915 wraps timestamps to u32). */
+#define time_after32(a, b)   ((s32)((u32)(b) - (u32)(a)) < 0)
+#define time_before32(a, b)  time_after32(b, a)
+/* jiffies rounding: the shim has no per-CPU alignment goal, so "round" is identity. */
+static inline unsigned long round_jiffies_up(unsigned long j){ return j; }
+static inline unsigned long round_jiffies_up_relative(unsigned long j){ return j; }
+static inline unsigned long round_jiffies_relative(unsigned long j){ return j; }
+static inline unsigned long round_jiffies(unsigned long j){ return j; }
 
 static inline unsigned long msecs_to_jiffies(unsigned int m) {
 	return (unsigned long)m * HZ / 1000u;   /* HZ=1000 -> 1:1 */

@@ -48,4 +48,7 @@ static inline int wake_up_process(struct task_struct *t){ (void)t; return 0; }
 #define _LKPI_SCHED_TIMEOUT
 static inline long schedule_timeout_uninterruptible(long t){ (void)t; return 0; }
 static inline long schedule_timeout_interruptible(long t){ (void)t; return 0; }
+/* cond_resched_lock: drop the lock, (would) yield, retake it. The deferred-preemption scheduler never
+ * preempts kernel readers, so there is nothing to yield to here — just report "did not resched". */
+#define cond_resched_lock(lock) ({ (void)(lock); 0; })
 #endif

@@ -27,4 +27,6 @@ static inline int mutex_is_locked(struct mutex *m){ return m->held; }
 #define _LKPI_MUTEX_DEC
 #include <linux/atomic.h>
 static inline int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock){ if(!atomic_dec_and_test(cnt)) return 0; mutex_lock(lock); return 1; }
+/* nest_lock annotates lockdep nesting; the shim ignores the nest arg and just takes the lock. */
+#define mutex_lock_nest_lock(lock, nest) mutex_lock(lock)
 #endif

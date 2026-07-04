@@ -129,6 +129,16 @@ void fput(struct file *f)
 
 int seq_printf(struct seq_file *m, const char *fmt, ...) { (void)m; (void)fmt; return 0; }
 void seq_puts(struct seq_file *m, const char *s) { (void)m; (void)s; }
+/* No real file read pipeline in the shim: report immediate EOF (0 bytes). */
+long seq_read(struct file *f, char __user *buf, unsigned long size, loff_t *ppos)
+{ (void)f; (void)buf; (void)size; (void)ppos; return 0; }
+
+/* wait_queue wake callbacks. wake_up() is a barrier in the shim (waiters spin on the condition), so
+ * these are invoked only if a caller walks the queue itself; autoremove unlinks the entry as Linux does. */
+int default_wake_function(struct wait_queue_entry *e, unsigned mode, int sync, void *key)
+{ (void)e; (void)mode; (void)sync; (void)key; return 1; }
+int autoremove_wake_function(struct wait_queue_entry *e, unsigned mode, int sync, void *key)
+{ (void)mode; (void)sync; (void)key; if (e) list_del_init(&e->entry); return 1; }
 
 /* ---- sysfs string helpers ----------------------------------------------------------- */
 

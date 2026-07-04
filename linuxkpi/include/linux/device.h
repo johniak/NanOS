@@ -31,7 +31,10 @@ struct kobject { const char *name; struct kobject *parent; };
 struct class { const char *name; const struct attribute_group **dev_groups; char *(*devnode)(const struct device*, unsigned short*); };
 struct device_type { const char *name; const struct attribute_group **groups; void (*release)(struct device*); char *(*devnode)(const struct device*, unsigned short*, unsigned*, unsigned*); };
 struct component_ops { int (*bind)(struct device*, struct device*, void*); void (*unbind)(struct device*, struct device*, void*); };
+/* runtime-PM state block. The shim doesn't do autosuspend, so is_suspended stays 0 (always awake). */
+struct dev_pm_info { bool is_suspended; unsigned int disable_depth; void *driver_flags; };
 struct device {
+	struct dev_pm_info power;
 	struct device *parent;
 	const char *init_name;
 	char name[48];
@@ -153,6 +156,20 @@ static inline void device_remove_file(struct device *d, const struct device_attr
 static inline int device_add_group(struct device *d, const struct attribute_group *g){ (void)d;(void)g; return 0; }
 static inline int component_add(struct device *d, const struct component_ops *o){ (void)d;(void)o; return 0; }
 static inline void component_del(struct device *d, const struct component_ops *o){ (void)d;(void)o; }
+/* device_link: express a supplier/consumer PM+probe ordering edge. The shim has no PM-runtime graph,
+ * so this returns a non-NULL sentinel (callers only NULL-check it) and del is a no-op. */
+struct device_link;
+static inline struct device_link *device_link_add(struct device *consumer, struct device *supplier, unsigned int flags){ (void)consumer;(void)supplier;(void)flags; return (struct device_link *)consumer; }
+static inline void device_link_del(struct device_link *link){ (void)link; }
+static inline void device_link_remove(void *consumer, struct device *supplier){ (void)consumer;(void)supplier; }
+static inline bool device_iommu_mapped(struct device *d){ (void)d; return false; }
+static inline int device_create_bin_file(struct device *d, const void *attr){ (void)d;(void)attr; return 0; }
+static inline void device_remove_bin_file(struct device *d, const void *attr){ (void)d;(void)attr; }
+static inline void dev_pm_set_driver_flags(struct device *d, unsigned long flags){ (void)d;(void)flags; }
+#define DL_FLAG_STATELESS         (1<<0)
+#define DL_FLAG_PM_RUNTIME        (1<<1)
+#define DL_FLAG_RPM_ACTIVE        (1<<2)
+#define DPM_FLAG_NO_DIRECT_COMPLETE (1<<0)
 #endif
 
 #ifndef _LKPI_DEVICE_ATTR2

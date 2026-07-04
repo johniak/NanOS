@@ -72,3 +72,11 @@ enum { DUMP_PREFIX_NONE=0, DUMP_PREFIX_ADDRESS, DUMP_PREFIX_OFFSET };
 static inline void print_hex_dump(const char*a,const char*b,int c,int d,int e,const void*f,size_t g,bool h){ (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h; }
 static inline void print_hex_dump_debug(const char*a,int b,int c,int d,const void*e,size_t f,bool g){ (void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g; }
 #endif
+
+#ifndef _LKPI_PRINTK_ONCE
+#define _LKPI_PRINTK_ONCE
+#define pr_warn_once(fmt, ...)  ({ static int __w; if(!__w){ __w=1; printk(fmt, ##__VA_ARGS__); } (void)0; })
+#define pr_info_once(fmt, ...)  ({ static int __w; if(!__w){ __w=1; printk(fmt, ##__VA_ARGS__); } (void)0; })
+#define pr_err_once(fmt, ...)   ({ static int __w; if(!__w){ __w=1; printk(fmt, ##__VA_ARGS__); } (void)0; })
+#define pr_notice_once(fmt, ...) pr_info_once(fmt, ##__VA_ARGS__)
+#endif

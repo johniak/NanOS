@@ -154,4 +154,43 @@ typedef int pci_power_t;
 #define PCI_D3hot  3
 #define PCI_D3cold 4
 #define PCI_POWER_ERROR (-1)
+
+/* bus-level config accessors: address by (bus, devfn) instead of a pci_dev. Same knx_pci path. */
+static inline int pci_bus_read_config_dword(struct pci_bus *b, unsigned int devfn, int where, u32 *val) {
+	*val = knx_pci_cfg_read32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)where); return 0;
+}
+static inline int pci_bus_read_config_word(struct pci_bus *b, unsigned int devfn, int where, u16 *val) {
+	u32 v = knx_pci_cfg_read32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3));
+	*val = (u16)(v >> ((where & 2) * 8)); return 0;
+}
+static inline int pci_bus_read_config_byte(struct pci_bus *b, unsigned int devfn, int where, u8 *val) {
+	u32 v = knx_pci_cfg_read32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3));
+	*val = (u8)(v >> ((where & 3) * 8)); return 0;
+}
+static inline int pci_bus_write_config_word(struct pci_bus *b, unsigned int devfn, int where, u16 val) {
+	u32 v = knx_pci_cfg_read32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3));
+	int sh = (where & 2) * 8; v = (v & ~(0xffffu << sh)) | ((u32)val << sh);
+	knx_pci_cfg_write32(b?b->number:0, PCI_SLOT(devfn), PCI_FUNC(devfn), (unsigned char)(where & ~3), v); return 0;
+}
+
+/* Device lookup helpers. The shim probes only our single GPU (handed to it directly), so scans for
+ * OTHER devices (bridges, ISA, another GPU) find nothing: return NULL. Callers treat NULL as absent. */
+static inline struct pci_dev *pci_get_class(unsigned int class, struct pci_dev *from) { (void)class;(void)from; return 0; }
+static inline struct pci_dev *pci_get_domain_bus_and_slot(int domain, unsigned int bus, unsigned int devfn) { (void)domain;(void)bus;(void)devfn; return 0; }
+/* pci_match_id: linear scan of a null-terminated id table for a vendor/device match (real logic). */
+static inline const struct pci_device_id *pci_match_id(const struct pci_device_id *ids, struct pci_dev *dev) {
+	if (!ids || !dev) return 0;
+	for (; ids->vendor || ids->device || ids->subvendor || ids->class_mask; ids++) {
+		if ((ids->vendor == PCI_ANY_ID || ids->vendor == dev->vendor) &&
+		    (ids->device == PCI_ANY_ID || ids->device == dev->device) &&
+		    (ids->subvendor == PCI_ANY_ID || ids->subvendor == dev->subsystem_vendor) &&
+		    (ids->subdevice == PCI_ANY_ID || ids->subdevice == dev->subsystem_device))
+			return ids;
+	}
+	return 0;
+}
+/* Option-ROM / BAR resource release: the shim doesn't reserve them, so releasing is a no-op. */
+static inline void pci_release_resource(struct pci_dev *dev, int bar) { (void)dev; (void)bar; }
+static inline int pci_resource_n(struct pci_dev *dev) { (void)dev; return PCI_STD_NUM_BARS; }
+
 #endif /* _LINUXKPI_LINUX_PCI_H */

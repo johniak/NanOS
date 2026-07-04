@@ -19,6 +19,12 @@ extern unsigned long long knx_uptime_us(void);
 
 static inline ktime_t ktime_get(void) { return (ktime_t)(knx_uptime_us() * 1000ull); }
 static inline ktime_t ktime_get_boottime(void) { return ktime_get(); }
+#ifndef _LKPI_KTIME_BOOTTIME_NS
+#define _LKPI_KTIME_BOOTTIME_NS
+static inline u64 ktime_get_boottime_ns(void) { return (u64)ktime_get_boottime(); }
+#endif
+/* compose a ktime from seconds + nanoseconds (ktime_t is a scalar ns count here). */
+static inline ktime_t ktime_set(s64 secs, unsigned long nsecs) { return secs*1000000000LL + (s64)nsecs; }
 /* Raw (NTP-uncorrected) monotonic clock. We have no NTP discipline, so it equals ktime_get(). i915
  * uses it for engine-busy timestamps. */
 static inline ktime_t ktime_get_raw(void) { return ktime_get(); }
@@ -31,6 +37,7 @@ static inline s64 ktime_to_ms(ktime_t k) { return k / 1000000; }
 static inline ktime_t ktime_add(ktime_t a, ktime_t b) { return a + b; }
 static inline ktime_t ktime_add_ns(ktime_t a, u64 ns) { return a + (s64)ns; }
 static inline ktime_t ktime_add_us(ktime_t a, u64 us) { return a + (s64)us * 1000; }
+static inline ktime_t ktime_add_ms(ktime_t a, u64 ms) { return a + (s64)ms * 1000000; }
 static inline ktime_t ktime_sub(ktime_t a, ktime_t b) { return a - b; }
 static inline s64 ktime_us_delta(ktime_t a, ktime_t b) { return ktime_to_us(a - b); }
 static inline s64 ktime_ms_delta(ktime_t a, ktime_t b) { return ktime_to_ms(a - b); }

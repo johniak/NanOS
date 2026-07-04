@@ -60,6 +60,21 @@ void sort(void *vbase, size_t num, size_t size,
 	}
 }
 
+/* sort_r: same heap-free contract as sort() but the comparator/swap receive a caller `priv`.
+ * Insertion sort — i915's sort_r inputs are tiny (a handful of VBT/engine entries), so O(n^2) is
+ * fine and keeps the priv-threading trivially correct. */
+void sort_r(void *vbase, size_t num, size_t size,
+            int (*cmp)(const void *, const void *, const void *priv),
+            void (*swapf)(void *, void *, int),
+            const void *priv) {
+	char *base = (char *)vbase;
+	if (num < 2 || size == 0)
+		return;
+	for (size_t i = 1; i < num; i++)
+		for (size_t j = i; j > 0 && cmp(base + (j - 1) * size, base + j * size, priv) > 0; j--)
+			do_swap(base + (j - 1) * size, base + j * size, (int)size, swapf);
+}
+
 void *lkpi_bsearch(const void *key, const void *base, size_t num, size_t size,
                    int (*cmp)(const void *, const void *)) {
 	const char *b = (const char *)base;

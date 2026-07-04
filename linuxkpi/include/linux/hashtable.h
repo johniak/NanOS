@@ -62,4 +62,10 @@ static inline bool __hash_empty(struct hlist_head *ht, unsigned int sz)
 #define hash_for_each_possible(ht, obj, member, key) \
 	hlist_for_each_entry(obj, &ht[hash_min(key, HASH_BITS(ht))], member)
 
+#define hash_for_each_safe(ht, bkt, tmp, obj, member) \
+	for ((bkt) = 0; (bkt) < HASH_SIZE(ht); (bkt)++) \
+		hlist_for_each_entry_safe(obj, tmp, &ht[bkt], member)
+#define hash_for_each_possible_safe(ht, obj, tmp, member, key) \
+	hlist_for_each_entry_safe(obj, tmp, &ht[hash_min(key, HASH_BITS(ht))], member)
+
 #endif /* _LINUXKPI_LINUX_HASHTABLE_H */

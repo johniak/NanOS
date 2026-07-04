@@ -79,6 +79,17 @@
 
 #define data_race(expr) ({ __auto_type __v = ({ expr; }); __v; })
 
+/* __diag_* wrap per-file GCC diagnostic pragmas (i915_pci.c brackets its big device tables
+ * in __diag_push()/__diag_ignore_all("-Woverride-init",...)/__diag_pop()). We compile the
+ * vendored tables as-is and don't need those warnings suppressed, so these are no-ops. */
+#ifndef __diag_push
+#define __diag_push()
+#define __diag_pop()
+#define __diag_ignore_all(option, s)
+#define __diag_ignore(compiler, version, option, s)
+#define __diag(s)
+#endif
+
 static inline void __chk_user_ptr(const volatile void *p) { (void)p; }
 
 #endif /* __ASSEMBLY__ */

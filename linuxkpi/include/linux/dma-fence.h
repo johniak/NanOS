@@ -9,8 +9,10 @@ struct dma_fence;
 struct dma_fence_ops;
 struct dma_fence {
   spinlock_t *lock; const struct dma_fence_ops *ops;
+  struct rcu_head rcu;              /* freed via kfree_rcu after the last ref (dma_fence_free) */
   struct list_head cb_list; u64 context; u64 seqno; unsigned long flags;
   struct kref refcount; int error;
+  ktime_t timestamp;               /* set when the fence signals (DMA_FENCE_FLAG_TIMESTAMP_BIT) */
 };
 struct dma_fence_cb; typedef void (*dma_fence_func_t)(struct dma_fence*, struct dma_fence_cb*);
 struct dma_fence_cb { struct list_head node; dma_fence_func_t func; };

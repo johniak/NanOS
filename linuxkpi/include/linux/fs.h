@@ -2,9 +2,10 @@
 #define _LKPI_FS_H
 #include <linux/types.h>
 #include <linux/wait.h>
+#include <linux/atomic.h>   /* struct file.f_count is an atomic_long_t (i915 shmem_utils bumps it) */
 struct vm_area_struct;
 struct inode { unsigned long i_ino; void *i_mapping; umode_t i_mode; void *i_private; };
-struct file { void *private_data; void *f_mapping; unsigned int f_flags; loff_t f_pos; const struct file_operations *f_op; struct inode *f_inode; };
+struct file { void *private_data; void *f_mapping; unsigned int f_flags; loff_t f_pos; const struct file_operations *f_op; struct inode *f_inode; atomic_long_t f_count; };
 struct file_operations {
   void *owner;
   int (*open)(struct inode *, struct file *);

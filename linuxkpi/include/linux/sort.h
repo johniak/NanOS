@@ -18,6 +18,13 @@ void sort(void *base, size_t num, size_t size,
 void *bsearch(const void *key, const void *base, size_t num, size_t size,
               int (*cmp)(const void *, const void *));
 
+/* sort_r: like sort() but the comparator (and optional swap) receive a caller `priv` pointer.
+ * i915 sorts small arrays (e.g. VBT child devices, engine lists); implemented in kpi_sort.c. */
+void sort_r(void *base, size_t num, size_t size,
+            int (*cmp)(const void *, const void *, const void *priv),
+            void (*swap)(void *, void *, int size),
+            const void *priv);
+
 /* collision-free engine entry (bsearch aliases this in the kext; host tests call it). */
 void *lkpi_bsearch(const void *key, const void *base, size_t num, size_t size,
                    int (*cmp)(const void *, const void *));
