@@ -178,6 +178,7 @@ static Task* allocSlot(int id) {
 	Task* t = &g_tasks[i];
 	t->id = id;
 	t->body = 0;
+	t->arg = 0;
 	t->state = TASK_BLOCKED;   // not runnable until the caller has fabricated a valid kesp
 	t->wakeAt = 0;
 	t->waitNext = 0;
@@ -199,6 +200,21 @@ Task* Scheduler::create(void (*body)(), int id) {
 	t->kesp = arch::archTaskBootstrap((unsigned char*) t->esp0, arch::archKernelCr3());
 	// Publish READY under the runqueue lock — the slot was left TASK_BLOCKED (non-claimable) by
 	// allocSlot, and only now is its kesp valid, so this is the point another CPU may claim it.
+	unsigned long f = arch::cpuIrqSave();
+	g_rqLock.lock();
+	t->state = TASK_READY;
+	g_rqLock.unlock();
+	arch::cpuIrqRestore(f);
+	return t;
+}
+
+Task* Scheduler::create(void (*body)(), void* arg, int id) {
+	Task* t = allocSlot(id);
+	if (!t)
+		return 0;
+	t->body = body ? body : idleBody;
+	t->arg  = arg;                                 // set BEFORE publishing READY (claimable point)
+	t->kesp = arch::archTaskBootstrap((unsigned char*) t->esp0, arch::archKernelCr3());
 	unsigned long f = arch::cpuIrqSave();
 	g_rqLock.lock();
 	t->state = TASK_READY;

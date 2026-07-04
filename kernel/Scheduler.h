@@ -32,6 +32,7 @@ struct Task {
 	uintptr_t esp0;         // top of this task's kernel stack (TSS.esp0 when it runs)
 	TaskState state;
 	void (*body)();
+	void*    arg;           // opaque per-task argument for arg-passing kernel threads (0 for none)
 	int id;                 // 0 = idle
 	unsigned char* kstack;
 	unsigned wakeAt;        // BLOCKED with a timed wakeup: tick at which onTick re-wakes it (0 = none)
@@ -46,6 +47,9 @@ class Scheduler {
 public:
 	static void init();                            // create the idle task (id 0)
 	static Task* create(void (*body)(), int id);   // bootstrap a task, mark READY
+	// Same, but with an opaque argument the body can read via current()->arg (arg is set before
+	// the task is published READY, so a claiming CPU always sees it). For knx_thread_spawn.
+	static Task* create(void (*body)(), void* arg, int id);
 	static Task* createBlank(int id);              // alloc a task slot + kstack only
 	                                               // (kesp fabricated by the caller, e.g. fork)
 	static Task* createIdle(int cpu);              // SMP: per-CPU idle task (one per AP)

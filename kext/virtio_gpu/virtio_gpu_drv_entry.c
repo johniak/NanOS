@@ -20,6 +20,7 @@
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>   /* lkpi_wq_init(): async workqueues + pump-drain (Task 3) */
 #include "lkpi_knx.h"
 #include "virtio_transport.h"
 
@@ -94,7 +95,12 @@ int nkext_init(void)
 	 * a normal / compositor run. */
 	{ extern unsigned long __drm_debug; __drm_debug = 0x0; }
 
-	/* 0) initialize DRM core (chrdev/class + drm_core_init_complete) before any probe */
+	/* 0) LinuxKPI async workqueues + timers: create the system queues and register the wait-pump
+	 * drain hook BEFORE any driver code (INIT_WORK/schedule_work). Runs inline until the scheduler
+	 * is up (workers spawn via knx_run_after_scheduler), so the cooperative probe is unaffected. */
+	lkpi_wq_init();
+
+	/* 0b) initialize DRM core (chrdev/class + drm_core_init_complete) before any probe */
 	__lkpi_modinit_drm_core_init();
 
 	/* 1) register the unmodified driver (stores &virtio_gpu_driver in g_virtio_drv) */

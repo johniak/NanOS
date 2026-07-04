@@ -29,11 +29,7 @@
 struct cpuinfo_x86 boot_cpu_data = { .x86_clflush_size = 64, .x86_cache_alignment = 64 };
 struct resource iomem_resource = { .start = 0, .end = ~(resource_size_t)0, .name = "PCI mem" };
 
-static struct workqueue_struct lkpi_sys_wq;
-struct workqueue_struct *system_wq        = &lkpi_sys_wq;
-struct workqueue_struct *system_unbound_wq = &lkpi_sys_wq;
-struct workqueue_struct *system_long_wq   = &lkpi_sys_wq;
-struct workqueue_struct *system_highpri_wq = &lkpi_sys_wq;
+/* system_* workqueues are now defined by kpi_kthread.c (real async queues, Task 3). */
 
 static struct task_struct lkpi_current_task = { .pid = 1, .comm = "virtio_gpu", .mm = 0 };
 struct task_struct *lkpi_current = &lkpi_current_task;

@@ -4,7 +4,7 @@
 #define TASK_RUNNING 0
 #define TASK_INTERRUPTIBLE 1
 #define TASK_UNINTERRUPTIBLE 2
-struct task_struct { int pid; const char *comm; void *mm; };
+struct task_struct { int pid; const char *comm; void *mm; void *knx; };
 extern struct task_struct *lkpi_current;
 #define current (lkpi_current)
 static inline void schedule(void){ __asm__ __volatile__("pause"); }

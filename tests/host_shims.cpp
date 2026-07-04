@@ -32,6 +32,16 @@ extern "C" void  knx_log(const char *s) { (void)s; }
 // exercises request_irq/free_irq/dispatch directly and never needs a real MSI, so return failure.
 extern "C" int knx_register_msi(unsigned char, unsigned char, unsigned char,
                                 void (*)(void *), void *) { return -1; }
+// Kernel-thread facility for the kpi_kthread doctest: no real threads on the host — spawn returns a
+// non-null dummy handle (the worker body is never auto-run; the test drives lkpi_wq_drain itself),
+// and run_after_scheduler fires immediately so lkpi_wq_init flips to async in the test.
+extern "C" void *knx_thread_spawn(void (*)(void *), void *, const char *) { return (void *)1; }
+extern "C" int   knx_thread_should_stop(void) { return 0; }
+extern "C" void  knx_thread_stop(void *) {}
+extern "C" void  knx_thread_yield(void) {}
+extern "C" void  knx_run_after_scheduler(void (*fn)(void)) { if (fn) fn(); }
+// kpi_fence.c (not in the host test) normally provides this; the wq test doesn't need the pump hook.
+extern "C" void  lkpi_set_wq_pump(void (*)(void)) {}
 
 // Arch console sink stand-in: route glyphs to stdout, ignore cursor/clear.
 namespace arch {

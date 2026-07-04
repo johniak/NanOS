@@ -216,7 +216,68 @@ int knx_boot_fb(uint64_t* addr, uint32_t* pitch, uint32_t* w, uint32_t* h, uint8
 	return 1;
 }
 
+// ---- kernel threads for LinuxKPI (kthreads + async workqueue workers, Task 3) ----
+// A knx-spawned thread carries (fn,arg,stop,done) via the Task's opaque arg. kthread_should_stop
+// reads the RUNNING task's flag; knx_thread_stop sets it and waits for the body to leave its loop.
+// Kernel threads are not processes (no Process bound) — pure scheduler tasks like the present thread.
+struct KnxThread { void (*fn)(void*); void* arg; volatile int stop; volatile int done; };
+static int g_knxThreadId = 6;   // informational task id base (present thread is 5)
+
+static void knxThreadTrampoline() {
+	KnxThread* k = (KnxThread*) Scheduler::current()->arg;
+	if (k) { k->fn(k->arg); k->done = 1; }
+}
+
+// Spawn a kernel thread running fn(arg). Returns an opaque handle for knx_thread_stop, or 0.
+void* knx_thread_spawn(void (*fn)(void*), void* arg, const char* name) {
+	(void) name;
+	KnxThread* k = (KnxThread*) malloc(sizeof(KnxThread));
+	if (!k)
+		return 0;
+	k->fn = fn; k->arg = arg; k->stop = 0; k->done = 0;
+	if (!Scheduler::create(knxThreadTrampoline, k, g_knxThreadId++)) { free(k); return 0; }
+	return k;
+}
+
+// True inside a knx thread whose stop flag was set (kthread_should_stop). 0 for non-knx tasks.
+int knx_thread_should_stop(void) {
+	Task* t = Scheduler::current();
+	KnxThread* k = t ? (KnxThread*) t->arg : 0;
+	return k ? k->stop : 0;
+}
+
+// Ask a knx thread to stop and wait for it to exit its loop (kthread_stop). Frees the handle.
+void knx_thread_stop(void* handle) {
+	KnxThread* k = (KnxThread*) handle;
+	if (!k)
+		return;
+	k->stop = 1;
+	while (!k->done)
+		Scheduler::yield();   // cooperative: let the worker reach its next stop-check
+	free(k);
+}
+
+// Yield the CPU (used by worker/timer loops between polls).
+void knx_thread_yield(void) { Scheduler::yield(); }
+
+// Register a callback to run once, AFTER the scheduler is up (kexts load pre-scheduler, so anything
+// that must spawn kernel threads — workqueue/timer workers — defers here, like the present thread).
+// Kernel::start calls runAfterSchedulerHooks() right after Scheduler::init + fbStartPresentThread.
+static void (*g_afterSched[8])(void);
+static int   g_afterSchedN = 0;
+void knx_run_after_scheduler(void (*fn)(void)) {
+	if (fn && g_afterSchedN < 8)
+		g_afterSched[g_afterSchedN++] = fn;
+}
+
 }  // extern "C"
+
+// Invoke every knx_run_after_scheduler callback (kernel linkage; called from Kernel::start).
+void runAfterSchedulerHooks() {
+	for (int i = 0; i < g_afterSchedN; i++)
+		if (g_afterSched[i])
+			g_afterSched[i]();
+}
 
 // kernel:: linkage (NOT extern "C") — DrmDevice.cpp references kernel::syscallCurrentPid, and
 // DrmDevice.h declares kernel::drmNodesRegister.

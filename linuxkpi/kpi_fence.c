@@ -33,9 +33,21 @@ struct ww_class reservation_ww_class = { 0 };
 static void (*lkpi_fence_poll_hook)(void);
 void lkpi_set_fence_poll(void (*fn)(void)) { lkpi_fence_poll_hook = fn; }
 
-/* Called from __wait_event()'s spin (see <linux/wait.h>): pump the registered poll source
- * (virtio vq) so a cooperative boot-time wait on a vq ack/response makes progress. */
-void lkpi_wait_pump(void) { if (lkpi_fence_poll_hook) lkpi_fence_poll_hook(); }
+/* Second cooperative-wait hook: kpi_kthread.c sets this to drain the async workqueues. With async
+ * workqueues, a completion's bottom half (e.g. virtio_gpu's ctrl-vq dequeue) runs on a worker, not
+ * inline in schedule_work — so a busy-spinning __wait_event that expects the dequeue to have run
+ * would deadlock. Draining pending work here keeps the cooperative wait making progress whether the
+ * worker has been scheduled yet or not. */
+static void (*lkpi_wq_pump_hook)(void);
+void lkpi_set_wq_pump(void (*fn)(void)) { lkpi_wq_pump_hook = fn; }
+
+/* Called from __wait_event()'s spin (see <linux/wait.h>): pump the registered poll sources (virtio
+ * vq + async workqueue) so a cooperative wait on a vq ack/response or a deferred bottom half makes
+ * progress. */
+void lkpi_wait_pump(void) {
+	if (lkpi_fence_poll_hook) lkpi_fence_poll_hook();
+	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
+}
 
 /* ---- dma_fence ---------------------------------------------------------------------- */
 

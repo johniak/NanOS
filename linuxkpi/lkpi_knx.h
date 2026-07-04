@@ -32,6 +32,15 @@ void          *knx_map_mmio(unsigned int phys, unsigned int len);
 void          *knx_dma_alloc(unsigned int len, unsigned int *phys_out);
 void           knx_register_irq(int irq, void (*h)(void *));
 int            knx_register_msi(unsigned char bus, unsigned char dev, unsigned char func, void (*h)(void *), void *ctx);
+/* Kernel threads for the LinuxKPI kthread/workqueue/timer layer (kpi_kthread.c). A knx thread runs
+ * fn(arg) as a scheduler task; the handle drives knx_thread_stop. should_stop is true inside a knx
+ * thread whose stop was requested. yield gives up the CPU (worker/timer poll loops). */
+void          *knx_thread_spawn(void (*fn)(void *), void *arg, const char *name);
+int            knx_thread_should_stop(void);
+void           knx_thread_stop(void *handle);
+void           knx_thread_yield(void);
+/* Run fn() once after the scheduler is up (worker/timer kthreads defer their spawn here). */
+void           knx_run_after_scheduler(void (*fn)(void));
 /* adopt a kext-owned framebuffer as the system fb: builds /dev/fb0 (+ VT console if the
  * bootloader gave none) and runs a present thread calling `flush` periodically. */
 void           knx_fb_set_backing(unsigned long long phys, unsigned int pitch, unsigned int w,

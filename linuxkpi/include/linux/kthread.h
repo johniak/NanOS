@@ -14,9 +14,17 @@ static inline void kthread_flush_work(struct kthread_work *w){ (void)w; }
 static inline void kthread_flush_worker(struct kthread_worker *w){ (void)w; }
 static inline struct kthread_worker *kthread_create_worker(unsigned flags, const char *name, ...){ (void)flags;(void)name; static struct kthread_worker kw; return &kw; }
 static inline void kthread_destroy_worker(struct kthread_worker *w){ (void)w; }
-static inline struct task_struct *kthread_run(int (*fn)(void*), void *arg, const char *name, ...){ (void)fn;(void)arg;(void)name; return 0; }
-static inline int kthread_stop(struct task_struct *t){ (void)t; return 0; }
-static inline bool kthread_should_stop(void){ return false; }
+/* Real kernel threads (kpi_kthread.c) over knx_thread_spawn — for i915's retire/hangcheck/HPD work.
+ * kthread_should_stop() is true inside a kthread whose kthread_stop() has been called. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct task_struct *kthread_run(int (*fn)(void*), void *arg, const char *name, ...);
+int  kthread_stop(struct task_struct *t);
+bool kthread_should_stop(void);
+#ifdef __cplusplus
+}
+#endif
 static inline bool kthread_cancel_work_sync(struct kthread_work *w){ (void)w; return false; }
 static inline bool kthread_cancel_delayed_work_sync(void *w){ (void)w; return false; }
 /* scheduler policy hint — NanOS kthreads run at the default priority; no-op. */
