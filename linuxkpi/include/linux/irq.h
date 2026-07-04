@@ -22,8 +22,13 @@ static inline void enable_irq(unsigned int irq){ (void)irq; }
 static inline void disable_irq_nosync(unsigned int irq){ (void)irq; }
 /* generic-irqchip plumbing (i915 GSC). No irq domain in the shim, so these are inert. */
 static inline void irq_set_chip_and_handler_name(unsigned int irq, const struct irq_chip *chip, void *handle, const char *name){ (void)irq;(void)chip;(void)handle;(void)name; }
-static inline void irq_set_chip_data(unsigned int irq, void *data){ (void)irq;(void)data; }
-static inline void irq_set_handler_data(unsigned int irq, void *data){ (void)irq;(void)data; }
-static inline void generic_handle_irq(unsigned int irq){ (void)irq; }
+static inline int irq_set_chip_data(unsigned int irq, void *data){ (void)irq;(void)data; return 0; }
+static inline int irq_set_handler_data(unsigned int irq, void *data){ (void)irq;(void)data; return 0; }
+static inline int generic_handle_irq(unsigned int irq){ (void)irq; return 0; }
+/* irq descriptor allocation: the shim has no generic irq domain; hand back a dummy positive irq. */
+static inline int irq_alloc_desc(int node){ (void)node; return 1; }
+static inline int irq_alloc_descs(int irq, unsigned int from, unsigned int cnt, int node){ (void)irq;(void)from;(void)cnt;(void)node; return 1; }
+static inline void irq_free_desc(unsigned int irq){ (void)irq; }
+static inline void irq_free_descs(unsigned int irq, unsigned int cnt){ (void)irq;(void)cnt; }
 #define handle_simple_irq ((void *)0)
 #endif

@@ -75,6 +75,7 @@ static inline int dev_set_name(struct device *dev, const char *fmt, ...) {
 	(void)fmt; dev->init_name = 0; return 0;
 }
 static inline void *dev_get_drvdata(const struct device *dev) { return dev->driver_data; }
+static inline void *dev_get_platdata(const struct device *dev) { return dev->platform_data; }
 static inline void  dev_set_drvdata(struct device *dev, void *data) { dev->driver_data = data; }
 
 static inline void device_initialize(struct device *dev) { (void)dev; }

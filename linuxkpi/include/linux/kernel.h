@@ -116,6 +116,8 @@ void panic(const char *fmt, ...) __attribute__((noreturn, __format__(__printf__,
 #ifndef _LKPI_KERNEL_EXTRA
 #define _LKPI_KERNEL_EXTRA
 #define u64_to_user_ptr(x) ((void *)(unsigned long)(x))
+/* PTR_IF(cond, ptr): ptr if cond else NULL. */
+#define PTR_IF(cond, ptr) ((cond) ? (ptr) : NULL)
 #define typecheck(type,x) 1
 static inline const char *str_yes_no(bool v){ return v?"yes":"no"; }
 static inline const char *str_on_off(bool v){ return v?"on":"off"; }

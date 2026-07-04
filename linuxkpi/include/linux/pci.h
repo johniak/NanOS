@@ -17,6 +17,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/errno.h>
 #include <linux/dma-mapping.h>
+#include <linux/pm.h>   /* pm_message_t for pci_choose_state */
 #include <lkpi_knx.h>
 
 #define PCI_ANY_ID (~0)
@@ -215,6 +216,21 @@ static inline int pci_resize_resource(struct pci_dev *dev, int bar, int size){ (
 /* is a device matching this id table currently present? Only our GPU is; others are absent. */
 static inline int pci_dev_present(const struct pci_device_id *ids){ (void)ids; return 0; }
 static inline void pci_assign_unassigned_bus_resources(struct pci_bus *bus){ (void)bus; }
+static inline int pci_set_power_state(struct pci_dev *dev, pci_power_t state){ (void)dev;(void)state; return 0; }
+static inline pci_power_t pci_choose_state(struct pci_dev *dev, pm_message_t state){ (void)dev;(void)state; return PCI_D0; }
+static inline int pci_save_state(struct pci_dev *dev){ (void)dev; return 0; }
+static inline void pci_restore_state(struct pci_dev *dev){ (void)dev; }
+static inline int pci_enable_device_mem(struct pci_dev *dev){ (void)dev; return 0; }
+/* PCIe topology walk: the shim exposes a flat single-device view, so the "root port" is the device
+ * itself (i915 only reads capabilities off it). */
+static inline struct pci_dev *pcie_find_root_port(struct pci_dev *dev){ return dev; }
+static inline struct pci_dev *pci_upstream_bridge(struct pci_dev *dev){ (void)dev; return 0; }
+static inline int pcie_get_readrq(struct pci_dev *dev){ (void)dev; return 512; }
+static inline int pcie_capability_read_dword(struct pci_dev *dev, int pos, u32 *val){ (void)dev;(void)pos; if(val)*val=0; return 0; }
+static inline void pci_d3cold_disable(struct pci_dev *dev){ (void)dev; }
+static inline void pci_d3cold_enable(struct pci_dev *dev){ (void)dev; }
+static inline void pci_ignore_hotplug(struct pci_dev *dev){ (void)dev; }
+static inline int pci_pcie_type(const struct pci_dev *dev){ (void)dev; return 0; }
 /* resizable-BAR possible-size bitmask: BAR is fixed in the shim, so only the current size is offered. */
 static inline u32 pci_rebar_get_possible_sizes(struct pci_dev *dev, int bar){ (void)dev;(void)bar; return 0; }
 /* MSI enable: interrupts are wired by the kext's minimal LAPIC path (single vector), so report OK. */

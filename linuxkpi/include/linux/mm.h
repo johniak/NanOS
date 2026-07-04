@@ -185,6 +185,17 @@ static inline struct vm_area_struct *vma_lookup(struct mm_struct *mm, unsigned l
 static inline unsigned long totalram_pages(void){ return 512UL * 1024 * 1024 / PAGE_SIZE; }
 /* the shim never runs in kswapd/reclaim context. */
 static inline int current_is_kswapd(void){ return 0; }
+static inline int page_mapped(struct page *p){ (void)p; return 0; }
+static inline int page_count(struct page *p){ (void)p; return 1; }
+/* page-flag setters/clearers i915 swap-out touches (no writeback pipeline → bookkeeping no-ops). */
+static inline void SetPageReclaim(struct page *p){ (void)p; }
+static inline void ClearPageReclaim(struct page *p){ (void)p; }
+static inline void set_page_writeback(struct page *p){ (void)p; }
+static inline void end_page_writeback(struct page *p){ (void)p; }
+#ifndef _LKPI_MARK_PAGE_ACCESSED
+#define _LKPI_MARK_PAGE_ACCESSED
+static inline void mark_page_accessed(struct page *p){ (void)p; }
+#endif
 #ifndef VM_FAULT_RETRY
 #define VM_FAULT_RETRY  0x000400
 #define VM_FAULT_NOPAGE 0x000100

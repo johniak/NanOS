@@ -9,7 +9,10 @@
 #include <linux/writeback.h>
 struct folio; struct list_head; struct pagevec;
 #define SWAP_CLUSTER_MAX 32UL
+#ifndef _LKPI_MARK_PAGE_ACCESSED
+#define _LKPI_MARK_PAGE_ACCESSED
 static inline void mark_page_accessed(void *page){ (void)page; }
+#endif
 /* folio_mark_accessed + check_move_unevictable_folios live in the shim's pagemap.h */
 #define total_swap_pages 0UL
 #endif

@@ -4,8 +4,9 @@
 #include <linux/wait.h>
 #include <linux/atomic.h>   /* struct file.f_count is an atomic_long_t (i915 shmem_utils bumps it) */
 struct vm_area_struct;
-struct inode { unsigned long i_ino; void *i_mapping; umode_t i_mode; void *i_private; };
-struct file { void *private_data; void *f_mapping; unsigned int f_flags; loff_t f_pos; const struct file_operations *f_op; struct inode *f_inode; atomic_long_t f_count; };
+struct address_space;
+struct inode { unsigned long i_ino; void *i_mapping; umode_t i_mode; void *i_private; loff_t i_size; };
+struct file { void *private_data; struct address_space *f_mapping; unsigned int f_flags; loff_t f_pos; const struct file_operations *f_op; struct inode *f_inode; atomic_long_t f_count; };
 struct file_operations {
   void *owner;
   int (*open)(struct inode *, struct file *);
@@ -18,7 +19,15 @@ struct file_operations {
 };
 /* address_space doubles as the shmem page cache for gem_shmem: `pages` is a lazily
  * populated per-index array of single-page folios (see kpi_misc.c shmem_*). */
-struct address_space { void *host; struct page **pages; unsigned long nrpages; unsigned gfp_mask; };
+struct writeback_control;
+struct address_space_operations {
+	int (*writepage)(struct page *page, struct writeback_control *wbc);
+	int (*read_folio)(struct file *, struct folio *);
+	int (*write_begin)(struct file *, struct address_space *, loff_t, unsigned, struct page **, void **);
+	int (*write_end)(struct file *, struct address_space *, loff_t, unsigned, unsigned, struct page *, void *);
+	int (*migrate_folio)(struct address_space *, struct folio *, struct folio *, int);
+};
+struct address_space { struct inode *host; struct page **pages; unsigned long nrpages; unsigned gfp_mask; const struct address_space_operations *a_ops; };
 static inline loff_t i_size_read(const struct inode *i){ (void)i; return 0; }
 extern loff_t noop_llseek(struct file *file, loff_t offset, int whence);
 #define FOP_UNSIGNED_OFFSET (1u<<5)

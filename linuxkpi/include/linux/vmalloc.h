@@ -12,4 +12,10 @@ struct notifier_block;
  * reclaim in the shim, so registration is inert. */
 static inline int register_vmap_purge_notifier(struct notifier_block *nb){ (void)nb; return 0; }
 static inline int unregister_vmap_purge_notifier(struct notifier_block *nb){ (void)nb; return 0; }
+#ifndef VM_MAP_PUT_PAGES
+#define VM_MAP        0x00000004
+#define VM_MAP_PUT_PAGES 0x00000200
+#define VM_IOREMAP    0x00000001
+#define VM_ALLOC      0x00000002
+#endif
 #endif

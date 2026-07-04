@@ -8,7 +8,11 @@ struct edid;
 static inline void cec_notifier_set_phys_addr(struct cec_notifier *n, unsigned short pa){ (void)n;(void)pa; }
 static inline void cec_notifier_set_phys_addr_from_edid(struct cec_notifier *n, const struct edid *edid){ (void)n;(void)edid; }
 static inline void cec_notifier_phys_addr_invalidate(struct cec_notifier *n){ (void)n; }
-static inline struct cec_notifier *cec_notifier_conn_register(struct device *hdmi_dev, const char *port_name, const void *conn_info){ (void)hdmi_dev;(void)port_name;(void)conn_info; return 0; }
 static inline void cec_notifier_conn_unregister(struct cec_notifier *n){ (void)n; }
 #define CEC_PHYS_ADDR_INVALID 0xffff
+/* connector info the HDMI driver hands to the CEC notifier. Inert: fill leaves it zeroed. */
+struct drm_connector;
+struct cec_connector_info { unsigned int type; unsigned int reserved[16]; };
+static inline void cec_fill_conn_info_from_drm(struct cec_connector_info *conn_info, const struct drm_connector *connector){ (void)connector; if(conn_info){ conn_info->type=0; } }
+static inline struct cec_notifier *cec_notifier_conn_register(struct device *hdmi_dev, const char *port_name, const struct cec_connector_info *conn_info){ (void)hdmi_dev;(void)port_name;(void)conn_info; return 0; }
 #endif

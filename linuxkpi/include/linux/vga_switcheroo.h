@@ -1,5 +1,8 @@
 #ifndef _LKPI_VGA_SWITCHEROO_H
 #define _LKPI_VGA_SWITCHEROO_H
+/* i915_driver.c passes FBINFO_STATE_SUSPENDED to intel_fbdev_set_suspend but reaches the constant
+ * only through <linux/vga_switcheroo.h> in our include graph; route <linux/fb.h> here. */
+#include <linux/fb.h>
 static inline void vga_switcheroo_lock_ddc(struct pci_dev *p){ (void)p; }
 static inline void vga_switcheroo_unlock_ddc(struct pci_dev *p){ (void)p; }
 #endif

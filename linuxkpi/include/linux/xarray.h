@@ -18,6 +18,8 @@ static inline void *xa_store(struct xarray *xa, unsigned long i, void *p, unsign
 static inline void *__xa_store(struct xarray *xa, unsigned long i, void *p, unsigned gfp){ return xa_store(xa,i,p,gfp); }
 static inline void *xa_erase(struct xarray *xa, unsigned long i){ return idr_remove(&xa->idr,(int)i); }
 static inline void *__xa_erase(struct xarray *xa, unsigned long i){ return xa_erase(xa,i); }
+static inline void *xa_erase_irq(struct xarray *xa, unsigned long i){ return xa_erase(xa,i); }
+static inline void *xa_store_irq(struct xarray *xa, unsigned long i, void *p, unsigned gfp){ return xa_store(xa,i,p,gfp); }
 /* value entries: XArray can store small integers tagged in the pointer (LSB set). */
 static inline void *xa_mk_value(unsigned long v){ return (void *)((v << 1) | 1UL); }
 static inline unsigned long xa_to_value(const void *e){ return (unsigned long)e >> 1; }

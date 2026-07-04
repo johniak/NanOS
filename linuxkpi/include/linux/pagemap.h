@@ -40,4 +40,7 @@ static inline struct page *find_lock_page(struct address_space *mapping, unsigne
 static inline struct page *find_get_page(struct address_space *mapping, unsigned long index){ (void)mapping;(void)index; return 0; }
 static inline void unlock_page(struct page *p){ (void)p; }
 static inline void lock_page(struct page *p){ (void)p; }
+static inline int clear_page_dirty_for_io(struct page *p){ (void)p; return 0; }
+static inline int trylock_page(struct page *p){ (void)p; return 1; }
+static inline void wait_on_page_writeback(struct page *p){ (void)p; }
 #endif

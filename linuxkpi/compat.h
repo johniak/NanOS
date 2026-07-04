@@ -114,6 +114,13 @@ static inline u64 __lkpi_swab64(u64 x) { return __builtin_bswap64(x); }
 #ifndef fallthrough
 #define fallthrough __attribute__((__fallthrough__))
 #endif
+/* DECLARE_FLEX_ARRAY: valid flex array inside a union (i915_syncmap unions seqno[]/child[]). Defined
+ * in the force-include hub so vendored files that use it in a struct/union without pulling stddef.h
+ * (e.g. i915_syncmap.c, which includes only slab.h) still see it. */
+#ifndef DECLARE_FLEX_ARRAY
+#define DECLARE_FLEX_ARRAY(TYPE, NAME) \
+	struct { struct { } __empty_ ## NAME; TYPE NAME[]; }
+#endif
 #ifndef __nonstring
 #define __nonstring
 #endif
