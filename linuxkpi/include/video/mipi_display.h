@@ -15,4 +15,21 @@
 #define MIPI_DCS_SET_DISPLAY_OFF         0x28
 #define MIPI_DCS_ENTER_SLEEP_MODE        0x10
 #define MIPI_DCS_EXIT_SLEEP_MODE         0x11
+
+/* MIPI DSI processor-to-peripheral transaction data types (from the MIPI DSI spec;
+ * values verbatim from Linux include/video/mipi_display.h). intel_dsi_vbt.c switches on
+ * these to emit VBT panel-init sequences over the DSI link. */
+enum {
+	MIPI_DSI_GENERIC_SHORT_WRITE_0_PARAM	= 0x03,
+	MIPI_DSI_GENERIC_SHORT_WRITE_1_PARAM	= 0x13,
+	MIPI_DSI_GENERIC_SHORT_WRITE_2_PARAM	= 0x23,
+	MIPI_DSI_GENERIC_READ_REQUEST_0_PARAM	= 0x04,
+	MIPI_DSI_GENERIC_READ_REQUEST_1_PARAM	= 0x14,
+	MIPI_DSI_GENERIC_READ_REQUEST_2_PARAM	= 0x24,
+	MIPI_DSI_DCS_SHORT_WRITE		= 0x05,
+	MIPI_DSI_DCS_SHORT_WRITE_PARAM		= 0x15,
+	MIPI_DSI_DCS_READ			= 0x06,
+	MIPI_DSI_GENERIC_LONG_WRITE		= 0x29,
+	MIPI_DSI_DCS_LONG_WRITE			= 0x39,
+};
 #endif

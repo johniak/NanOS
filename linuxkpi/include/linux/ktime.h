@@ -38,6 +38,8 @@ static inline ktime_t ktime_set(s64 secs, unsigned long nsecs) { return secs*100
 /* Raw (NTP-uncorrected) monotonic clock. We have no NTP discipline, so it equals ktime_get(). i915
  * uses it for engine-busy timestamps. */
 static inline ktime_t ktime_get_raw(void) { return ktime_get(); }
+/* ns form of the raw monotonic clock (intel_rps IPS timestamps); ktime_t is already ns here. */
+static inline u64 ktime_get_raw_ns(void) { return (u64)ktime_get_raw(); }
 /* Lock-free fast monotonic-raw read in ns (i915 uses it on the context-switch hot path). No seqlock
  * to bypass here — the uptime read is already a single load. */
 static inline u64 ktime_get_raw_fast_ns(void) { return knx_uptime_us() * 1000ull; }

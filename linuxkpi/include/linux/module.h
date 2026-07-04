@@ -36,6 +36,15 @@ struct module;
 #define module_put(m)     do {} while (0)
 #define __module_get(m)   do {} while (0)
 
+/* Optional inter-module symbol coupling. Real Linux resolves these against the loaded-
+ * module symbol table at runtime; we have no such table, so an optional symbol is always
+ * ABSENT (NULL). That is the correct semantic here: i915's intel_rps.c uses
+ * symbol_get(ips_link_to_i915_driver) to reach the Gen5-only intel_ips.ko, which never
+ * exists on our target (Gen9.5) — so the coupling is a no-op, exactly as when IPS is
+ * unloaded upstream. typeof(&x) keeps the NULL correctly typed for the caller's pointer. */
+#define symbol_get(x)  ((typeof(&(x)))0)
+#define symbol_put(x)  do {} while (0)
+
 #endif /* _LINUXKPI_LINUX_MODULE_H */
 
 #ifndef _LKPI_MODULE_DRIVER

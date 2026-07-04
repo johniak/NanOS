@@ -38,4 +38,9 @@ static inline int __i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n
 static inline void i2c_del_adapter(struct i2c_adapter *a){ (void)a; }
 static inline int i2c_add_adapter(struct i2c_adapter *a){ (void)a; return 0; }
 static inline void *i2c_get_adapdata(const struct i2c_adapter *a){ return a->algo_data; }
+/* Look up a bus by number. No system-wide i2c adapter registry exists in the shim (gmbus
+ * owns its adapter directly), so this returns NULL ("bus not found"); intel_dsi_vbt.c's
+ * DSI-over-i2c panel path (embedded panels only) handles NULL by skipping. */
+static inline struct i2c_adapter *i2c_get_adapter(int nr){ (void)nr; return 0; }
+static inline void i2c_put_adapter(struct i2c_adapter *a){ (void)a; }
 #endif

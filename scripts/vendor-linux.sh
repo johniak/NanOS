@@ -59,6 +59,12 @@ FILES=(
   lib/rbtree.c
   lib/list_sort.c
   lib/scatterlist.c
+  # --- i915 compile campaign: the ONE header i915 pulls from outside the drm tree.
+  # gt/intel_rps.c does `#include "../../../platform/x86/intel_ips.h"`, which the
+  # -Iexternal/linux-6.12/drivers/gpu/drm/i915 flag resolves to drivers/platform/x86/
+  # (exactly as upstream kbuild does). It's a 1-line interface decl for the Gen5-only
+  # intel_ips.ko coupling — dead on Gen9.5, but the file must compile. Vendored, not shimmed.
+  drivers/platform/x86/intel_ips.h
   # COPYING for the GPL boundary record
   COPYING
 )

@@ -21,7 +21,20 @@
 #define PAGE_ALIGNED(addr)    IS_ALIGNED((unsigned long)(addr), PAGE_SIZE)
 #define offset_in_page(p)     ((unsigned long)(p) & ~PAGE_MASK)
 
-struct page;  /* opaque token: its pointer value == the page's kernel virtual address */
+/*
+ * struct page is an opaque token whose POINTER VALUE == the page's kernel virtual
+ * address (see the whole shim's page convention). We give it size 1 (not just a
+ * forward decl) so that pointer arithmetic on `struct page *` is BYTE arithmetic,
+ * which is exactly what the address-token convention requires. Every arithmetic site
+ * in the shim already casts to char-ptr or unsigned long first (nth_page, dma-mapping), so
+ * they are unaffected; a size-1 type only matters for vendored code that does raw
+ * `struct page * + n` expecting byte offsets, e.g. the i915 phys GEM backend's
+ * `sg_page(sgl) + args->offset` (it stashes a raw vaddr via sg_assign_page and treats
+ * the "page" as a byte address). Real Linux's mem_map page-stride arithmetic never
+ * applies here (our pages are not a contiguous array), so no correct code regresses.
+ * No member is ever accessed; the field exists only to complete the type.
+ */
+struct page { unsigned char __lkpi_addr_token; };
 
 static inline unsigned int get_order(unsigned long size) {
 	unsigned int order = 0;
