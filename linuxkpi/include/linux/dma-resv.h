@@ -48,3 +48,26 @@ static inline void dma_resv_lock_slow(struct dma_resv *r, struct ww_acquire_ctx 
  * uses this to wait for a buffer's producer before scanning it out. */
 static inline int dma_resv_get_singleton(struct dma_resv *r, enum dma_resv_usage u, struct dma_fence **f){ (void)u; *f = (r && r->fences) ? dma_fence_get((struct dma_fence *)r->fences) : 0; return 0; }
 #endif
+
+/* Fence iterator. The shim's dma_resv tracks a SINGLE fence in ->fences (see the singleton note
+ * above), so the cursor yields that one fence once — consistent with dma_resv_get_singleton, and
+ * enough for i915_deps to add it as a dependency. A true multi-fence reservation is a Phase-B item. */
+#ifndef _LKPI_DMA_RESV_ITER
+#define _LKPI_DMA_RESV_ITER
+struct dma_resv_iter {
+	struct dma_resv *obj;
+	enum dma_resv_usage usage;
+	struct dma_fence *fence;
+	enum dma_resv_usage fence_usage;
+	int index;   /* -1 before first_iter, 0 once the single fence has been yielded */
+};
+static inline void dma_resv_iter_begin(struct dma_resv_iter *c, struct dma_resv *obj, enum dma_resv_usage usage){ c->obj=obj; c->usage=usage; c->fence=0; c->fence_usage=DMA_RESV_USAGE_WRITE; c->index=-1; }
+static inline void dma_resv_iter_end(struct dma_resv_iter *c){ (void)c; }
+static inline struct dma_fence *dma_resv_iter_first(struct dma_resv_iter *c){ c->index=0; c->fence = (c->obj && c->obj->fences) ? (struct dma_fence*)c->obj->fences : 0; return c->fence; }
+static inline struct dma_fence *dma_resv_iter_next(struct dma_resv_iter *c){ c->fence=0; return 0; }
+static inline bool dma_resv_iter_is_restarted(struct dma_resv_iter *c){ return c->index==0; }
+#define dma_resv_for_each_fence(cursor, obj, usage, fence) \
+	for (dma_resv_iter_begin(cursor, obj, usage), fence = dma_resv_iter_first(cursor); fence; fence = dma_resv_iter_next(cursor))
+#define dma_resv_for_each_fence_unlocked(cursor, fence) \
+	for (fence = dma_resv_iter_first(cursor); fence; fence = dma_resv_iter_next(cursor))
+#endif

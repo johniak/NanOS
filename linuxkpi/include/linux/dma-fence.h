@@ -30,6 +30,7 @@ enum { DMA_FENCE_FLAG_SIGNALED_BIT=0, DMA_FENCE_FLAG_TIMESTAMP_BIT, DMA_FENCE_FL
 extern "C" {
 #endif
 void dma_fence_init(struct dma_fence*, const struct dma_fence_ops*, spinlock_t*, u64, u64);
+void dma_fence_free(struct dma_fence*);
 struct dma_fence *dma_fence_get(struct dma_fence*);
 struct dma_fence *dma_fence_get_rcu(struct dma_fence*);
 void dma_fence_put(struct dma_fence*);

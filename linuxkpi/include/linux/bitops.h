@@ -40,6 +40,8 @@ static inline int ffs(int x) { return __builtin_ffs(x); }
 static inline unsigned long __ffs(unsigned long x) { return __builtin_ctzl(x); }
 static inline unsigned long __fls(unsigned long x) { return x ? (BITS_PER_LONG - 1 - __builtin_clzl(x)) : 0; }
 static inline int fls64(u64 x) { return x ? (64 - __builtin_clzll(x)) : 0; }
+static inline unsigned int hweight8(u8 w)   { return __builtin_popcount(w); }
+static inline unsigned int hweight16(u16 w)  { return __builtin_popcount(w); }
 static inline unsigned int hweight32(u32 w) { return __builtin_popcount(w); }
 static inline unsigned int hweight64(u64 w) { return __builtin_popcountll(w); }
 static inline unsigned long hweight_long(unsigned long w) { return __builtin_popcountl(w); }
@@ -47,7 +49,13 @@ static inline unsigned long hweight_long(unsigned long w) { return __builtin_pop
 static inline u32 rol32(u32 word, unsigned int shift) { return (word << (shift & 31)) | (word >> ((-shift) & 31)); }
 static inline u32 ror32(u32 word, unsigned int shift) { return (word >> (shift & 31)) | (word << ((-shift) & 31)); }
 
-#define order_base_2(n) (fls64((u64)(n) - 1))
+/* Constant-expression form: __builtin_clzll of a constant folds, so this is a valid integer constant
+ * expression and can size a bit-field (i915 intel_dp uses link_rate_idx:INTEL_DP_LINK_RATE_IDX_BITS,
+ * where the width is order_base_2(...)). Value equals the old fls64(n-1) but with no function call.
+ * #ifndef-guarded to agree with the identical constant form in <linux/log2.h>. */
+#ifndef order_base_2
+#define order_base_2(n) ((n) > 1 ? (int)(64 - __builtin_clzll((unsigned long long)((n) - 1))) : 0)
+#endif
 static inline int get_count_order(unsigned int count) { return count <= 1 ? 0 : (int)fls(count - 1); }
 
 #endif /* _LINUXKPI_LINUX_BITOPS_H */

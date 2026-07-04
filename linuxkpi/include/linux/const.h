@@ -13,4 +13,11 @@
 #define _ULL(x)  (_AC(x, ULL))
 #define _BITUL(x)  (_UL(1) << (x))
 #define _BITULL(x) (_ULL(1) << (x))
+/* True (as an integer constant expression) iff x is a compile-time constant. Same trick as Linux's
+ * <linux/const.h>: the type of the ?: differs (void* vs int*) depending on whether x folds to 0. i915
+ * gates its overflow-check macros (castable_to_type, __overflows_type) on it. */
+#ifndef __is_constexpr
+#define __is_constexpr(x) \
+	(sizeof(int) == sizeof(*(8 ? ((void *)((long)(x) * 0l)) : (int *)8)))
+#endif
 #endif

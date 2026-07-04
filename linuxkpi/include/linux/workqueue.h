@@ -3,6 +3,9 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/timer.h>
+#include <linux/interrupt.h>   /* i915 engine/scheduler types embed a tasklet_struct by value, reached
+                                * only transitively (intel_engine_types.h -> here) — same routing as
+                                * seqcount_t via timer.h. interrupt.h pulls only types/irqreturn, no cycle. */
 #ifdef __cplusplus
 extern "C" {
 #endif

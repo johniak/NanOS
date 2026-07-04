@@ -17,6 +17,16 @@ struct bin_attribute { struct attribute attr; size_t size; void *private;
 #define __BIN_ATTR(_name,_mode,_read,_write,_size) { .attr={.name=#_name,.mode=_mode}, .size=_size, .read=_read, .write=_write }
 #define BIN_ATTR_RO(_name,_size) struct bin_attribute bin_attr_##_name = __BIN_ATTR(_name,0444,_name##_read,0,_size)
 struct attribute_group_x { const char *name; struct attribute **attrs; struct bin_attribute **bin_attrs; };
+/* kobj_attribute: a sysfs attribute with kobject-scoped show/store (Linux keeps it in kobject.h; it
+ * embeds struct attribute, defined here, so it lives with its base). i915 perf embeds one by value. */
+#ifndef _LKPI_KOBJ_ATTRIBUTE
+#define _LKPI_KOBJ_ATTRIBUTE
+struct kobj_attribute {
+	struct attribute attr;
+	ssize_t (*show)(struct kobject *kobj, struct kobj_attribute *attr, char *buf);
+	ssize_t (*store)(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count);
+};
+#endif
 int sysfs_streq(const char *a, const char *b);
 long sysfs_emit(char *buf, const char *fmt, ...);
 long sysfs_emit_at(char *buf, int at, const char *fmt, ...);

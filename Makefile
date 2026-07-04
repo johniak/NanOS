@@ -2513,14 +2513,19 @@ $(BINFOLDER)%.o: external/linux-6.12/lib/%.c
 # LINUXKPI_CFLAGS + DRM include tree so the campaign and the eventual kext link never drift.
 I915_SRC=external/linux-6.12/drivers/gpu/drm/i915
 I915_VINC=$(DRM_VINC) -I$(I915_SRC) -DI915
+# i915 REQUIRES optimization: IS_PLATFORM/IS_SUBPLATFORM etc. do BUILD_BUG_ON(!__builtin_constant_p(p)),
+# which only folds to a constant under the optimizer — the real kernel always builds i915 at -O2. The
+# kext core defaults to -O0 (KOPTFLAGS empty; kernel -O2 is blocked on an unrelated ext UB), so we opt
+# in -O2 for i915 objects specifically. Kept on both the probe and the object rule so they never drift.
+I915_OPT=-O2
 $(BINFOLDER)i915/%.o: $(I915_SRC)/%.c
 	@mkdir -p $(@D)
-	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -MMD -MP -c $< -o $@
+	$(CXX) $(LINUXKPI_CFLAGS) $(I915_OPT) $(I915_VINC) -MMD -MP -c $< -o $@
 # Compile-campaign scorer (in-container half): how many of the 276 vendored i915 objects build
 # against the shim. scripts/build-i915.sh keeps clean/total + the cluster map. The host-side
 # `i915-probe` wrapper (which runs this in Docker) lives in the HOST section next to test64.
 _i915_probe:
-	CC="$(CXX)" CFLAGS="$(LINUXKPI_CFLAGS) $(I915_VINC)" I915_BUILD_OUT="$(BINFOLDER)i915-build" bash scripts/build-i915.sh
+	CC="$(CXX)" CFLAGS="$(LINUXKPI_CFLAGS) $(I915_OPT) $(I915_VINC)" I915_BUILD_OUT="$(BINFOLDER)i915-build" bash scripts/build-i915.sh
 
 # Per-kext link: nxhdr placeholder + generated kernel import stub + kext runtime + objects,
 # linked at the kext base with relocations kept (--emit-relocs), then mknx -> .nkext.

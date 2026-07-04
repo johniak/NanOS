@@ -64,6 +64,10 @@ static inline void spin_unlock_irq(spinlock_t *l) { __lk_release(&l->rlock.lock)
 
 #define spin_lock_irqsave(l, flags)      do { (flags) = __lkpi_irq_save(); spin_lock(l); } while (0)
 #define spin_unlock_irqrestore(l, flags) do { spin_unlock(l); __lkpi_irq_restore(flags); } while (0)
+/* nested variant: lockdep subclass is meaningless with lockdep off — same lock, same save/restore
+ * (i915_sw_fence takes the child fence's lock nested under the parent's). */
+#define spin_lock_irqsave_nested(l, flags, subclass) spin_lock_irqsave(l, flags)
+#define spin_lock_nested(l, subclass)                spin_lock(l)
 
 static inline void raw_spin_lock(raw_spinlock_t *l)   { __lk_acquire(&l->lock); }
 static inline void raw_spin_unlock(raw_spinlock_t *l) { __lk_release(&l->lock); }

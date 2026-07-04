@@ -48,5 +48,70 @@
 #define EREMOTEIO 121
 #define EPROBE_DEFER 517
 
+/* Remainder of the canonical asm-generic errno set (values from asm-generic/errno{,-base}.h). i915
+ * maps its firmware/uc load states onto several of these (ESTALE, ENOEXEC, ENOPKG, ...). Added whole
+ * rather than one-at-a-time to end the whack-a-mole; none collide with the subset above. */
+#define ECHILD        10
+#define ENOTBLK       15
+#define EXDEV         18
+#define ENOTDIR       20
+#define EISDIR        21
+#define ENFILE        23
+#define EMFILE        24
+#define ETXTBSY       26
+#define EFBIG         27
+#define ESPIPE        29
+#define EMLINK        31
+#define EPIPE         32
+#define EDOM          33
+#define ENAMETOOLONG  36
+#define ENOLCK        37
+#define ENOTEMPTY     39
+#define ELOOP         40
+#define EWOULDBLOCK   EAGAIN
+#define ENOMSG        42
+#define EIDRM         43
+#define ECHRNG        44
+#define EBADRQC       56
+#define EBADSLT       57
+#define EBFONT        59
+#define ENOSTR        60
+#define ENONET        64
+#define ENOPKG        65
+#define EREMOTE       66
+#define ENOLINK       67
+#define ECOMM         70
+#define EMULTIHOP     72
+#define EDOTDOT       73
+#define EBADMSG       74
+#define ENOTUNIQ      76
+#define EBADFD        77
+#define EMSGSIZE      90
+#define EPROTOTYPE    91
+#define ENOPROTOOPT   92
+#define EPROTONOSUPPORT 93
+#define EAFNOSUPPORT  97
+#define EADDRINUSE    98
+#define EADDRNOTAVAIL 99
+#define ENETDOWN      100
+#define ENETUNREACH   101
+#define ENETRESET     102
+#define ECONNABORTED  103
+#define ECONNRESET    104
+#define ENOBUFS       105
+#define EISCONN       106
+#define ENOTCONN      107
+#define ESHUTDOWN     108
+#define ECONNREFUSED  111
+#define EHOSTDOWN     112
+#define EHOSTUNREACH  113
+#define EINPROGRESS   115
+#define ESTALE        116
+#define EDQUOT        122
+#define ENOMEDIUM     123
+#define EMEDIUMTYPE   124
+#define ECANCELED     125
+#define ENOKEY        126
+
 #endif /* NANOS_HOST_TEST */
 #endif /* _LINUXKPI_LINUX_ERRNO_H */

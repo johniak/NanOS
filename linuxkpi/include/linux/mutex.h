@@ -14,6 +14,10 @@ static inline void mutex_lock(struct mutex *m){ raw_spin_lock(&m->l); m->held = 
 static inline void mutex_unlock(struct mutex *m){ m->held = 0; raw_spin_unlock(&m->l); }
 static inline int mutex_lock_interruptible(struct mutex *m){ raw_spin_lock(&m->l); m->held = 1; return 0; }
 static inline int mutex_trylock(struct mutex *m){ if(!__lk_try(&m->l.lock)) return 0; m->held = 1; return 1; }
+/* _nested variants: the lockdep subclass is meaningless with lockdep off (i915 nests context and
+ * timeline mutexes). Same lock, same acquire. */
+#define mutex_lock_nested(m, subclass)               mutex_lock(m)
+#define mutex_lock_interruptible_nested(m, subclass) mutex_lock_interruptible(m)
 static inline int mutex_is_locked(struct mutex *m){ return m->held; }
 #define mutex_destroy(m) do{}while(0)
 #define might_lock(m) do{}while(0)

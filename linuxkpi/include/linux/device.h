@@ -91,6 +91,13 @@ static inline void put_device(struct device *dev) { (void)dev; }
 #define dev_warn_once(dev, fmt, ...) printk(fmt, ##__VA_ARGS__)
 #define dev_info_once(dev, fmt, ...) printk(fmt, ##__VA_ARGS__)
 #define dev_err_probe(dev, err, fmt, ...) ({ printk(fmt, ##__VA_ARGS__); (err); })
+/* _ratelimited variants: no rate limiter in the shim printk, so they just print (i915 uses them on
+ * DP-aux and reg-access error paths). */
+#define dev_err_ratelimited(dev, fmt, ...)   printk(fmt, ##__VA_ARGS__)
+#define dev_warn_ratelimited(dev, fmt, ...)  printk(fmt, ##__VA_ARGS__)
+#define dev_notice_ratelimited(dev, fmt, ...) printk(fmt, ##__VA_ARGS__)
+#define dev_info_ratelimited(dev, fmt, ...)  printk(fmt, ##__VA_ARGS__)
+#define dev_dbg_ratelimited(dev, fmt, ...)   do {} while (0)
 #define dev_WARN(dev, fmt, ...)   printk(fmt, ##__VA_ARGS__)
 
 /* devm_ managed allocations: the shim does not track them (leak on detach is acceptable

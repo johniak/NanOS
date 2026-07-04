@@ -19,6 +19,12 @@ extern unsigned long long knx_uptime_us(void);
 
 static inline ktime_t ktime_get(void) { return (ktime_t)(knx_uptime_us() * 1000ull); }
 static inline ktime_t ktime_get_boottime(void) { return ktime_get(); }
+/* Raw (NTP-uncorrected) monotonic clock. We have no NTP discipline, so it equals ktime_get(). i915
+ * uses it for engine-busy timestamps. */
+static inline ktime_t ktime_get_raw(void) { return ktime_get(); }
+/* Lock-free fast monotonic-raw read in ns (i915 uses it on the context-switch hot path). No seqlock
+ * to bypass here — the uptime read is already a single load. */
+static inline u64 ktime_get_raw_fast_ns(void) { return knx_uptime_us() * 1000ull; }
 static inline s64 ktime_to_ns(ktime_t k) { return k; }
 static inline s64 ktime_to_us(ktime_t k) { return k / 1000; }
 static inline s64 ktime_to_ms(ktime_t k) { return k / 1000000; }

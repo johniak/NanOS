@@ -73,6 +73,14 @@ static void dma_fence_release(struct kref *kref)
 		kfree(f);
 }
 
+/* Free a fence's backing storage. In Linux this is a kfree_rcu so concurrent rcu-protected readers
+ * finish first; under deferred preemption a kernel reader is never mid-section across our free, so a
+ * plain kfree is correct. Drivers call this from their ->release (i915_sw_fence_work). */
+void dma_fence_free(struct dma_fence *f)
+{
+	kfree(f);
+}
+
 struct dma_fence *dma_fence_get(struct dma_fence *f)
 {
 	if (f)
