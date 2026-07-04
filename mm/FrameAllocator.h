@@ -37,6 +37,12 @@ public:
 	void markRangeUsed(uint64_t base, uint64_t len);
 
 	uint64_t alloc();          // first-free frame's physical address; 0 = OOM
+	// First free frame at or above minPa. For DMA memory the CPU touches via phys==virt from
+	// arbitrary context (NIC rings/buffers): a frame inside the per-process user window
+	// [VA_USER_BASE, VA_USER_END) is NOT identity-mapped under a user CR3 (the window is
+	// privatized), so a syscall- or IRQ-context access to it #PFs. Allocating above the
+	// window keeps the identity valid in every address space.
+	uint64_t allocAbove(uint64_t minPa);
 	void free(uint64_t pa);    // return a frame to the pool
 
 	bool isUsed(uint64_t frameIndex) const;

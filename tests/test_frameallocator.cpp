@@ -104,3 +104,42 @@ TEST_CASE("allocates a frame above 4 GiB without truncating the high bits (LP64)
 	CHECK((a >> 32) != 0);                                    // genuinely a 64-bit address
 	delete fa;
 }
+
+TEST_CASE("allocAbove skips free frames below minPa") {
+	// DMA memory must sit above the privatized user window: free frames BELOW the floor
+	// must never satisfy an allocAbove, even when they are the first free frames.
+	FrameAllocator* fa = fresh(0x20000);            // 32 frames
+	fa->markRangeFree(0x1000, 0x1F000);             // frames 1..31 free
+	uint64_t a = fa->allocAbove(0x10000);           // floor at frame 16
+	CHECK(a == 0x10000);                            // NOT 0x1000 (the globally-first free frame)
+	CHECK(fa->isUsed(16));
+	CHECK(!fa->isUsed(1));                          // low frames untouched
+	CHECK(fa->alloc() == 0x1000);                   // plain alloc still hands out the low ones
+	delete fa;
+}
+
+TEST_CASE("allocAbove rounds a mid-frame minPa up to the next frame") {
+	FrameAllocator* fa = fresh(0x20000);
+	fa->markRangeFree(0x1000, 0x1F000);
+	uint64_t a = fa->allocAbove(0x10001);           // one byte into frame 16 -> frame 17
+	CHECK(a == 0x11000);
+	delete fa;
+}
+
+TEST_CASE("allocAbove returns 0 (OOM) when everything at/above minPa is used") {
+	FrameAllocator* fa = fresh(0x20000);
+	fa->markRangeFree(0x1000, 0xF000);              // only frames 1..15 free, floor above them
+	CHECK(fa->allocAbove(0x10000) == 0);
+	CHECK(fa->freeCount() == 15);                   // the failed call took nothing
+	delete fa;
+}
+
+TEST_CASE("allocAbove interoperates with free (frame returns to the pool)") {
+	FrameAllocator* fa = fresh(0x20000);
+	fa->markRangeFree(0x10000, 0x10000);            // frames 16..31 free
+	uint64_t a = fa->allocAbove(0x10000);           // 0x10000
+	fa->free(a);
+	CHECK(!fa->isUsed(16));
+	CHECK(fa->allocAbove(0x10000) == a);            // handed back out
+	delete fa;
+}

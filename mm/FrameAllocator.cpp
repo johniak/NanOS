@@ -65,6 +65,27 @@ uint64_t FrameAllocator::alloc() {
 	return f * FRAME_SIZE;
 }
 
+uint64_t FrameAllocator::allocAbove(uint64_t minPa) {
+	SpinIrqGuard g(m_lock);
+	uint64_t start = (minPa + FRAME_SIZE - 1) / FRAME_SIZE;
+	for (uint64_t w = start / 32; w < BITMAP_WORDS; w++) {
+		if (m_bitmap[w] != 0xFFFFFFFFu) {
+			for (uint64_t b = 0; b < 32; b++) {
+				uint64_t f = w * 32 + b;
+				if (f < start)
+					continue;
+				if (f >= m_frameCount)
+					return 0;   // OOM above minPa
+				if (!((m_bitmap[w] >> b) & 1u)) {
+					set(f);
+					return f * FRAME_SIZE;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
 void FrameAllocator::free(uint64_t pa) {
 	SpinIrqGuard g(m_lock);
 	clear(pa / FRAME_SIZE);

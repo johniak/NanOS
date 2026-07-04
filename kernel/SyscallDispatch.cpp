@@ -973,7 +973,7 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 			if (addr + len > fbt) { ret = -22; break; }   // -EINVAL: straddles the window top
 			Process* fp = ProcTable::current();
 			arch::mmuUnmapUserFb((arch::AddressSpace*) fp->space, addr, len);
-			if (!kernel::mmapFreeAdd(fp->fbFree, &fp->fbFreeCount, Process::NMMAPFREE, addr, len)) {
+			if (!kernel::mmapFreeAdd(fp->fbFree, &fp->fbFreeCount, Process::NFBFREE, addr, len)) {
 				static bool fbWarned = false;
 				if (!fbWarned) {
 					fbWarned = true;

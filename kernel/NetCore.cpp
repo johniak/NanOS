@@ -85,11 +85,17 @@ void* knx_dma_alloc(uint32_t len, uint32_t* phys_out) {
 		if (phys_out) *phys_out = 0;
 		return 0;
 	}
-	uint32_t pa = g_frames.alloc();
+	// DMA memory is touched via phys==virt from ARBITRARY context: a NIC TX runs in the
+	// sending process's syscall (user CR3), RX drain in whatever CR3 the interrupt hit.
+	// A frame inside the privatized user window [VA_USER_BASE, VA_USER_END) is not identity
+	// there (#PF on the first packet once the allocator's low frames run into the window —
+	// exactly how ping regressed when boot-time allocations drifted past 40 MiB). Allocate
+	// above the window: [VA_USER_END, ...) stays identity in every address space.
+	uint32_t pa = (uint32_t) g_frames.allocAbove(arch::VA_USER_END);
 	if (!pa) { if (phys_out) *phys_out = 0; return 0; }
-	memset((void*) pa, 0, FRAME_SIZE);    // identity-mapped RAM: virt == phys
+	memset((void*) (uintptr_t) pa, 0, FRAME_SIZE);   // identity-mapped RAM: virt == phys
 	if (phys_out) *phys_out = pa;
-	return (void*) pa;
+	return (void*) (uintptr_t) pa;
 }
 
 void* knx_add_net_dev(struct KnxNetDev* desc) {

@@ -115,8 +115,14 @@ struct Process {
 	// GEM BOs). Each mmap gets its OWN VA — Mesa holds tens of BO maps concurrently, and a
 	// single fixed VA would alias every cached pointer onto the newest object's pages (the
 	// GL cross-window shred bug). munmap here drops PTEs only; frames stay device-owned.
+	// 16 entries, NOT NMMAPFREE: mmapFreeAdd UNIONs adjacent ranges and Mesa's staging churn
+	// frees contiguously, so the live list stays tiny (overflow degrades to a logged VA leak).
+	// Deliberately small — ProcTable multiplies every Process byte by 1024, and the kernel
+	// image must end below VA_USER_BASE (enforced by the linker.ld ASSERT; a 512 KiB version
+	// of this array pushed .bss to 0x855020 and the shootdown IPI #PF'd under a user CR3).
+	static const int NFBFREE = 16;
 	unsigned fbNext;
-	MmapFree fbFree[NMMAPFREE];
+	MmapFree fbFree[NFBFREE];
 	int      fbFreeCount;
 
 	// Sessions + process groups (job control). A new process is its own group+session
