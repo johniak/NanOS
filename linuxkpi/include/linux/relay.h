@@ -5,4 +5,6 @@ struct rchan; struct rchan_callbacks; struct dentry;
 /* No relayfs backing: the channel is always "not full" (writes are dropped, never blocked).
  * Takes void* so it matches whatever rchan_buf pointer the caller passes without a type clash. */
 static inline int relay_buf_full(void *buf){ (void)buf; return 0; }
+struct file_operations;
+extern const struct file_operations relay_file_operations;   /* GuC-log relay node fops (inert) */
 #endif

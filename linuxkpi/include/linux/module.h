@@ -22,6 +22,12 @@ struct module;
 #define MODULE_PARM_DESC(a, b)
 #define module_param(a, b, c)
 #define module_param_named(a, b, c, d)
+#define module_param_named_unsafe(a, b, c, d)
+#define module_param_unsafe(a, b, c)
+#define module_param_string(a, b, c, d)
+#define module_param_array(a, b, c, d)
+#define module_param_cb(a, b, c, d)
+#define core_param(a, b, c, d)
 
 #define module_init(fn) int __maybe_unused __lkpi_modinit_##fn(void) { return fn(); }
 #define module_exit(fn) void __maybe_unused __lkpi_modexit_##fn(void) { fn(); }

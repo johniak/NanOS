@@ -28,6 +28,10 @@ struct xa_limit; static inline int xa_alloc(struct xarray *xa, u32 *id, void *p,
 #define xa_for_each(xa, index, entry) for(index=0; ((entry)=xa_load((xa),index))!=0 || (index) < (unsigned long)(xa)->idr.cap; index++) if((entry))
 #define xa_lock_irqsave(xa,f) do{ (f)=0; xa_lock(xa); }while(0)
 #define xa_unlock_irqrestore(xa,f) do{ (void)(f); xa_unlock(xa); }while(0)
+#define xa_lock_irq(xa)   xa_lock(xa)
+#define xa_unlock_irq(xa) xa_unlock(xa)
+#define xa_lock_bh(xa)    xa_lock(xa)
+#define xa_unlock_bh(xa)  xa_unlock(xa)
 #endif
 
 #ifndef _LKPI_XARRAY_ALLOC
@@ -49,4 +53,5 @@ static inline int xa_alloc(struct xarray *xa, u32 *id, void *p, struct xa_limit 
 /* the id-range limits are struct xa_limit values (not bare integers) — xa_alloc takes them by value. */
 #define xa_limit_32b  XA_LIMIT(0, 0xffffffffU)
 #define xa_limit_31b  XA_LIMIT(0, 0x7fffffffU)
+static inline int xa_alloc_cyclic_irq(struct xarray *xa, u32 *id, void *p, struct xa_limit limit, u32 *next, unsigned gfp){ (void)limit;(void)next;(void)gfp; int r=idr_alloc(&xa->idr,p,0,0,0); if(r<0)return r; *id=(u32)r; return 0; }
 #endif

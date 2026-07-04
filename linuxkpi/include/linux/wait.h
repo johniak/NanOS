@@ -22,15 +22,15 @@ typedef struct wait_queue_head {
 struct wait_queue_entry;
 /* wake callback: return non-zero if the entry was woken (autoremove_wake_function removes it). */
 typedef int (*wait_queue_func_t)(struct wait_queue_entry *wq_entry, unsigned mode, int flags, void *key);
-struct wait_queue_entry { unsigned int flags; void *priv; wait_queue_func_t func; struct list_head entry; };
+struct wait_queue_entry { unsigned int flags; void *private; wait_queue_func_t func; struct list_head entry; };
 typedef struct wait_queue_entry wait_queue_entry_t;
 int autoremove_wake_function(struct wait_queue_entry *wq_entry, unsigned mode, int sync, void *key);
 int default_wake_function(struct wait_queue_entry *wq_entry, unsigned mode, int sync, void *key);
-static inline void init_waitqueue_entry(struct wait_queue_entry *e, void *task){ e->flags=0; e->priv=task; e->func=default_wake_function; INIT_LIST_HEAD(&e->entry); }
-static inline void init_wait_entry(struct wait_queue_entry *e, int flags){ e->flags=flags; e->priv=0; e->func=autoremove_wake_function; INIT_LIST_HEAD(&e->entry); }
+static inline void init_waitqueue_entry(struct wait_queue_entry *e, void *task){ e->flags=0; e->private=task; e->func=default_wake_function; INIT_LIST_HEAD(&e->entry); }
+static inline void init_wait_entry(struct wait_queue_entry *e, int flags){ e->flags=flags; e->private=0; e->func=autoremove_wake_function; INIT_LIST_HEAD(&e->entry); }
 /* DEFINE_WAIT declares an on-stack entry whose wake callback auto-removes it from the queue. */
 #define DEFINE_WAIT_FUNC(name, function) \
-	struct wait_queue_entry name = { .flags = 0, .priv = 0, .func = (function), .entry = { &(name).entry, &(name).entry } }
+	struct wait_queue_entry name = { .flags = 0, .private = 0, .func = (function), .entry = { &(name).entry, &(name).entry } }
 #define DEFINE_WAIT(name) DEFINE_WAIT_FUNC(name, autoremove_wake_function)
 
 #define DECLARE_WAIT_QUEUE_HEAD(name) wait_queue_head_t name = { { {0} }, { &(name).head, &(name).head } }

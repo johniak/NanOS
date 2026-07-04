@@ -49,6 +49,7 @@ int anon_inode_getfd(const char *name, const struct file_operations *ops, void *
 #define O_EXCL     0200
 #define O_CREAT    0100
 static inline struct file *file_clone_open(struct file *f){ return f; }
+static inline struct file *get_file_active(struct file **f){ return f ? *f : 0; }
 #endif
 
 

@@ -13,6 +13,8 @@ struct dma_buf_ops {
   struct sg_table *(*map_dma_buf)(struct dma_buf_attachment*, enum dma_data_direction);
   void (*unmap_dma_buf)(struct dma_buf_attachment*, struct sg_table*, enum dma_data_direction);
   void (*release)(struct dma_buf*);
+  int (*begin_cpu_access)(struct dma_buf*, enum dma_data_direction);
+  int (*end_cpu_access)(struct dma_buf*, enum dma_data_direction);
   int (*mmap)(struct dma_buf*, struct vm_area_struct*);
   int (*vmap)(struct dma_buf*, struct iosys_map*);
   void (*vunmap)(struct dma_buf*, struct iosys_map*);

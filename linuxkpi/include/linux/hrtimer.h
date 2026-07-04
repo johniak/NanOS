@@ -18,6 +18,7 @@ struct hrtimer {
 
 static inline void hrtimer_init(struct hrtimer *t, int which, enum hrtimer_mode mode) { (void)which;(void)mode; t->function = 0; }
 static inline int  hrtimer_cancel(struct hrtimer *t) { (void)t; return 0; }
+static inline int  hrtimer_try_to_cancel(struct hrtimer *t) { (void)t; return 0; }
 static inline void hrtimer_start(struct hrtimer *t, ktime_t tim, enum hrtimer_mode mode) { (void)t;(void)tim;(void)mode; }
 static inline void hrtimer_start_range_ns(struct hrtimer *t, ktime_t tim, u64 range_ns, enum hrtimer_mode mode) { (void)t;(void)tim;(void)range_ns;(void)mode; }
 static inline u64 hrtimer_forward(struct hrtimer *t, ktime_t now, ktime_t interval) { (void)t;(void)now;(void)interval; return 0; }

@@ -4,7 +4,14 @@
 #include <linux/types.h>
 struct device;
 enum backlight_type { BACKLIGHT_RAW = 1, BACKLIGHT_PLATFORM, BACKLIGHT_FIRMWARE };
-struct backlight_properties { int brightness; int max_brightness; int power; unsigned type; unsigned scale; };
+struct backlight_properties { int brightness; int max_brightness; int power; unsigned type; unsigned scale; unsigned int state; };
+#ifndef BACKLIGHT_POWER_OFF
+#define BACKLIGHT_POWER_ON       0
+#define BACKLIGHT_POWER_OFF      4
+#define BACKLIGHT_POWER_REDUCED  1
+#define BL_CORE_SUSPENDED        (1<<0)
+#define BL_CORE_FBBLANK          (1<<1)
+#endif
 struct backlight_device { struct backlight_properties props; void *data; };
 struct backlight_ops { unsigned options; int (*update_status)(struct backlight_device *);
 	int (*get_brightness)(struct backlight_device *); };

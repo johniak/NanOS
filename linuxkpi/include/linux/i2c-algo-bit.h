@@ -11,4 +11,7 @@ struct i2c_algo_bit_data {
 	int udelay; int timeout;
 };
 static inline int i2c_bit_add_bus(struct i2c_adapter *a){ (void)a; return 0; }
+/* the generic bit-bang algorithm i915_gmbus falls back to; master_xfer/functionality fail (no bus). */
+struct i2c_algorithm;
+extern const struct i2c_algorithm i2c_bit_algo;
 #endif

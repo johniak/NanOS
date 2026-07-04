@@ -40,4 +40,8 @@
 #define GFP_HIGHUSER_MOVABLE ((gfp_t)0u)
 #define GFP_NOIO ((gfp_t)0u)
 #define GFP_KERNEL_ACCOUNT ((gfp_t)0u)
+/* our GFP_* are all 0, so blocking is always "allowed"; __GFP_DIRECT_RECLAIM absence => nowait. */
+#define __GFP_DIRECT_RECLAIM ((gfp_t)0x400000u)
+#define __GFP_KSWAPD_RECLAIM ((gfp_t)0x800000u)
+static inline bool gfpflags_allow_blocking(gfp_t gfp){ (void)gfp; return true; }
 #endif

@@ -33,4 +33,13 @@ long sysfs_emit_at(char *buf, int at, const char *fmt, ...);
 static inline int sysfs_create_bin_file(struct kobject *k, const struct bin_attribute *a){ (void)k;(void)a; return 0; }
 static inline void sysfs_remove_bin_file(struct kobject *k, const struct bin_attribute *a){ (void)k;(void)a; }
 #define ATTRIBUTE_GROUPS(name) static const struct attribute_group *name##_groups[] = { &name##_group, 0 }
+static inline void sysfs_attr_init(struct attribute *a){ (void)a; }
+static inline int sysfs_create_group(struct kobject *k, const struct attribute_group *g){ (void)k;(void)g; return 0; }
+static inline void sysfs_remove_group(struct kobject *k, const struct attribute_group *g){ (void)k;(void)g; }
+static inline int sysfs_create_groups(struct kobject *k, const struct attribute_group **g){ (void)k;(void)g; return 0; }
+static inline void sysfs_remove_groups(struct kobject *k, const struct attribute_group **g){ (void)k;(void)g; }
+static inline int sysfs_create_files(struct kobject *k, const struct attribute * const *a){ (void)k;(void)a; return 0; }
+static inline void sysfs_bin_attr_init(struct bin_attribute *a){ (void)a; }
+/* sysfs group-name symbol i915 references as the parent group of its power attributes. */
+extern const char power_group_name[];
 #endif

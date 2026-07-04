@@ -109,6 +109,15 @@ static inline int set_page_dirty(struct page *p){ (void)p; return 1; }
 static inline int PageHighMem(const struct page *p){ (void)p; return 0; }
 static inline int PageReserved(const struct page *p){ (void)p; return 0; }
 /* PFN rounding of a byte count/address. */
+/* x86 PTE attribute bits (i915 GTT PPAT composition in intel_gtt.h uses PWT/PCD for uncached). */
+#ifndef _PAGE_PWT
+#define _PAGE_BIT_PWT 3
+#define _PAGE_BIT_PCD 4
+#define _PAGE_PWT  (1UL << _PAGE_BIT_PWT)
+#define _PAGE_PCD  (1UL << _PAGE_BIT_PCD)
+#define _PAGE_PRESENT (1UL << 0)
+#define _PAGE_RW      (1UL << 1)
+#endif
 #ifndef PFN_UP
 #define PFN_UP(x)   (((x) + PAGE_SIZE - 1) >> PAGE_SHIFT)
 #define PFN_DOWN(x) ((x) >> PAGE_SHIFT)
@@ -168,6 +177,9 @@ static inline void mmap_write_lock(struct mm_struct *mm){ (void)mm; }
 static inline void mmap_write_unlock(struct mm_struct *mm){ (void)mm; }
 static inline int mmap_write_lock_killable(struct mm_struct *mm){ (void)mm; return 0; }
 static inline int mmap_read_lock_killable(struct mm_struct *mm){ (void)mm; return 0; }
+/* no user VMA graph in the shim → find_vma finds nothing. */
+static inline struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr){ (void)mm;(void)addr; return 0; }
+static inline struct vm_area_struct *vma_lookup(struct mm_struct *mm, unsigned long addr){ (void)mm;(void)addr; return 0; }
 /* total RAM in pages: report a fixed large value (i915 sizes caches against it). */
 static inline unsigned long totalram_pages(void){ return 512UL * 1024 * 1024 / PAGE_SIZE; }
 #ifndef VM_FAULT_RETRY

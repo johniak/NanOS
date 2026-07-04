@@ -4,7 +4,9 @@
 #include <linux/workqueue.h>   /* drm_dp_helper.h embeds work_struct/delayed_work and reaches the
                                 * full definitions only through <linux/i2c.h> (mirrors upstream) */
 struct i2c_algorithm;
-struct i2c_adapter { char name[48]; void *algo_data; const struct i2c_algorithm *algo; struct device dev; unsigned int class; int nr; int retries; int timeout; void *owner; struct module *owner_mod; };
+struct i2c_lock_operations;
+struct i2c_adapter { char name[48]; void *algo_data; const struct i2c_algorithm *algo; const struct i2c_lock_operations *lock_ops; struct device dev; unsigned int class; int nr; int retries; int timeout; void *owner; struct module *owner_mod; };
+struct i2c_lock_operations { void (*lock_bus)(struct i2c_adapter*, unsigned int); int (*trylock_bus)(struct i2c_adapter*, unsigned int); void (*unlock_bus)(struct i2c_adapter*, unsigned int); };
 struct i2c_algorithm { int (*master_xfer)(struct i2c_adapter*, struct i2c_msg*, int); unsigned int (*functionality)(struct i2c_adapter*); };
 struct i2c_msg { unsigned short addr, flags, len; unsigned char *buf; };
 struct i2c_client { struct i2c_adapter *adapter; };

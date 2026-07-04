@@ -158,6 +158,11 @@ struct kobject *kobject_create_and_add(const char *name, struct kobject *parent)
 }
 void kobject_put(struct kobject *k) { kfree(k); }
 
+/* one shared var-event waitqueue: wake_up is a barrier and waiters re-check their own condition,
+ * so a single global queue is correct (see wait_bit.h). */
+static struct wait_queue_head __lkpi_var_wq;
+struct wait_queue_head *__var_waitqueue(void *p) { (void)p; return &__lkpi_var_wq; }
+
 /* ---- sysfs string helpers ----------------------------------------------------------- */
 
 int sysfs_streq(const char *a, const char *b)

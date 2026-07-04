@@ -55,8 +55,12 @@ struct pci_dev {
 	struct pci_bus *bus;
 	unsigned int devfn;
 	void *priv;
+	unsigned int msi_enabled:1;
+	unsigned int msix_enabled:1;
+	unsigned int no_64bit_msi:1;
+	unsigned int current_state;
 };
-struct pci_bus { unsigned char number; int domain_nr; };
+struct pci_bus { unsigned char number; int domain_nr; struct pci_bus *parent; struct pci_dev *self; struct resource *resource[4]; };
 #define PCI_SLOT(devfn) (((devfn) >> 3) & 0x1f)
 #define PCI_FUNC(devfn) ((devfn) & 0x07)
 #define PCI_DEVFN(slot, func) ((((slot) & 0x1f) << 3) | ((func) & 0x07))
@@ -217,6 +221,9 @@ static inline int pci_enable_msi(struct pci_dev *dev){ (void)dev; return 0; }
 static inline void pci_disable_msi(struct pci_dev *dev){ (void)dev; }
 /* pcibios_align_resource: identity alignment (return the requested start unchanged). */
 static inline unsigned long pcibios_align_resource(void *data, const struct resource *res, unsigned long size, unsigned long align){ (void)data;(void)res;(void)size;(void)align; return 0; }
+/* iterate a bus's window resources (shim bus has 4 slots, mostly NULL). */
+#define pci_bus_for_each_resource(bus, res) \
+	for (unsigned __i = 0; __i < 4 && ((res) = (bus)->resource[__i], 1); __i++)
 #ifndef PCIBIOS_MIN_MEM
 #define PCIBIOS_MIN_MEM 0x100000
 #define PCIBIOS_MIN_IO  0x1000
