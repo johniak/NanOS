@@ -11,7 +11,11 @@ set -u
 IMG=disk/image64-grub2.img
 SER=/tmp/nanos-smpnet.log
 MON=/tmp/nanos-smpnet-qmon.sock
-SETTLE="${SETTLE:-150}"   # TCG is slow; each datagram round-trip is a wake/schedule cycle
+# Completion CEILING, not a fixed sleep: the run is polled for the success line every 2 s and
+# returns as soon as it appears. nettorture wall-time under MTTCG swings 15 s .. 150+ s with host
+# load (Docker Desktop from the image64 rebuild, other QEMUs), so a fixed 150 s sleep flaked while
+# a quiet host finished in 15 s. 600 s is generous; a real hang still fails, just later.
+SETTLE="${SETTLE:-600}"
 rm -f "$SER" "$MON"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }
 
@@ -28,9 +32,9 @@ if ! grep -q "nanos login:" "$SER" 2>/dev/null; then
 	echo "FAIL: never reached login"; tail -20 "$SER" 2>/dev/null; exit 1
 fi
 
-python3 - "$MON" "$SETTLE" <<'PY'
+python3 - "$MON" "$SETTLE" "$SER" <<'PY'
 import socket,time,sys
-MON, SETTLE = sys.argv[1], float(sys.argv[2])
+MON, SETTLE, SER = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 def kn(c):
     if c.isdigit() or c.isalpha(): return c
     return {' ':'spc','.':'dot','\n':'ret','/':'slash'}.get(c)
@@ -51,7 +55,17 @@ def typ(text, settle):
     s.sendall(b"sendkey ret\n"); time.sleep(settle); s.close()
 typ("jan", 1.5)
 typ("jan", 2.5)
-typ("nettorture.nxe", SETTLE)
+typ("nettorture.nxe", 0.5)
+# Poll for completion (success line OR any nettorture verdict/fault) instead of a fixed sleep —
+# return the moment the run is decided, wait up to the SETTLE ceiling for a slow host.
+deadline = time.time() + SETTLE
+while time.time() < deadline:
+    time.sleep(2)
+    try: log = open(SER, "rb").read().decode(errors="replace")
+    except FileNotFoundError: continue
+    if ("datagrams ok" in log or "NET RACE" in log or "thread create FAIL" in log
+            or "KERNEL EXCEPTION" in log):
+        break
 PY
 sleep 2
 
@@ -59,9 +73,9 @@ echo "=== nettorture output ==="
 grep -a "nettorture:" "$SER" | sed 's/\x1b\[[0-9;]*m//g' || true
 echo "========================="
 
-if grep -aqE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT" "$SER"; then
+if grep -aqE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT|KERNEL EXCEPTION" "$SER"; then
 	echo "x86_64 SMP netstress: FAIL — kernel fault/panic in serial log"
-	grep -aE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT" "$SER" | head
+	grep -aE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT|KERNEL EXCEPTION" "$SER" | head
 	exit 1
 fi
 if grep -aq "nettorture: .* datagrams ok" "$SER"; then

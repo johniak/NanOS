@@ -14,7 +14,11 @@ set -u
 IMG=disk/image64-grub2.img
 SER=/tmp/nanos-smpstress.log
 MON=/tmp/nanos-smpstress-qmon.sock
-SETTLE="${SETTLE:-150}"           # seconds to let the torture run (TCG is slow; it is deterministic)
+# Completion CEILING, not a fixed sleep: the run is polled for a verdict every 2 s and returns
+# as soon as one appears. smptorture wall-time under MTTCG swings widely with host load (Docker
+# Desktop after an image64 rebuild, other QEMUs), so a fixed 150 s sleep flaked mid-thread-phase
+# on a busy host. 600 s is generous; a real hang still fails, just later.
+SETTLE="${SETTLE:-600}"
 rm -f "$SER" "$MON"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }
 
@@ -34,9 +38,9 @@ if ! grep -q "nanos login:" "$SER" 2>/dev/null; then
 	echo "FAIL: never reached login"; tail -20 "$SER" 2>/dev/null; exit 1
 fi
 
-python3 - "$MON" "$SETTLE" <<'PY'
+python3 - "$MON" "$SETTLE" "$SER" <<'PY'
 import socket,time,sys
-MON, SETTLE = sys.argv[1], float(sys.argv[2])
+MON, SETTLE, SER = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 def kn(c):
     if c.isdigit() or c.isalpha(): return c
     return {' ':'spc','.':'dot','\n':'ret','/':'slash'}.get(c)
@@ -57,7 +61,18 @@ def typ(text, settle):
     s.sendall(b"sendkey ret\n"); time.sleep(settle); s.close()
 typ("jan", 1.5)                  # username
 typ("jan", 2.5)                  # password -> bash login shell
-typ("smptorture.nxe", SETTLE)    # the race gate
+typ("smptorture.nxe", 0.5)       # the race gate
+# Poll for a verdict (final success line, any FAIL print, or a kernel fault) instead of a fixed
+# sleep — return the moment the run is decided, wait up to the SETTLE ceiling on a slow host.
+deadline = time.time() + SETTLE
+while time.time() < deadline:
+    time.sleep(2)
+    try: log = open(SER, "rb").read().decode(errors="replace")
+    except FileNotFoundError: continue
+    # NOT a bare "FAIL": the boot serial legitimately contains "[FAILED]" kext-probe lines.
+    if ("signals ok" in log or "read FAIL" in log or "create FAIL" in log
+            or "pipe() FAIL" in log or "SIGNAL FAIL" in log or "KERNEL EXCEPTION" in log):
+        break
 PY
 sleep 2
 
@@ -67,9 +82,9 @@ echo "========================="
 
 # Kernel-level failure: a panic or a triple/GP/page fault logged by the kernel itself (NOT the
 # benign "[FAILED]" kext lines for NICs absent in QEMU). Keep this marker list tight.
-if grep -aqE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT" "$SER"; then
+if grep -aqE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT|KERNEL EXCEPTION" "$SER"; then
 	echo "x86_64 SMP stress: FAIL — kernel fault/panic in serial log"
-	grep -aE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT" "$SER" | head
+	grep -aE "Kernel panic|PANIC|TRIPLE FAULT|triple fault|KERNEL FAULT|KERNEL EXCEPTION" "$SER" | head
 	exit 1
 fi
 # Decision is driven by smptorture's OWN output: the success line ends "... signals ok"; any other
