@@ -153,4 +153,41 @@ struct vma_iterator { int _unused; };
 #define VMA_ITERATOR(name, mm, addr) struct vma_iterator name = { 0 }
 #define for_each_vma(vmi, vma) for ((vma) = 0; (vma); )
 #define for_each_vma_range(vmi, vma, end) for ((vma) = 0; (vma); )
+/* single flat page map: nth_page is pointer arithmetic; kmap maps to the page's linear address. */
+static inline struct page *nth_page(struct page *p, unsigned long n){ return (struct page *)((char *)p + n * PAGE_SIZE); }
+#ifndef _LKPI_KMAP
+#define _LKPI_KMAP
+static inline void *kmap(struct page *p){ return page_address(p); }
+static inline void kunmap(struct page *p){ (void)p; }
+#endif
+/* mm read/write lock: KMS runs in-kernel with no user mm to lock — no-ops. */
+struct mm_struct;
+static inline void mmap_read_lock(struct mm_struct *mm){ (void)mm; }
+static inline void mmap_read_unlock(struct mm_struct *mm){ (void)mm; }
+static inline void mmap_write_lock(struct mm_struct *mm){ (void)mm; }
+static inline void mmap_write_unlock(struct mm_struct *mm){ (void)mm; }
+static inline int mmap_write_lock_killable(struct mm_struct *mm){ (void)mm; return 0; }
+static inline int mmap_read_lock_killable(struct mm_struct *mm){ (void)mm; return 0; }
+/* total RAM in pages: report a fixed large value (i915 sizes caches against it). */
+static inline unsigned long totalram_pages(void){ return 512UL * 1024 * 1024 / PAGE_SIZE; }
+#ifndef VM_FAULT_RETRY
+#define VM_FAULT_RETRY  0x000400
+#define VM_FAULT_NOPAGE 0x000100
+#endif
+#ifndef PROT_READ
+#define PROT_READ  0x1
+#define PROT_WRITE 0x2
+#define PROT_EXEC  0x4
+#endif
+#ifndef MAP_SHARED
+#define MAP_SHARED   0x01
+#define MAP_PRIVATE  0x02
+#define MAP_FIXED    0x10
+#endif
+#ifndef FAULT_FLAG_RETRY_NOWAIT
+#define FAULT_FLAG_WRITE        0x01
+#define FAULT_FLAG_ALLOW_RETRY  0x04
+#define FAULT_FLAG_RETRY_NOWAIT 0x08
+#define FAULT_FLAG_KILLABLE     0x10
+#endif
 #endif

@@ -33,5 +33,6 @@
 #define CONFIG_DRM_I915_TIMESLICE_DURATION 1
 /* force-probe list is empty: we probe only the real Gen9.5 IDs the driver already claims. */
 #define CONFIG_DRM_I915_FORCE_PROBE ""
+#define CONFIG_DRM_I915_REQUEST_TIMEOUT 20000
 
 #endif /* _LINUXKPI_AUTOCONF_H */

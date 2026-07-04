@@ -25,6 +25,16 @@ static inline u64 ktime_get_boottime_ns(void) { return (u64)ktime_get_boottime()
 #endif
 /* compose a ktime from seconds + nanoseconds (ktime_t is a scalar ns count here). */
 static inline ktime_t ktime_set(s64 secs, unsigned long nsecs) { return secs*1000000000LL + (s64)nsecs; }
+#ifndef KTIME_MAX
+#define KTIME_MAX ((s64)~((u64)1 << 63))
+#define KTIME_SEC_MAX (KTIME_MAX / 1000000000LL)
+#endif
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_REALTIME  0
+#define CLOCK_MONOTONIC 1
+#define CLOCK_MONOTONIC_RAW 4
+#define CLOCK_BOOTTIME  7
+#endif
 /* Raw (NTP-uncorrected) monotonic clock. We have no NTP discipline, so it equals ktime_get(). i915
  * uses it for engine-busy timestamps. */
 static inline ktime_t ktime_get_raw(void) { return ktime_get(); }

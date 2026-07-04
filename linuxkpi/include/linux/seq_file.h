@@ -3,7 +3,7 @@
 #include <linux/types.h>
 struct file;
 struct inode;
-struct seq_file { void *private; };
+struct seq_file { void *private; char *buf; unsigned long size; unsigned long count; unsigned long from; loff_t index; };
 int seq_printf(struct seq_file*, const char*, ...);
 void seq_puts(struct seq_file*, const char*);
 void seq_putc(struct seq_file*, char);

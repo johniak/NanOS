@@ -19,6 +19,8 @@
 #define DMA_ATTR_WRITE_COMBINE  (1UL << 2)
 #define DMA_ATTR_NO_KERNEL_MAPPING (1UL << 1)
 #define DMA_ATTR_FORCE_CONTIGUOUS (1UL << 7)
+#define DMA_ATTR_NO_WARN         (1UL << 8)
+#define DMA_ATTR_ALLOC_SINGLE_PAGES (1UL << 9)
 
 #ifdef __cplusplus
 extern "C" {
@@ -100,4 +102,6 @@ static inline int dma_map_sg_attrs(struct device *d, struct scatterlist *sgl, in
 	return nents;
 }
 static inline void dma_unmap_sg_attrs(struct device *d, struct scatterlist *sgl, int nents, enum dma_data_direction dir, unsigned long attrs){ (void)d;(void)sgl;(void)nents;(void)dir;(void)attrs; }
+static inline int dma_map_sg(struct device *d, struct scatterlist *sgl, int nents, enum dma_data_direction dir){ return dma_map_sg_attrs(d, sgl, nents, dir, 0); }
+static inline void dma_unmap_sg(struct device *d, struct scatterlist *sgl, int nents, enum dma_data_direction dir){ (void)d;(void)sgl;(void)nents;(void)dir; }
 #endif

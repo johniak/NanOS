@@ -68,6 +68,9 @@ struct pci_driver {
 	const struct pci_device_id *id_table;
 	int (*probe)(struct pci_dev *dev, const struct pci_device_id *id);
 	void (*remove)(struct pci_dev *dev);
+	void (*shutdown)(struct pci_dev *dev);
+	const void *driver;
+	void *driver_management;
 };
 
 #ifdef __cplusplus
@@ -203,5 +206,25 @@ static inline const struct pci_device_id *pci_match_id(const struct pci_device_i
 /* Option-ROM / BAR resource release: the shim doesn't reserve them, so releasing is a no-op. */
 static inline void pci_release_resource(struct pci_dev *dev, int bar) { (void)dev; (void)bar; }
 static inline int pci_resource_n(struct pci_dev *dev) { (void)dev; return PCI_STD_NUM_BARS; }
+/* resizable-BAR resize: the shim can't re-negotiate BAR size, so report unsupported. */
+static inline int pci_resize_resource(struct pci_dev *dev, int bar, int size){ (void)dev;(void)bar;(void)size; return -95; }
+/* is a device matching this id table currently present? Only our GPU is; others are absent. */
+static inline int pci_dev_present(const struct pci_device_id *ids){ (void)ids; return 0; }
+/* resizable-BAR possible-size bitmask: BAR is fixed in the shim, so only the current size is offered. */
+static inline u32 pci_rebar_get_possible_sizes(struct pci_dev *dev, int bar){ (void)dev;(void)bar; return 0; }
+/* MSI enable: interrupts are wired by the kext's minimal LAPIC path (single vector), so report OK. */
+static inline int pci_enable_msi(struct pci_dev *dev){ (void)dev; return 0; }
+static inline void pci_disable_msi(struct pci_dev *dev){ (void)dev; }
+/* pcibios_align_resource: identity alignment (return the requested start unchanged). */
+static inline unsigned long pcibios_align_resource(void *data, const struct resource *res, unsigned long size, unsigned long align){ (void)data;(void)res;(void)size;(void)align; return 0; }
+#ifndef PCIBIOS_MIN_MEM
+#define PCIBIOS_MIN_MEM 0x100000
+#define PCIBIOS_MIN_IO  0x1000
+#endif
+#ifndef PCI_CLASS_BRIDGE_ISA
+#define PCI_CLASS_BRIDGE_ISA   0x0601
+#define PCI_CLASS_DISPLAY_VGA  0x0300
+#define PCI_CLASS_BRIDGE_HOST  0x0600
+#endif
 
 #endif /* _LINUXKPI_LINUX_PCI_H */

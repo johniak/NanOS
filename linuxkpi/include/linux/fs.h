@@ -71,6 +71,12 @@ static inline int init_pseudo(struct fs_context *fc, unsigned long magic){ (void
 static inline struct file_system_type *get_fs_type(const char *name){ (void)name; return 0; }
 static inline struct vfsmount *kern_mount(struct file_system_type *t){ (void)t; return 0; }
 static inline void kern_unmount(struct vfsmount *m){ (void)m; }
+static inline struct vfsmount *vfs_kern_mount(struct file_system_type *t, int flags, const char *name, void *data){ (void)t;(void)flags;(void)name;(void)data; return 0; }
+#ifndef SB_KERNMOUNT
+#define SB_KERNMOUNT   (1<<22)
+#define SB_NOATIME     (1<<10)
+#define SB_RDONLY      (1<<0)
+#endif
 static inline int simple_pin_fs(struct file_system_type *t, struct vfsmount **m, int *count){ (void)t;(void)m;(void)count; return 0; }
 static inline void simple_release_fs(struct vfsmount **m, int *count){ (void)m;(void)count; }
 static inline struct inode *alloc_anon_inode(struct super_block *sb){ (void)sb; return 0; }

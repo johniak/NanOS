@@ -3,7 +3,10 @@
 #ifndef _LINUXKPI_LINUX_IRQ_WORK_H
 #define _LINUXKPI_LINUX_IRQ_WORK_H
 #include <linux/types.h>
-struct irq_work { void (*func)(struct irq_work *); };
+#include <linux/llist.h>
+/* mirrors Linux's __call_single_node: i915 links pending irq_work via work.node.llist. */
+struct __call_single_node { struct llist_node llist; };
+struct irq_work { struct __call_single_node node; void (*func)(struct irq_work *); };
 #define IRQ_WORK_INIT(_f)          { .func = (_f) }
 #define DEFINE_IRQ_WORK(n, _f)     struct irq_work n = IRQ_WORK_INIT(_f)
 static inline void init_irq_work(struct irq_work *w, void (*f)(struct irq_work *)) { w->func = f; }

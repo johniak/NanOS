@@ -11,6 +11,8 @@
 /* PAT (page attribute table) is not exposed to the shim; write-combining is handled by ioremap_wc
  * directly, so i915 can treat PAT as available (its WC-mapping path is a no-op cost here). */
 static inline bool pat_enabled(void){ return true; }
+/* wrap an errno as an __iomem ERR_PTR (i915 ioremap error paths). */
+#define IOMEM_ERR_PTR(err) ((void __iomem *)(long)(err))
 /* MTRR write-combine add/del: NanOS maps device BARs WC via ioremap_wc already, so these succeed
  * with a positive handle and free is a no-op. */
 static inline int arch_phys_wc_add(unsigned long base, unsigned long size){ (void)base;(void)size; return 0; }

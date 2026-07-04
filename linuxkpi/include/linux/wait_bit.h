@@ -10,7 +10,9 @@ static inline int wait_on_bit(unsigned long *word, int bit, unsigned mode)
 { (void)mode; while (test_bit(bit, word)) cpu_relax(); return 0; }
 static inline int wait_on_bit_timeout(unsigned long *word, int bit, unsigned mode, unsigned long to)
 { (void)mode; (void)to; while (test_bit(bit, word)) cpu_relax(); return 0; }
+#define ___wait_var_event(var, condition, state, exclusive, ret, cmd) do { while (!(condition)) cpu_relax(); } while (0)
 #define wait_var_event(var, condition) do { while (!(condition)) cpu_relax(); } while (0)
+#define wait_var_event_interruptible(var, condition) ({ while (!(condition)) cpu_relax(); 0; })
 #define wait_var_event_killable(var, condition) ({ while (!(condition)) cpu_relax(); 0; })
 #define wait_var_event_timeout(var, condition, timeout) ({ while (!(condition)) cpu_relax(); 1; })
 /* Wake waiters on a bit-word (paired with wait_on_bit). Cooperative kernel: the bit is already

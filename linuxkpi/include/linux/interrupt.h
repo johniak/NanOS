@@ -55,6 +55,7 @@ static inline void tasklet_unlock_spin_wait(struct tasklet_struct *t){ (void)t; 
 static inline void tasklet_hi_schedule(struct tasklet_struct *t){ tasklet_schedule(t); }
 static inline void tasklet_enable(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_disable(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_disable_nosync(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_kill(struct tasklet_struct *t){ (void)t; }
 /* tasklet_setup: modern init form (callback style). */
 static inline void tasklet_setup(struct tasklet_struct *t, void (*callback)(struct tasklet_struct *)){ if(!t) return; t->next=0; t->state=0; t->count=0; t->use_callback=true; t->callback=callback; t->data=0; }
@@ -62,6 +63,8 @@ static inline void tasklet_setup(struct tasklet_struct *t, void (*callback)(stru
  * synchronize_irq has nothing to wait for. */
 static inline void synchronize_irq(unsigned int irq){ (void)irq; }
 static inline int  synchronize_hardirq(unsigned int irq){ (void)irq; return 0; }
+/* from_tasklet == container_of(callback_arg, type, tasklet_field). */
+#define from_tasklet(var, callback_tasklet, tasklet_fieldname) container_of(callback_tasklet, __typeof__(*var), tasklet_fieldname)
 /* Bottom-half / softirq disable: cooperative kernel never runs softirqs concurrently -> no-ops. */
 static inline void local_bh_disable(void){}
 static inline void local_bh_enable(void){}

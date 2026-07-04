@@ -14,4 +14,8 @@ struct pci_dev;
 /* single-GPU NanOS: no muxed switcheroo, so probe is never deferred and no handler flags are set. */
 static inline int vga_switcheroo_client_probe_defer(struct pci_dev *pdev){ (void)pdev; return 0; }
 static inline int vga_switcheroo_handler_flags(void){ return 0; }
+#ifndef VGA_SWITCHEROO_CAN_SWITCH_DDC
+#define VGA_SWITCHEROO_CAN_SWITCH_DDC  (1 << 0)
+#define VGA_SWITCHEROO_NEEDS_EDP_CONFIG (1 << 1)
+#endif
 #endif

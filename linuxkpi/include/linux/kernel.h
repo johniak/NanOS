@@ -170,6 +170,7 @@ static inline int kstrtobool(const char *s, bool *res){
 #ifndef _LKPI_KERNEL_MATH
 #define _LKPI_KERNEL_MATH
 #define DIV_ROUND_UP_ULL(n,d) DIV_ROUND_UP((unsigned long long)(n),(d))
+#define mult_frac(x, numer, denom) ({ __typeof__(x) __q=(x)/(denom), __r=(x)%(denom); __q*(numer) + __r*(numer)/(denom); })
 #define DIV64_U64_ROUND_UP(n,d) DIV_ROUND_UP_ULL(n,d)
 #define KHZ2PICOS(a) (1000000000UL/(a))
 #endif
@@ -185,6 +186,10 @@ static inline int kstrtobool(const char *s, bool *res){
 #ifndef _LKPI_ADD_TAINT
 #define _LKPI_ADD_TAINT
 #define TAINT_WARN 9
+#define TAINT_USER 6
+#define TAINT_MACHINE_CHECK 4
+#define TAINT_DIE 25
+extern unsigned int tsc_khz;   /* x86 TSC frequency; i915 GT PMU reads it (kexports/bring-up value) */
 #define LOCKDEP_NOW_UNRELIABLE 0
 #define LOCKDEP_STILL_OK 1     /* i915_utils.h uses add_taint(t, LOCKDEP_STILL_OK); co-locate here */
 static inline void add_taint(unsigned flag, int lockdep_ok){ (void)flag; (void)lockdep_ok; }

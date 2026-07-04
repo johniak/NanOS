@@ -8,7 +8,7 @@
 #include <linux/types.h>
 #include <linux/ktime.h>
 
-enum hrtimer_mode { HRTIMER_MODE_REL = 0, HRTIMER_MODE_ABS = 1 };
+enum hrtimer_mode { HRTIMER_MODE_REL = 0, HRTIMER_MODE_ABS = 1, HRTIMER_MODE_REL_PINNED = 2, HRTIMER_MODE_ABS_PINNED = 3, HRTIMER_MODE_REL_HARD = 4, HRTIMER_MODE_ABS_HARD = 5 };
 enum hrtimer_restart { HRTIMER_NORESTART = 0, HRTIMER_RESTART = 1 };
 
 struct hrtimer {

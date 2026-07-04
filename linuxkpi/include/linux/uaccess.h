@@ -11,8 +11,11 @@ static inline unsigned long __copy_to_user(void *to, const void *from, unsigned 
 static inline unsigned long __copy_from_user(void *to, const void *from, unsigned long n){ memcpy(to,from,n); return 0; }
 static inline unsigned long __copy_from_user_inatomic(void *to, const void *from, unsigned long n){ memcpy(to,from,n); return 0; }
 static inline unsigned long __copy_to_user_inatomic(void *to, const void *from, unsigned long n){ memcpy(to,from,n); return 0; }
+static inline unsigned long __copy_from_user_inatomic_nocache(void *to, const void *from, unsigned long n){ memcpy(to,from,n); return 0; }
 #define __get_user(x,p)  ({ (x)=*(p); 0; })
 #define __put_user(x,p)  ({ *(p)=(x); 0; })
+static inline int user_access_begin(const void __user *ptr, unsigned long len){ (void)ptr;(void)len; return 1; }
+static inline void user_access_end(void){ }
 #endif
 
 #ifndef _LKPI_UACCESS_MEMDUP
@@ -39,5 +42,13 @@ static inline int kstrtobool_from_user(const void __user *s, unsigned long count
 static inline int kstrtoull_from_user(const void __user *s, unsigned long count, unsigned int base, unsigned long long *res){
 	char buf[32]; unsigned long n = count < sizeof(buf)-1 ? count : sizeof(buf)-1;
 	if (copy_from_user(buf, s, n)) return -14; buf[n] = 0; return kstrtoull(buf, base, res);
+}
+static inline int kstrtoint_from_user(const void __user *s, unsigned long count, unsigned int base, int *res){
+	char buf[16]; unsigned long n = count < sizeof(buf)-1 ? count : sizeof(buf)-1;
+	if (copy_from_user(buf, s, n)) return -14; buf[n] = 0; return kstrtoint(buf, base, res);
+}
+static inline int kstrtouint_from_user(const void __user *s, unsigned long count, unsigned int base, unsigned int *res){
+	char buf[16]; unsigned long n = count < sizeof(buf)-1 ? count : sizeof(buf)-1;
+	if (copy_from_user(buf, s, n)) return -14; buf[n] = 0; return kstrtouint(buf, base, res);
 }
 #endif
