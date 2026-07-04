@@ -312,6 +312,39 @@ static void pciScanReport() {
 	} else {
 		Console::writeLine("no e1000 (run with: make run-net)");
 	}
+
+	// Display-adapter inventory (i915 plan Task 1): for every PCI display-class device (class 0x03)
+	// print location, id, and BAR0/BAR2 base+size. For Intel IGPs (vendor 0x8086) also dump the
+	// graphics-specific config registers the i915 kext needs to build its device: GGC (0x50, stolen
+	// size/pre-alloc bits), BDSM (0x5C, data-stolen-memory base), and ASLS (0xFC, OpRegion pointer).
+	// These are read straight from config space so the Dell values can be transcribed into the test
+	// log before any driver code binds. Harmless on QEMU (virtio-gpu is display-class too).
+	for (int i = 0; i < n; ++i) {
+		const PciDevice& g = devs[i];
+		if (g.classCode != 0x03) continue;   // 0x03 = display controller
+		Console::write("  DISPLAY ");
+		Console::writeHex((int) g.vendor); Console::write(":"); Console::writeHex((int) g.device);
+		Console::write(" @ ");
+		Console::write((int) g.bus); Console::write(":");
+		Console::write((int) g.dev); Console::write(".");
+		Console::write((int) g.func);
+		Console::write(" class="); Console::writeHex((int) g.classCode);
+		Console::write("/"); Console::writeHex((int) g.subclass);
+		Console::write(" BAR0="); Console::writeHex((uint64_t) g.bar[0].addr);
+		Console::write("(sz="); Console::writeHex((uint64_t) g.bar[0].size); Console::write(")");
+		Console::write(" BAR2="); Console::writeHex((uint64_t) g.bar[2].addr);
+		Console::write("(sz="); Console::writeHex((uint64_t) g.bar[2].size); Console::write(")");
+		Console::writeLine("");
+		if (g.vendor == 0x8086) {
+			uint16_t ggc  = Pci::read16(g.bus, g.dev, g.func, 0x50);
+			uint32_t bdsm = Pci::read32(g.bus, g.dev, g.func, 0x5C);
+			uint32_t asls = Pci::read32(g.bus, g.dev, g.func, 0xFC);
+			Console::write("    Intel IGP: GGC="); Console::writeHex((uint64_t) ggc);
+			Console::write(" BDSM="); Console::writeHex((uint64_t) bdsm);
+			Console::write(" ASLS="); Console::writeHex((uint64_t) asls);
+			Console::writeLine("");
+		}
+	}
 }
 
 void Kernel::start() {

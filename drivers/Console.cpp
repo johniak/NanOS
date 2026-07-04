@@ -26,8 +26,12 @@ void Console::write(int d) {
 void Console::writeHex(int hex) {
 	char* ss = itoa(hex, 16);
 	if (ss[1] == 0) {
+		// Pad a single hex digit to two. itoa's shared static buffer is not cleared between
+		// calls, so its '\0' (which sat at [1]) must be re-placed at [2] — otherwise stale
+		// bytes from a previous longer itoa() result leak through (e.g. "03" → "0350").
 		ss[1] = ss[0];
 		ss[0] = '0';
+		ss[2] = '\0';
 	}
 	write(ss);
 }
