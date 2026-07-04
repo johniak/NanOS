@@ -55,3 +55,35 @@ static inline void memcpy_toio(volatile void *d, const void *s, size_t n){ for(s
 static inline void memcpy_fromio(void *d, const volatile void *s, size_t n){ for(size_t i=0;i<n;i++)((char*)d)[i]=((const volatile char*)s)[i]; }
 static inline void memset_io(volatile void *d, int c, size_t n){ for(size_t i=0;i<n;i++)((volatile char*)d)[i]=c; }
 #endif
+
+/* 64-bit MMIO + x86 port I/O + IRQ-flag control. i915 touches legacy VGA ports (outb/inb) and a few
+ * local_irq_save/disable sites. The port/flag ops are real x86 instructions in the kext; under the
+ * host doctest build they are no-ops (no I/O ports, tests never take these paths). */
+#ifndef _LKPI_IO_PORT
+#define _LKPI_IO_PORT
+#define ioread64(a)    readq(a)
+#define iowrite64(v,a) writeq(v,a)
+#ifdef NANOS_HOST_TEST
+static inline void outb(u8 v, u16 p){ (void)v;(void)p; }
+static inline void outw(u16 v, u16 p){ (void)v;(void)p; }
+static inline void outl(u32 v, u16 p){ (void)v;(void)p; }
+static inline u8  inb(u16 p){ (void)p; return 0; }
+static inline u16 inw(u16 p){ (void)p; return 0; }
+static inline u32 inl(u16 p){ (void)p; return 0; }
+static inline void local_irq_disable(void){}
+static inline void local_irq_enable(void){}
+#define local_irq_save(f)    do { (f) = 0; } while (0)
+#define local_irq_restore(f) do { (void)(f); } while (0)
+#else
+static inline void outb(u8 v, u16 p){ __asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p)); }
+static inline void outw(u16 v, u16 p){ __asm__ volatile("outw %0,%1"::"a"(v),"Nd"(p)); }
+static inline void outl(u32 v, u16 p){ __asm__ volatile("outl %0,%1"::"a"(v),"Nd"(p)); }
+static inline u8  inb(u16 p){ u8 v;  __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
+static inline u16 inw(u16 p){ u16 v; __asm__ volatile("inw %1,%0":"=a"(v):"Nd"(p)); return v; }
+static inline u32 inl(u16 p){ u32 v; __asm__ volatile("inl %1,%0":"=a"(v):"Nd"(p)); return v; }
+static inline void local_irq_disable(void){ __asm__ volatile("cli":::"memory"); }
+static inline void local_irq_enable(void){ __asm__ volatile("sti":::"memory"); }
+#define local_irq_save(f)    do { unsigned long __lf; __asm__ volatile("pushfq; pop %0; cli":"=r"(__lf)::"memory"); (f) = __lf; } while (0)
+#define local_irq_restore(f) do { __asm__ volatile("push %0; popfq"::"r"((unsigned long)(f)):"memory","cc"); } while (0)
+#endif
+#endif

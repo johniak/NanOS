@@ -176,6 +176,7 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/wait.h>
 #include <linux/string.h>
 #include <linux/uuid.h>
+#include <linux/hash.h>       /* hash_32/hash_64 — i915 handle-hash tables use them with no direct include */
 #include <linux/ratelimit.h>
 #include <linux/ktime.h>
 #include <linux/completion.h>
@@ -224,3 +225,8 @@ static inline int seq_write(struct seq_file *m, const void *data, unsigned long 
 #define _LKPI_CPU_RELAX
 static inline void cpu_relax(void) { __asm__ __volatile__("pause" ::: "memory"); }
 #endif
+
+/* wait_bit.h AFTER cpu_relax: its wait_on_bit spins with cpu_relax(), so it must be pulled once that
+ * is defined (it lives further down this force-include than bitops). Gives wake_up_bit/var + wait_on_bit
+ * to i915 files that use them without a direct include. */
+#include <linux/wait_bit.h>

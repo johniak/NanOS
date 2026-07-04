@@ -34,6 +34,9 @@ static inline int test_and_clear_bit(long nr, volatile unsigned long *addr) {
 /* non-atomic variants */
 static inline void __set_bit(long nr, volatile unsigned long *addr) { addr[BIT_WORD(nr)] |= BIT_MASK(nr); }
 static inline void __clear_bit(long nr, volatile unsigned long *addr) { addr[BIT_WORD(nr)] &= ~BIT_MASK(nr); }
+/* non-atomic test-and-set/clear (single-threaded bring-up caller holds the relevant lock) */
+static inline int __test_and_set_bit(long nr, volatile unsigned long *addr) { unsigned long m=BIT_MASK(nr); volatile unsigned long *p=&addr[BIT_WORD(nr)]; unsigned long old=*p; *p=old|m; return (old&m)!=0; }
+static inline int __test_and_clear_bit(long nr, volatile unsigned long *addr) { unsigned long m=BIT_MASK(nr); volatile unsigned long *p=&addr[BIT_WORD(nr)]; unsigned long old=*p; *p=old&~m; return (old&m)!=0; }
 
 static inline int fls(unsigned int x) { return x ? (32 - __builtin_clz(x)) : 0; }
 static inline int ffs(int x) { return __builtin_ffs(x); }

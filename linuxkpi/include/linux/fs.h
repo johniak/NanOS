@@ -3,7 +3,7 @@
 #include <linux/types.h>
 #include <linux/wait.h>
 struct vm_area_struct;
-struct inode { unsigned long i_ino; void *i_mapping; umode_t i_mode; };
+struct inode { unsigned long i_ino; void *i_mapping; umode_t i_mode; void *i_private; };
 struct file { void *private_data; void *f_mapping; unsigned int f_flags; loff_t f_pos; const struct file_operations *f_op; struct inode *f_inode; };
 struct file_operations {
   void *owner;

@@ -107,3 +107,23 @@ static inline void __list_del_entry(struct list_head *entry){ __list_del(entry->
 #define list_for_each_entry_from_reverse(pos, head, member) \
 	for (; &pos->member != (head); pos = list_prev_entry(pos, member))
 #endif
+
+#ifndef _LKPI_LIST_X3
+#define _LKPI_LIST_X3
+/* Empty-check safe against concurrent list_del (careful): both ends must point back at head. */
+static inline int list_empty_careful(const struct list_head *head){ struct list_head *next=head->next; return (next==head) && (next==head->prev); }
+#define list_for_each_entry_safe_reverse(pos, n, head, member) \
+	for (pos = list_last_entry(head, __typeof__(*pos), member), n = list_prev_entry(pos, member); \
+	     &pos->member != (head); pos = n, n = list_prev_entry(n, member))
+/* Re-seat the safe-iteration cursor after the caller moved `pos` (i915 execlists dequeue). */
+#define list_safe_reset_next(pos, n, member) \
+	(n) = list_next_entry(pos, member)
+/* RCU list ops degrade to the plain ops: the shim's deferred-preemption RCU has no separate publish
+ * barrier requirement for a kernel-mode reader (see [[nanos-gpu-plans]] synchronize_rcu note). */
+#define list_add_rcu(new, head)      list_add(new, head)
+#define list_add_tail_rcu(new, head) list_add_tail(new, head)
+#define list_del_rcu(entry)          list_del(entry)
+#define list_for_each_entry_rcu(pos, head, member, ...) list_for_each_entry(pos, head, member)
+#define list_first_or_null_rcu(ptr, type, member) \
+	({ struct list_head *__h = (ptr); __h->next != __h ? list_entry(__h->next, type, member) : (type*)0; })
+#endif
