@@ -135,6 +135,9 @@ static inline int list_empty_careful(const struct list_head *head){ struct list_
 #ifndef _LKPI_LIST_PREV
 #define _LKPI_LIST_PREV
 #define list_for_each_prev(pos, head) for ((pos) = (head)->prev; (pos) != (head); (pos) = (pos)->prev)
+/* lockless list walk: the deferred-preemption reader can't be preempted mid-walk, so plain iteration. */
+#define list_for_each_entry_lockless(pos, head, member) list_for_each_entry(pos, head, member)
+static inline unsigned long list_count_nodes(struct list_head *head){ unsigned long n=0; struct list_head *p; for(p=(head)->next; p!=(head); p=p->next) n++; return n; }
 #define list_for_each_prev_safe(pos, n, head) \
 	for ((pos) = (head)->prev, (n) = (pos)->prev; (pos) != (head); (pos) = (n), (n) = (pos)->prev)
 #endif

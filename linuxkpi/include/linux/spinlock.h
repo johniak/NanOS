@@ -62,6 +62,7 @@ static inline void __lkpi_irq_restore(unsigned long f) {
 static inline void spin_lock_irq(spinlock_t *l)   { __lk_acquire(&l->rlock.lock); }
 static inline void spin_unlock_irq(spinlock_t *l) { __lk_release(&l->rlock.lock); }
 static inline int  spin_trylock_irq(spinlock_t *l) { return __lk_try(&l->rlock.lock); }
+#define spin_trylock_irqsave(l, flags) ({ (flags) = __lkpi_irq_save(); int __ok = spin_trylock(l); if(!__ok) __lkpi_irq_restore(flags); __ok; })
 
 #define spin_lock_irqsave(l, flags)      do { (flags) = __lkpi_irq_save(); spin_lock(l); } while (0)
 #define spin_unlock_irqrestore(l, flags) do { spin_unlock(l); __lkpi_irq_restore(flags); } while (0)

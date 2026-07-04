@@ -4,7 +4,14 @@
 static inline void *kmap_atomic(struct page *p){ return page_address(p); }
 static inline void kunmap_atomic(void *a){ (void)a; }
 static inline void *kmap_local_page(struct page *p){ return page_address(p); }
+#ifndef _LKPI_KMAP_LOCAL_FOLIO
+#define _LKPI_KMAP_LOCAL_FOLIO
+static inline void *kmap_local_folio(struct folio *f, size_t offset){ return (char *)page_address((struct page *)f) + offset; }
+#endif
+#ifndef _LKPI_KUNMAP_LOCAL
+#define _LKPI_KUNMAP_LOCAL
 static inline void kunmap_local(void *a){ (void)a; }
+#endif
 #ifndef _LKPI_KMAP
 #define _LKPI_KMAP
 static inline void *kmap(struct page *p){ return page_address(p); }

@@ -55,11 +55,14 @@ struct device {
 	void (*type_release)(struct device*);
 };
 
+struct dev_pm_ops;
 struct device_driver {
 	const char *name;
 	struct bus_type *bus;
 	int (*probe)(struct device *dev);
 	void (*remove)(struct device *dev);
+	const struct dev_pm_ops *pm;
+	const struct attribute_group **dev_groups;
 };
 
 struct bus_type {

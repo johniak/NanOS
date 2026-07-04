@@ -113,4 +113,6 @@ int vsscanf(const char *buf, const char *fmt, __builtin_va_list ap);
 #ifndef NANOS_HOST_TEST
 static inline char *strchrnul(const char *s, int c){ while(*s && *s!=(char)c) s++; return (char*)s; }
 #endif
+/* memset_p: fill an array of `n` pointers with value `v` (i915 execlists clears the port array). */
+static inline void memset_p(void **p, void *v, size_t n){ for(size_t i=0;i<n;i++) p[i]=v; }
 #endif

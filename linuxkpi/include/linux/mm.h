@@ -192,6 +192,9 @@ static inline void SetPageReclaim(struct page *p){ (void)p; }
 static inline void ClearPageReclaim(struct page *p){ (void)p; }
 static inline void set_page_writeback(struct page *p){ (void)p; }
 static inline void end_page_writeback(struct page *p){ (void)p; }
+static inline int PageWriteback(struct page *p){ (void)p; return 0; }
+static inline int PageDirty(struct page *p){ (void)p; return 0; }
+static inline int PageLocked(struct page *p){ (void)p; return 0; }
 #ifndef _LKPI_MARK_PAGE_ACCESSED
 #define _LKPI_MARK_PAGE_ACCESSED
 static inline void mark_page_accessed(struct page *p){ (void)p; }

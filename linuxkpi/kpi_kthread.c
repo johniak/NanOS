@@ -151,6 +151,19 @@ bool flush_delayed_work(struct delayed_work *dw) {
 	return was_pending;
 }
 
+/* rcu_work: call_rcu runs the callback inline in the shim (no real grace period on the queue path),
+ * so queuing rcu-work is equivalent to queuing the work immediately. */
+bool queue_rcu_work(struct workqueue_struct *q, struct rcu_work *rw) {
+	if (!rw) return false;
+	rw->wq = q;
+	return queue_work(q, &rw->work);
+}
+bool flush_rcu_work(struct rcu_work *rw) {
+	if (!rw) return false;
+	flush_work(&rw->work);
+	return true;
+}
+
 void flush_workqueue(struct workqueue_struct *q) {
 	if (!q) q = system_wq;
 	if (!q) return;

@@ -18,6 +18,7 @@
 #include <linux/errno.h>
 #include <linux/dma-mapping.h>
 #include <linux/pm.h>   /* pm_message_t for pci_choose_state */
+#include <linux/ioport.h>  /* struct resource — pci_dev embeds a BAR resource array by value */
 #include <lkpi_knx.h>
 
 #define PCI_ANY_ID (~0)
@@ -60,11 +61,14 @@ struct pci_dev {
 	unsigned int msix_enabled:1;
 	unsigned int no_64bit_msi:1;
 	unsigned int current_state;
+	struct resource resource[7];   /* BAR windows (6 BARs + ROM); i915 GSC reads resource[0] */
 };
 struct pci_bus { unsigned char number; int domain_nr; struct pci_bus *parent; struct pci_dev *self; struct resource *resource[4]; };
 #define PCI_SLOT(devfn) (((devfn) >> 3) & 0x1f)
 #define PCI_FUNC(devfn) ((devfn) & 0x07)
 #define PCI_DEVFN(slot, func) ((((slot) & 0x1f) << 3) | ((func) & 0x07))
+#define PCI_DEVID(bus, devfn) ((((unsigned)(bus)) << 8) | (devfn))
+#define PCI_BUS_NUM(devid)    (((devid) >> 8) & 0xff)
 static inline int pci_domain_nr(struct pci_bus *b){ return b ? b->domain_nr : 0; }
 
 struct pci_device_id;
@@ -74,13 +78,17 @@ struct pci_driver {
 	int (*probe)(struct pci_dev *dev, const struct pci_device_id *id);
 	void (*remove)(struct pci_dev *dev);
 	void (*shutdown)(struct pci_dev *dev);
-	const void *driver;
+	struct device_driver driver;   /* i915_pci sets .driver.pm = &i915_pm_ops */
 	void *driver_management;
 };
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+/* driver registration: the kext bootstrap calls lkpi_module_init (module_pci_driver) which calls
+ * pci_register_driver; the shim keeps the single driver and probes our GPU directly (kpi_pci.c). */
+int  pci_register_driver(struct pci_driver *drv);
+void pci_unregister_driver(struct pci_driver *drv);
 /* implemented in linuxkpi/kpi_pci.c */
 int   pci_find_capability(struct pci_dev *dev, int cap);
 int   pci_find_next_capability(struct pci_dev *dev, u8 pos, int cap);

@@ -3,6 +3,8 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/timer.h>
+#include <linux/rcupdate.h>   /* struct rcu_head — rcu_work embeds it by value; NOT force-included on
+                               * the host-test path (compat.h guards it), so pull it here directly. */
 #include <linux/interrupt.h>   /* i915 engine/scheduler types embed a tasklet_struct by value, reached
                                 * only transitively (intel_engine_types.h -> here) — same routing as
                                 * seqcount_t via timer.h. interrupt.h pulls only types/irqreturn, no cycle. */
@@ -14,6 +16,11 @@ struct work_struct; typedef void (*work_func_t)(struct work_struct*);
 struct work_struct { work_func_t func; struct list_head entry; volatile int pending; };
 struct workqueue_struct;   /* opaque: full definition lives in kpi_kthread.c */
 struct delayed_work { struct work_struct work; struct timer_list timer; struct workqueue_struct *wq; };
+/* rcu_work: run `work` after an RCU grace period. call_rcu runs inline in the shim, so queue_rcu_work
+ * just queues the work immediately. */
+struct rcu_work { struct work_struct work; struct rcu_head rcu; struct workqueue_struct *wq; };
+static inline struct rcu_work *to_rcu_work(struct work_struct *w){ return container_of(w, struct rcu_work, work); }
+#define INIT_RCU_WORK(rw, f) INIT_WORK(&(rw)->work, (f))
 #define INIT_WORK(w,f)         do{ (w)->func=(f); INIT_LIST_HEAD(&(w)->entry); (w)->pending=0; }while(0)
 #define INIT_DELAYED_WORK(w,f) do{ (w)->work.func=(f); INIT_LIST_HEAD(&(w)->work.entry); (w)->work.pending=0; (w)->wq=0; INIT_LIST_HEAD(&(w)->timer.entry); (w)->timer.lkpi_linked=0; }while(0)
 #define INIT_WORK_ONSTACK(w,f) INIT_WORK(w,f)
@@ -61,6 +68,8 @@ void lkpi_set_wq_pump(void (*fn)(void));   /* kpi_fence.c: register the wait-pum
 }
 #endif
 bool flush_delayed_work(struct delayed_work *dw);
+bool queue_rcu_work(struct workqueue_struct *wq, struct rcu_work *rwork);
+bool flush_rcu_work(struct rcu_work *rwork);
 /* ordered workqueue == single in-flight work: alloc_workqueue with max_active=1. */
 #define __WQ_ORDERED 0
 #define alloc_ordered_workqueue(fmt, flags, ...) alloc_workqueue((fmt), (flags), 1, ##__VA_ARGS__)

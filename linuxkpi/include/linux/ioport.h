@@ -1,7 +1,7 @@
 #ifndef _LKPI_IOPORT_H
 #define _LKPI_IOPORT_H
 #include <linux/types.h>
-struct resource { resource_size_t start, end; const char *name; unsigned long flags; struct resource *parent, *sibling, *child; };
+struct resource { resource_size_t start, end; const char *name; unsigned long flags; unsigned long desc; struct resource *parent, *sibling, *child; };
 #define IORESOURCE_MEM 0x00000200
 #define IORESOURCE_IO  0x00000100
 #define IORESOURCE_BUSY 0x80000000
@@ -23,6 +23,11 @@ static inline void release_mem_region(unsigned long start, unsigned long n){ (vo
 #define IORESOURCE_IRQ      0x00000400
 #define IORESOURCE_DMA      0x00000800
 #define IORESOURCE_IRQ_HIGHEDGE 0x00000001
+#endif
+#ifndef IORES_DESC_NONE
+#define IORES_DESC_NONE                 0
+#define IORES_DESC_RESERVED             8
+#define IORES_DESC_DEVICE_PRIVATE_MEMORY 6
 #endif
 #ifndef DEFINE_RES_IRQ
 #define DEFINE_RES_IRQ(_irq) (struct resource){ .start=(_irq), .end=(_irq), .flags=IORESOURCE_IRQ }

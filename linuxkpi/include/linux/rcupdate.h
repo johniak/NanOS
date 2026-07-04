@@ -53,7 +53,11 @@ struct rcu_head { void *next; void (*func)(struct rcu_head *); };
 /* kfree_rcu(ptr, rcu_member): with call_rcu running the callback inline (see above), the object
  * can be freed immediately — no reader can still hold it (readers never sleep, are never preempted).
  * Both the 2-arg (offset form) and 1-arg mightsleep form reduce to a plain kfree. */
+#ifdef __cplusplus
+extern "C" void kfree(const void *);
+#else
 void kfree(const void *);
+#endif
 #define kfree_rcu(ptr, rhf)      kfree(ptr)
 #define kfree_rcu_mightsleep(ptr) kfree(ptr)
 /* RCU-head lifetime hooks are debug-only; no-ops here. */
