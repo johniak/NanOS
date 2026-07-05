@@ -1172,6 +1172,16 @@ flash-dell-armed: image64
 	IMAGE=$(IMAGE64) FORCE=1 NO_EJECT=1 ./scripts/flash-usb.sh
 	VALUE=1 ./scripts/arm-i915.sh
 
+# update-dell — the FAST i915 inner loop: rebuild, then push ONLY the changed kernel + i915 kext
+# onto the stick with host debugfs (~6 MiB) and re-arm, skipping the ~320 MiB whole-disk dd that
+# flash-dell-armed does. Both files live on the ext root, the same partition the image build itself
+# populates the same way — so this is byte-identical to a reflash for those two files, just far
+# faster. Use it whenever only kernel/i915 code changed (the usual case); use flash-dell-armed after
+# a partition-layout change or a fresh stick. `make update-dell` -> boot Dell -> `make i915-log`.
+.PHONY: update-dell
+update-dell: image64
+	KERNEL=$(BINFOLDER)k64/kernel.bin KEXT=$(BINFOLDER)i915.nkext ARM=1 ./scripts/update-dell.sh
+
 run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
