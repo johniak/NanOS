@@ -22,19 +22,38 @@
 #define offset_in_page(p)     ((unsigned long)(p) & ~PAGE_MASK)
 
 /*
- * struct page is an opaque token whose POINTER VALUE == the page's kernel virtual
- * address (see the whole shim's page convention). We give it size 1 (not just a
- * forward decl) so that pointer arithmetic on `struct page *` is BYTE arithmetic,
- * which is exactly what the address-token convention requires. Every arithmetic site
- * in the shim already casts to char-ptr or unsigned long first (nth_page, dma-mapping), so
- * they are unaffected; a size-1 type only matters for vendored code that does raw
- * `struct page * + n` expecting byte offsets, e.g. the i915 phys GEM backend's
- * `sg_page(sgl) + args->offset` (it stashes a raw vaddr via sg_assign_page and treats
- * the "page" as a byte address). Real Linux's mem_map page-stride arithmetic never
- * applies here (our pages are not a contiguous array), so no correct code regresses.
- * No member is ever accessed; the field exists only to complete the type.
+ * REAL page model (mem_map). struct page is a metadata record living in a dense mem_map array
+ * (one entry per physical page frame), SEPARATE from the page's data. This is Linux's model and
+ * is REQUIRED because vendored code — notably TTM's page pool — stores per-page metadata directly
+ * in page->private / page->lru; if `struct page *` were the page's data address (the old token
+ * model), those writes would corrupt the page's own bytes.
+ *
+ * Identity map (kernel virt == phys): the entry at index `pfn` describes the frame at
+ * phys/virt = pfn << PAGE_SHIFT. So page_to_pfn(p) = p - mem_map, and page_to_virt(p) maps back.
+ * mem_map is allocated at kext load from knx_ram_top() (kpi_mm.c: lkpi_mem_map_init).
  */
-struct page { unsigned char __lkpi_addr_token; };
+#include <linux/list.h>
+#include <linux/atomic.h>
+
+struct page {
+	unsigned long flags;      /* PG_* bits (see the PageFoo helpers below) */
+	atomic_t _refcount;       /* get_page/put_page; 1 fresh from alloc_pages */
+	atomic_t _mapcount;
+	unsigned long private;    /* driver scratch (TTM pool order / dma cookie) */
+	struct list_head lru;     /* TTM pool free list, LRU chains */
+	void *mapping;            /* owning address_space (shmem) */
+	unsigned long index;      /* offset within mapping, in pages */
+	void *freelist;           /* misc per-page scratch */
+};
+
+/* Single-page folios: a folio pointer holds the same value as its page pointer (a mem_map entry).
+ * struct folio stays a distinct forward-declared type (mm_types.h); the folio and kmap_local_folio
+ * helpers cast folio-ptr to page-ptr as before. The cast is valid because both are the same
+ * mem_map pointer. */
+
+extern struct page *lkpi_mem_map;        /* &mem_map[0] — describes pfn 0 */
+extern unsigned long lkpi_mem_map_pfns;  /* number of entries (== top-of-RAM pfn) */
+void lkpi_mem_map_init(void);            /* allocate mem_map from knx_ram_top(); idempotent, kext-load */
 
 static inline unsigned int get_order(unsigned long size) {
 	unsigned int order = 0;
@@ -43,16 +62,22 @@ static inline unsigned int get_order(unsigned long size) {
 	return order;
 }
 
-static inline void *page_address(const struct page *p) { return (void *)p; }
-static inline struct page *virt_to_page(const void *addr) {
-	return (struct page *)((unsigned long)addr & PAGE_MASK);
-}
-static inline unsigned long page_to_pfn(const struct page *p) { return (unsigned long)p >> PAGE_SHIFT; }
-static inline struct page *pfn_to_page(unsigned long pfn) { return (struct page *)(pfn << PAGE_SHIFT); }
-static inline phys_addr_t page_to_phys(const struct page *p) { return (phys_addr_t)(unsigned long)p; }
-static inline void *page_to_virt(const struct page *p) { return (void *)p; }
+static inline unsigned long page_to_pfn(const struct page *p) { return (unsigned long)(p - lkpi_mem_map); }
+static inline struct page *pfn_to_page(unsigned long pfn) { return lkpi_mem_map + pfn; }
+static inline void *page_to_virt(const struct page *p) { return (void *)(page_to_pfn(p) << PAGE_SHIFT); }
+static inline phys_addr_t page_to_phys(const struct page *p) { return (phys_addr_t)(page_to_pfn(p) << PAGE_SHIFT); }
+static inline void *page_address(const struct page *p) { return page_to_virt(p); }
+static inline struct page *virt_to_page(const void *addr) { return lkpi_mem_map + ((unsigned long)addr >> PAGE_SHIFT); }
 static inline phys_addr_t virt_to_phys(const volatile void *addr) { return (phys_addr_t)(unsigned long)addr; }
 static inline void *phys_to_virt(phys_addr_t pa) { return (void *)(unsigned long)pa; }
+
+/* per-page metadata accessors */
+static inline void set_page_private(struct page *p, unsigned long v){ p->private = v; }
+static inline unsigned long page_private(const struct page *p){ return p->private; }
+static inline void set_page_count(struct page *p, int v){ atomic_set(&p->_refcount, v); }
+static inline int  page_ref_count(const struct page *p){ return atomic_read(&p->_refcount); }
+static inline int  page_count(const struct page *p){ return atomic_read(&p->_refcount); }
+static inline void page_ref_inc(struct page *p){ atomic_inc(&p->_refcount); }
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,12 +88,20 @@ void  free_pages_exact(void *virt, size_t size);
 }
 #endif
 
-/* alloc_page/__get_free_page return page-aligned memory via the same allocator. */
-static inline struct page *alloc_page(gfp_t gfp) { return (struct page *)alloc_pages_exact(PAGE_SIZE, gfp); }
-static inline struct page *alloc_pages(gfp_t gfp, unsigned int order) { return (struct page *)alloc_pages_exact(PAGE_SIZE << order, gfp); }
+/* alloc_pages: allocate 2^order contiguous data pages, return the mem_map entry describing the base
+ * frame (its page_to_virt() is the data). Fresh pages get _refcount = 1 (Linux convention). */
+static inline struct page *alloc_pages(gfp_t gfp, unsigned int order) {
+	void *mem = alloc_pages_exact(PAGE_SIZE << order, gfp);
+	if (!mem) return 0;
+	struct page *p = virt_to_page(mem);
+	set_page_count(p, 1);
+	return p;
+}
+static inline struct page *alloc_page(gfp_t gfp) { return alloc_pages(gfp, 0); }
 /* NUMA-node-targeted allocation (TTM page pool). Single-node/UMA here, so node is ignored. */
 static inline struct page *alloc_pages_node(int nid, gfp_t gfp, unsigned int order) { (void)nid; return alloc_pages(gfp, order); }
-static inline void __free_page(struct page *p) { free_pages_exact((void *)p, PAGE_SIZE); }
+static inline void __free_page(struct page *p) { free_pages_exact(page_to_virt(p), PAGE_SIZE); }
+/* __get_free_page(s) return the DATA ADDRESS (not a page*), so they bypass mem_map entirely. */
 static inline unsigned long __get_free_page(gfp_t gfp) { return (unsigned long)alloc_pages_exact(PAGE_SIZE, gfp); }
 static inline unsigned long __get_free_pages(gfp_t gfp, unsigned int order) { return (unsigned long)alloc_pages_exact(PAGE_SIZE << order, gfp); }
 static inline void free_page(unsigned long addr) { free_pages_exact((void *)addr, PAGE_SIZE); }
@@ -141,8 +174,9 @@ static inline int PageReserved(const struct page *p){ (void)p; return 0; }
 #define PFN_PHYS(x) ((phys_addr_t)(x) << PAGE_SHIFT)
 #define PHYS_PFN(x) ((unsigned long)((x) >> PAGE_SHIFT))
 #endif
-/* free order-N pages: the shim frees single pages; callers pass order 0 here. */
-static inline void __free_pages(struct page *p, unsigned int order){ (void)order; __free_page(p); }
+/* free order-N pages: free_pages_exact recovers the original allocation from its header, so the
+ * order/size argument is advisory (the base data address is all it needs). */
+static inline void __free_pages(struct page *p, unsigned int order){ (void)order; free_pages_exact(page_to_virt(p), PAGE_SIZE << order); }
 /* swap accounting: no swap on NanOS, so nothing is reclaimable this way. */
 static inline long get_nr_swap_pages(void){ return 0; }
 /* pagefault_disable/enable bracket a no-fault region; the shim's flat map never faults, so no-op. */
@@ -153,9 +187,15 @@ static inline void pagefault_enable(void){ }
 struct file; struct vm_area_struct;
 static inline unsigned long vm_mmap(struct file *f, unsigned long addr, unsigned long len, unsigned long prot, unsigned long flag, unsigned long off){ (void)f;(void)addr;(void)len;(void)prot;(void)flag;(void)off; return 0; }
 static inline int call_mmap(struct file *f, struct vm_area_struct *vma){ (void)f;(void)vma; return -19; }
-/* page refcount: single flat allocator with no per-page refcount — get/put are inert. */
-static inline void get_page(struct page *p){ (void)p; }
-static inline void put_page(struct page *p){ (void)p; }
+/* page refcount over the real _refcount field: get/put track a real count (i915/TTM read it), but
+ * put_page does NOT auto-free. NanOS's page lifetime is block-based — shmem objects are ONE
+ * contiguous allocation sliced into per-frame struct pages (kpi_misc), and dma_alloc_coherent
+ * blocks likewise — so only the block owner may free (via __free_page/free_pages_exact on the base).
+ * Auto-freeing an individual slice would hand free_pages_exact an interior address with no allocator
+ * header => heap corruption. Reclaim of partial objects is a documented follow-on. */
+static inline void get_page(struct page *p){ atomic_inc(&p->_refcount); }
+static inline void put_page(struct page *p){ if (atomic_read(&p->_refcount) > 0) atomic_dec(&p->_refcount); }
+static inline bool put_page_testzero(struct page *p){ return atomic_dec_and_test(&p->_refcount); }
 /* VMA protection/flags bits (subset i915 references). */
 #ifndef VM_READ
 #define VM_READ    0x00000001
@@ -193,8 +233,9 @@ struct vma_iterator { int _unused; };
 #define VMA_ITERATOR(name, mm, addr) struct vma_iterator name = { 0 }
 #define for_each_vma(vmi, vma) for ((vma) = 0; (vma); )
 #define for_each_vma_range(vmi, vma, end) for ((vma) = 0; (vma); )
-/* single flat page map: nth_page is pointer arithmetic; kmap maps to the page's linear address. */
-static inline struct page *nth_page(struct page *p, unsigned long n){ return (struct page *)((char *)p + n * PAGE_SIZE); }
+/* mem_map: consecutive frames have consecutive struct page entries, so nth_page is plain array
+ * arithmetic (the real Linux definition). */
+static inline struct page *nth_page(struct page *p, unsigned long n){ return p + n; }
 #ifndef _LKPI_KMAP
 #define _LKPI_KMAP
 static inline void *kmap(struct page *p){ return page_address(p); }
@@ -235,7 +276,7 @@ static inline void si_meminfo(struct sysinfo *si){
 /* the shim never runs in kswapd/reclaim context. */
 static inline int current_is_kswapd(void){ return 0; }
 static inline int page_mapped(struct page *p){ (void)p; return 0; }
-static inline int page_count(struct page *p){ (void)p; return 1; }
+/* page_count lives up top now (real _refcount read). */
 /* page-flag setters/clearers i915 swap-out touches (no writeback pipeline → bookkeeping no-ops). */
 static inline void SetPageReclaim(struct page *p){ (void)p; }
 static inline void ClearPageReclaim(struct page *p){ (void)p; }

@@ -55,10 +55,12 @@ static inline void dma_sync_single_range_for_cpu(struct device *d, dma_addr_t a,
 static inline void dma_sync_single_range_for_device(struct device *d, dma_addr_t a, unsigned long off, size_t s, enum dma_data_direction dir) { (void)d;(void)a;(void)off;(void)s;(void)dir; }
 static inline bool dma_need_sync(struct device *dev, dma_addr_t addr) { (void)dev;(void)addr; return false; }
 
-/* page maps: phys == virt under identity mapping */
-static inline dma_addr_t dma_map_page_attrs(struct device *dev, void *page, size_t off,
+/* page maps: the DMA address is the page's PHYSICAL base (from its mem_map entry) plus the offset.
+ * phys == virt under identity mapping, but we must go through page_to_phys — a struct page* is now
+ * a mem_map pointer, NOT the data address. */
+static inline dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page, size_t off,
                                             size_t size, enum dma_data_direction dir, unsigned long attrs) {
-	(void)dev;(void)size;(void)dir;(void)attrs; return (dma_addr_t)((unsigned long)page + off);
+	(void)dev;(void)size;(void)dir;(void)attrs; return (dma_addr_t)(page_to_phys(page) + off);
 }
 #define dma_map_page(d, pg, off, sz, dir) dma_map_page_attrs(d, pg, off, sz, dir, 0)
 static inline void dma_unmap_page_attrs(struct device *d, dma_addr_t a, size_t s, enum dma_data_direction dir, unsigned long attrs) { (void)d;(void)a;(void)s;(void)dir;(void)attrs; }

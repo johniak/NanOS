@@ -87,6 +87,10 @@ int nkext_init(void)
 	u64 host;
 	int ret;
 
+	/* -1) build the LinuxKPI mem_map (one struct page per RAM frame) FIRST — every alloc_pages /
+	 * virt_to_page / page_address below indexes it. Idempotent; must precede DRM core init. */
+	{ extern void lkpi_mem_map_init(void); lkpi_mem_map_init(); }
+
 	/* DRM debug categories (CORE|DRIVER|KMS|PRIME|ATOMIC|VBL|STATE|LEASE|DP). Keep this at 0:
 	 * every drm_dbg/atomic-state-dump goes through printk -> knx_log -> the graphical console
 	 * (fbcon), and under KMS the console mirror-present re-grabs the scanout on each write, so a

@@ -3,8 +3,11 @@
 #include <linux/mm.h>
 #include <linux/fs.h>
 #include <linux/gfp.h>
-static inline void *folio_address(struct folio *f){ return (void*)f; }
-static inline struct page *folio_page(struct folio *f, unsigned long n){ return (struct page*)((char*)f + n*PAGE_SIZE); }
+/* mem_map model: a folio* IS a page* (mem_map entry). folio_address maps it to the DATA address via
+ * page_address (NOT (void*)f, which would be the metadata-array pointer); folio_page(f,n) is the
+ * n-th frame = mem_map-adjacent entry f+n (single-page folios normally use n==0). */
+static inline void *folio_address(struct folio *f){ return page_address((struct page*)f); }
+static inline struct page *folio_page(struct folio *f, unsigned long n){ return (struct page*)f + n; }
 static inline struct page *folio_file_page(struct folio *f, unsigned long i){ (void)i; return (struct page*)f; }
 static inline unsigned long folio_nr_pages(struct folio *f){ (void)f; return 1; }
 static inline unsigned long folio_pfn(struct folio *f){ return page_to_pfn((struct page*)f); }

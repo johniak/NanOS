@@ -11,8 +11,8 @@
 
 #include <linux/types.h>
 #include <linux/string.h>
-
-struct page;  /* token: pointer value == kernel virtual address (see linux/mm.h) */
+#include <linux/mm.h>   /* page_link now stores a real struct page* (mem_map entry); sg_virt/sg_phys
+                         * go through page_address()/page_to_phys() rather than treating it as a vaddr */
 
 struct scatterlist {
 	unsigned long  page_link;     /* buffer addr | flags (bit0 chain, bit1 end) */
@@ -26,13 +26,15 @@ struct scatterlist {
 #define SG_END    0x2UL
 #define SG_PAGE_LINK_MASK (~(SG_CHAIN | SG_END))
 
+/* store the mem_map entry for the frame containing buf; caller sets the intra-page offset. */
 static inline void sg_assign_buf(struct scatterlist *sg, const void *buf) {
 	unsigned long flags = sg->page_link & (SG_CHAIN | SG_END);
-	sg->page_link = ((unsigned long)buf & SG_PAGE_LINK_MASK) | flags;
+	sg->page_link = ((unsigned long)virt_to_page(buf) & SG_PAGE_LINK_MASK) | flags;
 }
 
 static inline void *sg_virt(struct scatterlist *sg) {
-	return (void *)((sg->page_link & SG_PAGE_LINK_MASK) + sg->offset);
+	struct page *pg = (struct page *)(sg->page_link & SG_PAGE_LINK_MASK);
+	return (char *)page_address(pg) + sg->offset;
 }
 
 /* page model: a struct page* is the page's kernel virtual address (see linux/mm.h). */
@@ -75,7 +77,7 @@ static inline void sg_init_table(struct scatterlist *sgl, unsigned int nents) {
 
 static inline void sg_set_buf(struct scatterlist *sg, const void *buf, unsigned int buflen) {
 	sg_assign_buf(sg, buf);
-	sg->offset = 0;
+	sg->offset = (unsigned int)((unsigned long)buf & ~PAGE_MASK);
 	sg->length = buflen;
 }
 
@@ -85,7 +87,7 @@ static inline void sg_init_one(struct scatterlist *sg, const void *buf, unsigned
 }
 
 static inline dma_addr_t sg_phys(struct scatterlist *sg) {
-	return (dma_addr_t)(sg->page_link & SG_PAGE_LINK_MASK) + sg->offset;
+	return (dma_addr_t)page_to_phys(sg_page(sg)) + sg->offset;
 }
 
 #define sg_dma_address(sg) ((sg)->dma_address)

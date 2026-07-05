@@ -57,12 +57,14 @@ int sg_alloc_table_from_pages_segment(struct sg_table *sgt, struct page **pages,
 	if (max_seg == 0)
 		max_seg = PAGE_SIZE;
 
+	/* Contiguity is a PHYSICAL-address property. Under the mem_map model a struct page* is an
+	 * index, not an address, so adjacency is page_to_phys(pages[i]) == prev_phys + PAGE_SIZE. */
 	/* First pass: count coalesced segments. */
 	{
 		unsigned long prev_end = 0;
 		unsigned int cur = 0;
 		for (i = 0; i < n_pages; i++) {
-			unsigned long pa = (unsigned long)pages[i];
+			unsigned long pa = (unsigned long)page_to_phys(pages[i]);
 			if (i > 0 && pa == prev_end && cur < max_seg) {
 				cur += PAGE_SIZE;
 			} else {
@@ -77,32 +79,35 @@ int sg_alloc_table_from_pages_segment(struct sg_table *sgt, struct page **pages,
 	if (sg_alloc_table(sgt, segs, gfp))
 		return -ENOMEM;
 
-	/* Second pass: emit coalesced entries, honoring offset (first) and size (last). */
+	/* Second pass: emit coalesced entries, honoring offset (first) and size (last). seg_base holds
+	 * the mem_map ENTRY of the segment's first page (sg_set_page derives its phys). */
 	sg = sgt->sgl;
 	left = size;
 	{
-		unsigned long seg_base = (unsigned long)pages[0];
+		struct page *seg_base = pages[0];
 		unsigned long seg_len = 0;
+		unsigned long prev_phys = 0;
 		unsigned int off = offset;
 		for (i = 0; i < n_pages; i++) {
-			unsigned long pa = (unsigned long)pages[i];
-			if (i > 0 && pa == seg_base + seg_len && seg_len < max_seg) {
+			unsigned long pa = (unsigned long)page_to_phys(pages[i]);
+			if (i > 0 && pa == prev_phys + PAGE_SIZE && seg_len < max_seg) {
 				seg_len += PAGE_SIZE;
 			} else if (i > 0) {
 				unsigned int this_off = off; unsigned long this_len = seg_len - this_off;
 				if (this_len > left) this_len = left;
-				sg_set_page(sg, (struct page *)seg_base, (unsigned)this_len, this_off);
+				sg_set_page(sg, seg_base, (unsigned)this_len, this_off);
 				left -= this_len; off = 0; sg = sg_next(sg);
-				seg_base = pa; seg_len = PAGE_SIZE;
+				seg_base = pages[i]; seg_len = PAGE_SIZE;
 			} else {
-				seg_base = pa; seg_len = PAGE_SIZE;
+				seg_base = pages[i]; seg_len = PAGE_SIZE;
 			}
+			prev_phys = pa;
 		}
 		/* final segment */
 		{
 			unsigned int this_off = off; unsigned long this_len = seg_len - this_off;
 			if (this_len > left) this_len = left;
-			sg_set_page(sg, (struct page *)seg_base, (unsigned)this_len, this_off);
+			sg_set_page(sg, seg_base, (unsigned)this_len, this_off);
 		}
 	}
 	return 0;

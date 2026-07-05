@@ -16,6 +16,8 @@ void              *knx_malloc(unsigned size);
 void               knx_free(void *p);
 void               knx_log(const char *s);
 unsigned long long knx_uptime_us(void);
+/* top of physical RAM in bytes (highest usable address); LinuxKPI sizes its mem_map against it. */
+unsigned long long knx_ram_top(void);
 
 /* PCI + MMIO + DMA + IRQ (kexports.def). phys/len are 32-bit: QEMU places virtio-pci BARs
  * and our DMA buffers below 4 GiB, so 32-bit addressing is sufficient. */

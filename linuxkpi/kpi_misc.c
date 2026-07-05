@@ -77,8 +77,13 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 			return 0;
 		}
 		memset(blk, 0, npages * PAGE_SIZE);
-		for (i = 0; i < npages; i++)
-			m->pages[i] = (struct page *)(blk + i * PAGE_SIZE);
+		/* store the mem_map ENTRY for each frame (not the data address): a struct page* is now
+		 * a mem_map index, and page_to_phys()/page_address() derive the data from it. blk is
+		 * contiguous+page-aligned, so these are consecutive mem_map entries. */
+		for (i = 0; i < npages; i++) {
+			m->pages[i] = virt_to_page(blk + i * PAGE_SIZE);
+			set_page_count(m->pages[i], 1);   /* sane refcount for page_count() readers */
+		}
 	}
 	m->nrpages = npages;
 	m->host = ino;
@@ -116,7 +121,7 @@ void lkpi_shmem_release(struct file *f)
 	m = f->f_mapping;
 	if (m->pages) {
 		if (m->nrpages && m->pages[0])
-			free_pages_exact((void *)m->pages[0], m->nrpages * PAGE_SIZE);
+			free_pages_exact(page_address(m->pages[0]), m->nrpages * PAGE_SIZE);
 		kfree(m->pages);
 	}
 	kfree(m->host);

@@ -56,6 +56,10 @@ void* knx_malloc(unsigned n)              { return malloc(n); }
 void  knx_free(void* p)                   { free(p); }
 void  knx_log(const char* s)              { Console::write(s); }
 unsigned long long knx_uptime_us(void)    { return (unsigned long long) Scheduler::ticks() * 1000ull; }
+// Top of physical RAM in bytes (highest usable address, holes included). LinuxKPI sizes its mem_map
+// (one struct page per page frame) against this so virt_to_page()/page_to_virt() are O(1) and never
+// miss for any kernel page. Capped at the frame-pool ceiling by bootMemTop(); ~1.5% of RAM like Linux.
+unsigned long long knx_ram_top(void)      { return (unsigned long long) arch::bootMemTop(); }
 
 // Read a whole file through the VFS (the same path the kext/init loaders use). With buf==0, report
 // the file size in *out_len and return 0 (so a caller can size a buffer, then read). Otherwise copy
