@@ -202,10 +202,12 @@ static inline int pci_bus_alloc_resource(struct pci_bus *b, void *res, unsigned 
 #define PCI_DEVICE(vend, dev) .vendor = (vend), .device = (dev), .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
 #define PCI_DEVICE_CLASS(dev_class, dev_class_mask) .vendor = PCI_ANY_ID, .device = PCI_ANY_ID, .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID, .class = (dev_class), .class_mask = (dev_class_mask)
 
-/* Device lookup helpers. The shim probes only our single GPU (handed to it directly), so scans for
- * OTHER devices (bridges, ISA, another GPU) find nothing: return NULL. Callers treat NULL as absent. */
+/* Device lookup helpers. pci_get_class scans by class and finds nothing (the shim probes only the
+ * single GPU handed to it). pci_get_domain_bus_and_slot builds a pci_dev on demand for a specific
+ * address if a device is present there — i915 uses it to reach the host bridge (00:00.0) for
+ * GMCH/MCHBAR config access; see kpi_pci.c. */
 static inline struct pci_dev *pci_get_class(unsigned int class, struct pci_dev *from) { (void)class;(void)from; return 0; }
-static inline struct pci_dev *pci_get_domain_bus_and_slot(int domain, unsigned int bus, unsigned int devfn) { (void)domain;(void)bus;(void)devfn; return 0; }
+struct pci_dev *pci_get_domain_bus_and_slot(int domain, unsigned int bus, unsigned int devfn);
 /* pci_match_id: linear scan of a null-terminated id table for a vendor/device match (real logic). */
 static inline const struct pci_device_id *pci_match_id(const struct pci_device_id *ids, struct pci_dev *dev) {
 	if (!ids || !dev) return 0;

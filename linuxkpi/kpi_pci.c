@@ -3,7 +3,43 @@
  * backed by the knx_pci_* config accessors and knx_map_mmio.
  */
 #include <linux/pci.h>
+#include <linux/string.h>
 #include "lkpi_knx.h"
+
+/* Build a pci_dev on demand for the device at (bus, devfn), or NULL if no device is present there.
+ * The shim has no PCI device registry; i915 calls this to grab the host bridge (00:00.0) for GMCH /
+ * MCHBAR config access (intel_gmch_bridge_setup). pci_dev_put is a no-op, so the small allocation
+ * leaks — acceptable: probe calls this a handful of times, once per bring-up. */
+struct pci_dev *pci_get_domain_bus_and_slot(int domain, unsigned int bus, unsigned int devfn) {
+	unsigned char b = (unsigned char)bus;
+	unsigned char d = (unsigned char)PCI_SLOT(devfn);
+	unsigned char f = (unsigned char)PCI_FUNC(devfn);
+	u32 v0 = knx_pci_cfg_read32(b, d, f, 0x00);
+	if (v0 == 0xffffffffu || (v0 & 0xffff) == 0xffff)
+		return 0;   /* no device at that slot */
+
+	struct pci_dev *p = (struct pci_dev *)knx_malloc(sizeof *p);
+	if (!p)
+		return 0;
+	memset(p, 0, sizeof *p);
+	p->nbus = b; p->ndev = d; p->nfunc = f;
+	p->devfn = (unsigned int)devfn;
+
+	/* A minimal owning bus (pci_domain_nr / pci_bus_alloc_resource read it). */
+	struct pci_bus *pb = (struct pci_bus *)knx_malloc(sizeof *pb);
+	if (pb) { memset(pb, 0, sizeof *pb); pb->number = b; pb->domain_nr = domain; }
+	p->bus = pb;
+
+	lkpi_pci_fill_ids(p);
+	for (int i = 0; i < 6; i++) {
+		unsigned long start = pci_resource_start(p, i);
+		unsigned long len   = pci_resource_len(p, i);
+		p->resource[i].start = start;
+		p->resource[i].end   = len ? start + len - 1 : 0;
+		p->resource[i].flags = len ? pci_resource_flags(p, i) : 0;
+	}
+	return p;
+}
 
 /* Fill vendor/device/subsystem/revision from config space for a hand-built pci_dev whose
  * nbus/ndev/nfunc are already set. */
