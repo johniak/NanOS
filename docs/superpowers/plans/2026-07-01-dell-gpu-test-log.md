@@ -77,3 +77,57 @@ i915 code path itself.
 
   **Dell-runtime-pending for Task 4:** actual firmware blobs (if any DMC is shipped), WC vs UC on the
   aperture, whether the GMADR BAR needs the 64-bit MMIO ABI, and RCU under real multi-CPU i915 load.
+
+## Task 5 — compile + link (QEMU-verified) & the 64-bit BAR ABI
+
+- The 276-object i915 compile campaign reached 100% and `bin/i915.nkext` links 0-unresolved (commit
+  `e2eedc6`); isolated idle-load on QEMU boots with the driver registered, no fault.
+- **64-bit MMIO/BAR ABI widened** (commit `3b795b8`): `knx_map_mmio`/`knx_pci_bar` are now 64-bit, so
+  the Dell's Comet Lake GTTMMADR/GMADR BARs above 4 GiB no longer truncate — the Task-4 caveat is
+  closed. Validated by `test64` 863/863 (decodes a 32-bit AND a 64-bit BAR) + runtime unregressed.
+
+## Real-HW boot #1 — armed harness reaches the Phase-B boundary
+
+- **Date:** 2026-07-05 (CEST)
+- **Image commit:** branch `feat/i915-dell-gpu` (armed via `/nanos/config/i915` = `1`, flashed to the
+  Kingston DataTraveler 3.0 with `make flash-dell-armed`).
+- **Result (persisted `/nanos/logs/i915-boot.txt`, read back with `make i915-log`):** the full armed
+  sequence succeeded on the real Dell — system reached shell + desktop (harness idles safe, no fault):
+
+  ```
+  i915: ===== bring-up session armed =====
+  i915: mem_map init OK
+  i915: DRM core init OK
+  i915: unmodified Linux 6.12 i915 driver registered
+  i915: Intel GPU FOUND — pci_dev construction + probe() is Phase B (Dell)
+  ```
+
+  So the LinuxKPI shim + unmodified i915 load, init, and **detect the GPU** (PCI id_table matched the
+  real `8086:9B41`) on the hardware — everything short of `driver->probe()`. Fallback state: firmware
+  framebuffer (harness idled without touching the display).
+- **Dell inventory row (Task 1 table) still to transcribe:** the harness now logs BAR0/BAR2/IRQ at
+  probe entry (see Task 6), so boot #2 will fill the GTTMMADR/GMADR/IRQ values.
+
+## Task 6 — probe glue (build the pci_dev + drive i915's own probe)
+
+- **Change (QEMU-built, Dell-runtime-pending):** `kext/i915/i915_entry.c` now, on a real match, hand-
+  builds a `struct pci_dev` (bus/dev/func + `lkpi_pci_fill_ids` for vendor/device/subsystem/revision/
+  IRQ + the six BAR `resource[]` windows decoded from live config space + a 64-bit DMA mask + a
+  `pci_bus`), then calls the driver's own `probe(pdev, id)` with the matched `pci_device_id` (whose
+  `driver_data` carries the CML `intel_device_info`). Params set first: `enable_guc = 0` (Gen9.5 runs
+  GuC-less on execlists).
+- **Stop before modeset, no source edit:** `i915.modeset=0` is the wrong knob (it makes `i915_init()`
+  itself return `-ENODEV`). Instead the glue uses i915's **own** `inject_probe_failure` — a
+  driver-native "abort cleanly at internal injection point N" mechanism — dialed at runtime via the
+  `/nanos/config/i915_inject` knob (`make i915-inject N=<stage>` / `make i915-inject-off`). `0` = full
+  probe; a crash can be walked back to the last clean stage with no rebuild/reflash.
+- **Diagnostics:** the harness now tees **every** `printk` line (the full `drm_dbg` trail, once
+  `__drm_debug=0x1ff`) into the persistent log too (`lkpi_set_log_tee`), so a probe that scrolls the
+  fbcon or hard-hangs still leaves the complete narration on the stick. Probe entry logs BAR0/BAR2/IRQ
+  and the probe return code.
+- **QEMU gates green** (probe code is dead on QEMU — no Intel GPU, scan returns idle): `i915-probe`
+  276/276, `link-support-probe` 21/21, `test64` doctests pass, `smoke-virtio-gpu` 3704 colours,
+  `smoke-i915` A+B, `smoke-kpi-wq`/`smoke-kpi-irq`. `bin/i915.nkext` relinks 0-unresolved.
+- **Next Dell boot:** armed full probe → read `make i915-log` → the `drm_dbg` trail shows how far
+  probe got (uncore/forcewake → GGTT → display → …); dial `i915-inject` down to the last clean stage
+  as needed. Firmware fb is the fallback throughout (nothing hands off the display until Task 7).

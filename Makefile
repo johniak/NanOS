@@ -1147,6 +1147,17 @@ arm-i915:
 disarm-i915:
 	VALUE=0 ./scripts/arm-i915.sh
 
+# i915-inject — dial-a-stop for the probe: write stage N to /nanos/config/i915_inject so i915
+# aborts probe cleanly (its own -ENODEV unwind) at its Nth internal injection point. Use after a
+# full-probe crash to walk the stop back to the last clean stage — no rebuild/reflash. `make
+# i915-inject N=3`; `make i915-inject-off` clears it (full probe).
+.PHONY: i915-inject i915-inject-off
+i915-inject:
+	@[ -n "$(N)" ] || { echo "usage: make i915-inject N=<stage>"; exit 1; }
+	KNOB=/nanos/config/i915_inject VALUE=$(N) ./scripts/arm-i915.sh
+i915-inject-off:
+	KNOB=/nanos/config/i915_inject VALUE=0 ./scripts/arm-i915.sh
+
 # i915-log — after a Dell boot, dump the persisted harness log from the stick
 # (/nanos/logs/i915-boot.txt). Bring the Kingston back, run this. Needs sudo.
 .PHONY: i915-log
@@ -2688,8 +2699,11 @@ $(foreach s,$(LINK_SUPPORT_SRCS),$(eval $(call SUPPORT_OBJ_RULE,$(s))))
 
 # The i915 kext glue (bootstrap + PCI-driver registration + legacy-GMCH stubs + stolen_res).
 # Built with the DRM vendored-include set so <drm/intel/intel-gtt.h> resolves.
+# Built with I915_VINC (adds -I$(I915_SRC) -DI915) so the glue can include i915_params.h and set
+# i915_modparams (enable_guc / inject_probe_failure) type-safely — no shim header keys off -DI915,
+# so the glue's view of every shared struct stays identical to the i915 objects it calls into.
 $(BINFOLDER)i915_entry.o: kext/i915/i915_entry.c
-	$(CXX) $(LINUXKPI_CFLAGS) $(DRM_VINC) -MMD -MP -c $< -o $@
+	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -MMD -MP -c $< -o $@
 I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o
 
 # The link: kext bootstrap + i915 glue + all 276 i915 objects + the TTM/DRM-display SUPPORT set +

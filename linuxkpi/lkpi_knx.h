@@ -52,6 +52,9 @@ int            knx_file_read(const char *path, void *buf, unsigned long max, uns
  * bring-up harness persists boot markers to /nanos/log/i915-boot.txt so a Dell hang leaves a log
  * that survives reboot. Best-effort; returns 0 on success, <0 on error. */
 int            knx_file_append(const char *path, const void *buf, unsigned long len);
+/* Tee every subsequent printk line to `path` too (bring-up debug: the full drm_dbg trail survives a
+ * screen-scroll / hard hang). Pass 0 to stop teeing. Inert unless called — set by the i915 harness. */
+void           lkpi_set_log_tee(const char *path);
 /* Real RCU grace period: block until every other online CPU has passed a quiescent state
  * (LinuxKPI synchronize_rcu). On UP this is a barrier. See Scheduler::rcuSynchronize. */
 void           knx_rcu_synchronize(void);

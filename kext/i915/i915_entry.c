@@ -23,7 +23,9 @@
 #include <linux/ioport.h>
 #include <linux/workqueue.h>
 #include <linux/errno.h>
+#include <linux/string.h>
 #include <drm/intel/intel-gtt.h>
+#include "i915_params.h"    /* i915_modparams — set enable_guc / inject_probe_failure before probe */
 #include "lkpi_knx.h"
 
 /* ---- arch-provided globals the driver expects (x86 GPU stolen-memory resource) ------------ *
@@ -61,9 +63,10 @@ extern int __lkpi_modinit_drm_core_init(void);
 #define PCI_VENDOR_INTEL 0x8086
 
 /* Scan the devices present against the driver's own PCI id_table (as the PCI bus match would),
- * so the report reflects exactly what i915 would bind. Returns 1 and fills b/d/f on the first
- * match, else 0. */
-static int i915_scan_present(const struct pci_driver *drv, unsigned char *b, unsigned char *d, unsigned char *f)
+ * so the report reflects exactly what i915 would bind. Returns the matched id_table entry (whose
+ * ->driver_data is the intel_device_info probe() needs) and fills b/d/f, else 0. */
+static const struct pci_device_id *i915_scan_present(const struct pci_driver *drv,
+		unsigned char *b, unsigned char *d, unsigned char *f)
 {
 	const struct pci_device_id *id;
 
@@ -74,9 +77,71 @@ static int i915_scan_present(const struct pci_driver *drv, unsigned char *b, uns
 		if (id->device == (unsigned)PCI_ANY_ID)
 			continue;   /* class-only wildcards: knx_pci_find needs a concrete device id */
 		if (knx_pci_find(vend, (unsigned short)id->device, b, d, f))
-			return 1;
+			return id;
 	}
 	return 0;
+}
+
+/* ---- hand-built pci_dev (Phase B) --------------------------------------------------------------
+ * On a real x86 kernel the PCI bus code builds the pci_dev and calls the driver's probe on a match.
+ * Our port has no PCI-bus/driver-model, so we construct the pci_dev the driver needs by hand from
+ * the enumerated address, then call probe() ourselves. The shim's config-space/BAR accessors all
+ * key off nbus/ndev/nfunc, so filling those + the id fields + the resource[] windows is enough for
+ * i915's uncore/GGTT setup to read the real hardware. */
+static struct pci_dev g_i915_pdev;
+static struct pci_bus g_i915_bus;
+static u64 g_i915_dma_mask = ~0ULL;   /* 64-bit; the shim's dma_set_* are no-ops but paths may read it */
+
+static struct pci_dev *i915_build_pci_dev(unsigned char b, unsigned char d, unsigned char f)
+{
+	struct pci_dev *p = &g_i915_pdev;
+	int i;
+
+	memset(p, 0, sizeof *p);
+	memset(&g_i915_bus, 0, sizeof g_i915_bus);
+	p->nbus = b; p->ndev = d; p->nfunc = f;
+	p->devfn = PCI_DEVFN(d, f);
+	g_i915_bus.number = b;
+	g_i915_bus.domain_nr = 0;
+	p->bus = &g_i915_bus;
+
+	/* vendor/device/subsystem/revision + legacy IRQ line, straight from config space. */
+	lkpi_pci_fill_ids(p);
+
+	/* BAR windows: some i915 paths read pdev->resource[bar] directly rather than via
+	 * pci_resource_start(). Decode all six from live config space (a 64-bit BAR's high slot reads
+	 * back 0 — Pci::readBars folds it into the low slot — so its resource entry is correctly empty). */
+	for (i = 0; i < 6; i++) {
+		unsigned long start = pci_resource_start(p, i);
+		unsigned long len   = pci_resource_len(p, i);
+		p->resource[i].start = start;
+		p->resource[i].end   = len ? start + len - 1 : 0;
+		p->resource[i].flags = len ? pci_resource_flags(p, i) : 0;
+	}
+
+	/* A 64-bit DMA mask (IGP shares system RAM, DMA is identity-mapped). */
+	p->dev.dma_mask = &g_i915_dma_mask;
+	p->dev.coherent_dma_mask = ~0ULL;
+	p->dev.init_name = "i915";
+	return p;
+}
+
+/* Optional dial-a-stop: /nanos/config/i915_inject holds an integer N. N>0 -> i915_modparams.
+ * inject_probe_failure = N, making probe abort via the driver's OWN clean -ENODEV unwind at its Nth
+ * internal injection point. After a full-probe crash you dial N down to the last clean stage to
+ * confirm the unwind path, with NO rebuild/reflash. Absent/0 = full probe. */
+#define I915_INJECT_KNOB "/disks/main/nanos/config/i915_inject"
+static unsigned i915_inject_stop(void)
+{
+	char buf[8];
+	unsigned long n = 0, v = 0;
+	const char *p;
+	if (knx_file_read(I915_INJECT_KNOB, buf, sizeof(buf) - 1, &n) < 0)
+		return 0;
+	buf[n < sizeof(buf) ? n : sizeof(buf) - 1] = 0;
+	for (p = buf; *p >= '0' && *p <= '9'; p++)
+		v = v * 10 + (unsigned)(*p - '0');
+	return (unsigned)v;
 }
 
 /* ---- bring-up debug harness ---------------------------------------------------------------- *
@@ -118,9 +183,28 @@ static int i915_armed(void)
 	return *p == '1';
 }
 
+/* Tee a marker plus a small integer (probe return code / inject stage) to both channels — knx_log /
+ * knx_file_append take strings, so format the number here. */
+static void i915_log_val(const char *msg, long v)
+{
+	char num[24], rev[24];
+	int i = 0, neg = 0, j = 0;
+	unsigned long u;
+	if (v < 0) { neg = 1; u = (unsigned long)(-v); } else u = (unsigned long)v;
+	if (u == 0) rev[i++] = '0';
+	while (u) { rev[i++] = (char)('0' + u % 10); u /= 10; }
+	if (neg) num[j++] = '-';
+	while (i) num[j++] = rev[--i];
+	num[j++] = '\n'; num[j] = 0;
+	knx_log(msg); knx_log(num);
+	knx_file_append(I915_LOG_PATH, msg, i915_strlen(msg));
+	knx_file_append(I915_LOG_PATH, num, i915_strlen(num));
+}
+
 int nkext_init(void)
 {
 	const struct pci_driver *drv;
+	const struct pci_device_id *id;
 	unsigned char bus, dev, func;
 	int ret;
 
@@ -131,6 +215,11 @@ int nkext_init(void)
 	}
 
 	i915_log("i915: ===== bring-up session armed =====\n");
+
+	/* Route EVERY subsequent printk (incl. the full drm_dbg trail once __drm_debug is up) into the
+	 * persistent log too, so a probe that scrolls the fbcon or hard-hangs still leaves the complete
+	 * narration on the stick (recover with `make i915-log`). */
+	lkpi_set_log_tee(I915_LOG_PATH);
 
 	/* 1) LinuxKPI mem_map first — indexed by every alloc_pages/virt_to_page below. */
 	{ extern void lkpi_mem_map_init(void); lkpi_mem_map_init(); }
@@ -160,15 +249,44 @@ int nkext_init(void)
 	i915_log("i915: unmodified Linux 6.12 i915 driver registered\n");
 
 	/* 4) match the id_table against present devices. */
-	if (!i915_scan_present(drv, &bus, &dev, &func)) {
+	id = i915_scan_present(drv, &bus, &dev, &func);
+	if (!id) {
 		i915_log("i915: no Intel GPU present — idle (expected on QEMU; Dell bring-up is Phase B)\n");
 		return 0;
 	}
 
-	/* Device present (real hardware): bring up async workqueues, then hand off to Phase B.
-	 * The full pci_dev construction (BAR64 mapping, MSI, execlists) + i915 probe() lands in the
-	 * Dell bring-up increment — reaching this line on the Latitude is the goal that unblocks it. */
+	/* Device present (real hardware). Bring up async workqueues (breadcrumb/hangcheck/retire
+	 * workers), then hand-build the pci_dev and drive i915's own probe() — Phase B (Dell). */
 	lkpi_wq_init();
-	i915_log("i915: Intel GPU FOUND — pci_dev construction + probe() is Phase B (Dell)\n");
+
+	/* Gen9.5 (Comet Lake-U) runs GuC-less on execlists; force it explicit (the default -1 auto-selects
+	 * the same on Gen9, but a firmware-less box then never blocks waiting on a GuC load). */
+	i915_modparams.enable_guc = 0;
+
+	/* Optional dial-a-stop: abort probe via i915's own clean unwind at injection point N (see the
+	 * knob comment). 0 = full probe. Lets a crash be walked back to the last clean stage w/o rebuild. */
+	i915_modparams.inject_probe_failure = i915_inject_stop();
+	if (i915_modparams.inject_probe_failure)
+		i915_log_val("i915: inject_probe_failure armed at stage ", (long)i915_modparams.inject_probe_failure);
+
+	i915_log_val("i915: Intel GPU FOUND at bus ", (long)bus);
+	{
+		struct pci_dev *pdev = i915_build_pci_dev(bus, dev, func);
+		int pret;
+
+		i915_log_val("i915:   BAR0 (GTTMMADR) start ", (long)pdev->resource[0].start);
+		i915_log_val("i915:   BAR2 (GMADR)    start ", (long)pdev->resource[2].start);
+		i915_log_val("i915:   legacy IRQ line       ", (long)pdev->irq);
+
+		i915_log("i915: probe start — narrating via drm_dbg (see log tail)\n");
+		pret = drv->probe(pdev, id);
+		i915_log_val("i915: probe RETURNED ", (long)pret);
+		if (pret == 0)
+			i915_log("i915: DRIVER BOUND — GPU is up (full probe succeeded)\n");
+		else if (pret == -ENODEV && i915_modparams.inject_probe_failure)
+			i915_log("i915: stopped at the armed inject point (clean -ENODEV unwind)\n");
+		else
+			i915_log("i915: probe FAILED — see the drm_dbg trail above for the failing stage\n");
+	}
 	return 0;
 }

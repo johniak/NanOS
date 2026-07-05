@@ -16,6 +16,11 @@ set -euo pipefail
 
 VALUE="${VALUE:-1}"
 USB_NAME="${USB_NAME:-Kingston|DataTraveler}"
+# Which knob to write, as an absolute path INSIDE the ext filesystem (default = the arm knob).
+# The i915 dial-a-stop uses KNOB=/nanos/config/i915_inject with an integer VALUE.
+KNOB="${KNOB:-/nanos/config/i915}"
+KNOB_DIR="${KNOB%/*}"
+KNOB_PARENT="${KNOB_DIR%/*}"
 
 die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 note() { printf '\033[36m%s\033[0m\n' "$*"; }
@@ -42,7 +47,7 @@ PDEV="/dev/$PART"
 
 note "stick     : $DEV  ($NAME)"
 note "ext part  : $PDEV"
-note "knob      : /nanos/config/i915  <-  '$VALUE'   ($([ "$VALUE" = 1 ] && echo ARM || echo disarm))"
+note "knob      : $KNOB  <-  '$VALUE'"
 
 diskutil unmountDisk "$DEV" >/dev/null 2>&1 || true
 # Cache sudo up front with a visible prompt (the debugfs calls below suppress stderr, which would
@@ -52,16 +57,16 @@ sudo -v || die "sudo required to write the raw partition"
 TMP=$(mktemp); printf '%s' "$VALUE" > "$TMP"
 CMDS=$(mktemp)
 cat > "$CMDS" <<EOF
-mkdir /nanos
-mkdir /nanos/config
-rm /nanos/config/i915
-write $TMP /nanos/config/i915
+mkdir $KNOB_PARENT
+mkdir $KNOB_DIR
+rm $KNOB
+write $TMP $KNOB
 EOF
 # debugfs -f runs the script; mkdir/rm on an existing/absent path just print a warning and continue.
 sudo "$DBG" -w -f "$CMDS" "$PDEV" >/dev/null 2>&1 || true
 rm -f "$CMDS" "$TMP"
 
-got=$(sudo "$DBG" -R "cat /nanos/config/i915" "$PDEV" 2>/dev/null | tr -d '\0')
+got=$(sudo "$DBG" -R "cat $KNOB" "$PDEV" 2>/dev/null | tr -d '\0')
 [ "$got" = "$VALUE" ] || die "verify failed: knob reads '$got', expected '$VALUE'"
 note "ok — knob = '$got'. Eject-safe; boot the Dell."
 diskutil eject "$DEV" >/dev/null 2>&1 || true

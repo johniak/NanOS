@@ -242,6 +242,15 @@ int sprintf(char *buf, const char *fmt, ...) {
 }
 #endif
 
+/* Optional persistent tee for bring-up sessions. When set (by the i915 debug harness), EVERY
+ * printk line — crucially the full drm_dbg/dev_dbg trail once __drm_debug is turned up — is also
+ * appended to a file, so the narration survives a screen-scroll or a hard hang where the fbcon is
+ * unreadable. Null by default: virtio_gpu and every normal boot never set it, so this is inert. */
+static const char *g_log_tee_path;
+static int g_log_tee_busy;   /* re-entrancy guard: the VFS append itself may printk */
+
+void lkpi_set_log_tee(const char *path) { g_log_tee_path = path; }
+
 int printk(const char *fmt, ...) {
 	char line[512];
 	va_list ap; va_start(ap, fmt);
@@ -251,5 +260,16 @@ int printk(const char *fmt, ...) {
 	const char *out = line;
 	if (out[0] == '\001' && out[1]) out += 2;
 	knx_log(out);
+#ifndef NANOS_HOST_TEST
+	/* knx_file_append is a kernel export; the host doctest binary doesn't link it, and it never
+	 * sets a tee anyway, so compile the persistent tee out of the host build. */
+	if (g_log_tee_path && !g_log_tee_busy) {
+		unsigned long n = 0;
+		while (out[n]) n++;
+		g_log_tee_busy = 1;
+		knx_file_append(g_log_tee_path, out, n);
+		g_log_tee_busy = 0;
+	}
+#endif
 	return r;
 }
