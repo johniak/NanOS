@@ -274,9 +274,19 @@ int nkext_init(void)
 		struct pci_dev *pdev = i915_build_pci_dev(bus, dev, func);
 		int pret;
 
+		/* Pre-probe hardware inventory — config-space only (safe, no forcewake), so this is captured
+		 * no matter how far probe gets and completes the Task-1 table the Dell can't print (no serial):
+		 * the BAR windows we handed the driver + the graphics config regs (GGC stolen size, BDSM stolen
+		 * base, ASLS OpRegion pointer) + whether an MSI capability is present. */
 		i915_log_val("i915:   BAR0 (GTTMMADR) start ", (long)pdev->resource[0].start);
+		i915_log_val("i915:   BAR0 size            ", (long)pci_resource_len(pdev, 0));
 		i915_log_val("i915:   BAR2 (GMADR)    start ", (long)pdev->resource[2].start);
+		i915_log_val("i915:   BAR2 size            ", (long)pci_resource_len(pdev, 2));
 		i915_log_val("i915:   legacy IRQ line       ", (long)pdev->irq);
+		i915_log_val("i915:   GGC  (0x50, stolen)   ", (long)(knx_pci_cfg_read32(bus, dev, func, 0x50) & 0xffff));
+		i915_log_val("i915:   BDSM (0x5C, stolen@)  ", (long)knx_pci_cfg_read32(bus, dev, func, 0x5C));
+		i915_log_val("i915:   ASLS (0xFC, OpRegion) ", (long)knx_pci_cfg_read32(bus, dev, func, 0xFC));
+		i915_log_val("i915:   MSI cap offset        ", (long)pci_find_capability(pdev, 0x05 /*PCI_CAP_ID_MSI*/));
 
 		i915_log("i915: probe start — narrating via drm_dbg (see log tail)\n");
 		pret = drv->probe(pdev, id);

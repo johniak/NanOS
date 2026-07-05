@@ -2713,6 +2713,14 @@ $(BINFOLDER)i915.nkext: $(KEXT_GLUE) $(I915_GLUE_OBJS) $(I915_OBJS) $(SUPPORT_OB
 	  $(KEXT_GLUE) $(I915_GLUE_OBJS) $(I915_OBJS) $(SUPPORT_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(LINUXKPI_OBJS) -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
+# Track header dependencies for the vendored kext objects (all built with -MMD -MP). Without this,
+# a shim-HEADER change (e.g. a linuxkpi/include/linux/*.h edit that turns a stub inline into a real
+# out-of-line function) does NOT rebuild the i915/DRM/support objects that #include it — they keep
+# the stale inlined stub and the link silently uses old behaviour on real hardware. (The kernel
+# objects are covered by the -include at $(OBJECTS:.o=.d); these vendored groups were not.)
+-include $(I915_OBJS:.o=.d) $(I915_GLUE_OBJS:.o=.d) $(SUPPORT_OBJS:.o=.d)
+-include $(DRM_CORE_OBJS:.o=.d) $(DRM_LIB_OBJS:.o=.d) $(LINUXKPI_OBJS:.o=.d)
+
 KEXTS=kbd mouse e1000 e1000e i219
 # The LinuxKPI virtio_gpu + i915 modules are x86_64-only (vendored Linux source assumes 64-bit).
 # i915 ships in the image but is a safe no-op unless armed via /nanos/config/i915 (=1): unarmed,
