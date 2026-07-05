@@ -107,9 +107,10 @@ int virtio_gpu_fbcon_bringup(struct virtio_device *vdev)
 	virtio_gpu_notify(vgdev);
 	lkpi_wait_pump();
 
-	/* 3) the contiguous shmem backing IS the system framebuffer (identity-mapped:
-	 * the page's kernel virtual address equals its physical address). */
-	phys = (unsigned long long)(unsigned long)bo->base.pages[0];
+	/* 3) the contiguous shmem backing IS the system framebuffer. Under the mem_map model a
+	 * struct page* is a metadata index, NOT an address — take the frame's physical base via
+	 * page_to_phys (identity-mapped, so phys == the fb's kernel virtual address). */
+	phys = (unsigned long long)(unsigned long)page_to_phys(bo->base.pages[0]);
 
 	present_flush();   /* push the initial (cleared) frame */
 

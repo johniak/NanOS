@@ -39,7 +39,15 @@ struct page {
 	unsigned long flags;      /* PG_* bits (see the PageFoo helpers below) */
 	atomic_t _refcount;       /* get_page/put_page; 1 fresh from alloc_pages */
 	atomic_t _mapcount;
+	/* 'private' (a C++ keyword) is the field name the vendored C drivers use. The kext build is C,
+	 * so it sees `private`. The host-test build is C++ (doctest) and only includes this header — it
+	 * never compiles those drivers — so it sees the renamed field and the private accessors below
+	 * are compiled out for it. */
+#ifdef __cplusplus
+	unsigned long lkpi_private;
+#else
 	unsigned long private;    /* driver scratch (TTM pool order / dma cookie) */
+#endif
 	struct list_head lru;     /* TTM pool free list, LRU chains */
 	void *mapping;            /* owning address_space (shmem) */
 	unsigned long index;      /* offset within mapping, in pages */
@@ -62,18 +70,31 @@ static inline unsigned int get_order(unsigned long size) {
 	return order;
 }
 
+#ifdef NANOS_HOST_TEST
+/* Host-test (C++ doctest) includes this header but never links kpi_mm.c / does real page ops. Use
+ * the trivial token model (page* == address) so the accessors need no mem_map global to link. */
+static inline unsigned long page_to_pfn(const struct page *p) { return (unsigned long)p >> PAGE_SHIFT; }
+static inline struct page *pfn_to_page(unsigned long pfn) { return (struct page *)(pfn << PAGE_SHIFT); }
+static inline void *page_to_virt(const struct page *p) { return (void *)p; }
+static inline phys_addr_t page_to_phys(const struct page *p) { return (phys_addr_t)(unsigned long)p; }
+static inline void *page_address(const struct page *p) { return (void *)p; }
+static inline struct page *virt_to_page(const void *addr) { return (struct page *)((unsigned long)addr & PAGE_MASK); }
+#else
 static inline unsigned long page_to_pfn(const struct page *p) { return (unsigned long)(p - lkpi_mem_map); }
 static inline struct page *pfn_to_page(unsigned long pfn) { return lkpi_mem_map + pfn; }
 static inline void *page_to_virt(const struct page *p) { return (void *)(page_to_pfn(p) << PAGE_SHIFT); }
 static inline phys_addr_t page_to_phys(const struct page *p) { return (phys_addr_t)(page_to_pfn(p) << PAGE_SHIFT); }
 static inline void *page_address(const struct page *p) { return page_to_virt(p); }
 static inline struct page *virt_to_page(const void *addr) { return lkpi_mem_map + ((unsigned long)addr >> PAGE_SHIFT); }
+#endif
 static inline phys_addr_t virt_to_phys(const volatile void *addr) { return (phys_addr_t)(unsigned long)addr; }
 static inline void *phys_to_virt(phys_addr_t pa) { return (void *)(unsigned long)pa; }
 
 /* per-page metadata accessors */
+#ifndef __cplusplus
 static inline void set_page_private(struct page *p, unsigned long v){ p->private = v; }
 static inline unsigned long page_private(const struct page *p){ return p->private; }
+#endif
 static inline void set_page_count(struct page *p, int v){ atomic_set(&p->_refcount, v); }
 static inline int  page_ref_count(const struct page *p){ return atomic_read(&p->_refcount); }
 static inline int  page_count(const struct page *p){ return atomic_read(&p->_refcount); }
