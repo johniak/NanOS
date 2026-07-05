@@ -13,6 +13,8 @@ namespace kernel {
 const uint32_t PTE_PRESENT = 0x1;
 const uint32_t PTE_RW = 0x2;
 const uint32_t PTE_USER = 0x4;
+const uint32_t PTE_PWT = 0x8;    // Page Write-Through
+const uint32_t PTE_PCD = 0x10;   // Page Cache Disable — PCD+PWT = UC, required for device MMIO
 const uint32_t PAGE_MASK = 0xFFFFF000;
 
 inline uint32_t pdIndex(uint32_t va) { return (va >> 22) & 0x3FF; }

@@ -16,6 +16,12 @@ namespace kernel {
 const uint64_t PTE_PRESENT = 0x1;
 const uint64_t PTE_RW      = 0x2;
 const uint64_t PTE_USER    = 0x4;
+const uint64_t PTE_PWT     = 0x8;                        // Page Write-Through (bit 3)
+const uint64_t PTE_PCD     = 0x10;                       // Page Cache Disable (bit 4). PCD+PWT with the
+                                                         // default PAT = strong UC — required for device
+                                                         // MMIO (GPU registers): a cached register write
+                                                         // buffers in the CPU cache and never reaches the
+                                                         // device (forcewake never acks -> hang on real HW).
 const uint64_t PTE_NX      = 1ULL << 63;                 // No-Execute (honored when EFER.NXE=1)
 const uint64_t PTE_PS      = 1ULL << 7;                  // Page Size: a PD entry with this maps a 2 MiB page
 const uint64_t PTE_PRIV    = 1ULL << 9;                  // AVL bit 9 (ignored by HW): this entry points

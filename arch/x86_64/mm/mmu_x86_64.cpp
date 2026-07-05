@@ -112,17 +112,35 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 uint32_t mmuKernelDirPhys() { return (uint32_t) g_kernelDirPhys; }
 
 void mmuMapKernelMmio(uint64_t phys, uint64_t bytes) {
+	// Device MMIO must be UNCACHED (PCD+PWT). A cached register write buffers in the CPU cache and
+	// never reaches the device — on real hardware an i915 forcewake write is then never acked and the
+	// GPU bring-up hard-hangs on the first forcewake-gated register read. QEMU/TCG treats cached MMIO
+	// as if it landed, which hid this for the whole QEMU bring-up.
+	const uint64_t UC = kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_PCD | kernel::PTE_PWT;
+	const uint64_t HP = 0x200000;   // 2 MiB huge-page span
 	uint64_t base = phys & kernel::PAGE_MASK;
-	uint64_t end_ = (phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
-	// Anything below the huge identity map is already mapped (identity, RW). Re-mapping it with a
-	// 4 KiB mapRange would collide with the live 2 MiB huge PDE (see g_identityTop). Map only the
-	// part above the map; if the whole region is below it, there is nothing to do. (Real-HW MMIO
-	// like the framebuffer at ~3 GiB falls inside the map; QEMU put it above, hiding the collision.)
-	if (base < g_identityTop)
-		base = g_identityTop;
+	uint64_t end_ = (phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up to 4 KiB
 	if (base >= end_)
 		return;
-	g_kspace->mapRange(base, base, end_ - base, kernel::PTE_PRESENT | kernel::PTE_RW);
+
+	// (1) The part inside the 2 MiB huge identity map is ALREADY mapped, but write-back. We cannot
+	// drop a 4 KiB UC mapping over a live 2 MiB huge PDE, so overwrite the covering huge PDEs with the
+	// same identity phys + UC. These addresses are PCI MMIO holes (below top-of-RAM but not RAM), so
+	// marking the whole covering 2 MiB span uncached is safe. Real-HW GPU BARs (Dell: 0x80000000 /
+	// 0xCB000000) take this path; QEMU's high MMIO does not.
+	if (base < g_identityTop) {
+		uint64_t hiEnd = end_ < g_identityTop ? end_ : g_identityTop;
+		uint64_t hbase = base & ~(HP - 1);
+		uint64_t hend  = (hiEnd + HP - 1) & ~(HP - 1);
+		g_kspace->mapRangeHuge(hbase, hbase, hend - hbase, UC);
+	}
+	// (2) The part above the huge identity map needs a fresh 4 KiB UC mapping (QEMU's MMIO layout).
+	if (end_ > g_identityTop) {
+		uint64_t lo = base < g_identityTop ? g_identityTop : base;
+		g_kspace->mapRange(lo, lo, end_ - lo, UC);
+	}
+	// Flush the local TLB so the new (uncached) attributes take effect immediately.
+	kernel::loadCr3(kernel::readCr3());
 }
 
 uint32_t mmuCurrentDirPhys() { return (uint32_t) kernel::readCr3(); }

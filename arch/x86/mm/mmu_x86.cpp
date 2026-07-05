@@ -101,8 +101,11 @@ void mmuMapKernelMmio(uint64_t phys, uint64_t bytes) {
 	// i686 physical space is 32-bit; the 64-bit contract just narrows here.
 	uint32_t base = (uint32_t) phys & kernel::PAGE_MASK;
 	uint32_t end = ((uint32_t) phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
-	// Map into the live kernel directory; these VAs were never touched, so no stale TLB.
-	g_kspace->mapRange(base, base, end - base, kernel::PTE_PRESENT | kernel::PTE_RW);
+	// Map into the live kernel directory; these VAs were never touched, so no stale TLB. Device MMIO
+	// must be UNCACHED (PCD+PWT) — a cached register write buffers in the CPU cache and never reaches
+	// the device (see the x86_64 mmuMapKernelMmio note on i915 forcewake).
+	g_kspace->mapRange(base, base, end - base,
+	                   kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_PCD | kernel::PTE_PWT);
 }
 
 uint32_t mmuCurrentDirPhys() { return kernel::readCr3(); }
