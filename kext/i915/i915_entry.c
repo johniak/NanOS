@@ -79,37 +79,89 @@ static int i915_scan_present(const struct pci_driver *drv, unsigned char *b, uns
 	return 0;
 }
 
+/* ---- bring-up debug harness ---------------------------------------------------------------- *
+ * The Dell Latitude 5310 has NO serial port and every iteration is a USB re-flash, so the design
+ * goal is "one boot tells us as much as possible". Two log channels, always in lockstep:
+ *   - knx_log -> the firmware fbcon (guaranteed visible even on a hard hang — photograph it),
+ *   - knx_file_append -> /nanos/logs/i915-boot.txt on the writable root (survives the reboot).
+ * i915 is ARMED only when /nanos/config/i915 begins with '1'. Unarmed, nkext_init returns BEFORE
+ * touching mem_map / DRM core / i915_init, so the kext is a safe no-op in the default image (and
+ * cannot double-init DRM core against virtio_gpu). Armed, it turns the vendored DRM debug all the
+ * way up and narrates every stage. */
+/* The physical (USB/ATA) root is mounted at /disks/main — "/" itself is an in-RAM SynthFs — so the
+ * PERSISTENT paths kexts see are under /disks/main/nanos/... (this is exactly where loadAllKexts
+ * reads the .nkext from). /disks/main is mounted read-write before the kexts load. */
+#define I915_ARM_KNOB "/disks/main/nanos/config/i915"
+#define I915_LOG_PATH "/disks/main/nanos/logs/i915-boot.txt"
+
+static unsigned long i915_strlen(const char *s) { unsigned long n = 0; while (s[n]) n++; return n; }
+
+/* Tee one marker to both channels. Keep messages short + prefixed "i915:" so a photo or a grep of
+ * the log reads as a timeline. */
+static void i915_log(const char *msg)
+{
+	knx_log(msg);
+	knx_file_append(I915_LOG_PATH, msg, i915_strlen(msg));
+}
+
+/* Armed iff the first non-space byte of /nanos/config/i915 is '1'. Absent/unreadable/0 -> disarmed. */
+static int i915_armed(void)
+{
+	char buf[8];
+	unsigned long n = 0;
+	const char *p;
+	if (knx_file_read(I915_ARM_KNOB, buf, sizeof(buf) - 1, &n) < 0)
+		return 0;
+	buf[n < sizeof(buf) ? n : sizeof(buf) - 1] = 0;
+	for (p = buf; *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'; p++)
+		;
+	return *p == '1';
+}
+
 int nkext_init(void)
 {
 	const struct pci_driver *drv;
 	unsigned char bus, dev, func;
 	int ret;
 
+	/* 0) arm gate. Disarmed = a safe no-op (default image); nothing below runs. */
+	if (!i915_armed()) {
+		knx_log("i915: not armed (write '1' to " I915_ARM_KNOB " to bring up) — skipping\n");
+		return 0;
+	}
+
+	i915_log("i915: ===== bring-up session armed =====\n");
+
 	/* 1) LinuxKPI mem_map first — indexed by every alloc_pages/virt_to_page below. */
 	{ extern void lkpi_mem_map_init(void); lkpi_mem_map_init(); }
+	i915_log("i915: mem_map init OK\n");
 
-	/* Keep DRM debug quiet (each drm_dbg -> printk -> fbcon would repaint the console). */
-	{ extern unsigned long __drm_debug; __drm_debug = 0x0; }
+	/* Turn the vendored DRM debug all the way up (CORE|DRIVER|KMS|PRIME|ATOMIC|VBL|STATE|LEASE|DP):
+	 * every drm_dbg/atomic-state dump now flows through printk -> knx_log -> both channels. This is
+	 * exactly the drm.debug=0xff a normal kernel would take for a bring-up, and it is why one armed
+	 * boot is worth many blind ones. */
+	{ extern unsigned long __drm_debug; __drm_debug = 0x1ff; }
 
 	/* 2) DRM core (chrdev/class + drm_core_init_complete) before any probe. */
 	__lkpi_modinit_drm_core_init();
+	i915_log("i915: DRM core init OK\n");
 
 	/* 3) run the UNMODIFIED i915_init(): registers the pci_driver + module subfuncs. */
 	ret = __lkpi_modinit_i915_init();
 	if (ret) {
-		knx_log("i915: i915_init() failed\n");
-		return -1;
+		i915_log("i915: FAIL i915_init()\n");
+		return 0;   /* never fault the box — firmware fb stays up */
 	}
 	drv = lkpi_pci_get_driver();
 	if (!drv || !drv->probe) {
-		knx_log("i915: driver did not register a probe\n");
-		return -1;
+		i915_log("i915: FAIL driver registered no probe\n");
+		return 0;
 	}
-	knx_log("i915: unmodified Linux 6.12 i915 driver registered\n");
+	i915_log("i915: unmodified Linux 6.12 i915 driver registered\n");
 
 	/* 4) match the id_table against present devices. */
 	if (!i915_scan_present(drv, &bus, &dev, &func)) {
-		knx_log("i915: no Intel GPU present — idle (expected on QEMU; Dell bring-up is Phase B)\n");
+		i915_log("i915: no Intel GPU present — idle (expected on QEMU; Dell bring-up is Phase B)\n");
 		return 0;
 	}
 
@@ -117,6 +169,6 @@ int nkext_init(void)
 	 * The full pci_dev construction (BAR64 mapping, MSI, execlists) + i915 probe() lands in the
 	 * Dell bring-up increment — reaching this line on the Latitude is the goal that unblocks it. */
 	lkpi_wq_init();
-	knx_log("i915: Intel GPU found — pci_dev construction + probe() is Phase B (Dell)\n");
+	i915_log("i915: Intel GPU FOUND — pci_dev construction + probe() is Phase B (Dell)\n");
 	return 0;
 }

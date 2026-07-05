@@ -78,6 +78,23 @@ int knx_file_read(const char* path, void* buf, unsigned long max, unsigned long*
 	return 0;
 }
 
+// Append `len` bytes to `path` through the VFS, creating the file if absent (write at the current
+// end offset). Used by the i915 bring-up harness to persist boot markers to /nanos/log/i915-boot.txt
+// on the writable (USB) root, so a Dell session that hangs before serial is even possible still
+// leaves a log that survives the reboot. Best-effort: returns 0 on success, <0 on error. The screen
+// (knx_log -> fbcon) is the guaranteed-visible companion channel for a hard hang (photograph it).
+int knx_file_append(const char* path, const void* buf, unsigned long len) {
+	if (!g_kexVfs || !path || !buf) return -2;
+	String p((char*) path);
+	FileStat st;
+	unsigned off = 0;
+	if (g_kexVfs->stat(p, st) >= 0)
+		off = st.size;                      // append at end
+	else if (g_kexVfs->create(p, 0644) < 0)
+		return -2;                          // could not create the log file
+	return g_kexVfs->write(p, (unsigned) len, off, buf);
+}
+
 // Real RCU grace period (LinuxKPI synchronize_rcu). See Scheduler::rcuSynchronize.
 void knx_rcu_synchronize(void)            { Scheduler::rcuSynchronize(); }
 

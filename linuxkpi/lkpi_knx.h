@@ -47,6 +47,10 @@ void           knx_run_after_scheduler(void (*fn)(void));
 /* Read a whole file through the kernel VFS (request_firmware). buf==0 -> report size in *out_len.
  * Returns 0 on success, <0 (ENOENT/unreadable) otherwise; sets *out_len to the bytes read. */
 int            knx_file_read(const char *path, void *buf, unsigned long max, unsigned long *out_len);
+/* Append `len` bytes to `path` (create if absent), through the VFS on the writable root. The i915
+ * bring-up harness persists boot markers to /nanos/log/i915-boot.txt so a Dell hang leaves a log
+ * that survives reboot. Best-effort; returns 0 on success, <0 on error. */
+int            knx_file_append(const char *path, const void *buf, unsigned long len);
 /* Real RCU grace period: block until every other online CPU has passed a quiescent state
  * (LinuxKPI synchronize_rcu). On UP this is a barrier. See Scheduler::rcuSynchronize. */
 void           knx_rcu_synchronize(void);

@@ -1014,6 +1014,15 @@ smoke-vt: image64
 smoke-virtio-gpu: image64
 	bash scripts/smoke-virtio-gpu.sh
 
+# `smoke-i915` is the i915 link+load+bring-up-harness gate (Dell GPU plan Task 5/6): the full
+# unmodified Linux 6.12 i915 driver (bin/i915.nkext, 276 objs + full TTM + DRM core + shim) ships
+# in the image, gated by /nanos/config/i915. Part A asserts it is a safe no-op unarmed (default
+# boot unaffected); Part B arms a throwaway, boots it, and asserts the driver loads, runs i915_init,
+# narrates every stage, idles clean on QEMU (no Intel GPU), and that the markers PERSIST to
+# /nanos/logs/i915-boot.txt (the Dell hang-survival log channel).
+smoke-i915: image64
+	bash scripts/smoke-i915.sh
+
 # `smoke-kpi-irq` is the LinuxKPI real-interrupt gate (i915 plan Task 2): boots virtio-gpu as the
 # only display and asserts the device's interrupt runs through request_irq -> MSI-X (MsiRouter MSI-X
 # + kpi_irq + vt_enable_msi), delivering a real MSI to the handler while the poll stays a watchdog.
@@ -1079,8 +1088,8 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-virtio-gpu smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
-	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + i915 (link/load/harness) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
 	$(DOCKER_RUN) make _clean
@@ -2659,9 +2668,12 @@ $(BINFOLDER)i915.nkext: $(KEXT_GLUE) $(I915_GLUE_OBJS) $(I915_OBJS) $(SUPPORT_OB
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
 KEXTS=kbd mouse e1000 e1000e i219
-# The LinuxKPI virtio_gpu module is x86_64-only (vendored Linux source assumes 64-bit).
+# The LinuxKPI virtio_gpu + i915 modules are x86_64-only (vendored Linux source assumes 64-bit).
+# i915 ships in the image but is a safe no-op unless armed via /nanos/config/i915 (=1): unarmed,
+# its nkext_init returns before any DRM/i915 init, so it never double-inits DRM core against
+# virtio_gpu and adds nothing to a normal boot. Armed (Dell bring-up), it runs the full driver.
 ifeq ($(ARCH),x86_64)
-KEXTS+= virtio_gpu
+KEXTS+= virtio_gpu i915
 endif
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
