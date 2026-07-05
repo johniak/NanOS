@@ -1129,6 +1129,38 @@ bringup64:
 image64:
 	$(DOCKER_RUN) make ARCH=x86_64 _image64
 
+# flash-dell — build the x86_64 disk image and write it to the Kingston boot stick.
+# scripts/flash-usb.sh auto-locates the removable USB disk whose media name matches
+# "Kingston|DataTraveler" (the Dell Latitude's DataTraveler 3.0), refuses to touch a
+# fixed/internal disk, and asks for a typed "yes" before erasing it. Override the match
+# with USB_NAME=... , the image with IMAGE=... , or skip the prompt with FORCE=1.
+.PHONY: flash-dell
+flash-dell: image64
+	IMAGE=$(IMAGE64) FORCE=1 ./scripts/flash-usb.sh
+
+# arm-i915 / disarm-i915 — flip the i915 debug harness on the Kingston stick in-place (no
+# rebuild, no reflash): writes '1'/'0' to /nanos/config/i915 on the stick's ext partition
+# with host debugfs. Needs sudo (raw partition access). See scripts/arm-i915.sh.
+.PHONY: arm-i915 disarm-i915
+arm-i915:
+	VALUE=1 ./scripts/arm-i915.sh
+disarm-i915:
+	VALUE=0 ./scripts/arm-i915.sh
+
+# i915-log — after a Dell boot, dump the persisted harness log from the stick
+# (/nanos/logs/i915-boot.txt). Bring the Kingston back, run this. Needs sudo.
+.PHONY: i915-log
+i915-log:
+	./scripts/i915-log.sh
+
+# flash-dell-armed — the one-shot for a real Dell i915 run: flash the LATEST image (kernel with
+# the 64-bit BAR fix + current i915 kext), THEN arm the knob. Order matters — flashing rewrites
+# the whole partition and would wipe a knob written earlier, so arm must come AFTER the flash.
+.PHONY: flash-dell-armed
+flash-dell-armed: image64
+	IMAGE=$(IMAGE64) FORCE=1 NO_EJECT=1 ./scripts/flash-usb.sh
+	VALUE=1 ./scripts/arm-i915.sh
+
 run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
