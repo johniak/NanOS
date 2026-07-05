@@ -17,15 +17,24 @@ static inline bool llist_add_batch(struct llist_node *first, struct llist_node *
   struct llist_node *f=h->first; last->next=f; h->first=first; return f==0; }
 static inline struct llist_node *llist_del_first(struct llist_head *h){
   struct llist_node *f=h->first; if(f) h->first=f->next; return f; }
+#define llist_entry(ptr,type,member) container_of(ptr,type,member)
+/* The NULL-terminated llist walk ends when the current NODE pointer is NULL — i.e. when the
+ * iterator, reconstructed from that node via container_of, has its member back at address 0.
+ * Testing `&pos->member != 0` as a POINTER is undefined behavior: GCC (esp. at -O2, which i915
+ * requires) assumes the address of a struct member is never NULL and DELETES the check, turning
+ * the loop into an unterminated do-while that walks container_of(NULL) and #PFs. Upstream defeats
+ * this with member_address_is_nonnull(), which forces the comparison into integer (uintptr_t)
+ * arithmetic the optimizer must honor. Mirror it exactly. */
+#define member_address_is_nonnull(ptr,member) \
+  ((uintptr_t)(ptr) + __builtin_offsetof(__typeof__(*(ptr)),member) != 0)
 #define llist_for_each(pos,node) for(pos=(node);pos;pos=pos->next)
 #define llist_for_each_entry(pos,node,member) \
   for(pos=llist_entry((node),__typeof__(*pos),member); \
-      &pos->member!=0; \
+      member_address_is_nonnull(pos,member); \
       pos=llist_entry(pos->member.next,__typeof__(*pos),member))
-#define llist_entry(ptr,type,member) container_of(ptr,type,member)
 #define llist_for_each_safe(pos,n,node) for(pos=(node);pos&&((n=pos->next),1);pos=n)
 #define llist_for_each_entry_safe(pos,n,node,member) \
   for(pos=llist_entry((node),__typeof__(*pos),member); \
-      &pos->member!=0&&((n=llist_entry(pos->member.next,__typeof__(*pos),member)),1); \
+      member_address_is_nonnull(pos,member)&&((n=llist_entry(pos->member.next,__typeof__(*pos),member)),1); \
       pos=n)
 #endif
