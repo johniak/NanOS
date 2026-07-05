@@ -57,21 +57,39 @@ void Pci::readBars(PciDevice& d) {
 			write32(d.bus, d.dev, d.func, off, orig);
 			d.bar[i].size = back ? (~back + 1) & 0xffff : 0;   // I/O regions are <=64KiB
 		} else {
-			// Memory BAR: bits[2:1] type (0=32, 2=64), bit3 prefetchable.
+			// Memory BAR: bits[2:1] type (0=32, 2=64), bit3 prefetchable. A 64-bit BAR spans this
+			// slot (lo) plus the next (hi); we decode both into bar[lo] and skip hi.
+			int lo = i;
 			uint32_t type = (orig >> 1) & 0x3;
-			d.bar[i].prefetch = (orig >> 3) & 0x1;
-			d.bar[i].addr = orig & ~0xfu;
-			d.bar[i].is64 = (type == 0x2);
+			d.bar[lo].prefetch = (orig >> 3) & 0x1;
+			d.bar[lo].is64 = (type == 0x2);
+			// Low dword: base (mask flag bits) + size probe.
 			write32(d.bus, d.dev, d.func, off, 0xffffffffu);
-			uint32_t back = read32(d.bus, d.dev, d.func, off) & ~0xfu;
+			uint32_t backLo = read32(d.bus, d.dev, d.func, off) & ~0xfu;
 			write32(d.bus, d.dev, d.func, off, orig);
-			d.bar[i].size = back ? (~back + 1) : 0;
-			if (d.bar[i].is64 && i + 1 < 6) {
-				// The high dword occupies the next slot; restore it too and skip it.
-				uint32_t hi = read32(d.bus, d.dev, d.func, (uint8_t) (off + 4));
-				(void) hi;   // 32-bit kernel: we only use the low dword for the address
-				i++;
+			uint64_t addr = (uint64_t) (orig & ~0xfu);
+			// Assemble the 64-bit size mask. For a 32-bit BAR the high bits don't exist, so treat
+			// them as all-ones — otherwise (~mask + 1) would compute a bogus >4 GiB size.
+			uint32_t backHi = 0;
+			uint64_t mask = (uint64_t) backLo | 0xffffffff00000000ull;
+			if (d.bar[lo].is64 && lo + 1 < 6) {
+				// The high dword occupies the next slot: it holds the top 32 bits of both the base
+				// and the size mask. Probe + restore it too, fold it in, then skip the slot.
+				uint8_t offHi = (uint8_t) (off + 4);
+				uint32_t origHi = read32(d.bus, d.dev, d.func, offHi);
+				addr |= (uint64_t) origHi << 32;
+				write32(d.bus, d.dev, d.func, offHi, 0xffffffffu);
+				backHi = read32(d.bus, d.dev, d.func, offHi);
+				write32(d.bus, d.dev, d.func, offHi, origHi);
+				mask = (uint64_t) backLo | ((uint64_t) backHi << 32);
+				i++;   // skip the high slot
 			}
+			d.bar[lo].addr = addr;
+			// A read-back of 0 (both dwords for a 64-bit BAR) means an unimplemented/zero-size BAR;
+			// only then is size 0 — otherwise the region is (~mask + 1). backLo can legitimately be 0
+			// for a 64-bit BAR whose size is >= 4 GiB (all its size bits live in the high dword).
+			bool sized = backLo != 0 || (d.bar[lo].is64 && backHi != 0);
+			d.bar[lo].size = sized ? (~mask + 1) : 0;
 		}
 	}
 }

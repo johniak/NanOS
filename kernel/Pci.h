@@ -9,10 +9,13 @@
 
 namespace kernel {
 
-// One decoded Base Address Register. addr/size are 0 for an unused slot.
+// One decoded Base Address Register. addr/size are 0 for an unused slot. 64-bit wide: a 64-bit
+// memory BAR combines its low + high dword here (the high slot is then left zeroed), so devices
+// whose firmware places a BAR above 4 GiB — e.g. the Dell's Comet Lake GTTMMADR/GTT — decode
+// correctly instead of truncating to the low 32 bits.
 struct PciBar {
-	uint32_t addr;      // base address (low flag bits masked off); for I/O BARs, the port base
-	uint32_t size;      // region size in bytes (power of two), 0 = unused
+	uint64_t addr;      // base address (low flag bits masked off); for I/O BARs, the port base
+	uint64_t size;      // region size in bytes (power of two), 0 = unused
 	bool     isIo;      // true = I/O-space BAR, false = memory-mapped BAR
 	bool     is64;      // 64-bit memory BAR (its high dword lives in the next slot, which is then 0)
 	bool     prefetch;  // prefetchable memory

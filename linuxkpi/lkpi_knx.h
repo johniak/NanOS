@@ -19,18 +19,19 @@ unsigned long long knx_uptime_us(void);
 /* top of physical RAM in bytes (highest usable address); LinuxKPI sizes its mem_map against it. */
 unsigned long long knx_ram_top(void);
 
-/* PCI + MMIO + DMA + IRQ (kexports.def). phys/len are 32-bit: QEMU places virtio-pci BARs
- * and our DMA buffers below 4 GiB, so 32-bit addressing is sufficient. */
+/* PCI + MMIO + DMA + IRQ (kexports.def). knx_pci_bar / knx_map_mmio are 64-bit: real hardware
+ * (e.g. the Dell's Comet Lake GPU) places GTTMMADR/GTT BARs above 4 GiB, and the kernel MMU
+ * identity-maps any physical address. DMA buffers still fit below 4 GiB (knx_dma_alloc). */
 int            knx_pci_find(unsigned short vendor, unsigned short device,
                             unsigned char *bus, unsigned char *dev, unsigned char *func);
-unsigned int   knx_pci_bar(unsigned char bus, unsigned char dev, unsigned char func, int n);
-unsigned int   knx_pci_bar_size(unsigned char bus, unsigned char dev, unsigned char func, int n);
+unsigned long long knx_pci_bar(unsigned char bus, unsigned char dev, unsigned char func, int n);
+unsigned long long knx_pci_bar_size(unsigned char bus, unsigned char dev, unsigned char func, int n);
 int            knx_pci_bar_is_io(unsigned char bus, unsigned char dev, unsigned char func, int n);
 unsigned char  knx_pci_irq(unsigned char bus, unsigned char dev, unsigned char func);
 void           knx_pci_enable_bus_master(unsigned char bus, unsigned char dev, unsigned char func);
 unsigned int   knx_pci_cfg_read32(unsigned char bus, unsigned char dev, unsigned char func, unsigned char off);
 void           knx_pci_cfg_write32(unsigned char bus, unsigned char dev, unsigned char func, unsigned char off, unsigned int v);
-void          *knx_map_mmio(unsigned int phys, unsigned int len);
+void          *knx_map_mmio(unsigned long long phys, unsigned long long len);
 void          *knx_dma_alloc(unsigned int len, unsigned int *phys_out);
 void           knx_register_irq(int irq, void (*h)(void *));
 int            knx_register_msi(unsigned char bus, unsigned char dev, unsigned char func, void (*h)(void *), void *ctx);

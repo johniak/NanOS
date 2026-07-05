@@ -64,9 +64,11 @@ MsiResult msiSetup(const MsiEnv& env, uint8_t bus, uint8_t dev, uint8_t func) {
 		uint32_t barLo   = env.cfgRead(bus, dev, func, (uint8_t) (0x10 + bir * 4));
 		if (barLo & 0x1)                                           // I/O BAR: MSI-X table must be MMIO
 			return none;
-		uint32_t barBase = barLo & ~0xFu;                         // mask memory-BAR flag bits (low 4)
-		// 64-bit BAR high dword is the next slot; on QEMU with <4 GiB RAM the base fits in 32 bits,
-		// and mapMmio takes a 32-bit phys, so the low dword base is sufficient here.
+		uint64_t barBase = (uint64_t) (barLo & ~0xFu);            // mask memory-BAR flag bits (low 4)
+		if (((barLo >> 1) & 0x3) == 0x2) {                        // 64-bit BAR: fold in the high dword
+			uint32_t barHi = env.cfgRead(bus, dev, func, (uint8_t) (0x10 + (bir + 1) * 4));
+			barBase |= (uint64_t) barHi << 32;                   // e.g. i915's MSI-X table in BAR0
+		}
 		int vec = env.allocVector();
 		if (vec < 0)
 			return none;

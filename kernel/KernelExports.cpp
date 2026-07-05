@@ -146,12 +146,12 @@ int knx_pci_find(uint16_t vendor, uint16_t device, uint8_t* bus, uint8_t* dev, u
 	if (func) *func = d.func;
 	return 1;
 }
-uint32_t knx_pci_bar(uint8_t bus, uint8_t dev, uint8_t func, int n) {
+uint64_t knx_pci_bar(uint8_t bus, uint8_t dev, uint8_t func, int n) {
 	PciDevice d;
 	if (n < 0 || n > 5 || !Pci::probe(bus, dev, func, d)) return 0;
 	return d.bar[n].addr;
 }
-uint32_t knx_pci_bar_size(uint8_t bus, uint8_t dev, uint8_t func, int n) {
+uint64_t knx_pci_bar_size(uint8_t bus, uint8_t dev, uint8_t func, int n) {
 	PciDevice d;
 	if (n < 0 || n > 5 || !Pci::probe(bus, dev, func, d)) return 0;
 	return d.bar[n].size;
@@ -183,7 +183,7 @@ int knx_register_msi(uint8_t bus, uint8_t dev, uint8_t func, void (*h)(void*), v
 	MsiEnv env;
 	env.cfgRead     = [](uint8_t b, uint8_t d, uint8_t f, uint8_t o) { return Pci::read32(b, d, f, o); };
 	env.cfgWrite    = [](uint8_t b, uint8_t d, uint8_t f, uint8_t o, uint32_t v) { Pci::write32(b, d, f, o, v); };
-	env.mapMmio     = [](uint32_t p, uint32_t l) -> void* { return knx_map_mmio(p, l); };
+	env.mapMmio     = [](uint64_t p, uint64_t l) -> void* { return knx_map_mmio(p, l); };
 	env.allocVector = []() { return lapicAllocVector(); };
 	env.lapicId     = []() { return lapicId(); };
 	MsiResult r = msiSetup(env, bus, dev, func);

@@ -15,7 +15,7 @@ namespace kernel {
 struct MsiEnv {
 	uint32_t (*cfgRead)(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off);
 	void     (*cfgWrite)(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint32_t v);
-	void*    (*mapMmio)(uint32_t phys, uint32_t len);   // for the MSI-X table BAR; unused for MSI
+	void*    (*mapMmio)(uint64_t phys, uint64_t len);   // for the MSI-X table BAR; unused for MSI
 	int      (*allocVector)();                          // a CPU vector (>=0) or -1 if none free
 	uint8_t  (*lapicId)();                              // for the MSI message address
 };

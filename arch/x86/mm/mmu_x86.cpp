@@ -97,7 +97,7 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {   // contrac
 
 uint32_t mmuKernelDirPhys() { return g_kernelDirPhys; }
 
-void mmuMapKernelMmio(uint64_t phys, uint32_t bytes) {
+void mmuMapKernelMmio(uint64_t phys, uint64_t bytes) {
 	// i686 physical space is 32-bit; the 64-bit contract just narrows here.
 	uint32_t base = (uint32_t) phys & kernel::PAGE_MASK;
 	uint32_t end = ((uint32_t) phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up

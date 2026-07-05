@@ -13,7 +13,7 @@ static void fcWrite(uint8_t, uint8_t, uint8_t, uint8_t off, uint32_t v) {
 static int     fAlloc() { return 0x71; }
 static uint8_t fId()    { return 3; }
 static uint32_t g_table[4];
-static void*   fMap(uint32_t, uint32_t) { return g_table; }
+static void*   fMap(uint64_t, uint64_t) { return g_table; }
 
 TEST_CASE("msiSetup uses single-vector MSI even when MSI-X is also present (single-queue NIC)") {
 	memset(g_cfg, 0, sizeof g_cfg);

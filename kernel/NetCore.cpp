@@ -75,9 +75,9 @@ void netTimerBody() {
 // ---- driver-facing exports (also entries in the KernelExports table) -------------------------
 extern "C" {
 
-void* knx_map_mmio(uint32_t phys, uint32_t len) {
+void* knx_map_mmio(uint64_t phys, uint64_t len) {
 	arch::mmuMapKernelMmio(phys, len);
-	return (void*) phys;      // identity-mapped: the physical address is directly usable
+	return (void*) (uintptr_t) phys;   // identity-mapped: the physical address is directly usable
 }
 
 void* knx_dma_alloc(uint32_t len, uint32_t* phys_out) {

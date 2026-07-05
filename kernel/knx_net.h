@@ -27,7 +27,7 @@ struct KnxNetDev {
 
 // Map `len` bytes of device MMIO at physical `phys` into the kernel and return a usable pointer
 // (identity-mapped). For a NIC's BAR0 register window.
-void* knx_map_mmio(uint32_t phys, uint32_t len);
+void* knx_map_mmio(uint64_t phys, uint64_t len);
 
 // Allocate `len` bytes (<= 4096) of physically-contiguous, identity-mapped DMA memory, zeroed.
 // Returns the virtual pointer (== physical, RAM is identity-mapped) and writes the physical

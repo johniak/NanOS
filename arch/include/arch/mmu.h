@@ -52,7 +52,7 @@ uint32_t mmuKernelDirPhys();
 // routinely programmed above 4 GiB. Truncating to 32 bits maps the wrong page and the
 // first access triple-faults on the metal (QEMU/OVMF places them low, hiding it). The
 // i686 impl narrows internally (its physical space is 32-bit anyway).
-void mmuMapKernelMmio(uint64_t phys, uint32_t bytes);
+void mmuMapKernelMmio(uint64_t phys, uint64_t bytes);
 
 // Read/load the active page-directory physical address (CR3 on x86). MI code uses
 // these to stage a spawned child under the kernel identity map, then restore the

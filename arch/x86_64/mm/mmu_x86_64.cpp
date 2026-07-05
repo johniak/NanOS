@@ -111,7 +111,7 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 
 uint32_t mmuKernelDirPhys() { return (uint32_t) g_kernelDirPhys; }
 
-void mmuMapKernelMmio(uint64_t phys, uint32_t bytes) {
+void mmuMapKernelMmio(uint64_t phys, uint64_t bytes) {
 	uint64_t base = phys & kernel::PAGE_MASK;
 	uint64_t end_ = (phys + bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;  // round up
 	// Anything below the huge identity map is already mapped (identity, RW). Re-mapping it with a

@@ -143,8 +143,8 @@ static inline void  devm_kfree(struct device *dev, void *p) { (void)dev; kfree(p
 #define _LKPI_DEVICE_EXTRA
 static inline const char *dev_driver_string(const struct device *dev){ (void)dev; return "virtio_gpu"; }
 static inline int dev_to_node(struct device *dev){ (void)dev; return -1; }
-extern void *knx_map_mmio(unsigned int, unsigned int);
-static inline void *devm_request_mem_region(struct device *d, unsigned long s, unsigned long n, const char *nm){ (void)d;(void)nm; return knx_map_mmio((unsigned)s,(unsigned)n); }
+extern void *knx_map_mmio(unsigned long long, unsigned long long);
+static inline void *devm_request_mem_region(struct device *d, unsigned long s, unsigned long n, const char *nm){ (void)d;(void)nm; return knx_map_mmio(s, n); }
 #endif
 
 #ifndef _LKPI_DEVICE_REG

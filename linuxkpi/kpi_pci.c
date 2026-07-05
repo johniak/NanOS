@@ -71,7 +71,7 @@ void *pci_iomap_range(struct pci_dev *d, int bar, unsigned long offset, unsigned
 	unsigned long maplen = rlen - offset;
 	if (maxlen && maxlen < maplen)
 		maplen = maxlen;
-	return knx_map_mmio((unsigned)(start + offset), (unsigned)maplen);
+	return knx_map_mmio((unsigned long long)(start + offset), (unsigned long long)maplen);
 }
 
 void pci_iounmap(struct pci_dev *d, void *addr) {

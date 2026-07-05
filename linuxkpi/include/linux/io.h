@@ -18,9 +18,9 @@ static inline bool pat_enabled(void){ return true; }
 static inline int arch_phys_wc_add(unsigned long base, unsigned long size){ (void)base;(void)size; return 0; }
 static inline void arch_phys_wc_del(int handle){ (void)handle; }
 static inline unsigned long arch_phys_wc_index(int handle){ (void)handle; return 0; }
-static inline void *ioremap(phys_addr_t phys, unsigned long size) { return knx_map_mmio((unsigned)phys, (unsigned)size); }
-static inline void *ioremap_wc(phys_addr_t phys, unsigned long size) { return knx_map_mmio((unsigned)phys, (unsigned)size); }
-static inline void *ioremap_cache(phys_addr_t phys, unsigned long size) { return knx_map_mmio((unsigned)phys, (unsigned)size); }
+static inline void *ioremap(phys_addr_t phys, unsigned long size) { return knx_map_mmio(phys, size); }
+static inline void *ioremap_wc(phys_addr_t phys, unsigned long size) { return knx_map_mmio(phys, size); }
+static inline void *ioremap_cache(phys_addr_t phys, unsigned long size) { return knx_map_mmio(phys, size); }
 static inline void  iounmap(volatile void *addr) { (void)addr; }
 static inline phys_addr_t virt_to_phys_io(const volatile void *a) { return (phys_addr_t)(unsigned long)a; }
 
@@ -54,8 +54,8 @@ static inline void writeq(u64 v, volatile void *a) { *(volatile u64 *)a = v; }
 #ifndef _LKPI_IO_EXTRA
 #define _LKPI_IO_EXTRA
 #include <linux/ioport.h>
-static inline void *devm_ioremap(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
-static inline void *devm_ioremap_wc(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio((unsigned)o,(unsigned)s); }
+static inline void *devm_ioremap(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio(o, s); }
+static inline void *devm_ioremap_wc(struct device *d, phys_addr_t o, unsigned long s){ (void)d; return knx_map_mmio(o, s); }
 /* memremap: map system RAM / reserved physical memory into the kernel linear map. TTM uses it for
  * the resource bus-address kmap. We have a flat identity map, so it reduces to knx_map_mmio (the
  * MEMREMAP_* mode is advisory — writes land either way; WC coalescing is a documented perf follow-on). */
@@ -64,7 +64,7 @@ static inline void *devm_ioremap_wc(struct device *d, phys_addr_t o, unsigned lo
 #define MEMREMAP_WT  (1 << 1)
 #define MEMREMAP_WC  (1 << 2)
 #endif
-static inline void *memremap(phys_addr_t o, unsigned long s, unsigned long flags){ (void)flags; return knx_map_mmio((unsigned)o,(unsigned)s); }
+static inline void *memremap(phys_addr_t o, unsigned long s, unsigned long flags){ (void)flags; return knx_map_mmio(o, s); }
 static inline void memunmap(void *addr){ (void)addr; }
 #endif
 

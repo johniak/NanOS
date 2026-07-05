@@ -10,9 +10,8 @@
  * code), so the mapping is uncached — writes still land, they are just not coalesced. That is a
  * correctness-preserving perf follow-on; a one-time notice records it.
  *
- * NOTE (Phase B / Dell): knx_map_mmio's ABI is 32-bit (phys, len). If a real i915 aperture BAR
- * sits above 4 GiB, the base truncates here — widening the knx MMIO ABI is tracked separately
- * (the same 32-bit limit the net stack lives with). QEMU never exercises this (no i915 device).
+ * knx_map_mmio's ABI is 64-bit (phys, len), so a real i915 aperture BAR placed above 4 GiB maps
+ * correctly here; the kernel MMU identity-maps any physical address (mmuMapKernelMmio).
  */
 #include <linux/io-mapping.h>
 #include "lkpi_knx.h"
@@ -28,7 +27,7 @@ static void __iomem *iomap_base(struct io_mapping *m)
 			knx_log("lkpi: io_mapping UC (no PAT)\n");
 			g_uc_noticed = 1;
 		}
-		m->iomem = knx_map_mmio((unsigned) m->base, (unsigned) m->size);
+		m->iomem = knx_map_mmio((unsigned long long) m->base, (unsigned long long) m->size);
 	}
 	return m->iomem;
 }

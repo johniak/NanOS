@@ -36,7 +36,7 @@ void txEncode(TxDesc* d, uint32_t bufPhys, int len) {
 #include "knx_net.h"   // KnxNetDev + knx_map_mmio/dma_alloc/add_net_dev/netif_rx
 
 extern "C" int  knx_pci_find(uint16_t vendor, uint16_t device, uint8_t* bus, uint8_t* dev, uint8_t* func);
-extern "C" uint32_t knx_pci_bar(uint8_t bus, uint8_t dev, uint8_t func, int n);
+extern "C" uint64_t knx_pci_bar(uint8_t bus, uint8_t dev, uint8_t func, int n);
 extern "C" uint8_t  knx_pci_irq(uint8_t bus, uint8_t dev, uint8_t func);
 extern "C" void knx_pci_enable_bus_master(uint8_t bus, uint8_t dev, uint8_t func);
 extern "C" void knx_register_irq(int irq, void (*h)(void*));
