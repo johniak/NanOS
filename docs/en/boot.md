@@ -16,7 +16,7 @@ GRUB2 ──multiboot──► loader.s (0x100000) ──► kmain() ──► K
 
 ## 1. GRUB2 + Multiboot
 
-GRUB2 is installed in the disk image (`scripts/create-grub2-image.sh`): the MBR boot code + a
+GRUB2 is installed in the disk image (`scripts/create-image.sh`): the MBR boot code + a
 `grub-mkimage` core (with the `multiboot`, `part_msdos`, `ext2`, `biosdisk` modules) loads
 `/boot/grub/grub.cfg`, which does `multiboot /nanos/core/kernel.bin` — GRUB reads the kernel off
 the **ext** partition and jumps to it per the Multiboot protocol.
@@ -124,7 +124,7 @@ brings up networking via DHCP, starts the listening services, and `execve`s the 
 
 ## 7. Boot artifacts
 
-`scripts/create-grub2-image.sh` (run inside the `nanos-build` container by `make image`) builds a
+`scripts/create-image.sh` (run inside the `nanos-build` container by `make image`) builds a
 32 MiB raw disk: an MBR with one bootable partition at LBA 2048, an **ext4** filesystem on it,
 `grub.cfg` written in, and GRUB2's `boot.img` (MBR) + `core.img` (sector 1) installed. The kernel
 lives at `/nanos/core/kernel.bin` and the bootloader stages at `/boot/grub/` (filesystem.md
@@ -132,4 +132,4 @@ lives at `/nanos/core/kernel.bin` and the bootloader stages at `/boot/grub/` (fi
 
 **Key files:** `grub.cfg`, `arch/x86/boot/{loader.s, linker.ld, MultibootInfo.h, MultibootMmap.cpp,
 bootinfo_x86.cpp}`, `init/kmain.cpp`, `kernel/Kernel.cpp`, `arch/x86/cpu/{cpu_x86.cpp, Gdt.cpp,
-Idt.cpp}`, `scripts/create-grub2-image.sh`.
+Idt.cpp}`, `scripts/create-image.sh`.

@@ -11,7 +11,7 @@
 # The cocoa window is left open on screen so a human can eyeball it (the authoritative oracle).
 set -u
 cd "$(dirname "$0")/.."
-IMG=${IMG:-disk/image64-grub2.img}
+IMG=${IMG:-disk/image64.img}
 QEMU_GL=${QEMU_GL:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64}
 SER=$(mktemp -t nanos-gldesk.XXXXXX.log)
 MON=$(mktemp -t nanos-gldesk.XXXXXX.mon); rm -f "$MON"

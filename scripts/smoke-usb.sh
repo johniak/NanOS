@@ -6,10 +6,10 @@
 # driven by the in-kernel USB-HID module: the console fork/exec below is typed THROUGH the USB
 # keyboard (QEMU routes sendkey to it), so a green fork/exec assertion also proves USB-HID input.
 #
-# Usage: scripts/smoke-usb.sh              (boots disk/image64-grub2.img as a USB stick; build first)
+# Usage: scripts/smoke-usb.sh              (boots disk/image64.img as a USB stick; build first)
 # Exit 0 = PASS, non-zero = FAIL (offending serial/int lines printed).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 USBIMG=/tmp/nanos-usbsmoke-stick.img
 SER=/tmp/nanos-usbsmoke-serial.log
 INT=/tmp/nanos-usbsmoke-int.log

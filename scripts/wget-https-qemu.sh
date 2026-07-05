@@ -5,7 +5,7 @@
 set -u
 OUT="${1:-/tmp/wget-https.png}"
 URL="${2:-https://example.com/}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/wget-https.sock; LOG=/tmp/wget-https.log; PPM=/tmp/wget-https.ppm
 rm -f "$MON" "$LOG" "$PPM" "$OUT"
 qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \

@@ -5,7 +5,7 @@
 set -u
 OUT="${1:-/tmp/openssl-tls.png}"
 HOST="${2:-example.com}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/ossl-tls.sock; LOG=/tmp/ossl-tls.log; PPM=/tmp/ossl-tls.ppm
 rm -f "$MON" "$LOG" "$PPM" "$OUT"
 qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \

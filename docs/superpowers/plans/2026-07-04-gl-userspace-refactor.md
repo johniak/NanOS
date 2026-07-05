@@ -16,7 +16,7 @@
 - **The fork rules are law** (from the shred/hang investigations — see `nw_compose_gl.c` header comments): blur textures+FBOs allocated and attached ONCE at init, never mid-frame; window/wallpaper/chrome uploads are `glTexImage2D` + `glFinish` (never `glTexSubImage2D`); window content textures stay SINGLE-buffered. No task may regress these.
 - **No behaviour change to the CPU compositor** (`nw_compose.c` path) — verify64's image64 uses it; the host tests are the referee.
 - Every task ends with: full `make image64` + `make verify64` green, and for GL-visible tasks `make image64-gl` + a fork-QEMU boot with the screencapture oracle (isolated window capture, enlarged crops — never a pixelated full-screen shot).
-- Boot test images from a COPY of the disk image (the user's own QEMU may hold a write lock on `disk/image64-gl-grub2.img`).
+- Boot test images from a COPY of the disk image (the user's own QEMU may hold a write lock on `disk/image64-gl.img`).
 - No Claude/AI attribution in commits.
 
 ---

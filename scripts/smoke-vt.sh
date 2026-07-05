@@ -19,7 +19,7 @@
 #
 # Pass iff A!=B and A==C, the tty7 desktop renders (D is graphical), and no kernel fault/panic is logged.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-vtsmoke.log
 MON=/tmp/nanos-vtsmoke-qmon.sock
 A=/tmp/nanos-vt-A.ppm; B=/tmp/nanos-vt-B.ppm; C=/tmp/nanos-vt-C.ppm; D=/tmp/nanos-vt-D.ppm

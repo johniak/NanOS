@@ -189,7 +189,7 @@ serial bracket in `blur_backdrop`; an incomplete blur FBO auto-falls back to opa
 All hooks live under `#ifdef NWM_GL`, so the in-tree `nwm.nxe` is a pure-CPU program (unchanged). The
 GL-capable compositor is a **separate** Mesa-linked binary: `make nwm-gl` (Docker, `build-nwm-gl.sh`
 in `nanos-sdk-work/mesa-port`, the source tree mounted read-only) → `nwm-gl.nxe`, installed by
-`make image64-gl` (a byte copy of `image64-grub2.img` with `/nanos/bin/nwm.nxe` swapped for
+`make image64-gl` (a byte copy of `image64.img` with `/nanos/bin/nwm.nxe` swapped for
 `nwm-gl.nxe`). At runtime it falls back to the CPU compositor on `NWM_NO_GL=1`, a missing DRM node
 (plain QEMU), or any GL/KMS error — logging `nwm: GL compositor active` or `... unavailable ...`.
 

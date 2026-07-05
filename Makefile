@@ -19,14 +19,14 @@ MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
 
 BINFOLDER=bin/
-IMAGE_GRUB2=disk/image-grub2.img
+IMAGE=disk/image.img
 # Partition starts at LBA 2048 (1MiB offset)
-IMAGE_GRUB2_PART=$(IMAGE_GRUB2)?offset=1048576
+IMAGE_PART=$(IMAGE)?offset=1048576
 # x86_64 staged GRUB disk image (Plan 5): a separate image carrying the staged ELF64 kernel
 # + an ext4 partition for /disks/main. Same partition layout/offset as the i686 image.
-IMAGE64_GRUB2=disk/image64-grub2.img
+IMAGE64=disk/image64.img
 # Hybrid GPT+Limine layout: the ext4 root (P3) starts at 34 MiB (after bios_boot @1MiB + ESP @2MiB,32MiB).
-IMAGE64_GRUB2_PART=$(IMAGE64_GRUB2)?offset=69206016
+IMAGE64_PART=$(IMAGE64)?offset=69206016
 
 DOCKER_IMAGE=nanos-build
 # Build the image for the host's NATIVE architecture (no --platform): the i686-elf cross
@@ -506,18 +506,18 @@ nwm-gl: bin/libc.ndl bin/libc.ndl.a
 	cp "$(MESA_PORT)/nwm-gl.nxe" $(BINFOLDER)nwm-gl.nxe
 	@echo "nwm-gl.nxe -> $(BINFOLDER)nwm-gl.nxe"
 
-# image64-gl — a GL desktop image: a byte copy of image64-grub2.img with /nanos/bin/nwm.nxe
+# image64-gl — a GL desktop image: a byte copy of image64.img with /nanos/bin/nwm.nxe
 # swapped for the Mesa-linked nwm-gl.nxe (Task 10). verify64 keeps using the untouched image64
 # (original CPU nwm.nxe); the GL scripts/smoke gate use this one. Cheap: copy + one debugfs write.
 # The debugfs write runs INSIDE the nanos-build container ($(DOCKER_RUN)) — like the main image64
 # build — so it does not depend on e2fsprogs being on the host PATH (keg-only on macOS).
-IMAGE64_GL_GRUB2=disk/image64-gl-grub2.img
-IMAGE64_GL_GRUB2_PART=$(IMAGE64_GL_GRUB2)?offset=69206016
+IMAGE64_GL=disk/image64-gl.img
+IMAGE64_GL_PART=$(IMAGE64_GL)?offset=69206016
 image64-gl: nwm-gl
-	@test -f $(IMAGE64_GRUB2) || { echo "run 'make image64' first"; exit 1; }
-	cp $(IMAGE64_GRUB2) $(IMAGE64_GL_GRUB2)
-	$(DOCKER_RUN) sh -c 'printf "rm /nanos/bin/nwm.nxe\nwrite $(BINFOLDER)nwm-gl.nxe /nanos/bin/nwm.nxe\nset_inode_field /nanos/bin/nwm.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GL_GRUB2_PART)"'
-	@echo "image64-gl -> $(IMAGE64_GL_GRUB2) (nwm = GPU-native GL compositor)"
+	@test -f $(IMAGE64) || { echo "run 'make image64' first"; exit 1; }
+	cp $(IMAGE64) $(IMAGE64_GL)
+	$(DOCKER_RUN) sh -c 'printf "rm /nanos/bin/nwm.nxe\nwrite $(BINFOLDER)nwm-gl.nxe /nanos/bin/nwm.nxe\nset_inode_field /nanos/bin/nwm.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GL_PART)"'
+	@echo "image64-gl -> $(IMAGE64_GL) (nwm = GPU-native GL compositor)"
 
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
 ifeq ($(ARCH),x86_64)
@@ -912,7 +912,7 @@ QEMU_SMP64 ?= -accel tcg,thread=multi -smp $(NCPU64)
 QEMU_DISPLAY64 ?= -display cocoa,zoom-to-fit=on
 
 run: image
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_NET)
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE),format=raw $(NIC_NET)
 
 run-iso: iso
 	$(QEMU) -cdrom nanos.iso
@@ -936,7 +936,7 @@ NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=t
 NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
 
 run-net: image
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE_GRUB2),format=raw $(NIC_OPTS)
+	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE),format=raw $(NIC_OPTS)
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
@@ -1093,7 +1093,7 @@ verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smo
 
 clean:
 	$(DOCKER_RUN) make _clean
-	-rm -rf iso/ nanos.iso $(IMAGE_GRUB2) coverage/
+	-rm -rf iso/ nanos.iso $(IMAGE) coverage/
 
 # Machine-independence guard: the MI layer (init/kernel/mm/fs/lib/drivers) must
 # only reach the arch via <arch/...> contracts — never x86 internals. Runs on the
@@ -1122,15 +1122,15 @@ bringup64:
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_MEM) -cdrom $(BINFOLDER)nanos64.iso
 
 # x86_64 staged DISK image (Plan 5): build the staged long-mode kernel (now with the MI storage
-# stack linked in) and install it into a GRUB2 ext4 disk image as /nanos/core/kernel64.bin, with
-# a grub.cfg that multiboots it. Unlike bringup64 (rescue ISO) this boots from a real -drive disk
-# whose ext4 partition the staged kernel mounts at /disks/main and reads/writes.
+# stack linked in) and install it into a hybrid GPT+Limine disk image (BIOS+UEFI) as
+# /nanos/core/kernel64.bin, which Limine multiboots. Unlike bringup64 (rescue ISO) this boots from a
+# real -drive disk whose ext4 partition the staged kernel mounts at /disks/main and reads/writes.
 .PHONY: image64
 image64:
 	$(DOCKER_RUN) make ARCH=x86_64 _image64
 
 run64: image64
-	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
+	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
 # GL/virgl interactive run — like `run64`, but with GPU-accelerated OpenGL ES. Stock homebrew QEMU
 # has no virgl, so `run64` cannot show GL; this points at the kosmickrisp fork (virtio-gpu-gl →
@@ -1164,7 +1164,7 @@ run64-gl: image64
 	  [ -d "$$d" ] && for l in "$$d"/*.dylib; do codesign --force --sign - "$$l" >/dev/null 2>&1; done; \
 	done; true
 	$(QEMU_GL) $(QEMU_CPU64) -accel tcg,thread=multi -smp 1 $(QEMU_MEM) \
-	    -drive file=$(IMAGE64_GRUB2),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
+	    -drive file=$(IMAGE64),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
 
 # run64-gl-desktop — boot the GPU-NATIVE desktop (image64-gl = nwm-gl.nxe) on the virgl fork, so the
 # WHOLE compositor runs on the GPU: window textures + the two-pass Gaussian GLASS BLUR as a real GL
@@ -1182,14 +1182,14 @@ run64-gl-desktop: image64-gl
 	  [ -d "$$d" ] && for l in "$$d"/*.dylib; do codesign --force --sign - "$$l" >/dev/null 2>&1; done; \
 	done; true
 	$(QEMU_GL) $(QEMU_CPU64) -accel tcg,thread=multi -smp 1 $(QEMU_MEM) \
-	    -drive file=$(IMAGE64_GL_GRUB2),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
+	    -drive file=$(IMAGE64_GL),format=raw $(QEMU_GL_VGA) -no-reboot $(QEMU_GL_NET)
 
 # Headless GL proof — boot on the virgl fork, log in, run `gles2info`, print the GL markers to this
 # terminal (no cocoa window, no clicking). Success = `renderer=virgl`. The GL-composited desktop is
 # a separate unbuilt milestone; this proves only the unmodified-Mesa → virgl → ANGLE → Metal path.
 .PHONY: run64-gl-test
 run64-gl-test: image64
-	QEMU_GL="$(QEMU_GL)" IMG="$(IMAGE64_GRUB2)" bash scripts/run64-gl-selftest.sh
+	QEMU_GL="$(QEMU_GL)" IMG="$(IMAGE64)" bash scripts/run64-gl-selftest.sh
 
 # Doom (in-tree doomgeneric), ARCH-AWARE host wrapper. Stages bin/doom.nxe in the container for
 # the selected arch — i686 (default) or x86_64 — using the arch-selected userland toolchain,
@@ -1420,7 +1420,7 @@ _bringup64:
 # Plan 9 (un-stage): build the REAL machine-independent kernel via the full `_all` link (into
 # bin/kernel.bin — the same kernel/Kernel.cpp the i686 build runs) and install it into a GRUB2
 # ext4 DISK image. Depends on _all (which compiles the x86_64 objects into bin/k64/ and links
-# bin/kernel.bin). Then: (re)create the disk skeleton (create-grub2-image.sh, IMAGE_PATH
+# bin/kernel.bin). Then: (re)create the disk skeleton (create-image.sh, IMAGE_PATH
 # overridden to the x86_64 image), point grub.cfg at the real kernel, and write it to
 # /nanos/core/kernel.bin. The ext4 partition doubles as /disks/main, which the real kernel
 # mounts at boot; init.nxe (PID 1) is installed at /nanos/core/init.nxe — the exact path
@@ -1429,178 +1429,178 @@ _bringup64:
 _image64: _all _userland64 _kext
 	# Hybrid GPT image bootable under BOTH BIOS and UEFI via Limine (limine.conf on the ESP points at
 	# /nanos/core/kernel.bin on the ext4 root by label — no /boot/grub/grub.cfg needed).
-	IMAGE_PATH=$(IMAGE64_GRUB2) NANOS_BOOT=limine ./scripts/create-grub2-image.sh
+	IMAGE_PATH=$(IMAGE64) NANOS_BOOT=limine ./scripts/create-image.sh
 	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config,cache,logs,
 	# share/terminfo/x} + the /apps bundle root + the /bin link farm, created upfront so every
 	# subsequent install step (and the optional-app blocks below) finds its parent directory.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/firmware\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/icons\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/firmware\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/icons\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	# Optional device-firmware blobs (request_firmware reads /nanos/firmware/<name>). Empty by
 	# default: Gen9 i915 needs no GuC/HuC/DMC blob. Any blob shipped here must be redistributable
 	# (linux-firmware licence). The README documents the contract.
 	printf 'NanOS device firmware.\n\nrequest_firmware(name) reads /nanos/firmware/<name>. Empty by default;\nGen9 (Comet Lake UHD) i915 runs execlists with no GuC/HuC/DMC blob. Any blob\nplaced here must be redistributable (linux-firmware licence).\n' > $(BINFOLDER)firmware-README
-	printf "rm /nanos/firmware/README\nwrite $(BINFOLDER)firmware-README /nanos/firmware/README\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null || true
-	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "rm /nanos/firmware/README\nwrite $(BINFOLDER)firmware-README /nanos/firmware/README\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null || true
+	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_PART)"
 	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot
 	# (loadAllKexts). The PS/2 keyboard + mouse + e1000 NIC drivers live here, NOT in kernel.bin.
 	for m in $(KEXTS); do \
-	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	# PID 1: the real user/init.c (dynamically linked against libc.ndl), which execve()s the
 	# login shell. The kernel execs /disks/main/nanos/core/init.nxe and runs it in ring 3.
-	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	printf "set_inode_field /nanos/core/init.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"   # executables need +x (exec-perm enforced)
+	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE64_PART)"
+	printf "set_inode_field /nanos/core/init.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"   # executables need +x (exec-perm enforced)
 	# The shared C library the dynamic loader binds every program against -> /nanos/lib.
-	printf "rm /nanos/lib/libc.ndl\nwrite $(BINFOLDER)libc.ndl /nanos/lib/libc.ndl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "rm /nanos/lib/libc.ndl\nwrite $(BINFOLDER)libc.ndl /nanos/lib/libc.ndl\n" | debugfs -w "$(IMAGE64_PART)"
 	# The shell + the sbase coreutils -> /nanos/bin (nsh resolves a bare command name here first).
 	for p in $(X64_SYS_PROGS); do \
-	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	# chsh edits the account DB, so it runs setuid-root (a non-root user changing their own shell).
-	printf "set_inode_field /nanos/bin/chsh.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "set_inode_field /nanos/bin/chsh.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_PART)"
 	# nanosu is the "authenticate to open" privileged helper: it verifies root's password and runs the
 	# target as root, so it must be setuid-root (owner root, mode 04755).
-	printf "set_inode_field /nanos/bin/nanosu.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "set_inode_field /nanos/bin/nanosu.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_PART)"
 	# nanowm compositor (a system GUI program) -> /nanos/bin, and the nanowm client shared libs
 	# (libnw.ndl / libnwui.ndl) -> /nanos/lib (the NetSurf libnsfb backend binds libnw.ndl at load).
 	for p in $(X64_GUI_PROGS); do \
-	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\nset_inode_field /nanos/bin/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	for l in $(X64_GUI_LIBS); do \
-	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	# nanowm desktop apps -> /apps/<name>/<name>.nxe bundles + /bin/<name>.nxe symlink (the link farm),
 	# the layout nwm spawns them from. Mirrors the i686 APP_PROGS loop.
 	for p in $(X64_GUI_APPS); do \
-	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	# Desktop artwork. The wallpaper ships as the source PNG; nanowm decodes it and cover-fits it to
 	# the live resolution at runtime (so it fills ANY panel). The logo stays a fixed 96x96 raw (About
 	# blits it directly, no scaling). Mirrors the i686 _image artwork block.
 	if [ -f assets/wallpaper.png ]; then \
-	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)logo.raw ]; then \
-	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# Icon set for the Rust file explorer (rsexp) -> /nanos/share/icons. Decoded at runtime via the
 	# toolkit PNG loader; the iconview color-keys magenta as transparent.
 	for ic in computer drive folder home program text image file ui-back ui-fwd ui-up ui-home; do \
 	  if [ -f assets/icons/$$ic.png ]; then \
-	    printf "rm /nanos/share/icons/$$ic.png\nwrite assets/icons/$$ic.png /nanos/share/icons/$$ic.png\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	    printf "rm /nanos/share/icons/$$ic.png\nwrite assets/icons/$$ic.png /nanos/share/icons/$$ic.png\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  fi; \
 	done
 	# UI/terminal fonts (TTF) -> /nanos/share/fonts; nw_gfx loads the UI font (proportional, AA).
-	-printf "mkdir /nanos/share/fonts\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos/share/fonts\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	for ft in UISans-Regular Mono-Regular; do \
 	  if [ -f assets/fonts/$$ft.ttf ]; then \
-	    printf "rm /nanos/share/fonts/$$ft.ttf\nwrite assets/fonts/$$ft.ttf /nanos/share/fonts/$$ft.ttf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	    printf "rm /nanos/share/fonts/$$ft.ttf\nwrite assets/fonts/$$ft.ttf /nanos/share/fonts/$$ft.ttf\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  fi; \
 	done
 	# Account database -> /nanos/config (init's getpwuid reads pw_shell from here; absent -> nsh).
 	# passwd (x in field 2), shadow (hashes, 0600 root), group (with members), sudoers (%wheel).
 	# The kernel copies all four into the writable /etc tmpfs at boot (Kernel.cpp populateEtc).
-	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	printf "rm /nanos/config/shadow\nwrite config/shadow /nanos/config/shadow\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	printf "rm /nanos/config/group\nwrite config/group /nanos/config/group\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	printf "rm /nanos/config/sudoers\nwrite config/sudoers /nanos/config/sudoers\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
-	-printf "set_inode_field /nanos/config/shadow mode 0100600\nset_inode_field /nanos/config/sudoers mode 0100440\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE64_PART)"
+	printf "rm /nanos/config/shadow\nwrite config/shadow /nanos/config/shadow\n" | debugfs -w "$(IMAGE64_PART)"
+	printf "rm /nanos/config/group\nwrite config/group /nanos/config/group\n" | debugfs -w "$(IMAGE64_PART)"
+	printf "rm /nanos/config/sudoers\nwrite config/sudoers /nanos/config/sudoers\n" | debugfs -w "$(IMAGE64_PART)"
+	-printf "set_inode_field /nanos/config/shadow mode 0100600\nset_inode_field /nanos/config/sudoers mode 0100440\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	# jan's home directory under /users (NanOS/macOS layout, not Linux /home), uid/gid 1000 so the
 	# login shell can write there. Remove any stale /home from an earlier (incremental) build.
-	-printf "rmdir /home/jan\nrmdir /home\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
-	-printf "mkdir /users\nmkdir /users/jan\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
-	-printf "set_inode_field /users/jan uid 1000\nset_inode_field /users/jan gid 1000\nset_inode_field /users/jan mode 040755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "rmdir /home/jan\nrmdir /home\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
+	-printf "mkdir /users\nmkdir /users/jan\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
+	-printf "set_inode_field /users/jan uid 1000\nset_inode_field /users/jan gid 1000\nset_inode_field /users/jan mode 040755\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
 	# tmpfs at boot, see Kernel.cpp populateEtc). /etc/shells in particular lists the valid login
 	# shells: dropbear's getusershell() rejects an SSH login whose passwd shell isn't there. Mirrors
 	# the i686 _image etc population.
-	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells profile; do \
-	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	# Per-user interactive bash config: seed jan's ~/.bashrc from config/skel (Linux /etc/skel).
-	printf "rm /users/jan/.bashrc\nwrite config/skel/.bashrc /users/jan/.bashrc\nset_inode_field /users/jan/.bashrc uid 1000\nset_inode_field /users/jan/.bashrc gid 1000\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"
+	printf "rm /users/jan/.bashrc\nwrite config/skel/.bashrc /users/jan/.bashrc\nset_inode_field /users/jan/.bashrc uid 1000\nset_inode_field /users/jan/.bashrc gid 1000\n" | debugfs -w "$(IMAGE64_PART)"
 	# GNU bash (optional): installed as an /apps/bash bundle + a /bin/bash.nxe symlink ONLY if
 	# `make ARCH=x86_64 bash` staged bin/bash.nxe. passwd's login shell is /disks/main/bin/bash.nxe,
 	# so this is what PID 1 execve()s. Mirrors the i686 _image bash population. Skipped silently
 	# otherwise (init falls back to nsh). The /apps + /bin link-farm dirs are created here.
-	-printf "mkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	if [ -f $(BINFOLDER)bash.nxe ]; then \
-	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# grep + bzip2 (optional, external): system utilities -> /nanos/bin, installed only if
 	# `make ARCH=x86_64 grep|bzip2` staged them. Mirrors the i686 _image population.
 	if [ -f $(BINFOLDER)grep.nxe ]; then \
-	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
-	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# htop (optional, external): interactive process monitor built by `make ARCH=x86_64 htop` (the
 	# nanos-sdk port), staged into bin/htop.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)htop.nxe ]; then \
-	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\nset_inode_field /nanos/bin/htop.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/htop.nxe\nwrite $(BINFOLDER)htop.nxe /nanos/bin/htop.nxe\nset_inode_field /nanos/bin/htop.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# gles2info (optional, external): the Mesa (gallium-virgl + EGL + GLES2) bring-up oracle, built by
 	# `make gles2info` (links the Mesa .a closure from the mesa-port). A system utility (flat in
 	# /nanos/bin). Skipped if absent — only present on a GL dev build.
 	if [ -f $(BINFOLDER)gles2info.nxe ]; then \
-	  printf "rm /nanos/bin/gles2info.nxe\nwrite $(BINFOLDER)gles2info.nxe /nanos/bin/gles2info.nxe\nset_inode_field /nanos/bin/gles2info.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/gles2info.nxe\nwrite $(BINFOLDER)gles2info.nxe /nanos/bin/gles2info.nxe\nset_inode_field /nanos/bin/gles2info.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# glkms (optional, external): the Task-9 GBM+EGL+KMS present oracle (GL gradient → scanout), built
 	# by `make glkms` (Mesa .a closure + libdrm KMS). A system utility (flat in /nanos/bin). Skipped if
 	# absent — only present on a GL dev build.
 	if [ -f $(BINFOLDER)glkms.nxe ]; then \
-	  printf "rm /nanos/bin/glkms.nxe\nwrite $(BINFOLDER)glkms.nxe /nanos/bin/glkms.nxe\nset_inode_field /nanos/bin/glkms.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/glkms.nxe\nwrite $(BINFOLDER)glkms.nxe /nanos/bin/glkms.nxe\nset_inode_field /nanos/bin/glkms.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# SQLite (optional, external): the real sqlite3 CLI built by `make ARCH=x86_64 sqlite` (the SQLite
 	# fork). A system utility (flat in /nanos/bin); the libsqlite.ndl shared engine goes to /nanos/lib
 	# so other apps can import the SQL API by name. Skipped if absent.
 	if [ -f $(BINFOLDER)sqlite3.nxe ]; then \
-	  printf "rm /nanos/bin/sqlite3.nxe\nwrite $(BINFOLDER)sqlite3.nxe /nanos/bin/sqlite3.nxe\nset_inode_field /nanos/bin/sqlite3.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/sqlite3.nxe\nwrite $(BINFOLDER)sqlite3.nxe /nanos/bin/sqlite3.nxe\nset_inode_field /nanos/bin/sqlite3.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)libsqlite.ndl ]; then \
-	  printf "rm /nanos/lib/libsqlite.ndl\nwrite $(BINFOLDER)libsqlite.ndl /nanos/lib/libsqlite.ndl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/lib/libsqlite.ndl\nwrite $(BINFOLDER)libsqlite.ndl /nanos/lib/libsqlite.ndl\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# toybox (optional, external): the user-identity multicall built by `make ARCH=x86_64 toybox`.
 	# Installed as ONE setuid-root binary (mode 04755) with a per-command symlink farm — toybox's
 	# CONFIG_TOYBOX_SUID drops privilege for the non-suid applets (id/groups/whoami) while
 	# login/su/passwd keep root to read /etc/shadow + switch identity. Skipped if absent.
 	if [ -f $(BINFOLDER)toybox.nxe ]; then \
-	  printf "rm /nanos/bin/toybox.nxe\nwrite $(BINFOLDER)toybox.nxe /nanos/bin/toybox.nxe\nset_inode_field /nanos/bin/toybox.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/toybox.nxe\nwrite $(BINFOLDER)toybox.nxe /nanos/bin/toybox.nxe\nset_inode_field /nanos/bin/toybox.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	  for c in login su passwd id groups whoami; do \
-	    printf "rm /nanos/bin/$$c.nxe\nln /nanos/bin/toybox.nxe /nanos/bin/$$c.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	    printf "rm /nanos/bin/$$c.nxe\nln /nanos/bin/toybox.nxe /nanos/bin/$$c.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	  done; \
 	fi
 	# sudo (optional, external): real sudo built by `make ARCH=x86_64 sudo`. Installed setuid-root
 	# (mode 04755) so an unprivileged user can escalate; it reads /etc/sudoers (%wheel, seeded).
 	if [ -f $(BINFOLDER)sudo.nxe ]; then \
-	  printf "rm /nanos/bin/sudo.nxe\nwrite $(BINFOLDER)sudo.nxe /nanos/bin/sudo.nxe\nset_inode_field /nanos/bin/sudo.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/sudo.nxe\nwrite $(BINFOLDER)sudo.nxe /nanos/bin/sudo.nxe\nset_inode_field /nanos/bin/sudo.nxe mode 0104755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# ping (optional, external): GNU inetutils ping built by `make ARCH=x86_64 ping` (the nanos-sdk
 	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	# Mirrors the i686 _image population.
 	if [ -f $(BINFOLDER)ping.nxe ]; then \
-	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# openssl (optional, external): OpenSSL CLI built by `make ARCH=x86_64 openssl` (the nanos-sdk
 	# port), staged into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	# Mirrors the i686 _image population.
 	if [ -f $(BINFOLDER)openssl.nxe ]; then \
-	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# CA trust store + config (Mozilla bundle): OpenSSL's compiled OPENSSLDIR is /disks/main/nanos/ssl;
 	# ship cert.pem + openssl.cnf there so the TLS clients can verify chains without a per-command
 	# -CAfile and the CLI finds its config. Mirrors the i686 _image population. Skipped if absent.
 	if [ -f disk-content/ssl/cert.pem ]; then \
-	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# Dropbear SSH (optional, external): server + keygen + client -> /nanos/bin, installed only if
 	# `make ARCH=x86_64 dropbear` staged them. init's start_sshd() generates a persistent ed25519
@@ -1609,25 +1609,25 @@ _image64: _all _userland64 _kext
 	# location). Mirrors the i686 _image dropbear population. The host reaches sshd via hostfwd 2222->22.
 	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
 	  for b in dropbear dropbearkey dbclient; do \
-	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	  done; \
-	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	fi
 	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
 	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
 	if [ -f $(BINFOLDER)vim.nxe ]; then \
-	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "mkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "mkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  infocmp xterm-256color 2>/dev/null \
 	    | sed -E 's@setaf=[^,]*,@setaf=\\E[3%p1%dm,@; s@setab=[^,]*,@setab=\\E[4%p1%dm,@' \
 	    > /tmp/xterm-256color.ti; \
 	  tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null; \
-	  printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# terminfo DB for vim (mirror i686 _image): the xterm-256color entry, with setaf/setab rewritten
 	# to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form vim's term_color() drives correctly (the stock
@@ -1639,11 +1639,11 @@ _image64: _all _userland64 _kext
 	# guarded by file presence since doom is not in the minimal X64_USER_PROGS subset. doom mmaps
 	# /dev/fb0 and reads /dev/input0, both now present on x86_64 (the framebuffer multiboot tag).
 	if [ -f $(BINFOLDER)doom.nxe ]; then \
-	  printf "mkdir /apps/doom\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/doom/doom.nxe\nwrite $(BINFOLDER)doom.nxe /apps/doom/doom.nxe\nset_inode_field /apps/doom/doom.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /apps/doom\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/doom/doom.nxe\nwrite $(BINFOLDER)doom.nxe /apps/doom/doom.nxe\nset_inode_field /apps/doom/doom.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
 	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
@@ -1652,139 +1652,139 @@ _image64: _all _userland64 _kext
 	# netsurf` (the netsurf-nanos port stack); launch inside nanowm. Skipped if bin/netsurf.nxe absent.
 	# Mirrors the i686 _image netsurf population.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
-	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
-	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	  if [ -d $(BINFOLDER)netsurf-res ]; then \
-	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
-	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE64_GRUB2_PART)" 2>/dev/null; \
+	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	    done; \
 	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
-	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE64_GRUB2_PART)"; \
+	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE64_PART)"; \
 	    done; \
 	  fi; \
 	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
-	e2fsck -fy "$(IMAGE64_GRUB2_PART)" || true
-	@echo "x86_64 disk image ready: $(IMAGE64_GRUB2)  (boot: $(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64_GRUB2),format=raw)"
+	e2fsck -fy "$(IMAGE64_PART)" || true
+	@echo "x86_64 disk image ready: $(IMAGE64)  (boot: $(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw)"
 
 -include $(OBJECTS:.o=.d)
 
 # Build the GRUB2 ext2 skeleton once, then (re)write the kernel into it.
-_grub2-image:
-	./scripts/create-grub2-image.sh
+_disk-image:
+	./scripts/create-image.sh
 
-_image: _all _userland _kext _grub2-image
+_image: _all _userland _kext _disk-image
 	# System volume layout: NanOS itself lives under /nanos (core/bin/lib/kext/config/
 	# cache/logs); non-system user apps live in /apps. GRUB stays in /boot. mkdir is
 	# idempotent across rebuilds.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null
 	# Kernel + init (PID 1) in core.
-	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
-	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_PART)"
+	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_PART)"
 	# Account database -> /nanos/config (NanOS keeps system config here, not in /etc). The
 	# 7th field is the login shell: init/nterm launch getpwuid()->pw_shell, so editing this
 	# file sets the default shell (the read-only-disk equivalent of chsh).
-	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_PART)"
 	# Network config templates -> /nanos/config/etc (copied into the writable /etc tmpfs at boot).
-	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null
+	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null
 	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells; do \
-	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_PART)"; \
 	done
 	# DHCP: the udhcpc action helper (compiled .nxe; udhcpc exec()s it) -> /nanos/config/udhcpc.script,
 	# plus the busybox udhcpc client itself -> /nanos/bin (only if `make udhcpc` staged it).
-	printf "rm /nanos/config/udhcpc.script\nwrite $(BINFOLDER)dhcpcfg.nxe /nanos/config/udhcpc.script\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /nanos/config/udhcpc.script\nwrite $(BINFOLDER)dhcpcfg.nxe /nanos/config/udhcpc.script\n" | debugfs -w "$(IMAGE_PART)"
 	if [ -f $(BINFOLDER)udhcpc.nxe ]; then \
-	  printf "rm /nanos/bin/udhcpc.nxe\nwrite $(BINFOLDER)udhcpc.nxe /nanos/bin/udhcpc.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; fi
+	  printf "rm /nanos/bin/udhcpc.nxe\nwrite $(BINFOLDER)udhcpc.nxe /nanos/bin/udhcpc.nxe\n" | debugfs -w "$(IMAGE_PART)"; fi
 	# GNU git (optional, external): installed ONLY if `make git` staged bin/git.nxe. The single
 	# binary goes to TWO places: /nanos/bin/git.nxe (the shell runs `git` -> .nxe by name) AND
 	# /nanos/libexec/git-core/git (no extension) — git's compiled exec-path, where run-command
 	# self-execs the literal program "git" for forked subcommands (git gc -> git pack-objects).
 	if [ -f $(BINFOLDER)git.nxe ]; then \
-	  printf "rm /nanos/bin/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/bin/git.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "mkdir /nanos/libexec\nmkdir /nanos/libexec/git-core\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /nanos/libexec/git-core/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/libexec/git-core/git.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/bin/git.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "mkdir /nanos/libexec\nmkdir /nanos/libexec/git-core\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /nanos/libexec/git-core/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/libexec/git-core/git.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	  for c in gc repack pack-objects pack-refs prune prune-packed reflog rerere worktree maintenance commit-graph multi-pack-index fsck update-server-info upload-pack receive-pack; do \
-	    printf "rm /nanos/libexec/git-core/git-%s.nxe\nln /nanos/libexec/git-core/git.nxe /nanos/libexec/git-core/git-%s.nxe\n" "$$c" "$$c" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	    printf "rm /nanos/libexec/git-core/git-%s.nxe\nln /nanos/libexec/git-core/git.nxe /nanos/libexec/git-core/git-%s.nxe\n" "$$c" "$$c" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
 	  done; \
 	  echo "  installed git -> /nanos/bin/git.nxe + /nanos/libexec/git-core/{git,git-<cmd>}.nxe (run-command execs git-<cmd>; libc execve appends .nxe)"; fi
 	# System utilities -> /nanos/bin.
 	for p in $(SYS_PROGS); do \
-	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	done
 	# Non-system apps -> /apps. Each app is a self-contained BUNDLE directory
 	# /apps/<name>/ holding <name>.nxe (the entry binary) plus any data files. /bin is a
 	# flat link farm: a symbolic link /bin/<name>.nxe -> the app's bundle binary, so the
 	# shell can run an app by name without knowing its bundle layout (à la /usr/local/bin).
 	for p in $(APP_PROGS); do \
-	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	done
 	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
 	for l in $(USER_LIBS_NDL); do \
-	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_PART)"; \
 	done
 	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot.
 	for m in $(KEXTS); do \
-	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE_PART)"; \
 	done
 	# GNU bash (optional): installed as an /apps/bash bundle + /bin link ONLY if `make bash`
 	# staged bin/bash.nxe from the external fork. Skipped silently otherwise.
 	if [ -f $(BINFOLDER)bash.nxe ]; then \
-	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# vim (optional, external): built by the nanos-sdk port and staged into bin/vim.nxe, same
 	# pattern as bash. Its runtime (syntax/help/etc.) is a `data` entry the port driver installs
 	# into the bundle; vim itself runs without it (`-u NONE`). Skipped if bin/vim.nxe is absent.
 	if [ -f $(BINFOLDER)vim.nxe ]; then \
-	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# bzip2 (optional, external): built by the nanos-sdk port and staged into bin/bzip2.nxe. A
 	# system utility (flat in /nanos/bin) since it is a single self-contained binary. Skipped if
 	# absent. bzip2 -d decompresses (same binary), so no separate bunzip2 is shipped.
 	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
-	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# grep (optional, external): GNU grep built by the nanos-sdk port and staged into bin/grep.nxe.
 	# A system utility (flat in /nanos/bin) — a single self-contained binary. Skipped if absent.
 	if [ -f $(BINFOLDER)grep.nxe ]; then \
-	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# ping (optional, external): GNU inetutils ping built by `make ping` (the nanos-sdk port) and
 	# staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)ping.nxe ]; then \
-	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# wget (optional, external): GNU wget built by `make wget` (the nanos-sdk port), staged into
 	# bin/wget.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)wget.nxe ]; then \
-	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# openssl (optional, external): OpenSSL CLI built by `make openssl` (the nanos-sdk port), staged
 	# into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)openssl.nxe ]; then \
-	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# CA trust store (Mozilla bundle): the TLS clients (openssl s_client, wget https) verify server
 	# certificate chains against /nanos/ssl/cert.pem = OpenSSL's compiled OPENSSLDIR. Shipped so a
 	# guest TLS connection can return "Verify return code: 0 (ok)" without a per-command -CAfile.
 	if [ -f disk-content/ssl/cert.pem ]; then \
-	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
 	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
@@ -1792,17 +1792,17 @@ _image: _all _userland _kext _grub2-image
 	# res/ is installed recursively (dirs first top-down, then files) so arbitrary nesting works.
 	# Launch inside nanowm with `-f nanwm` (selects the nanowm libnsfb surface). Skipped if absent.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
-	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	  if [ -d $(BINFOLDER)netsurf-res ]; then \
-	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
 	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
-	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
 	    done; \
 	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
-	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE_PART)"; \
 	    done; \
 	  fi; \
 	fi
@@ -1811,43 +1811,43 @@ _image: _all _userland _kext _grub2-image
 	# pubkey auth has somewhere to read authorized_keys from and dropbear can store host keys.
 	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
 	  for b in dropbear dropbearkey dbclient; do \
-	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	  done; \
-	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
+	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
 	fi
 	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
 	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	if [ -f $(BINFOLDER)inetd.nxe ]; then \
-	  printf "rm /nanos/bin/inetd.nxe\nwrite $(BINFOLDER)inetd.nxe /nanos/bin/inetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/inetd.nxe\nwrite $(BINFOLDER)inetd.nxe /nanos/bin/inetd.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# telnetd (optional, external): GNU inetutils telnetd from the same services build. Remote bash
 	# login over a kernel pty (launched by inetd; execs nanologin -> the user's shell).
 	if [ -f $(BINFOLDER)telnetd.nxe ]; then \
-	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# inetutils diagnostic clients (FAZA I): telnet / ifconfig / traceroute -> /nanos/bin.
 	for b in telnet ifconfig traceroute; do \
 	  if [ -f $(BINFOLDER)$$b.nxe ]; then \
-	    printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	    printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
 	  fi; \
 	done
 	# darkhttpd (optional, external): single-file HTTP server -> /nanos/bin, plus its document
 	# root /apps/www (the served site: index.html). Skipped if the binary is absent.
 	if [ -f $(BINFOLDER)darkhttpd.nxe ]; then \
-	  printf "rm /nanos/bin/darkhttpd.nxe\nwrite $(BINFOLDER)darkhttpd.nxe /nanos/bin/darkhttpd.nxe\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
-	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE_GRUB2_PART)" 2>/dev/null; \
-	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/bin/darkhttpd.nxe\nwrite $(BINFOLDER)darkhttpd.nxe /nanos/bin/darkhttpd.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
+	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
+	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# Desktop artwork. The wallpaper ships as the source PNG; nanowm decodes it and cover-fits it to
 	# the live resolution at runtime. The logo stays a fixed 96x96 raw (About blits it directly).
 	if [ -f assets/wallpaper.png ]; then \
-	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)logo.raw ]; then \
-	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE_GRUB2_PART)"; \
+	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE_PART)"; \
 	fi
 	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
-	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_PART)"
 	# terminfo database: the xterm-256color entry (matches TERM), shipped under /nanos/share/
 	# terminfo. We rewrite setaf/setab to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form instead of the
 	# stock conditional `%?%p1%{8}%<%t...` string. Reason: vim's term_color() recognises the
@@ -1861,11 +1861,11 @@ _image: _all _userland _kext _grub2-image
 	  | sed -E 's@setaf=[^,]*,@setaf=\\E[3%p1%dm,@; s@setab=[^,]*,@setab=\\E[4%p1%dm,@' \
 	  > /tmp/xterm-256color.ti
 	tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null
-	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_GRUB2_PART)"
+	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_PART)"
 	# Reconcile the ext block/inode bitmaps after the debugfs writes: `debugfs write` can leave the
 	# free-counts/bitmaps slightly off, so a final `e2fsck -fy` makes every built image e2fsck-clean
 	# (exit 1 = "fixed", which is expected here, so don't fail the build on it).
-	e2fsck -fy "$(IMAGE_GRUB2_PART)" || true
+	e2fsck -fy "$(IMAGE_PART)" || true
 
 _iso: _all
 	mkdir -p iso/boot/grub

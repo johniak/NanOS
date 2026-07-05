@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Drive the NanOS console headlessly with arbitrary key steps, including Ctrl combos.
-# Boots disk/image-grub2.img, replays each step into the VGA console via QEMU monitor
+# Boots disk/image.img, replays each step into the VGA console via QEMU monitor
 # `sendkey`, screendumps to <out.png>, then quits and prints a fault summary.
 #
 # Usage: scripts/qemu-keys.sh <out.png> <boot-secs> step [step ...]
@@ -12,7 +12,7 @@
 set -u
 OUT="${1:?usage: qemu-keys.sh out.png boot-secs step...}"; shift
 BOOT="${1:?boot-secs}"; shift
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-qmon.sock
 LOG=/tmp/nanos-int.log
 PPM=/tmp/nanos-screen.ppm

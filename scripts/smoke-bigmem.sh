@@ -3,7 +3,7 @@
 # mmap region lives above 4 GiB) and assert the 64-bit memory map + huge-page kernel identity map work:
 # shell reached, /proc/meminfo MemTotal > 4 GiB, zero faults. Catches the uint32 truncation/wrap.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-bigmem-serial.log
 INT=/tmp/nanos-bigmem-int.log
 MON=/tmp/nanos-bigmem-qmon.sock

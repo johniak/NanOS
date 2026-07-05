@@ -4,7 +4,7 @@
 # the two boots — proof the kernel CSPRNG is seeded from real entropy, not a fixed seed.
 # Usage: scripts/randhex-qemu.sh   (writes /tmp/randhex-bootN.png; -d int fault check per boot)
 set -u
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 boot_once() {
     local tag="$1"
     local MON="/tmp/nanos-qmon-$tag.sock"

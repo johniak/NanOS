@@ -62,8 +62,8 @@ into the container; container targets do the real work. No infinite loop.
 1. `docker build -t nanos-build docker/` — once, then cached. First build ~20-40 min
    (cross-toolchain compilation).
 2. `docker run --rm --platform linux/amd64 -v $PWD:/src -w /src nanos-build make _all`
-   → produces the `i686-elf` kernel and `fs/image-grub2.img` with the kernel written in.
-3. Host: `qemu-system-i386 -drive file=fs/image-grub2.img,format=raw` — native window.
+   → produces the `i686-elf` kernel and `fs/image.img` with the kernel written in.
+3. Host: `qemu-system-i386 -drive file=fs/image.img,format=raw` — native window.
 
 ## Components
 
@@ -71,8 +71,8 @@ into the container; container targets do the real work. No infinite loop.
 |---|---|---|
 | `docker/Dockerfile` | NEW | Debian base; builds `i686-elf` binutils + gcc from source; installs `nasm`, `grub-pc-bin`, `grub-common`, `xorriso`, `mtools` (for `grub-mkrescue`), `e2fsprogs`, `parted`, `make`. Bakes `/etc/nanos-build` marker. Tagged `nanos-build`. |
 | `Makefile` | REBUILD | Host/container split via marker; transparent `run`/`run-iso` wrappers; toolchain prefix as a variable; image creation folded in; remove `-fda` and legacy floppy targets; drop hardcoded `/opt/homebrew/...` paths. |
-| `scripts/create-grub2-image.sh` | SIMPLIFY | Strip the nested `docker build` / `docker run` wrapping (we already run inside Linux). Becomes a pure parted/mke2fs/grub-mkimage sequence invoked from the Makefile container side. |
-| `.gitignore` | EXTEND | Add `iso/`, `*.iso`, `fs/image-grub2.img` (generated artifacts). |
+| `scripts/create-image.sh` | SIMPLIFY | Strip the nested `docker build` / `docker run` wrapping (we already run inside Linux). Becomes a pure parted/mke2fs/grub-mkimage sequence invoked from the Makefile container side. |
+| `.gitignore` | EXTEND | Add `iso/`, `*.iso`, `fs/image.img` (generated artifacts). |
 | `grub.cfg` | KEEP | Multiboot menu entry; minor tuning only if needed. |
 
 ### Dockerfile: cross-toolchain build (Approach A)
@@ -96,7 +96,7 @@ the Makefile (`-nostdlib -nostdinc++ --no-exceptions --no-rtti -fno-leading-unde
 ```
 source (.cpp/.s/.S) ──[container: i686-elf toolchain]──► bin/*.o ──[ld -Tlinker.ld]──► bin/kernel.bin
                                                                                             │
-grub.cfg + parted/mke2fs/grub-mkimage ──[container]──► fs/image-grub2.img ◄──[debugfs write]┘
+grub.cfg + parted/mke2fs/grub-mkimage ──[container]──► fs/image.img ◄──[debugfs write]┘
                                                                   │
                                                        host: qemu-system-i386 (native)
 ```
@@ -108,7 +108,7 @@ ISO path: `bin/kernel.bin` + `grub.cfg` → `iso/` staging → `grub-mkrescue` �
 
 - Container build steps run under `set -e`; any failed stage aborts the build with a
   non-zero exit, surfaced to the host `make`.
-- `.gitignore` prevents generated artifacts (`iso/`, `*.iso`, `fs/image-grub2.img`) from
+- `.gitignore` prevents generated artifacts (`iso/`, `*.iso`, `fs/image.img`) from
   being committed.
 - The marker-file detection has a single source of truth; if the marker is absent on the
   host and present in the container, behavior is unambiguous.

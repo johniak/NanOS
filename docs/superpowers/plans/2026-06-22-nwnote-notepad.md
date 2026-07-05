@@ -1707,11 +1707,11 @@ git commit -m "feat(notepad): rewrite as a Windows XP-style Notepad on libnwui"
 - [ ] **Step 1: Build the image**
 
 Run: `make image 2>&1 | tail -15`
-Expected: `disk/image-grub2.img` built with the new `notepad.nxe`.
+Expected: `disk/image.img` built with the new `notepad.nxe`.
 
 - [ ] **Step 2: Boot headless and screenshot (per CLAUDE.md)**
 
-Set `grub.cfg` `timeout=0`, boot `qemu-system-i386 -drive file=disk/image-grub2.img,format=raw -display none -monitor unix:/tmp/qmon,server,nowait`, drive the Run dialog (Super+R) to launch `notepad`, then via the monitor socket `screendump /tmp/x.ppm`, `sips -s format png /tmp/x.ppm --out /tmp/x.png`, and read `/tmp/x.png`. Restore `grub.cfg` `timeout=5` afterward.
+Set `grub.cfg` `timeout=0`, boot `qemu-system-i386 -drive file=disk/image.img,format=raw -display none -monitor unix:/tmp/qmon,server,nowait`, drive the Run dialog (Super+R) to launch `notepad`, then via the monitor socket `screendump /tmp/x.ppm`, `sips -s format png /tmp/x.ppm --out /tmp/x.png`, and read `/tmp/x.png`. Restore `grub.cfg` `timeout=5` afterward.
 
 Verify visually:
 - the Notepad window with the editor + status bar,

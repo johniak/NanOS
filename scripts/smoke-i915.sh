@@ -15,7 +15,7 @@
 #     bring-up markers must PERSIST to /nanos/logs/i915-boot.txt on the writable root (the Dell log
 #     channel that survives a hang) — verified by reading the file back out of the image after boot.
 set -u
-SRC=disk/image64-grub2.img
+SRC=disk/image64.img
 ARMIMG=disk/i915arm-smoke.img
 KNOB=bin/i915-arm-knob            # repo-local "1" file for debugfs (container sees /src)
 PART=69206016
@@ -31,14 +31,17 @@ QPID=""
 cleanup() { [ -n "${QPID:-}" ] && kill -9 "$QPID" 2>/dev/null; rm -f "$ARMIMG" "$KNOB"; return 0; }
 trap cleanup EXIT
 
+# "reached userspace" = the login greeter OR the serial root shell — either proves boot completed.
+# Which prompt lands on the serial console varies with display/greeter timing; both are success.
+READY='nanos login:|nsh\$'
 boot() {  # $1=image $2=serial-log
 	pkill -9 -f "qemu-system-x86_64.*$1" 2>/dev/null; sleep 1
 	qemu-system-x86_64 -accel tcg,thread=multi -cpu qemu64 -smp 1 -m 512 -drive file="$1",format=raw \
 	    -display none -serial file:"$2" -no-reboot &
 	QPID=$!
-	for i in $(seq 1 60); do grep -q "nanos login:" "$2" 2>/dev/null && break; sleep 1; done
+	for i in $(seq 1 60); do grep -qE "$READY" "$2" 2>/dev/null && break; sleep 1; done
 	kill -9 "$QPID" 2>/dev/null; QPID=""
-	grep -q "nanos login:" "$2" 2>/dev/null
+	grep -qE "$READY" "$2" 2>/dev/null
 }
 
 fault() { grep -iE "panic|#PF|GPF|unhandled|kernel fault|assertion failed" "$1" 2>/dev/null; }
@@ -46,7 +49,7 @@ fault() { grep -iE "panic|#PF|GPF|unhandled|kernel fault|assertion failed" "$1" 
 # ---- Part A: default image, i915 UNARMED = safe no-op --------------------------------------
 echo "smoke-i915: Part A — default image, i915 unarmed"
 if ! boot "$SRC" "$SERA"; then
-	echo "FAIL(A): default image never reached login (unarmed i915 broke boot?)"; tail -25 "$SERA"; exit 1
+	echo "FAIL(A): default image never reached a userspace prompt (unarmed i915 broke boot?)"; tail -25 "$SERA"; exit 1
 fi
 if ! grep -q "i915: not armed" "$SERA"; then
 	echo "FAIL(A): i915 did not report the disarmed no-op path"; grep -i i915 "$SERA" | tail; exit 1
@@ -63,7 +66,7 @@ docker run --rm -v "$PWD":/src -w /src nanos-build bash -c \
   || { echo "FAIL(B): could not arm /nanos/config/i915"; exit 1; }
 
 if ! boot "$ARMIMG" "$SERB"; then
-	echo "FAIL(B): armed image never reached login (i915 bring-up hang?)"; grep -i i915 "$SERB" | tail -25; exit 1
+	echo "FAIL(B): armed image never reached a userspace prompt (i915 bring-up hang?)"; grep -i i915 "$SERB" | tail -25; exit 1
 fi
 for marker in \
 	"bring-up session armed" \

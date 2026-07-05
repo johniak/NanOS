@@ -5,7 +5,7 @@
 # the QEMU pid is printed so you can `kill` it. Env: QEMU_GL, IMG.
 set -u
 cd "$(dirname "$0")/.."
-IMG=${IMG:-disk/image64-grub2.img}
+IMG=${IMG:-disk/image64.img}
 QEMU_GL=${QEMU_GL:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64}
 SER=$(mktemp -t nanos-glshow.XXXXXX.log)
 MON=$(mktemp -t nanos-glshow.XXXXXX.mon); rm -f "$MON"

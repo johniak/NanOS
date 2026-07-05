@@ -111,7 +111,7 @@ Enable the driver's blob-resource machinery: negotiate the two features, and sur
 - [ ] **Step 3: Wire + boot on the venus QEMU**
 
 `virtio_gpu_drv_entry.c`: after negotiation, log the three markers.
-Run: `make image64 && IMG=disk/image64-grub2.img SER=/tmp/vk.log DISPLAY_BACKEND=none bash scripts/run64-vk.sh & sleep 60; grep -E "blob resources|hostmem @" /tmp/vk.log; pkill -9 -f image64`
+Run: `make image64 && IMG=disk/image64.img SER=/tmp/vk.log DISPLAY_BACKEND=none bash scripts/run64-vk.sh & sleep 60; grep -E "blob resources|hostmem @" /tmp/vk.log; pkill -9 -f image64`
 Expected: both markers, sane hostmem range (512M). On the GL (non-venus) QEMU: `no blob/hostmem` and everything else still green (`make smoke-virtio-gpu-gl`).
 
 - [ ] **Step 4: Commit**

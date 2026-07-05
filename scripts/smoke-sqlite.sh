@@ -8,10 +8,10 @@
 #   boot 1: create the table, report PRECOUNT (0 on a fresh DB), insert 3 rows, report POSTCOUNT=3.
 #   boot 2: SAME image file (QEMU writes back to it), so PRECOUNT must now be 3 — proving the DB
 #           survived the reboot. A second insert makes POSTCOUNT=6.
-# Usage: scripts/smoke-sqlite.sh        (build disk/image64-grub2.img with sqlite installed first)
+# Usage: scripts/smoke-sqlite.sh        (build disk/image64.img with sqlite installed first)
 # Exit 0 = PASS.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 PART="$IMG?offset=69206016"
 MON=/tmp/nanos-sqlsmoke-qmon.sock
 SER1=/tmp/nanos-sqlsmoke-serial1.log

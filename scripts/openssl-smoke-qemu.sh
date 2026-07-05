@@ -4,7 +4,7 @@
 # dgst -sha256 (compare to the host sum of the same file). Usage: openssl-smoke-qemu.sh out.png
 set -u
 OUT="${1:-/tmp/openssl-smoke.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/ossl-smoke.sock; LOG=/tmp/ossl-smoke.log; PPM=/tmp/ossl-smoke.ppm
 rm -f "$MON" "$LOG" "$PPM" "$OUT"
 qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \

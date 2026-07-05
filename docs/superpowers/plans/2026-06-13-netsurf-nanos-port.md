@@ -1150,8 +1150,8 @@ the relevant lib's `sysroot_headers` and re-running. (This is where most debuggi
 set -e
 NXE="$1"; DST="$2"
 cd "$(dirname "$0")/.."
-cp disk/image-grub2.img /tmp/smoke.img
-PART=/tmp/smoke.img   # offset-handling as in scripts/create-grub2-image.sh consumers
+cp disk/image.img /tmp/smoke.img
+PART=/tmp/smoke.img   # offset-handling as in scripts/create-image.sh consumers
 printf "mkdir /apps/smoke\nrm %s\nwrite %s %s\n" "$DST" "$NXE" "$DST" | debugfs -w "$PART" 2>/dev/null || true
 # boot headless, autologin shell runs the nxe; screendump after a fixed delay (reuse openssl-smoke-qemu.sh pattern)
 sh scripts/openssl-smoke-qemu.sh /tmp/smoke.img "$DST" || true

@@ -155,7 +155,7 @@ Mechanika cut-over (po 2.2):
 - Każdy agent: `git worktree add ../nanos-wt/<temat> -b feat/<agent>/<temat> develop`
   → izolowany katalog roboczy; brak kolizji.
 - **Pułapka build-infra (zadanie Q1, Strumień 0/G):** `make run` używa współdzielonych
-  `disk/image-grub2.img` i monitora `/tmp/qmon` — 30 równoległych QEMU na to nadepnie.
+  `disk/image.img` i monitora `/tmp/qmon` — 30 równoległych QEMU na to nadepnie.
   Sparametryzować per-worktree: `IMAGE=$(pwd)/disk/image.img`, `QMON=/tmp/qmon-$(basename
   $PWD)`, nazwy kontenerów Docker z sufiksem worktree.
 - Narzędzie `Agent`/workflow z `isolation: "worktree"` używamy dla zadań mutujących pliki.

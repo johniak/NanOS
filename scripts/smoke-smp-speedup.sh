@@ -6,7 +6,7 @@
 # Asserts both runs produce the SAME checksum (parallel == serial result) and T(1)/T(4) >= a real
 # speedup threshold. Modelled on scripts/smoke-x86_64.sh (same proven login drive).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-smpspeed-serial.log
 INT=/tmp/nanos-smpspeed-int.log
 MON=/tmp/nanos-smpspeed-qmon.sock

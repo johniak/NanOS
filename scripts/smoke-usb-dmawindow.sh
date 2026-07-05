@@ -14,7 +14,7 @@
 # reaches login with ZERO kernel exceptions. Without the KernelCr3 guard this build faults in
 # ringPush; with it, boot is clean — so this catches any regression of the guard.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-usbdmawin-serial.log
 rm -f "$SER"
 pkill -9 -f "qemu-system-x86_64.*$IMG" 2>/dev/null

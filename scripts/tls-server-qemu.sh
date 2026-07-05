@@ -5,7 +5,7 @@
 # Proves: on-device keygen/cert + a guest TLS *server* handshake + HTTPS transfer to a host client.
 set -u
 OUTPNG="${1:-/tmp/tls-server.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/tls-srv.sock; LOG=/tmp/tls-srv.log; PPM=/tmp/tls-srv.ppm
 rm -f "$MON" "$LOG" "$PPM" "$OUTPNG"
 qemu-system-i386 -cpu Nehalem -m 512 -snapshot -drive file="$IMG",format=raw \

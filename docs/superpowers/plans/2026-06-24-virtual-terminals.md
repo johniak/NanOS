@@ -1214,7 +1214,7 @@ git commit -m "feat(vt): nwm is a VT_SETMODE graphics owner on tty7; init launch
 - Create: `scripts/smoke-vt.sh`
 - Modify: `Makefile` (a `smoke-vt` target; add to `verify64`)
 
-- [ ] **Step 1:** Write `scripts/smoke-vt.sh` modeled on `scripts/smoke-smp-stress.sh`: boot `disk/image64-grub2.img` headless with a serial log + monitor socket; wait for `nanos login:` on tty1; via the QEMU monitor `sendkey ctrl-alt-f2`; `sendkey`-type a login on tty2; `screendump /tmp/vt2.ppm`; `sendkey ctrl-alt-f1`; `screendump /tmp/vt1.ppm`; `sendkey ctrl-alt-f7`; `screendump /tmp/vt7.ppm`. Pass criteria: (a) no `Kernel panic|TRIPLE FAULT|KERNEL FAULT` in the serial log; (b) the three screendumps are pairwise different (a trivial byte-diff via `cmp`), proving the active console actually changed. (Use `sips -s format png` only if image inspection is needed; the byte-diff alone is a solid headless oracle.)
+- [ ] **Step 1:** Write `scripts/smoke-vt.sh` modeled on `scripts/smoke-smp-stress.sh`: boot `disk/image64.img` headless with a serial log + monitor socket; wait for `nanos login:` on tty1; via the QEMU monitor `sendkey ctrl-alt-f2`; `sendkey`-type a login on tty2; `screendump /tmp/vt2.ppm`; `sendkey ctrl-alt-f1`; `screendump /tmp/vt1.ppm`; `sendkey ctrl-alt-f7`; `screendump /tmp/vt7.ppm`. Pass criteria: (a) no `Kernel panic|TRIPLE FAULT|KERNEL FAULT` in the serial log; (b) the three screendumps are pairwise different (a trivial byte-diff via `cmp`), proving the active console actually changed. (Use `sips -s format png` only if image inspection is needed; the byte-diff alone is a solid headless oracle.)
 
 - [ ] **Step 2:** `Makefile`: add
 ```make

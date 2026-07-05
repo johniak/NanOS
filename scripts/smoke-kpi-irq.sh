@@ -16,7 +16,7 @@
 # The desktop-renders half is covered by smoke-virtio-gpu (same boot config); this gate is focused
 # on the interrupt path so it stays fast and does not repeat the login/screendump dance.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-kpiirq.log
 rm -f "$SER"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }

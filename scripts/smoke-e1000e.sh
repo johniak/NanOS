@@ -5,7 +5,7 @@
 # the e1000e kext binds the 82574L, publishes eth0, AND a real ping round-trips over MSI (proving RX +
 # TX interrupts actually deliver through the LAPIC) — all with zero faults.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-e1000e-serial.log
 INT=/tmp/nanos-e1000e-int.log
 MON=/tmp/nanos-e1000e-qmon.sock

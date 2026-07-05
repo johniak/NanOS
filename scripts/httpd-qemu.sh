@@ -5,7 +5,7 @@
 # Usage: scripts/httpd-qemu.sh [out.png]
 set -u
 OUT="${1:-/tmp/nanos-httpd.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-httpd-qmon.sock
 LOG=/tmp/nanos-httpd-int.log
 PPM=/tmp/nanos-httpd-screen.ppm

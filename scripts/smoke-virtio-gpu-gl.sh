@@ -15,7 +15,7 @@
 #                   desktop), asserted >= 200 when the GUI capture is available.
 set -u
 cd "$(dirname "$0")/.."
-IMG=disk/image64-gl-grub2.img
+IMG=disk/image64-gl.img
 QEMU_VIRGL_HOME=${QEMU_VIRGL_HOME:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp}
 QEMU_GL=${QEMU_GL:-$QEMU_VIRGL_HOME/bin/qemu-system-x86_64}
 SER=/tmp/nanos-glgate.log

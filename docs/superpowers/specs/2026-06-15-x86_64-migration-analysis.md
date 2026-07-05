@@ -205,7 +205,7 @@ Brak jawnego `-m32` — bitowość pochodzi z **domyślnej triplety toolchaina**
 - **GRUB:** dziś `i386-pc` (BIOS, `boot.img` 440 B, `grub-mkimage -O i386-pc`).
   Long-mode kernel ładowany Multiboot1 działa **z tym samym `i386-pc` GRUB-em** —
   GRUB startuje w PM32, my wchodzimy w long mode. **Nie trzeba** EFI GRUB, dopóki
-  trzymamy Multiboot1 + trampolina. (`scripts/create-grub2-image.sh` bez zmian.)
+  trzymamy Multiboot1 + trampolina. (`scripts/create-image.sh` bez zmian.)
 - `docker/Dockerfile.test`: natywny `g++`, bez crossa — **już buduje testy jako
   LP64** na amd64/arm64. Zostaje bez zmian; staje się naszym pierwszym sitem na błędy
   64-bit w MI.

@@ -11,7 +11,7 @@
 #
 # Pass iff the success line "smptorture: ... ok" appears and no race/fault/panic marker does.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-smpstress.log
 MON=/tmp/nanos-smpstress-qmon.sock
 # Completion CEILING, not a fixed sleep: the run is polled for a verdict every 2 s and returns

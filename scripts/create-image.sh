@@ -10,7 +10,7 @@
 
 set -e
 
-IMAGE_PATH="${IMAGE_PATH:-disk/image-grub2.img}"
+IMAGE_PATH="${IMAGE_PATH:-disk/image.img}"
 
 # Skeleton is built once; the kernel + files are (re)written separately each build.
 if [ -f "$IMAGE_PATH" ]; then

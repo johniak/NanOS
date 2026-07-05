@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # Headless QEMU driver with a FULL US-keyboard keymap so we can type shell metacharacters
-# ($ | ( ) * > & etc.) into bash. Boots disk/image-grub2.img, replays steps, screendumps.
+# ($ | ( ) * > & etc.) into bash. Boots disk/image.img, replays steps, screendumps.
 import socket, sys, time, subprocess, os
 
-IMG="disk/image-grub2.img"; MON="/tmp/nanos-qmon.sock"; LOG="/tmp/nanos-int.log"; PPM="/tmp/nanos-screen.ppm"
+IMG="disk/image.img"; MON="/tmp/nanos-qmon.sock"; LOG="/tmp/nanos-int.log"; PPM="/tmp/nanos-screen.ppm"
 OUT=sys.argv[1]; BOOT=float(sys.argv[2]); STEPS=sys.argv[3:]
 for f in (MON,LOG,PPM):
     try: os.remove(f)

@@ -5,7 +5,7 @@
 #
 # Needs the kosmickrisp virgl QEMU (see scripts/run64-gl.sh). GL requires a cocoa window on macOS.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=${SER:-/tmp/nanos-gles2info.log}
 MON=/tmp/nanos-gles2info-qmon.sock
 QEMU_VIRGL_HOME=${QEMU_VIRGL_HOME:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp}

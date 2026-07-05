@@ -5,10 +5,10 @@
 # faulted (the real-mode->long-mode trampoline is the fiddly part — a bad GDT/CR3 shows as a
 # v=0d/v=08 in the QEMU int log even if the console says nothing). One reproducible command.
 #
-# Usage: scripts/smoke-smp.sh           (boots disk/image64-grub2.img; build it first)
+# Usage: scripts/smoke-smp.sh           (boots disk/image64.img; build it first)
 # Exit 0 = PASS, non-zero = FAIL (with the offending serial/int-log lines printed).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-smpsmoke-serial.log
 INT=/tmp/nanos-smpsmoke-int.log
 MON=/tmp/nanos-smpsmoke-qmon.sock

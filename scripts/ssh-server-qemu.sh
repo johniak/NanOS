@@ -5,7 +5,7 @@
 # guest's bash. Proves pubkey-auth SSH-2 remote login from the host into the guest shell.
 set -u
 OUTPNG="${1:-/tmp/ssh-server.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/ssh-srv.sock; LOG=/tmp/ssh-srv.log; PPM=/tmp/ssh-srv.ppm
 KEY=/tmp/nktest
 rm -f "$MON" "$LOG" "$PPM" "$OUTPNG" "$KEY" "$KEY.pub"

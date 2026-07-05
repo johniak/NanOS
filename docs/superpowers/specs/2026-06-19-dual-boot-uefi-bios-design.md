@@ -94,7 +94,7 @@ protective MBR + GPT header + one ext partition), added to the doctest suite (`t
   with `lcov`/`grub-pc-bin`): a pinned **Limine binary release** (provides `limine-bios.sys` +
   `BOOTX64.EFI`) and the built `limine` host deploy utility (`make` in the release tree). `mtools`
   (already present) builds the FAT ESP with no mount/loop; `parted` (present) makes the GPT.
-- **`scripts/create-grub2-image.sh` → `scripts/create-image.sh`** — rewrite the skeleton builder for
+- **`scripts/create-image.sh` → `scripts/create-image.sh`** — rewrite the skeleton builder for
   GPT + Limine, still **no loop device / no privileges**:
   1. `dd` a blank image; `parted -s mklabel gpt`; create P1 (bios_boot, 1–2 MiB, `set 1 bios_grub on`),
      P2 (ESP, 2–34 MiB, `set 2 esp on`), P3 (root, 34 MiB–100%).
@@ -104,7 +104,7 @@ protective MBR + GPT header + one ext partition), added to the doctest suite (`t
   4. `limine bios-install <image> 1` to embed the BIOS stages into the bios_boot partition.
 - **`_image64`** (Makefile) — change the `IMAGE64_GRUB2_PART` offset from `1048576` to **`35651584`**
   (the fixed P3 offset); all `debugfs` populate steps then target the ext4 root unchanged. The image
-  filename (`disk/image64-grub2.img`) and the `smoke-*` paths stay as-is.
+  filename (`disk/image64.img`) and the `smoke-*` paths stay as-is.
 
 The i686 image path (`make image`) is **out of scope** here (i686 is frozen); this piece touches the
 x86_64 image build only. If the shared script needs to keep producing the old i686 image, it stays

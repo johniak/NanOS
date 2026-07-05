@@ -43,7 +43,7 @@ parser (`make ARCH=x86_64 test`, ≥90% lcov gate).
 **Modified:**
 - `docker/Dockerfile` — trailing layer: fetch Limine `v8.x-binary`, build the `limine` host tool,
   install `BOOTX64.EFI` + `limine`.
-- `scripts/create-grub2-image.sh` — rewrite the skeleton builder for GPT + Limine (keep the filename so
+- `scripts/create-image.sh` — rewrite the skeleton builder for GPT + Limine (keep the filename so
   the Makefile call site is unchanged).
 - `kernel/Kernel.cpp` — `firstPartitionLba()` delegates to `firstFsPartitionLba()`.
 - `Makefile` — `IMAGE64_GRUB2_PART` offset `1048576` → `35651584`; `MI_SOURCES`/`TEST_MODULES`/
@@ -305,12 +305,12 @@ git commit -m "feat(boot): root discovery uses MBR+GPT partition table (firstFsP
 ## Task 4: GPT + Limine image builder (the dual-boot image)
 
 **Files:**
-- Modify: `scripts/create-grub2-image.sh` (rewrite for GPT + Limine; keep the filename)
+- Modify: `scripts/create-image.sh` (rewrite for GPT + Limine; keep the filename)
 - Modify: `Makefile` (`IMAGE64_GRUB2_PART` offset; drop the GRUB `grub.cfg` step in `_image64`)
 
 > Verification = QEMU under both firmwares (Task 5). This task produces the image; Task 5 asserts it.
 
-- [ ] **Step 1: Rewrite `scripts/create-grub2-image.sh`.** GPT (bios_boot + ESP + ext4 root), no loop
+- [ ] **Step 1: Rewrite `scripts/create-image.sh`.** GPT (bios_boot + ESP + ext4 root), no loop
   device. Replaces the MBR + GRUB-i386-pc flow.
 
 ```bash
@@ -319,7 +319,7 @@ git commit -m "feat(boot): root discovery uses MBR+GPT partition table (firstFsP
 # root (label NANOS). Runs INSIDE nanos-build (Linux); no Docker, no mount, no loop device.
 # Layout (parted aligns to 1 MiB): P1 bios_boot @1MiB(1MiB), P2 ESP/FAT @2MiB(32MiB), P3 ext4 root @34MiB.
 set -e
-IMAGE_PATH="${IMAGE_PATH:-disk/image-grub2.img}"
+IMAGE_PATH="${IMAGE_PATH:-disk/image.img}"
 ROOT_OFFSET=35651584    # 34 MiB — the ext4 root partition (P3) byte offset (must match the Makefile)
 
 if [ -f "$IMAGE_PATH" ]; then
@@ -389,8 +389,8 @@ writes into the GPT ext4 root via the new offset.)
 ```bash
 make image64
 docker run --rm -v "$PWD":/src nanos-build sh -c \
-  'parted -s disk/image64-grub2.img print; \
-   echo "--- ESP /EFI/BOOT ---"; mdir -i disk/image64-grub2.img@@2M ::/EFI/BOOT'
+  'parted -s disk/image64.img print; \
+   echo "--- ESP /EFI/BOOT ---"; mdir -i disk/image64.img@@2M ::/EFI/BOOT'
 ```
 Expected: `parted print` shows a `gpt` label with `bios_boot`, `esp`, and a `NANOS`/ext4 partition;
 the kernel + `/nanos` tree are in the ext4 root (the build's `debugfs` steps ran without error).
@@ -398,7 +398,7 @@ the kernel + `/nanos` tree are in the ext4 root (the build's `debugfs` steps ran
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add scripts/create-grub2-image.sh Makefile
+git add scripts/create-image.sh Makefile
 git commit -m "feat(boot): hybrid GPT image built with Limine (bios_boot + ESP/FAT + ext4 root)"
 ```
 
@@ -425,7 +425,7 @@ Multiboot1 handoff all work.)
 # firmware runs EFI/BOOT/BOOTX64.EFI (Limine) -> kernel -> shell. Asserts the shell is reached and the
 # Multiboot1+GOP-framebuffer handoff produced zero faults. Pairs with smoke-x86_64 (BIOS/SeaBIOS).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-uefi-serial.log
 INT=/tmp/nanos-uefi-int.log
 VARS=/tmp/nanos-uefi-vars.fd

@@ -14,7 +14,7 @@
 #   3. workers spawned + async after scheduler:  "workqueues async (workers up)"
 #   4. no kernel fault/panic, and login is reached (no bring-up hang from the async switch).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-kpiwq.log
 rm -f "$SER"
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing — run 'make image64' first"; exit 2; }

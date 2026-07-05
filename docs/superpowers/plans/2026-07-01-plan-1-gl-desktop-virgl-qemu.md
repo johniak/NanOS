@@ -60,7 +60,7 @@ Everything downstream needs a QEMU whose `virtio-vga-gl` device exists and rende
 - Create: `scripts/run64-gl.sh`
 
 **Interfaces:**
-- Produces: `scripts/run64-gl.sh` boots `disk/image64-grub2.img` with `-device virtio-vga-gl`; env `QEMU_GL` overrides the qemu binary; `DISPLAY_BACKEND=none` for headless CI; serial to `$SER` (default `/tmp/nanos-gl.log`). Later tasks and the smoke gate consume exactly this script.
+- Produces: `scripts/run64-gl.sh` boots `disk/image64.img` with `-device virtio-vga-gl`; env `QEMU_GL` overrides the qemu binary; `DISPLAY_BACKEND=none` for headless CI; serial to `$SER` (default `/tmp/nanos-gl.log`). Later tasks and the smoke gate consume exactly this script.
 
 - [ ] **Step 1: Install the GL-enabled QEMU from the tap**
 
@@ -86,7 +86,7 @@ Expected: a property list including `gl` — NOT `'virtio-vga-gl' not found`.
 # QEMU_GL: path to a virgl-capable qemu-system-x86_64 (default: the kosmickrisp tap binary).
 # DISPLAY_BACKEND: cocoa,gl=es (default, interactive) | none (headless smoke).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=${SER:-/tmp/nanos-gl.log}
 QEMU_GL=${QEMU_GL:-$(brew --prefix qemu-virgl-kosmickrisp 2>/dev/null)/bin/qemu-system-x86_64}
 [ -x "$QEMU_GL" ] || { echo "no virgl qemu at $QEMU_GL (set QEMU_GL)"; exit 2; }

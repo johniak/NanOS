@@ -76,7 +76,7 @@ Exactly one matches, so registration order is irrelevant. Explicit mount by name
 
 ## "ext4 everywhere" + keeping ext2
 
-- `scripts/create-grub2-image.sh`: `mke2fs -t ext2` → `mkfs.ext4`. GRUB2 reads ext4
+- `scripts/create-image.sh`: `mke2fs -t ext2` → `mkfs.ext4`. GRUB2 reads ext4
   (extents) via its ext2 module — verified by booting in QEMU.
 - `kernel/Kernel.cpp`: mount `"/"` with type `"auto"` (resolves to ext4).
 - ext2 stays: `Ext2Filesystem` + `Ext2FileSystemType` still registered; the ext2

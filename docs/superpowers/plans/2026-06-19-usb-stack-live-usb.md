@@ -375,7 +375,7 @@ namespace arch { void xhciInit(); }   // discovers + brings up xHCI; registers v
 - [ ] **Step 4: QEMU verify.** Build + boot with an xHCI:
 ```bash
 make image64
-qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image64-grub2.img,format=raw \
+qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image64.img,format=raw \
   -device qemu-xhci -display none -serial file:/tmp/x.log -no-reboot -d int -D /tmp/i.log &
 sleep 12; grep -E "xHCI:|EXCEPTION|Triple" /tmp/x.log /tmp/i.log
 ```
@@ -501,7 +501,7 @@ git commit -m "feat(usb): HID boot keyboard/mouse decoders -> sink callbacks (ho
 ```bash
 make image64
 # inject a test authorized desktop autostart or use the console; boot with USB HID:
-qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image64-grub2.img,format=raw \
+qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image64.img,format=raw \
   -device qemu-xhci -device usb-mouse -device usb-kbd \
   -display none -serial file:/tmp/x.log -monitor unix:/tmp/qmon,server,nowait &
 # start nwm via console sendkey, move the USB mouse via the QEMU monitor 'mouse_move',
@@ -607,12 +607,12 @@ support via `configureEndpoint`).
   a NanOS partition (the existing MBR/partition-probe used for ATA), mount the first match at
   `/disks/main`. Keep the ATA device + fallback so the QEMU `-drive` disk-image path is unchanged.
 
-- [ ] **Step 3: Build the USB-root test image.** Reuse `disk/image64-grub2.img` as the USB drive backing
+- [ ] **Step 3: Build the USB-root test image.** Reuse `disk/image64.img` as the USB drive backing
   file (it already has the full FS). Boot it as a USB mass-storage device instead of `-drive`:
 ```bash
 make image64
 qemu-system-x86_64 -cpu qemu64 -m 512 \
-  -drive if=none,id=usbstick,file=disk/image64-grub2.img,format=raw \
+  -drive if=none,id=usbstick,file=disk/image64.img,format=raw \
   -device qemu-xhci -device usb-storage,drive=usbstick \
   -display none -serial file:/tmp/x.log -no-reboot -d int -D /tmp/i.log &
 sleep 18; grep -E "Mounting ext|EXT-RW selftest|bash-5|EXCEPTION|Triple" /tmp/x.log /tmp/i.log

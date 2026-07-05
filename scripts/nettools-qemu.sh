@@ -7,7 +7,7 @@ set -u
 BASE="${1:-/tmp/nanos-nettools.png}"; shift || true
 CMDS=( "$@" )
 [ ${#CMDS[@]} -eq 0 ] && CMDS=( "ifconfig" "traceroute -q 1 -w 2 -m 4 10.0.2.2" )
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-nt-qmon.sock
 LOG=/tmp/nanos-nt-int.log
 PCAP=/tmp/nanos-nt.pcap

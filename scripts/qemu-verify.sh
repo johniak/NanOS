@@ -2,7 +2,7 @@
 # Headless QEMU boot + screendump + interrupt-log capture (macOS host).
 #
 # Usage: scripts/qemu-verify.sh <seconds> <out.png>
-#   - assumes disk/image-grub2.img is already built (run `make image` first)
+#   - assumes disk/image.img is already built (run `make image` first)
 #   - boots with grub timeout already 0 (caller sets it), monitor on a unix socket,
 #     -d int into /tmp/nanos-int.log, -no-reboot (so a triple fault stops, not loops)
 #   - after <seconds>, screendumps to <out.png> (via sips from PPM) and quits cleanly
@@ -10,7 +10,7 @@
 set -u
 SECS="${1:-4}"
 OUT="${2:-/tmp/nanos.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-qmon.sock
 LOG=/tmp/nanos-int.log
 PPM=/tmp/nanos-screen.ppm

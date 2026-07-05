@@ -9,7 +9,7 @@
 # Usage: scripts/boot-services-qemu.sh [out.png]
 set -u
 OUT="${1:-/tmp/nanos-bootsvc.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-bsvc-qmon.sock
 LOG=/tmp/nanos-bsvc-int.log
 PPM=/tmp/nanos-bsvc-screen.ppm

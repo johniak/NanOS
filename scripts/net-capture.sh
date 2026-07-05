@@ -5,7 +5,7 @@
 # ARP/IP/ICMP/DNS/TCP against what a real Linux emits for the same operation.
 #
 # Usage: scripts/net-capture.sh [seconds] [out.pcap]
-#   - assumes disk/image-grub2.img is already built (run `make image` first)
+#   - assumes disk/image.img is already built (run `make image` first)
 #   - boots headless with the same NIC_OPTS the Makefile's run-net uses (e1000 + filter-dump),
 #     monitor on a unix socket, -d int into a log, -no-reboot
 #   - after [seconds], screendumps + quits, then decodes the pcap with tcpdump and prints a
@@ -14,7 +14,7 @@
 set -u
 SECS="${1:-8}"
 PCAP="${2:-/tmp/nanos.pcap}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-net-qmon.sock
 LOG=/tmp/nanos-net-int.log
 PPM=/tmp/nanos-net-screen.ppm

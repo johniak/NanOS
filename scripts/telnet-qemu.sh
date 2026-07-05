@@ -5,7 +5,7 @@
 # commands and checks the replies. Usage: scripts/telnet-qemu.sh [out.png]
 set -u
 OUT="${1:-/tmp/nanos-telnet.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-tel-qmon.sock
 LOG=/tmp/nanos-tel-int.log
 PPM=/tmp/nanos-tel-screen.ppm

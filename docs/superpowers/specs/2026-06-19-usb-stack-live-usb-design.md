@@ -100,7 +100,7 @@ Kernel::start:
   5. (existing) exec /disks/main/nanos/core/init.nxe.
 ```
 
-GRUB-from-USB itself: the current `image64-grub2.img` `dd`-ed to a pendrive is BIOS/CSM-bootable as-is
+GRUB-from-USB itself: the current `image64.img` `dd`-ed to a pendrive is BIOS/CSM-bootable as-is
 (GRUB2). Pure-UEFI USB boot (ESP partition) is a Stream-D refinement, out of scope here; the *kernel-
 side USB-root mount* is the substance of this plan and works under either firmware path.
 

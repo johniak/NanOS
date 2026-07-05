@@ -62,7 +62,7 @@ są tylko do odczytu — są generowane w locie, nigdzie nieprzechowywane.
 
 ## 2. Układ na dysku (`/disks/main`)
 
-Obraz ext2/ext4 (`disk/image-grub2.img`, budowany przez `scripts/create-grub2-image.sh`,
+Obraz ext2/ext4 (`disk/image.img`, budowany przez `scripts/create-image.sh`,
 wypełniany przez cel `_image` w Makefile). Ułożony tak, aby **system operacyjny, aplikacje
 użytkownika i PATH do uruchamiania po nazwie były czysto rozdzielone**:
 

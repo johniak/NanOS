@@ -5,7 +5,7 @@
 # far the passive open got. Usage: scripts/tcpsrv-diag.sh [out.png]
 set -u
 OUT="${1:-/tmp/nanos-tcpsrv.png}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-ts-qmon.sock
 LOG=/tmp/nanos-ts-int.log
 PPM=/tmp/nanos-ts-screen.ppm

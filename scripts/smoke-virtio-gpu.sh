@@ -16,7 +16,7 @@
 #      the unmodified driver, not just a cleared scanout).
 #   3. no kernel fault/panic on the serial console.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-vgpusmoke.log
 MON=/tmp/nanos-vgpusmoke-qmon.sock
 DESK=/tmp/nanos-vgpu-desk.ppm

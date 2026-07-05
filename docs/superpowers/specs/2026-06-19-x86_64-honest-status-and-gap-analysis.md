@@ -16,7 +16,7 @@ screen myself.
 
 ## 1. Verification method
 
-- Booted `disk/image64-grub2.img` natively: `qemu-system-x86_64 -cpu qemu64 -m 512` with
+- Booted `disk/image64.img` natively: `qemu-system-x86_64 -cpu qemu64 -m 512` with
   `-drive ...,snapshot=on` (so the image is never mutated), e1000 user-net + `hostfwd 2222->22`,
   `-display none -monitor unix:/tmp/qmon.sock` + `-serial file` + `-d int -D /tmp/qint.log -no-reboot`.
 - Drove the console via QEMU monitor `sendkey`; captured state with `screendump` → `sips` PNG → read.

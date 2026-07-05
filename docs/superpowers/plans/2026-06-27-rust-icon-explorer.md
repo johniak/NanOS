@@ -708,8 +708,8 @@ After the wallpaper-install block in `_image64`, add:
 Run: `make image64` then dump the dir:
 
 ```bash
-debugfs -R "ls -l /nanos/share/icons" disk/image64-grub2.img 2>/dev/null || \
-  printf "ls /nanos/share/icons\n" | debugfs disk/image64-grub2.img
+debugfs -R "ls -l /nanos/share/icons" disk/image64.img 2>/dev/null || \
+  printf "ls /nanos/share/icons\n" | debugfs disk/image64.img
 ```
 
 (Run inside the build container if `debugfs` isn't on the host — `make image64` already shells into it.)
@@ -1125,7 +1125,7 @@ Run: `make image64`
 
 - [ ] **Step 2: Boot headless with a monitor socket (per CLAUDE.md)**
 
-Use the project's headless pattern: set `grub.cfg` `timeout=0`, boot `qemu-system-x86_64 ... -drive file=disk/image64-grub2.img,format=raw -display none -monitor unix:/tmp/qmon,server,nowait`, log in if needed, switch to the graphics VT (F7), open the Start menu → "My Computer", `screendump /tmp/x.ppm` via the monitor socket, `sips -s format png /tmp/x.ppm --out /tmp/x.png`, and read `/tmp/x.png`.
+Use the project's headless pattern: set `grub.cfg` `timeout=0`, boot `qemu-system-x86_64 ... -drive file=disk/image64.img,format=raw -display none -monitor unix:/tmp/qmon,server,nowait`, log in if needed, switch to the graphics VT (F7), open the Start menu → "My Computer", `screendump /tmp/x.ppm` via the monitor socket, `sips -s format png /tmp/x.ppm --out /tmp/x.png`, and read `/tmp/x.png`.
 
 - [ ] **Step 3: Verify each acceptance criterion from the screenshots**
 

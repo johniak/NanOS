@@ -704,7 +704,7 @@ $(BINFOLDER)e1000e.nkext: $(KEXT_GLUE) $(BINFOLDER)e1000e.o $(BINFOLDER)e1000_co
 # smoke-e1000e.sh — boot with the 82574L (-device e1000e), exercising the shared E1000Core via MSI-X +
 # NAPI + checksum offload (the path the I219 needs but QEMU can't emulate for I219 itself).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-e1000e-serial.log
 INT=/tmp/nanos-e1000e-int.log
 rm -f "$SER" "$INT"

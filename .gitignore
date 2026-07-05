@@ -4,9 +4,8 @@
 # Build artifacts (bin/ is entirely generated: .o/.d/.elf/.nxe/kernel.bin)
 bin/
 disk/image.img
-disk/image-grub2.img
-disk/image64-grub2.img
-disk/image64-gl-grub2.img
+disk/image64.img
+disk/image64-gl.img
 disk/*_alloc.img
 disk/*_write.img
 iso/

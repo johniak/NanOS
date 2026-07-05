@@ -48,7 +48,7 @@
 - `user/init.c` — exec `login` on the console instead of the shell directly.
 - `user/libc-glue/pwd_grp.c` — read `/etc/passwd` (was `config/passwd`), tolerate `x` in field 2.
 - `config/passwd` — field 2 becomes `x` (hash moves to `config/shadow`).
-- `scripts/create-grub2-image.sh` + Makefile `_image` — install `config/{passwd,shadow,group,sudoers}`, the `/etc` symlinks, set modes, seed `root`+`jan`.
+- `scripts/create-image.sh` + Makefile `_image` — install `config/{passwd,shadow,group,sudoers}`, the `/etc` symlinks, set modes, seed `root`+`jan`.
 - `Makefile` — add `kernel/Cred.cpp` to `TEST_MODULES`/`COV_PATTERNS`; add toybox/sudo port targets.
 
 ---
@@ -903,7 +903,7 @@ TEST_CASE("crypt $6$ matches the reference vector") {
 
 ### Task 16: seed files + image wiring + `/etc` symlink persistence
 
-**Files:** Create `config/group`, `config/shadow`, `config/sudoers`; Modify `config/passwd`, `scripts/create-grub2-image.sh`, Makefile `_image`, the boot `/etc` populator (find it: grep `config/etc` in `kernel/`/`init`)
+**Files:** Create `config/group`, `config/shadow`, `config/sudoers`; Modify `config/passwd`, `scripts/create-image.sh`, Makefile `_image`, the boot `/etc` populator (find it: grep `config/etc` in `kernel/`/`init`)
 
 - [ ] **Step 1:** Generate password hashes with the new `crypt($6$)` (or `mkpasswd` from toybox once built) for `root` and `jan`. Write `config/passwd`:
 ```
@@ -929,10 +929,10 @@ jan:x:1000:
 root ALL=(ALL) ALL
 %wheel ALL=(ALL) ALL
 ```
-- [ ] **Step 2:** In `scripts/create-grub2-image.sh` / Makefile `_image`: copy the four files to `/disks/main/nanos/config/`; create `jan`'s home `/disks/main/home/jan` owned `1000:1000`; set `shadow` 0600 root, `sudoers` 0440 root; create the `/etc` symlinks **in the on-disk `config/etc/` template** so the boot populator reproduces them: `passwd→/disks/main/nanos/config/passwd`, `shadow→…/shadow`, `group→…/group`, `sudoers→…/sudoers`.
+- [ ] **Step 2:** In `scripts/create-image.sh` / Makefile `_image`: copy the four files to `/disks/main/nanos/config/`; create `jan`'s home `/disks/main/home/jan` owned `1000:1000`; set `shadow` 0600 root, `sudoers` 0440 root; create the `/etc` symlinks **in the on-disk `config/etc/` template** so the boot populator reproduces them: `passwd→/disks/main/nanos/config/passwd`, `shadow→…/shadow`, `group→…/group`, `sudoers→…/sudoers`.
 - [ ] **Step 3:** Teach the boot `/etc` populator to **preserve symlink** template entries (create them as symlinks, not copy target contents). Grep for where `config/etc` is read into the `/etc` RamFs and add symlink handling.
 - [ ] **Step 4: Build the image + boot**; verify `ls -l /etc/passwd` shows a symlink and `cat /etc/group` works.
-- [ ] **Step 5: e2fsck** the image after the write-bearing boot: `e2fsck -fn disk/image64-grub2.img` → clean.
+- [ ] **Step 5: e2fsck** the image after the write-bearing boot: `e2fsck -fn disk/image64.img` → clean.
 - [ ] **Step 6: Commit:** `git commit -am "feat(image): seed root+jan accounts, /etc/{passwd,shadow,group,sudoers} via persistent symlinks"`
 
 ---
@@ -991,7 +991,7 @@ root ALL=(ALL) ALL
   - `touch /nanos/bin/x` as jan → `Permission denied`.
   - `passwd` as jan changes jan's own password; relogin works with the new password (persists across reboot).
 - [ ] **Step 2:** Negative checks: jan cannot `kill` a root process (signal-permission is a separate model — note if NanOS enforces it; if not, record as out-of-scope follow-up, since this plan is *file/identity* permissions).
-- [ ] **Step 3:** `e2fsck -fn disk/image64-grub2.img` on the host after the session → **clean**.
+- [ ] **Step 3:** `e2fsck -fn disk/image64.img` on the host after the session → **clean**.
 - [ ] **Step 4:** Boot log `make run64` with `-d int -D /tmp/log` → grep no `v=08/0d/0e`.
 - [ ] **Step 5:** Run the full `make test` host suite → green, coverage ≥90% (the new `Cred`/VFS-perm/crypt modules are well-covered).
 - [ ] **Step 6: Commit** any final fixups: `git commit -am "test: end-to-end user-permissions acceptance (login/su/sudo/sticky/e2fsck)"`

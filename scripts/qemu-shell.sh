@@ -4,7 +4,7 @@
 # then quit. Usage: scripts/qemu-shell.sh <out.png> "cmd one" "cmd two" ...
 set -u
 OUT="${1:?usage: qemu-shell.sh out.png cmd...}"; shift
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-qmon.sock
 LOG=/tmp/nanos-int.log
 PPM=/tmp/nanos-screen.ppm

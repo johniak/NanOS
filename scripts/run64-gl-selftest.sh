@@ -8,7 +8,7 @@
 # reconnects after host state degrades). Env: QEMU_GL, IMG override the binary / disk image.
 set -u
 cd "$(dirname "$0")/.."
-IMG=${IMG:-disk/image64-grub2.img}
+IMG=${IMG:-disk/image64.img}
 QEMU_GL=${QEMU_GL:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64}
 SER=$(mktemp -t nanos-gl-selftest.XXXXXX.log)
 MON=$(mktemp -t nanos-gl-selftest.XXXXXX.mon); rm -f "$MON"

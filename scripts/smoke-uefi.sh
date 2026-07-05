@@ -3,7 +3,7 @@
 # firmware runs EFI/BOOT/BOOTX64.EFI (Limine) -> kernel -> shell. Asserts the shell is reached and the
 # Multiboot1+GOP-framebuffer handoff produced zero faults. Pairs with smoke-x86_64 (BIOS/SeaBIOS).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-uefi-serial.log
 INT=/tmp/nanos-uefi-int.log
 VARS=/tmp/nanos-uefi-vars.fd

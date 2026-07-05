@@ -27,7 +27,7 @@
 # libepoxy/angle/virglrenderer dylibs, which makes the kernel SIGKILL qemu at launch
 # ("Code Signature Invalid / Invalid Page"). We ad-hoc re-sign them below, idempotently.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=${SER:-/tmp/nanos-gl.log}
 QEMU_VIRGL_HOME=${QEMU_VIRGL_HOME:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp}
 QEMU_GL=${QEMU_GL:-$QEMU_VIRGL_HOME/bin/qemu-system-x86_64}

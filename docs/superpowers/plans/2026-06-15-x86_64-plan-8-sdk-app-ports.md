@@ -728,7 +728,7 @@ reprezentatywny zestaw.
 
 - [ ] **Step 2: Zbudować obraz**
 
-  **[NANOS]** Run: `make image`. Expected: `disk/image-grub2.img` zawiera 64-bitowe binaria pod
+  **[NANOS]** Run: `make image`. Expected: `disk/image.img` zawiera 64-bitowe binaria pod
   `/nanos/bin`, `/apps`, link-farm `/bin`.
 
 - [ ] **Step 3: Headless smoke — boot + zestaw poleceń**
@@ -747,7 +747,7 @@ reprezentatywny zestaw.
 - [ ] **Step 4: e2fsck-clean po zapisach**
 
   **[NANOS]** Po boocie (apki pisały do `/tmp`/`/etc`/rwtest) sprawdź spójność obrazu:
-  `docker run --rm -v "$(pwd)":/src -w /src nanos-build e2fsck -fn disk/image-grub2.img` (na
+  `docker run --rm -v "$(pwd)":/src -w /src nanos-build e2fsck -fn disk/image.img` (na
   właściwej partycji wg MBR). Expected: clean (write-path ext4 + JBD2 nienaruszone na 64-bit).
 
 - [ ] **Step 5: Commit (NanOS — staże artefaktów to build-output, nie commitujemy `.nxe`)**

@@ -1604,13 +1604,13 @@ git commit -m "abi: KTimespec/struct stat mapping matches picolibc x86_64 layout
 ```bash
 make ARCH=x86_64 image      # _all (kernel) + _userland64 path writes /nanos/core/init.nxe
 ```
-Expected: `disk/image-grub2.img` z 64-bitowym `kernel.bin` + `init.nxe` (v4). Ustaw w
+Expected: `disk/image.img` z 64-bitowym `kernel.bin` + `init.nxe` (v4). Ustaw w
 `grub.cfg` `timeout=0` na czas testu (przywróć po).
 
 - [ ] **Step 2: Boot interaktywny — zobaczyć wyjście init**
 
 ```bash
-qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image-grub2.img,format=raw
+qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image.img,format=raw
 ```
 Expected: w konsoli VGA: `NanOS x86_64 userland: ring 3 + syscall OK`, a pod spodem treść
 `grub.cfg`. Maszyna kończy spokojnie (init `exit(0)` → kernel idle).
@@ -1618,7 +1618,7 @@ Expected: w konsoli VGA: `NanOS x86_64 userland: ring 3 + syscall OK`, a pod spo
 - [ ] **Step 3: Weryfikacja headless + brak faultów (wzorzec z CLAUDE.md)**
 
 ```bash
-qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image-grub2.img,format=raw \
+qemu-system-x86_64 -cpu qemu64 -m 512 -drive file=disk/image.img,format=raw \
   -display none -monitor unix:/tmp/qmon64,server,nowait -no-reboot -d int -D /tmp/qlog64 &
 QEMU_PID=$!
 sleep 3

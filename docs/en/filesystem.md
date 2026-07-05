@@ -64,7 +64,7 @@ generated on the fly, not stored anywhere.
 
 ## 2. The on-disk layout (`/disks/main`)
 
-The ext2/ext4 image (`disk/image-grub2.img`, built by `scripts/create-grub2-image.sh`,
+The ext2/ext4 image (`disk/image.img`, built by `scripts/create-image.sh`,
 populated by the `_image` target in the Makefile). Laid out so that **the OS, user apps,
 and the run-by-name PATH are cleanly separated**:
 

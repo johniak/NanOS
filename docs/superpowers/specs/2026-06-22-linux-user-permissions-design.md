@@ -284,7 +284,7 @@ Clean-room, modeled on POSIX:
   re-spawns `login` (loop). **PTY/nterm:** the console requires login; an nterm/PTY terminal
   spawns the user's shell inheriting the already-authenticated session creds (faithful: a
   graphical terminal does not re-authenticate). 
-- **Seed (image build, `scripts/create-grub2-image.sh` + Makefile `_image`):** create
+- **Seed (image build, `scripts/create-image.sh` + Makefile `_image`):** create
   `config/{passwd,shadow,group,sudoers}` and the `/etc` symlinks; accounts `root(0)` and
   `jan(1000)` (group `jan(1000)`, member of `wheel(10)`); standard system groups
   (`daemon, tty, disk, …`); passwords set for both (hashed with our `$6$` crypt).
@@ -335,7 +335,7 @@ log (`-d int`) free of `v=08/0d/0e` faults.
   (drop `m_*` ids → `Cred* cred`; new credential syscalls), `kernel/SyscallNr.h`,
   `kernel/SyscallDispatch.cpp`, `kernel/Exec.cpp` (setuid-bit exec), `fs/Vfs.{h,cpp}` (policy
   layer + `CredProvider`), `kernel/Kernel.cpp` (install `CredProvider`), `user/init.c`
-  (`→ login`), `user/libc-glue/pwd_grp.c` (+group/shadow/grouplist), `scripts/create-grub2-image.sh`
+  (`→ login`), `user/libc-glue/pwd_grp.c` (+group/shadow/grouplist), `scripts/create-image.sh`
   + Makefile `_image` (seed + `/etc` symlinks), `/etc` boot populator (preserve symlinks),
   `Makefile` (`TEST_MODULES`/`COV_PATTERNS`, toybox/sudo port targets).
 

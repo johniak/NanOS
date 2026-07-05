@@ -10,7 +10,7 @@
 #
 # Pass iff F7 shows the desktop (many distinct colours) and no kernel fault/panic is logged.
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 STICK=/tmp/nanos-usbsmp-stick.img
 SER=/tmp/nanos-usbsmp.log
 MON=/tmp/nanos-usbsmp-qmon.sock

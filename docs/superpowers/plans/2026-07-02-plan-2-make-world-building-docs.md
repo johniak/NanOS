@@ -138,7 +138,7 @@ cd /Users/johniak/Projects/NanOS && git add Makefile && git commit -m "make sdk-
 
 **Interfaces:**
 - Consumes: `sdk-toolchain` (Task 1), `nanos-fetch` (Plan 1 Task 4), wszystkie istniejące cele portowe.
-- Produces: `make world` — kompletny `disk/image64-grub2.img` ze wszystkimi aplikacjami; `make world-gl` — dodatkowo libdrm+mesa (eksperyment).
+- Produces: `make world` — kompletny `disk/image64.img` ze wszystkimi aplikacjami; `make world-gl` — dodatkowo libdrm+mesa (eksperyment).
 
 - [ ] **Step 1: Ustal dokładne nazwy wszystkich celów portowych**
 
@@ -200,7 +200,7 @@ make run64   # ręczny smoke: desktop wstaje, w terminalu: bash, vim, git --vers
 
 ```bash
 docker run --rm -v "$PWD":/src -w /src nanos-build \
-  debugfs -R "ls /nanos/bin" -o 69206016 disk/image64-grub2.img 2>/dev/null | tr -s ' ' '\n' | sort | head -40
+  debugfs -R "ls /nanos/bin" -o 69206016 disk/image64.img 2>/dev/null | tr -s ' ' '\n' | sort | head -40
 ```
 
 Oczekiwane: `bash… git… htop… openssl… ping… sqlite3… vim…` (offset 69206016 = partycja NANOS; stała jest w `Makefile:29`).
@@ -219,7 +219,7 @@ git add Makefile && git commit -m "make world: one-command full build (toolchain
 - Modify: `/Users/johniak/Projects/NanOS/scripts/run64-gl.sh`
 
 **Interfaces:**
-- Consumes: `disk/image64-grub2.img`.
+- Consumes: `disk/image64.img`.
 - Produces: ten sam skrypt działa na Darwin (bez zmian zachowania) i na Linuksie (dystrybucyjny QEMU z virglem).
 
 - [ ] **Step 1: Zrefaktoruj skrypt na dwie gałęzie po `uname -s`**
@@ -445,7 +445,7 @@ jobs:
       - run: make image64
       - run: make test64
       - uses: actions/upload-artifact@v4
-        with: {name: image64, path: disk/image64-grub2.img, retention-days: 7}
+        with: {name: image64, path: disk/image64.img, retention-days: 7}
   world:
     if: github.event_name != 'push'   # nightly/manual only — pełny build jest długi
     needs: core
@@ -504,7 +504,7 @@ fi
 
 ### Task 9: Pętla deweloperska „build na serwerze, run na Macu" — `scripts/remote-build.sh`
 
-Docelowy workflow użytkownika: edycja + `make run64`/GUI na Macu, ciężkie buildy na serwerze i9. Obraz `disk/image64-grub2.img` (~320 MB) wraca po LAN w sekundy.
+Docelowy workflow użytkownika: edycja + `make run64`/GUI na Macu, ciężkie buildy na serwerze i9. Obraz `disk/image64.img` (~320 MB) wraca po LAN w sekundy.
 
 **Files:**
 - Create: `/Users/johniak/Projects/NanOS/scripts/remote-build.sh`
@@ -551,7 +551,7 @@ esac
 ssh "$HOST" "cd $RDIR && SDK_WORK=\$PWD/sdk-work $LOCK make $TARGET"
 case "$TARGET" in image64|world|world-gl)
   mkdir -p "$HERE/disk"
-  rsync -az "$HOST:$RDIR/disk/image64-grub2.img" "$HERE/disk/"
+  rsync -az "$HOST:$RDIR/disk/image64.img" "$HERE/disk/"
   echo "image pulled — boot it: make run64";;
 esac
 ```

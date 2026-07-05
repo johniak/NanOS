@@ -6,7 +6,7 @@
 # Usage: scripts/svc-loop-qemu.sh [N]   (default 40 GETs)
 set -u
 N="${1:-40}"
-IMG=disk/image-grub2.img
+IMG=disk/image.img
 MON=/tmp/nanos-loop-qmon.sock
 LOG=/tmp/nanos-loop-int.log
 PPM=/tmp/nanos-loop-screen.ppm

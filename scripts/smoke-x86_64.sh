@@ -5,10 +5,10 @@
 # the scheduler, and a ring-3 fork/exec (init -> bash) driven from the console. One reproducible
 # command, so "does x86_64 still work end-to-end" is checkable in ~30s instead of by eyeballing.
 #
-# Usage: scripts/smoke-x86_64.sh            (boots disk/image64-grub2.img; build it first)
+# Usage: scripts/smoke-x86_64.sh            (boots disk/image64.img; build it first)
 # Exit 0 = PASS, non-zero = FAIL (with the offending serial/int-log lines printed).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-x64smoke-serial.log
 INT=/tmp/nanos-x64smoke-int.log
 MON=/tmp/nanos-x64smoke-qmon.sock

@@ -8,7 +8,7 @@
 # own datagram comes back byte-for-byte before sending the next), so a misdelivery / corruption /
 # lost wakeup makes the success line never print. Required before flipping the BKL off (15f).
 set -u
-IMG=disk/image64-grub2.img
+IMG=disk/image64.img
 SER=/tmp/nanos-smpnet.log
 MON=/tmp/nanos-smpnet-qmon.sock
 # Completion CEILING, not a fixed sleep: the run is polled for the success line every 2 s and
