@@ -233,8 +233,16 @@ int nkext_init(void)
 	 * narration on the stick (recover with `make i915-log`). */
 	lkpi_set_log_tee(I915_LOG_PATH);
 
-	/* 1) LinuxKPI mem_map first — indexed by every alloc_pages/virt_to_page below. */
-	{ extern void lkpi_mem_map_init(void); lkpi_mem_map_init(); }
+	/* 1) LinuxKPI mem_map first — indexed by every alloc_pages/virt_to_page below. A NULL mem_map
+	 * (OOM: it is one struct page per RAM frame, ~256 MiB on a 16 GiB box) makes every page access
+	 * dereference garbage, so ABORT the bring-up cleanly rather than fault — the firmware fb stays up. */
+	{
+		extern int lkpi_mem_map_init(void);
+		if (!lkpi_mem_map_init()) {
+			i915_log("i915: ABORT — mem_map alloc failed (raise the kernel heap cap)\n");
+			return 0;
+		}
+	}
 	i915_log("i915: mem_map init OK\n");
 
 	/* Turn the vendored DRM debug all the way up (CORE|DRIVER|KMS|PRIME|ATOMIC|VBL|STATE|LEASE|DP):

@@ -74,7 +74,13 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 	// heap-at-top-of-RAM behaviour unchanged.)
 	const uint64_t BOOT_IDENTITY = 0x40000000;            // loader.s maps 1 GiB (512 x 2 MiB)
 	uint64_t heapSize = topOfRam / 4u;
-	if (heapSize > 256ull * 1024 * 1024) heapSize = 256ull * 1024 * 1024;
+	// Cap at 512 MiB (was 256). The LinuxKPI mem_map — one 64-byte struct page per RAM frame — is a
+	// single heap block up to ~256 MiB on a 16 GiB machine, and i915 GEM/framebuffer allocations come
+	// from this same heap; 256 MiB total starved both and mem_map alloc FAILED on the Dell (real HW,
+	// 8-16 GiB). 512 MiB fits mem_map + an early-probe working set. heapBase = 1 GiB - 512 MiB = 512
+	// MiB sits well above the kernel image + 32 MiB exec-staging window and inside the loader's 1 GiB
+	// identity map, so the constraints below still hold. Machines <=2 GiB never reach this cap.
+	if (heapSize > 512ull * 1024 * 1024) heapSize = 512ull * 1024 * 1024;
 	if (heapSize < 8ull * 1024 * 1024)   heapSize = 8ull * 1024 * 1024;
 	uint64_t heapTop = topOfRam < BOOT_IDENTITY ? topOfRam : BOOT_IDENTITY;
 	uint64_t heapBase = (heapTop - heapSize) & kernel::PAGE_MASK;

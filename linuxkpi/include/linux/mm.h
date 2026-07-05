@@ -61,7 +61,7 @@ struct page {
 
 extern struct page *lkpi_mem_map;        /* &mem_map[0] — describes pfn 0 */
 extern unsigned long lkpi_mem_map_pfns;  /* number of entries (== top-of-RAM pfn) */
-void lkpi_mem_map_init(void);            /* allocate mem_map from knx_ram_top(); idempotent, kext-load */
+int  lkpi_mem_map_init(void);            /* allocate mem_map from knx_ram_top(); 1=ok, 0=OOM (caller must abort); idempotent, kext-load */
 
 static inline unsigned int get_order(unsigned long size) {
 	unsigned int order = 0;

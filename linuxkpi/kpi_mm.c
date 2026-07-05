@@ -21,20 +21,21 @@
 struct page *lkpi_mem_map = 0;
 unsigned long lkpi_mem_map_pfns = 0;
 
-void lkpi_mem_map_init(void) {
+int lkpi_mem_map_init(void) {
 	if (lkpi_mem_map)
-		return;   /* idempotent */
+		return 1;   /* idempotent */
 	unsigned long long top = knx_ram_top();
 	unsigned long pfns = (unsigned long)(top >> PAGE_SHIFT) + 1;
 	unsigned long bytes = pfns * sizeof(struct page);
 	struct page *map = (struct page *)knx_malloc((unsigned)bytes);
 	if (!map) {
 		knx_log("lkpi: FATAL mem_map alloc failed\n");
-		return;   /* leaves lkpi_mem_map NULL; first page access will fault loudly */
+		return 0;   /* leaves lkpi_mem_map NULL; caller MUST abort (a page access would fault) */
 	}
 	memset(map, 0, bytes);
 	lkpi_mem_map_pfns = pfns;
 	lkpi_mem_map = map;   /* publish last: any concurrent reader sees a fully-zeroed map */
+	return 1;
 }
 
 void *alloc_pages_exact(size_t size, gfp_t gfp) {
