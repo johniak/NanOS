@@ -245,8 +245,12 @@ static inline void pci_ignore_hotplug(struct pci_dev *dev){ (void)dev; }
 static inline int pci_pcie_type(const struct pci_dev *dev){ (void)dev; return 0; }
 /* resizable-BAR possible-size bitmask: BAR is fixed in the shim, so only the current size is offered. */
 static inline u32 pci_rebar_get_possible_sizes(struct pci_dev *dev, int bar){ (void)dev;(void)bar; return 0; }
-/* MSI enable: interrupts are wired by the kext's minimal LAPIC path (single vector), so report OK. */
-static inline int pci_enable_msi(struct pci_dev *dev){ (void)dev; return 0; }
+/* MSI enable: bind a single-vector MSI (programs the device's MSI capability + a LAPIC vector via
+ * the kernel's MSI router) and store the shim irq number in dev->irq, so a later request_irq(dev->irq)
+ * installs the driver's handler — exactly the classic pci_enable_msi -> request_irq order i915 uses
+ * (i915_driver_hw_probe -> intel_irq_install). Returns 0 on success, <0 if the function has no MSI
+ * cap (caller stays on the legacy line). See kpi_pci.c. */
+int pci_enable_msi(struct pci_dev *dev);
 static inline void pci_disable_msi(struct pci_dev *dev){ (void)dev; }
 /* pcibios_align_resource: identity alignment (return the requested start unchanged). */
 static inline unsigned long pcibios_align_resource(void *data, const struct resource *res, unsigned long size, unsigned long align){ (void)data;(void)res;(void)size;(void)align; return 0; }

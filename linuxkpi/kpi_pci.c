@@ -4,7 +4,22 @@
  */
 #include <linux/pci.h>
 #include <linux/string.h>
+#include <linux/interrupt.h>   /* lkpi_irq_bind_msi */
 #include "lkpi_knx.h"
+
+/* Bind a single-vector MSI for this function and record the shim irq in dev->irq (see the header).
+ * i915 calls this in i915_driver_hw_probe; intel_irq_install then request_irq()s dev->irq. */
+int pci_enable_msi(struct pci_dev *dev) {
+	int irq;
+	if (!dev)
+		return -1;
+	irq = lkpi_irq_bind_msi(dev->nbus, dev->ndev, dev->nfunc);
+	if (irq < 0)
+		return -1;   /* no MSI cap / no free slot — caller keeps the legacy line */
+	dev->irq = (unsigned int)irq;
+	dev->msi_enabled = 1;
+	return 0;
+}
 
 /* Build a pci_dev on demand for the device at (bus, devfn), or NULL if no device is present there.
  * The shim has no PCI device registry; i915 calls this to grab the host bridge (00:00.0) for GMCH /

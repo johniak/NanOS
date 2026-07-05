@@ -281,6 +281,14 @@ int nkext_init(void)
 		i915_log("i915: probe start — narrating via drm_dbg (see log tail)\n");
 		pret = drv->probe(pdev, id);
 		i915_log_val("i915: probe RETURNED ", (long)pret);
+
+		/* Post-probe hardware-state snapshot (captured regardless of how far probe got, so one boot
+		 * yields the interrupt/bus-master truth even on a failure): the bound MSI irq (>=32 means
+		 * pci_enable_msi programmed a vector; 255 = still legacy), and the PCI command register
+		 * (bit1=mem-space, bit2=bus-master, bit10=INTx-disable). */
+		i915_log_val("i915:   post: pdev->irq   ", (long)pdev->irq);
+		i915_log_val("i915:   post: msi_enabled ", (long)pdev->msi_enabled);
+		i915_log_val("i915:   post: PCI cmd reg ", (long)(knx_pci_cfg_read32(bus, dev, func, 0x04) & 0xffff));
 		if (pret == 0)
 			i915_log("i915: DRIVER BOUND — GPU is up (full probe succeeded)\n");
 		else if (pret == -ENODEV && i915_modparams.inject_probe_failure)
