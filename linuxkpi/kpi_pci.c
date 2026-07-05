@@ -77,3 +77,23 @@ void *pci_iomap_range(struct pci_dev *d, int bar, unsigned long offset, unsigned
 void pci_iounmap(struct pci_dev *d, void *addr) {
 	(void)d; (void)addr;   /* knx_map_mmio regions are not unmapped */
 }
+
+/* pci_register_driver: the shim keeps a SINGLE registered driver (the kext runs exactly one
+ * DRM driver). i915's i915_init() (module_init) calls this via i915_pci_register_driver; the
+ * kext entry then retrieves it with lkpi_pci_get_driver() and drives probe() itself against a
+ * hand-built pci_dev — the port equivalent of the PCI bus match/probe in drivers/pci/pci-driver.c. */
+static struct pci_driver *g_pci_drv;
+
+int pci_register_driver(struct pci_driver *drv) {
+	g_pci_drv = drv;
+	return 0;
+}
+
+void pci_unregister_driver(struct pci_driver *drv) {
+	if (g_pci_drv == drv)
+		g_pci_drv = 0;
+}
+
+struct pci_driver *lkpi_pci_get_driver(void) {
+	return g_pci_drv;
+}

@@ -89,6 +89,8 @@ extern "C" {
  * pci_register_driver; the shim keeps the single driver and probes our GPU directly (kpi_pci.c). */
 int  pci_register_driver(struct pci_driver *drv);
 void pci_unregister_driver(struct pci_driver *drv);
+/* kext bootstrap fetches the single registered driver to drive probe() itself (kpi_pci.c). */
+struct pci_driver *lkpi_pci_get_driver(void);
 /* implemented in linuxkpi/kpi_pci.c */
 int   pci_find_capability(struct pci_dev *dev, int cap);
 int   pci_find_next_capability(struct pci_dev *dev, u8 pos, int cap);

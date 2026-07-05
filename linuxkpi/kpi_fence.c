@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/errno.h>
+#include <linux/err.h>
 #include <linux/jiffies.h>
 
 /* The global ww_class every dma_resv shares (declared extern in <linux/ww_mutex.h>). */
@@ -361,6 +362,24 @@ struct dma_buf_attachment *dma_buf_attach(struct dma_buf *b, struct device *dev)
 }
 
 void dma_buf_detach(struct dma_buf *b, struct dma_buf_attachment *a) { (void)b; kfree(a); }
+
+/* dma_buf_map/unmap_attachment: faithful delegation to the exporter's ops (as in
+ * drivers/dma-buf/dma-buf.c). i915 both exports and imports through these; the exporter
+ * (i915_gem_dmabuf.c / another DRM driver) supplies map_dma_buf, so no protocol is stubbed —
+ * we just forward to it, exactly like the upstream helper minus the dev-mapping bookkeeping. */
+struct sg_table *dma_buf_map_attachment(struct dma_buf_attachment *a, enum dma_data_direction dir)
+{
+	if (!a || !a->dmabuf || !a->dmabuf->ops || !a->dmabuf->ops->map_dma_buf)
+		return ERR_PTR(-EINVAL);
+	return a->dmabuf->ops->map_dma_buf(a, dir);
+}
+
+void dma_buf_unmap_attachment(struct dma_buf_attachment *a, struct sg_table *sg,
+			      enum dma_data_direction dir)
+{
+	if (a && a->dmabuf && a->dmabuf->ops && a->dmabuf->ops->unmap_dma_buf)
+		a->dmabuf->ops->unmap_dma_buf(a, sg, dir);
+}
 
 /* ---- dma_fence_chain (timeline syncobj path; not on the scanout hot path) ----------- */
 

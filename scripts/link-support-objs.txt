@@ -6,6 +6,8 @@ drivers/gpu/drm/ttm/ttm_pool.c
 drivers/gpu/drm/ttm/ttm_range_manager.c
 drivers/gpu/drm/ttm/ttm_resource.c
 drivers/gpu/drm/ttm/ttm_tt.c
+drivers/gpu/drm/ttm/ttm_module.c
+drivers/gpu/drm/ttm/ttm_sys_manager.c
 drivers/gpu/drm/display/drm_dp_helper.c
 drivers/gpu/drm/display/drm_dp_mst_topology.c
 drivers/gpu/drm/display/drm_dp_dual_mode_helper.c

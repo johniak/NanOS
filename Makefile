@@ -974,6 +974,9 @@ i915-objs: docker-image
 	$(DOCKER_RUN) make ARCH=x86_64 _i915-objs
 link-support-probe: docker-image
 	$(DOCKER_RUN) make ARCH=x86_64 _link-support-probe
+#   i915-link           — link the full driver to bin/i915.nkext (the Task 5 final milestone)
+i915-link: docker-image
+	$(DOCKER_RUN) make ARCH=x86_64 bin/i915.nkext
 
 # `smoke-x86_64` is the MACHINE-DEPENDENT half host tests can't reach: build the x86_64 disk image
 # and boot it in QEMU headless, asserting the whole MD path came up with zero faults (long-mode,
@@ -2629,6 +2632,31 @@ _link-support-probe:
 	    clean=$$((clean+1)); else echo "FAIL: $$c"; fi; \
 	done; \
 	echo "support clean/total: $$clean/$$tot"
+
+# SUPPORT objects as real link inputs: one $(eval)'d rule per source in the scored list, so the
+# flat bin/i915-link/<path_with_underscores>.o names map back to their slashed source paths (a
+# plain pattern rule can't un-flatten). Same -O2 + DRM_VINC recipe the probe uses — never drifts.
+LINK_SUPPORT_SRCS=$(shell cat scripts/link-support-objs.txt)
+SUPPORT_OBJS=$(foreach s,$(LINK_SUPPORT_SRCS),bin/i915-link/$(subst /,_,$(s:.c=)).o)
+define SUPPORT_OBJ_RULE
+bin/i915-link/$(subst /,_,$(1:.c=)).o: external/linux-6.12/$(1)
+	@mkdir -p bin/i915-link
+	$$(CXX) $$(LINUXKPI_CFLAGS) -O2 $$(DRM_VINC) -c $$< -o $$@
+endef
+$(foreach s,$(LINK_SUPPORT_SRCS),$(eval $(call SUPPORT_OBJ_RULE,$(s))))
+
+# The i915 kext glue (bootstrap + PCI-driver registration + legacy-GMCH stubs + stolen_res).
+# Built with the DRM vendored-include set so <drm/intel/intel-gtt.h> resolves.
+$(BINFOLDER)i915_entry.o: kext/i915/i915_entry.c
+	$(CXX) $(LINUXKPI_CFLAGS) $(DRM_VINC) -MMD -MP -c $< -o $@
+I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o
+
+# The link: kext bootstrap + i915 glue + all 276 i915 objects + the TTM/DRM-display SUPPORT set +
+# the shared DRM core/lib + the LinuxKPI shim runtime. No virtio objects. Produces bin/i915.nkext.
+$(BINFOLDER)i915.nkext: $(KEXT_GLUE) $(I915_GLUE_OBJS) $(I915_OBJS) $(SUPPORT_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(LINUXKPI_OBJS) $(MKNX_TOOL) $(KEXT_LD)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
+	  $(KEXT_GLUE) $(I915_GLUE_OBJS) $(I915_OBJS) $(SUPPORT_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(LINUXKPI_OBJS) -lgcc
+	$(MKNX_TOOL) $(@:.nkext=.elf) $@
 
 KEXTS=kbd mouse e1000 e1000e i219
 # The LinuxKPI virtio_gpu module is x86_64-only (vendored Linux source assumes 64-bit).

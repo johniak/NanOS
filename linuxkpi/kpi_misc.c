@@ -26,7 +26,9 @@
 
 /* ---- global data objects ------------------------------------------------------------ */
 
-struct cpuinfo_x86 boot_cpu_data = { .x86_clflush_size = 64, .x86_cache_alignment = 64 };
+/* .x86 = CPU family. TTM's ttm_prot_from_caching() gates PAT-based WC/UC mapping on
+ * (family > 3); Comet Lake-U (and every 64-bit x86) is family 6. */
+struct cpuinfo_x86 boot_cpu_data = { .x86_clflush_size = 64, .x86_cache_alignment = 64, .x86 = 6 };
 struct resource iomem_resource = { .start = 0, .end = ~(resource_size_t)0, .name = "PCI mem" };
 
 /* system_* workqueues are now defined by kpi_kthread.c (real async queues, Task 3). */
@@ -143,6 +145,7 @@ void fput(struct file *f)
 
 int seq_printf(struct seq_file *m, const char *fmt, ...) { (void)m; (void)fmt; return 0; }
 void seq_puts(struct seq_file *m, const char *s) { (void)m; (void)s; }
+void seq_putc(struct seq_file *m, char c) { (void)m; (void)c; }
 /* No real file read pipeline in the shim: report immediate EOF (0 bytes). */
 long seq_read(struct file *f, char __user *buf, unsigned long size, loff_t *ppos)
 { (void)f; (void)buf; (void)size; (void)ppos; return 0; }
@@ -286,6 +289,28 @@ struct file *anon_inode_getfile(const char *name, const struct file_operations *
 	return f;
 }
 
+/* anon_inode_getfd: install a file over an anonymous inode and return its fd. The shim has no
+ * process fd table at kext scope, so the backing file is created (identical to
+ * anon_inode_getfile) but no descriptor is installed — callers in the DRM prime/syncobj export
+ * path that only need the struct file* use anon_inode_getfile directly; the few that take the
+ * fd get a stub descriptor. Full fd-table integration is part of the DRM render-node lift. */
+int anon_inode_getfd(const char *name, const struct file_operations *ops, void *priv, int flags)
+{
+	struct file *f = anon_inode_getfile(name, ops, priv, flags);
+	if (!f)
+		return -ENOMEM;
+	return -ENOSYS;   /* no kext-scope fd table; see comment above */
+}
+
+/* x86 TSC frequency in kHz. i915's GT PMU / timestamp code reads it; a real per-boot value is
+ * supplied by the kernel via kexports on hardware bring-up. Non-zero default avoids div-by-zero. */
+unsigned int tsc_khz = 1000000;   /* 1 GHz placeholder until knx supplies the calibrated value */
+
+/* task_pid: the shim has no separate struct pid; identity is the task_struct pointer itself.
+ * i915 stores/compares the returned token (get_pid/put_pid are no-ops), so an opaque cast
+ * preserves the only property the driver relies on — pointer identity per task. */
+struct pid *task_pid(struct task_struct *t) { return (struct pid *)t; }
+
 loff_t noop_llseek(struct file *file, loff_t offset, int whence)
 {
 	(void)whence;
@@ -318,13 +343,16 @@ struct dma_buf *virtio_dma_buf_export(struct dma_buf_export_info *info)
 	return dma_buf_export(info);
 }
 
-/* ---- HDMI infoframes (no real HDMI sink on a virtio-gpu guest) ----------------------- */
+/* ---- HDMI infoframes ----------------------------------------------------------------- *
+ * WEAK stubs: the virtio_gpu link has no real HDMI sink and pulls only drm_edid (which calls
+ * hdmi_avi_infoframe_init), so these satisfy it. The i915 link DOES include the real
+ * drivers/video/hdmi.c, whose strong definitions override these — no multiple-definition clash. */
 #include <linux/hdmi.h>
-void hdmi_avi_infoframe_init(struct hdmi_avi_infoframe *frame)
+__attribute__((weak)) void hdmi_avi_infoframe_init(struct hdmi_avi_infoframe *frame)
 {
 	if (frame) { memset(frame, 0, sizeof(*frame)); frame->type = HDMI_INFOFRAME_TYPE_AVI; frame->version = 2; frame->length = 13; }
 }
-int hdmi_vendor_infoframe_init(struct hdmi_vendor_infoframe *frame)
+__attribute__((weak)) int hdmi_vendor_infoframe_init(struct hdmi_vendor_infoframe *frame)
 {
 	if (frame) { memset(frame, 0, sizeof(*frame)); frame->type = HDMI_INFOFRAME_TYPE_VENDOR; frame->version = 1; }
 	return 0;
