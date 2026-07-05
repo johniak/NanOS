@@ -24,6 +24,7 @@
 #include <linux/workqueue.h>
 #include <linux/errno.h>
 #include <linux/string.h>
+#include <linux/delay.h>    /* mdelay — warm/prove the monotonic clock before probe */
 #include <drm/intel/intel-gtt.h>
 #include "i915_params.h"    /* i915_modparams — set enable_guc / inject_probe_failure before probe */
 #include "lkpi_knx.h"
@@ -215,6 +216,17 @@ int nkext_init(void)
 	}
 
 	i915_log("i915: ===== bring-up session armed =====\n");
+
+	/* Warm + prove the free-running monotonic clock. The first read calibrates the TSC via a ~10 ms
+	 * PIT gate; do it here (normal IRQ-on context) so it never lands inside an IRQ-off forcewake/udelay
+	 * busy-poll. Then confirm it actually advances across a short mdelay: with the old tick clock this
+	 * delta was 0 whenever interrupts were off, and every wait_for/udelay in the probe spun forever. */
+	{
+		unsigned long long t0 = knx_uptime_us();
+		mdelay(5);
+		unsigned long long t1 = knx_uptime_us();
+		i915_log_val("i915: monotonic clock delta us over 5ms mdelay (want ~5000):", (long)(t1 - t0));
+	}
 
 	/* Route EVERY subsequent printk (incl. the full drm_dbg trail once __drm_debug is up) into the
 	 * persistent log too, so a probe that scrolls the fbcon or hard-hangs still leaves the complete

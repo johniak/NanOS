@@ -51,4 +51,12 @@ void cpuIdentify(CpuInfo* out);
 // gettimeofday so timestamps are real, not a fabricated fixed epoch. Returns 0 if no RTC.
 unsigned rtcEpoch();
 
+// Free-running monotonic microseconds since boot, read from a counter that advances
+// independently of interrupts (x86: the invariant TSC scaled by the calibrated frequency).
+// Unlike a timer-tick counter, this keeps advancing inside IRQ-disabled / atomic sections —
+// required so busy-poll timeouts (e.g. the i915 forcewake-ack wait_for, which runs with
+// interrupts off) actually expire instead of spinning forever. Returns 0 if the CPU has no
+// usable TSC, so the caller can fall back to the tick clock.
+unsigned long long monotonicUs();
+
 }

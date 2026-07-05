@@ -277,6 +277,19 @@ unsigned tscCalibrateKHz() {
 }
 }
 
+// Free-running monotonic microseconds from the invariant TSC (see arch/cpu.h). Divides the raw
+// count by MHz (kHz/1000) so it can never overflow, and advances with no dependence on the timer
+// interrupt — the whole point, so IRQ-off busy-poll timeouts expire. tscCalibrateKHz caches after
+// the first call; that first call busy-waits ~10 ms on the PIT (also IRQ-independent), so warm it
+// at boot (cpuIdentify already does) to keep it out of a critical path.
+unsigned long long monotonicUs() {
+    unsigned khz = tscCalibrateKHz();
+    if (!khz) return 0;                          // no TSC: caller falls back to the tick clock
+    unsigned mhz = khz / 1000u;
+    if (!mhz) mhz = 1;                           // sub-MHz TSC (impossible on real HW) — avoid /0
+    return rdtsc() / (unsigned long long) mhz;
+}
+
 // ---- CMOS real-time clock (for clock_gettime(CLOCK_REALTIME) / gettimeofday) ----------
 namespace {
 inline unsigned char cmosRead(int reg) {

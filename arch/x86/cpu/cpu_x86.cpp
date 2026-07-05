@@ -185,6 +185,13 @@ unsigned tscCalibrateKHz() {
 }
 }
 
+// Free-running monotonic microseconds (see arch/cpu.h). i386 is not a LinuxKPI/i915 bring-up
+// target and its 32-bit codegen avoids the 64-bit TSC divide (__udivdi3, not linked here), so we
+// report 0 — knx_uptime_us then falls back to the tick clock, exactly the historical i386 behavior.
+unsigned long long monotonicUs() {
+	return 0;
+}
+
 // ---- CMOS real-time clock (for clock_gettime(CLOCK_REALTIME) / gettimeofday) ----------
 namespace {
 inline unsigned char cmosRead(int reg) {

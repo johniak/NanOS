@@ -21,6 +21,7 @@
 #include <arch/irq.h>
 #include <arch/input.h>
 #include <arch/console.h>   // consoleSerialOut
+#include <arch/cpu.h>       // arch::monotonicUs (free-running clock for knx_uptime_us)
 #include <arch/bootinfo.h>  // bootFramebuffer (mirror source for a display kext)
 #include <stdint.h>
 #include <string.h>
@@ -55,7 +56,14 @@ extern "C" {
 void* knx_malloc(unsigned n)              { return malloc(n); }
 void  knx_free(void* p)                   { free(p); }
 void  knx_log(const char* s)              { Console::write(s); }
-unsigned long long knx_uptime_us(void)    { return (unsigned long long) Scheduler::ticks() * 1000ull; }
+unsigned long long knx_uptime_us(void) {
+	// Prefer the free-running TSC clock: it advances inside IRQ-disabled busy-polls (e.g. i915
+	// forcewake-ack wait_for), so their timeouts actually expire. The tick clock (Scheduler::ticks,
+	// bumped by the timer IRQ) freezes there and would spin forever. Fall back to it only if the CPU
+	// reports no TSC.
+	unsigned long long us = arch::monotonicUs();
+	return us ? us : (unsigned long long) Scheduler::ticks() * 1000ull;
+}
 // Top of physical RAM in bytes (highest usable address, holes included). LinuxKPI sizes its mem_map
 // (one struct page per page frame) against this so virt_to_page()/page_to_virt() are O(1) and never
 // miss for any kernel page. Capped at the frame-pool ceiling by bootMemTop(); ~1.5% of RAM like Linux.
