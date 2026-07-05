@@ -66,6 +66,8 @@ void  free_pages_exact(void *virt, size_t size);
 /* alloc_page/__get_free_page return page-aligned memory via the same allocator. */
 static inline struct page *alloc_page(gfp_t gfp) { return (struct page *)alloc_pages_exact(PAGE_SIZE, gfp); }
 static inline struct page *alloc_pages(gfp_t gfp, unsigned int order) { return (struct page *)alloc_pages_exact(PAGE_SIZE << order, gfp); }
+/* NUMA-node-targeted allocation (TTM page pool). Single-node/UMA here, so node is ignored. */
+static inline struct page *alloc_pages_node(int nid, gfp_t gfp, unsigned int order) { (void)nid; return alloc_pages(gfp, order); }
 static inline void __free_page(struct page *p) { free_pages_exact((void *)p, PAGE_SIZE); }
 static inline unsigned long __get_free_page(gfp_t gfp) { return (unsigned long)alloc_pages_exact(PAGE_SIZE, gfp); }
 static inline unsigned long __get_free_pages(gfp_t gfp, unsigned int order) { return (unsigned long)alloc_pages_exact(PAGE_SIZE << order, gfp); }
@@ -211,6 +213,25 @@ static inline struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned lon
 static inline struct vm_area_struct *vma_lookup(struct mm_struct *mm, unsigned long addr){ (void)mm;(void)addr; return 0; }
 /* total RAM in pages: report a fixed large value (i915 sizes caches against it). */
 static inline unsigned long totalram_pages(void){ return 512UL * 1024 * 1024 / PAGE_SIZE; }
+/* struct sysinfo / si_meminfo: memory totals for TTM's page-pool sizing. Fields match Linux
+ * semantics — totalram/freeram are in PAGE-sized `mem_unit`s. We report totalram_pages() and a
+ * conservative ~half free; TTM only uses these to cap its pool, so exact freeram is not critical. */
+struct sysinfo {
+	long uptime; unsigned long loads[3];
+	unsigned long totalram, freeram, sharedram, bufferram;
+	unsigned long totalswap, freeswap;
+	unsigned short procs, pad;
+	unsigned long totalhigh, freehigh;
+	unsigned int mem_unit;
+};
+static inline void si_meminfo(struct sysinfo *si){
+	si->totalram = totalram_pages();
+	si->freeram  = si->totalram / 2;
+	si->sharedram = si->bufferram = 0;
+	si->totalhigh = si->freehigh = 0;
+	si->totalswap = si->freeswap = 0;
+	si->mem_unit = PAGE_SIZE;
+}
 /* the shim never runs in kswapd/reclaim context. */
 static inline int current_is_kswapd(void){ return 0; }
 static inline int page_mapped(struct page *p){ (void)p; return 0; }
@@ -228,8 +249,21 @@ static inline int PageLocked(struct page *p){ (void)p; return 0; }
 static inline void mark_page_accessed(struct page *p){ (void)p; }
 #endif
 #ifndef VM_FAULT_RETRY
-#define VM_FAULT_RETRY  0x000400
-#define VM_FAULT_NOPAGE 0x000100
+#define VM_FAULT_OOM            0x000001
+#define VM_FAULT_SIGBUS         0x000002
+#define VM_FAULT_MAJOR          0x000004
+#define VM_FAULT_HWPOISON       0x000010
+#define VM_FAULT_HWPOISON_LARGE 0x000020
+#define VM_FAULT_SIGSEGV        0x000040
+#define VM_FAULT_NOPAGE         0x000100
+#define VM_FAULT_LOCKED         0x000200
+#define VM_FAULT_RETRY          0x000400
+#define VM_FAULT_FALLBACK       0x000800
+#define VM_FAULT_DONE_COW       0x001000
+#define VM_FAULT_NEEDDSYNC      0x002000
+/* the set of fault results that mean "failed" (TTM's fault handler checks VM_FAULT_ERROR). */
+#define VM_FAULT_ERROR (VM_FAULT_OOM | VM_FAULT_SIGBUS | VM_FAULT_SIGSEGV | \
+			VM_FAULT_HWPOISON | VM_FAULT_HWPOISON_LARGE | VM_FAULT_FALLBACK)
 #endif
 #ifndef PROT_READ
 #define PROT_READ  0x1
@@ -247,4 +281,14 @@ static inline void mark_page_accessed(struct page *p){ (void)p; }
 #define FAULT_FLAG_RETRY_NOWAIT 0x08
 #define FAULT_FLAG_KILLABLE     0x10
 #endif
+/* First attempt of a retryable fault? (ALLOW_RETRY set and TRIED not yet set.) TTM's fault
+ * handler uses it to decide whether it may drop mmap_lock and retry. */
+#ifndef FAULT_FLAG_TRIED
+#define FAULT_FLAG_TRIED        0x20
+#endif
+static inline bool fault_flag_allow_retry_first(unsigned int flags){
+	return (flags & FAULT_FLAG_ALLOW_RETRY) && !(flags & FAULT_FLAG_TRIED);
+}
+/* Should freed pages be poisoned/zeroed? NanOS has no init_on_free hardening, so no. */
+static inline bool want_init_on_free(void){ return false; }
 #endif

@@ -32,6 +32,8 @@ static inline struct rcu_work *to_rcu_work(struct work_struct *w){ return contai
  * up); before that, and under a forced LKPI_WQ_INLINE build, queue_work runs the work inline. */
 bool schedule_work(struct work_struct *w);
 bool queue_work(struct workqueue_struct *q, struct work_struct *w);
+/* NUMA-node-targeted queue (TTM delayed-delete). Single-node here, so node is ignored. */
+static inline bool queue_work_node(int node, struct workqueue_struct *q, struct work_struct *w){ (void)node; return queue_work(q, w); }
 bool schedule_delayed_work(struct delayed_work *w, unsigned long delay);
 bool queue_delayed_work(struct workqueue_struct *q, struct delayed_work *w, unsigned long delay);
 bool mod_delayed_work(struct workqueue_struct *q, struct delayed_work *w, unsigned long delay);

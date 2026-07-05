@@ -50,6 +50,7 @@ FILES=(
   include/linux/hdmi.h
   # --- full DRM lift (link phase): dma-buf core + lib helpers the DRM/virtio path needs ---
   drivers/dma-buf/dma-buf.c
+  drivers/dma-buf/dma-buf-sysfs-stats.h
   drivers/dma-buf/dma-fence.c
   drivers/dma-buf/dma-fence-chain.c
   drivers/dma-buf/dma-fence-array.c
@@ -65,6 +66,15 @@ FILES=(
   # (exactly as upstream kbuild does). It's a 1-line interface decl for the Gen5-only
   # intel_ips.ko coupling — dead on Gen9.5, but the file must compile. Vendored, not shimmed.
   drivers/platform/x86/intel_ips.h
+  # --- i915 LINK phase: vendored non-DRM subsystems the i915 objects call into ---
+  #   video/hdmi.c            : HDMI/DP infoframe pack/unpack (intel_hdmi/intel_dp)
+  #   i2c-algo-bit.c          : bit-banged i2c (i915 gmbus GPIO fallback)
+  #   char/agp/intel-gtt.c    : legacy GMCH GTT (intel_gmch_* — stolen-mem/GTT on the i915 ggtt path)
+  drivers/video/hdmi.c
+  drivers/i2c/algos/i2c-algo-bit.c
+  drivers/char/agp/intel-gtt.c
+  include/uapi/linux/dma-buf.h
+  include/uapi/linux/magic.h
   # COPYING for the GPL boundary record
   COPYING
 )

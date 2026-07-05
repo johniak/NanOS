@@ -66,4 +66,17 @@ struct dev_pm_ops {
 #define pm_ptr(_ptr) (_ptr)
 #define pm_sleep_ptr(_ptr) (_ptr)
 
+/* Generic runtime-PM callbacks a bus can point its dev_pm_ops at when the device has none of its
+ * own. drm_mipi_dsi's default host ops reference them. No runtime-PM engine here → success no-ops. */
+struct device;
+static inline int pm_generic_runtime_suspend(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_runtime_resume(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_runtime_idle(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_suspend(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_resume(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_freeze(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_thaw(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_poweroff(struct device *dev){ (void)dev; return 0; }
+static inline int pm_generic_restore(struct device *dev){ (void)dev; return 0; }
+
 #endif /* _LINUXKPI_LINUX_PM_H */

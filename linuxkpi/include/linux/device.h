@@ -68,7 +68,11 @@ struct device_driver {
 struct bus_type {
 	const char *name;
 	int (*match)(struct device *dev, struct device_driver *drv);
+	int (*uevent)(const struct device *dev, struct kobj_uevent_env *env);
 	int (*probe)(struct device *dev);
+	void (*remove)(struct device *dev);
+	void (*shutdown)(struct device *dev);
+	const struct dev_pm_ops *pm;
 };
 
 static inline const char *dev_name(const struct device *dev) {

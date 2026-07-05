@@ -4,6 +4,8 @@
 static inline void *kmap_atomic(struct page *p){ return page_address(p); }
 static inline void kunmap_atomic(void *a){ (void)a; }
 static inline void *kmap_local_page(struct page *p){ return page_address(p); }
+/* prot variant: the linear map is already cacheable-coherent here, so the pgprot is advisory. */
+static inline void *kmap_local_page_prot(struct page *p, pgprot_t prot){ (void)prot; return page_address(p); }
 #ifndef _LKPI_KMAP_LOCAL_FOLIO
 #define _LKPI_KMAP_LOCAL_FOLIO
 static inline void *kmap_local_folio(struct folio *f, size_t offset){ return (char *)page_address((struct page *)f) + offset; }
@@ -19,4 +21,6 @@ static inline void kunmap(struct page *p){ (void)p; }
 #endif
 static inline void memcpy_to_page(struct page *p, size_t off, const void *s, size_t n){ memcpy((char*)page_address(p)+off,s,n); }
 static inline void memcpy_from_page(void *d, struct page *p, size_t off, size_t n){ memcpy(d,(char*)page_address(p)+off,n); }
+static inline void copy_highpage(struct page *to, struct page *from){ memcpy(page_address(to), page_address(from), PAGE_SIZE); }
+static inline void clear_highpage(struct page *p){ memset(page_address(p), 0, PAGE_SIZE); }
 #endif

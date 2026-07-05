@@ -9,6 +9,7 @@ struct i2c_algo_bit_data {
 	int (*getsda)(void *); int (*getscl)(void *);
 	int (*pre_xfer)(struct i2c_adapter *); void (*post_xfer)(struct i2c_adapter *);
 	int udelay; int timeout;
+	bool can_do_atomic;   /* may the bus be driven from atomic context? */
 };
 static inline int i2c_bit_add_bus(struct i2c_adapter *a){ (void)a; return 0; }
 /* the generic bit-bang algorithm i915_gmbus falls back to; master_xfer/functionality fail (no bus). */

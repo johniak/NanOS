@@ -47,6 +47,12 @@ void knx_rcu_synchronize(void);   /* kexports.def; real grace period (Scheduler:
 #define rcu_assign_pointer(p, v)       smp_store_release(&(p), (v))
 #define RCU_INIT_POINTER(p, v)         do { (p) = (v); } while (0)
 #define rcu_replace_pointer(rp, p, c)  ({ __typeof__(p) __old = (rp); rcu_assign_pointer((rp), (p)); __old; })
+/* unrcu_pointer: strip the __rcu annotation, returning the raw pointer. No sparse/annotation layer
+ * here, so it is the identity read. dma-fence-chain walks its chain with it. */
+#define unrcu_pointer(p)               (p)
+/* RCU_INITIALIZER: wrap a pointer as an __rcu initializer value. No annotation layer here, so it is
+ * the identity — dma-fence-chain uses it to initialize its rcu-protected prev pointer. */
+#define RCU_INITIALIZER(v)             (v)
 
 struct rcu_head { void *next; void (*func)(struct rcu_head *); };
 

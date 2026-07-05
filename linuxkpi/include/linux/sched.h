@@ -55,4 +55,8 @@ static inline long schedule_timeout_interruptible(long t){ (void)t; return 0; }
 /* cond_resched_lock: drop the lock, (would) yield, retake it. The deferred-preemption scheduler never
  * preempts kernel readers, so there is nothing to yield to here — just report "did not resched". */
 #define cond_resched_lock(lock) ({ (void)(lock); 0; })
+/* yield(): give up the CPU to another runnable task. i2c-algo-bit spins on it while waiting for the
+ * bus line to settle. Under deferred preemption a kernel thread yields cooperatively; a pause hint
+ * is the honest minimum (the bus-timing loop also bounds its own retries). */
+static inline void yield(void){ __asm__ __volatile__("pause"); }
 #endif

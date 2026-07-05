@@ -43,4 +43,9 @@ static inline void *i2c_get_adapdata(const struct i2c_adapter *a){ return a->alg
  * DSI-over-i2c panel path (embedded panels only) handles NULL by skipping. */
 static inline struct i2c_adapter *i2c_get_adapter(int nr){ (void)nr; return 0; }
 static inline void i2c_put_adapter(struct i2c_adapter *a){ (void)a; }
+#ifndef I2C_SMBUS_BLOCK_MAX
+#define I2C_SMBUS_BLOCK_MAX 32   /* max bytes in an SMBus block xfer (i2c-algo-bit) */
+#endif
+/* 8-bit address byte (7-bit addr << 1 | R/W) for a message; i2c-algo-bit shifts it onto the wire. */
+static inline u8 i2c_8bit_addr_from_msg(const struct i2c_msg *msg){ return (u8)((msg->addr << 1) | ((msg->flags & I2C_M_RD) ? 1 : 0)); }
 #endif

@@ -61,6 +61,16 @@ static inline u32 ror32(u32 word, unsigned int shift) { return (word >> (shift &
 #endif
 static inline int get_count_order(unsigned int count) { return count <= 1 ? 0 : (int)fls(count - 1); }
 
+/* Constant-expression Hamming weight (population count). __builtin_popcountll of a constant folds,
+ * so these are valid integer constant expressions (drm_dp_tunnel sizes fields with HWEIGHT64). */
+#ifndef HWEIGHT64
+#define HWEIGHT8(w)  ((unsigned)__builtin_popcount((unsigned char)(w)))
+#define HWEIGHT16(w) ((unsigned)__builtin_popcount((unsigned short)(w)))
+#define HWEIGHT32(w) ((unsigned)__builtin_popcount((unsigned)(w)))
+#define HWEIGHT64(w) ((unsigned)__builtin_popcountll((unsigned long long)(w)))
+#define HWEIGHT(w)   HWEIGHT32(w)
+#endif
+
 #endif /* _LINUXKPI_LINUX_BITOPS_H */
 
 #ifndef _LKPI_BITOPS_FOREACH

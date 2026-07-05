@@ -382,3 +382,14 @@ struct dma_fence *dma_fence_chain_walk(struct dma_fence *fence)
 	dma_fence_put(fence);
 	return 0;
 }
+
+/* The ops table identifying a chain fence. i915/drm_syncobj compare fence->ops against this to
+ * tell a chain apart from a leaf fence (dma_fence_is_chain). Timeline chains use 64-bit seqnos.
+ * The chain traversal itself is the minimal shim above (single-fence model), off the scanout path. */
+static const char *dma_fence_chain_get_driver_name(struct dma_fence *f){ (void)f; return "dma_fence_chain"; }
+static const char *dma_fence_chain_get_timeline_name(struct dma_fence *f){ (void)f; return "unbound"; }
+const struct dma_fence_ops dma_fence_chain_ops = {
+	.use_64bit_seqno = true,
+	.get_driver_name = dma_fence_chain_get_driver_name,
+	.get_timeline_name = dma_fence_chain_get_timeline_name,
+};

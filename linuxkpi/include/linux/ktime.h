@@ -13,6 +13,9 @@ typedef s64 ktime_t;
 #define NSEC_PER_MSEC  1000000LL
 #define NSEC_PER_USEC  1000LL
 #define USEC_PER_SEC   1000000LL
+#ifndef USEC_PER_MSEC
+#define USEC_PER_MSEC  1000LL
+#endif
 #define MSEC_PER_SEC   1000LL
 
 extern unsigned long long knx_uptime_us(void);

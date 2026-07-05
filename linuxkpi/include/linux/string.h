@@ -115,4 +115,16 @@ static inline char *strchrnul(const char *s, int c){ while(*s && *s!=(char)c) s+
 #endif
 /* memset_p: fill an array of `n` pointers with value `v` (i915 execlists clears the port array). */
 static inline void memset_p(void **p, void *v, size_t n){ for(size_t i=0;i<n;i++) p[i]=v; }
+/* strlcat: append src to dst, total capped at siz (incl NUL); returns the length it tried to make.
+ * drm_dp_mst/ttm build debug strings with it. */
+#ifndef NANOS_HOST_TEST
+static inline size_t strlcat(char *dst, const char *src, size_t siz){
+	size_t dl = strlen(dst), sl = strlen(src);
+	if (dl >= siz) return siz + sl;
+	size_t room = siz - dl - 1, n = sl < room ? sl : room;
+	for (size_t i = 0; i < n; i++) dst[dl+i] = src[i];
+	dst[dl+n] = 0;
+	return dl + sl;
+}
+#endif
 #endif

@@ -32,6 +32,10 @@
 #define GFP_USER          ((gfp_t)0u)
 #define GFP_DMA           __GFP_DMA
 #define GFP_DMA32         __GFP_DMA32
+/* NUMA node-affinity hints: NanOS is single-node/UMA, so these are no-ops (0). */
+#ifndef __GFP_THISNODE
+#define __GFP_THISNODE    ((gfp_t)0u)
+#endif
 
 #endif /* _LINUXKPI_LINUX_GFP_H */
 #ifndef _LKPI_GFP_HIGHUSER

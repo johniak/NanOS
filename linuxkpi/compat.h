@@ -198,6 +198,8 @@ struct va_format { const char *fmt; va_list *va; };
 #include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/mutex.h>
+#include <linux/rwsem.h>     /* rw_semaphore is a fundamental lock type (like mutex); TTM's pool_shrink_rwsem and several i915 rwsems reach it only transitively */
+#include <linux/highmem.h>   /* copy_highpage/kmap helpers reached transitively by TTM (ttm_tt) and DRM shmem paths */
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/stringify.h>

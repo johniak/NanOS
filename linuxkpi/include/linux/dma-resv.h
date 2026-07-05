@@ -49,6 +49,17 @@ static inline void dma_resv_lock_slow(struct dma_resv *r, struct ww_acquire_ctx 
 static inline int dma_resv_get_singleton(struct dma_resv *r, enum dma_resv_usage u, struct dma_fence **f){ (void)u; *f = (r && r->fences) ? dma_fence_get((struct dma_fence *)r->fences) : 0; return 0; }
 #endif
 
+/* Copy src's fences onto dst. TTM uses it when moving a BO between resources. The shim tracks a
+ * single fence per reservation (see the iterator note below), so this carries that one fence over
+ * via the real dma_resv_add_fence path. */
+#ifndef _LKPI_DMA_RESV_COPY
+#define _LKPI_DMA_RESV_COPY
+static inline int dma_resv_copy_fences(struct dma_resv *dst, struct dma_resv *src){
+	if (src && src->fences) dma_resv_add_fence(dst, (struct dma_fence *)src->fences, DMA_RESV_USAGE_KERNEL);
+	return 0;
+}
+#endif
+
 /* Fence iterator. The shim's dma_resv tracks a SINGLE fence in ->fences (see the singleton note
  * above), so the cursor yields that one fence once — consistent with dma_resv_get_singleton, and
  * enough for i915_deps to add it as a dependency. A true multi-fence reservation is a Phase-B item. */

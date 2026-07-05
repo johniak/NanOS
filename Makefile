@@ -967,6 +967,14 @@ test64: test-image
 i915-probe: docker-image
 	$(DOCKER_RUN) make ARCH=x86_64 _i915_probe
 
+# i915 LINK phase host wrappers (in-container recipes live in the x86_64 section):
+#   i915-objs           — build all 276 i915 .o (scope link symbols)
+#   link-support-probe  — compile-score the TTM/DRM-display/subsystem support objects
+i915-objs: docker-image
+	$(DOCKER_RUN) make ARCH=x86_64 _i915-objs
+link-support-probe: docker-image
+	$(DOCKER_RUN) make ARCH=x86_64 _link-support-probe
+
 # `smoke-x86_64` is the MACHINE-DEPENDENT half host tests can't reach: build the x86_64 disk image
 # and boot it in QEMU headless, asserting the whole MD path came up with zero faults (long-mode,
 # GDT/IDT/paging, ATA+ext4 JBD2 write, e1000/net, scheduler, ring-3 fork/exec). Native QEMU on the
@@ -2599,6 +2607,28 @@ $(BINFOLDER)virtio_gpu.nkext: $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(DRM_DRIVER_OBJS)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(KEXT_LD) -o $(@:.nkext=.elf) \
 	  $(KEXT_GLUE) $(VIRTIO_GPU_OBJS) $(DRM_DRIVER_OBJS) $(DRM_CORE_OBJS) $(DRM_LIB_OBJS) $(VIRTIO_CORE_OBJS) $(LINUXKPI_OBJS) -lgcc
 	$(MKNX_TOOL) $(@:.nkext=.elf) $@
+
+# --- i915 LINK phase (Task 5 final step): the full unmodified 6.12 i915 driver -------------------
+# All 276 objects compile (make i915-probe = 276/276). I915_OBJS is derived from the SAME reproducible
+# list the probe scores (scripts/i915-objs.txt) so the two never drift. Each builds via the
+# $(BINFOLDER)i915/%.o rule (at -O2, DRM_VINC includes).
+I915_OBJS=$(patsubst %,$(BINFOLDER)i915/%.o,$(shell cat scripts/i915-objs.txt))
+# Build-only phony to materialise every i915 .o (in-container half; host wrapper near i915-probe),
+# used to scope the link's unresolved-symbol surface before the kext glue exists.
+_i915-objs: $(I915_OBJS)
+	@echo "i915: built $(words $(I915_OBJS)) objects"
+
+# Link-phase SUPPORT objects: TTM core, DRM display (DP/HDCP/DSC) helpers, drm_buddy/mipi_dsi,
+# dma-buf helpers, and the vendored non-DRM subsystems (hdmi/i2c-bit/intel-gtt) that i915 calls into.
+# Built at -O2 with the DRM vendored-include set (no -DI915, no i915 src dir). Scored like i915-probe.
+_link-support-probe:
+	@mkdir -p bin/i915-link; clean=0; tot=0; \
+	for c in $$(cat scripts/link-support-objs.txt); do \
+	  tot=$$((tot+1)); flat=$$(echo $$c | sed 's|external/linux-6.12/||; s|/|_|g; s|\.c$$||'); \
+	  if $(CXX) $(LINUXKPI_CFLAGS) -O2 $(DRM_VINC) -c external/linux-6.12/$$c -o bin/i915-link/$$flat.o 2> bin/i915-link/$$flat.err; then \
+	    clean=$$((clean+1)); else echo "FAIL: $$c"; fi; \
+	done; \
+	echo "support clean/total: $$clean/$$tot"
 
 KEXTS=kbd mouse e1000 e1000e i219
 # The LinuxKPI virtio_gpu module is x86_64-only (vendored Linux source assumes 64-bit).

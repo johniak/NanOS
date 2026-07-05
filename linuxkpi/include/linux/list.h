@@ -87,6 +87,14 @@ static inline void list_splice_tail(struct list_head *list, struct list_head *he
   if(!list_empty(list)){ struct list_head *f=list->next,*l=list->prev,*p=head->prev;
     p->next=f; f->prev=p; l->next=head; head->prev=l; } }
 static inline void list_splice_tail_init(struct list_head *list, struct list_head *head){ list_splice_tail(list,head); INIT_LIST_HEAD(list); }
+static inline int list_is_singular(const struct list_head *head){ return !list_empty(head) && head->next == head->prev; }
+/* Move the sublist [first..last] (already a contiguous run inside its list) to head's tail.
+ * ttm_resource uses it to bulk-requeue LRU entries. */
+static inline void list_bulk_move_tail(struct list_head *head, struct list_head *first, struct list_head *last){
+  first->prev->next = last->next; last->next->prev = first->prev;
+  last->next = head; first->prev = head->prev;
+  head->prev->next = first; head->prev = last;
+}
 #endif
 
 #ifndef _LKPI_LIST_SORT

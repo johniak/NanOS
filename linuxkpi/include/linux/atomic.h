@@ -87,6 +87,10 @@ static inline long atomic_long_read(const atomic_long_t *v){ return atomic64_rea
 static inline void atomic_long_set(atomic_long_t *v, long i){ atomic64_set(v, i); }
 static inline void atomic_long_inc(atomic_long_t *v){ atomic64_inc(v); }
 static inline void atomic_long_add(long i, atomic_long_t *v){ (void)atomic64_add_return(i, v); }
+static inline void atomic_long_sub(long i, atomic_long_t *v){ (void)atomic64_add_return(-i, v); }
+static inline long atomic_long_add_return(long i, atomic_long_t *v){ return atomic64_add_return(i, v); }
+static inline long atomic_long_sub_return(long i, atomic_long_t *v){ return atomic64_add_return(-i, v); }
+static inline void atomic_long_dec(atomic_long_t *v){ (void)atomic64_add_return(-1, v); }
 #endif
 
 #ifndef _LKPI_ATOMIC_CMPXCHG64
