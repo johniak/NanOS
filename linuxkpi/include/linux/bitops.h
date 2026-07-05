@@ -41,6 +41,8 @@ static inline int __test_and_clear_bit(long nr, volatile unsigned long *addr) { 
 static inline int fls(unsigned int x) { return x ? (32 - __builtin_clz(x)) : 0; }
 static inline int ffs(int x) { return __builtin_ffs(x); }
 static inline unsigned long __ffs(unsigned long x) { return __builtin_ctzl(x); }
+/* ffz: index of the first zero bit = first set bit of the complement (drm_dp_mst allocates VCPI). */
+static inline unsigned long ffz(unsigned long x) { return __builtin_ctzl(~x); }
 static inline unsigned long __fls(unsigned long x) { return x ? (BITS_PER_LONG - 1 - __builtin_clzl(x)) : 0; }
 static inline int fls64(u64 x) { return x ? (64 - __builtin_clzll(x)) : 0; }
 static inline unsigned int hweight8(u8 w)   { return __builtin_popcount(w); }

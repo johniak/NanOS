@@ -28,6 +28,9 @@ extern "C" {
 
 void *dma_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle, gfp_t gfp);
 void  dma_free_coherent(struct device *dev, size_t size, void *vaddr, dma_addr_t dma_handle);
+/* attrs variants: the shim ignores DMA_ATTR_* (coherent identity map), so route to coherent. */
+static inline void *dma_alloc_attrs(struct device *dev, size_t size, dma_addr_t *dma, gfp_t gfp, unsigned long attrs){ (void)attrs; return dma_alloc_coherent(dev, size, dma, gfp); }
+static inline void dma_free_attrs(struct device *dev, size_t size, void *v, dma_addr_t dma, unsigned long attrs){ (void)attrs; dma_free_coherent(dev, size, v, dma); }
 dma_addr_t dma_map_single_attrs(struct device *dev, void *ptr, size_t size,
                                 enum dma_data_direction dir, unsigned long attrs);
 void dma_unmap_single_attrs(struct device *dev, dma_addr_t addr, size_t size,

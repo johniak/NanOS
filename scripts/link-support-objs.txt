@@ -15,6 +15,5 @@ drivers/gpu/drm/display/drm_hdmi_helper.c
 drivers/gpu/drm/display/drm_scdc_helper.c
 drivers/gpu/drm/drm_buddy.c
 drivers/gpu/drm/drm_mipi_dsi.c
-drivers/dma-buf/dma-buf.c
 drivers/video/hdmi.c
 drivers/i2c/algos/i2c-algo-bit.c

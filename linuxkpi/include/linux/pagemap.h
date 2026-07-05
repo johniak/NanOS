@@ -47,9 +47,14 @@ static inline int clear_page_dirty_for_io(struct page *p){ (void)p; return 0; }
 #ifndef _LKPI_KMAP_LOCAL_FOLIO
 #define _LKPI_KMAP_LOCAL_FOLIO
 static inline void *kmap_local_folio(struct folio *f, size_t offset){ return (char *)page_address((struct page *)f) + offset; }
+/* offset_in_folio / memcpy_to_folio / memcpy_from_folio live in highmem.h (force-included) under the
+ * shared _LKPI_FOLIO_XFER sentinel; that copy wins whether or not <linux/pagemap.h> is included. */
+#ifndef _LKPI_FOLIO_XFER
+#define _LKPI_FOLIO_XFER
 static inline size_t offset_in_folio(struct folio *f, unsigned long pos){ (void)f; return pos & (PAGE_SIZE - 1); }
 static inline void memcpy_to_folio(struct folio *f, size_t off, const void *src, size_t n){ memcpy((char *)page_address((struct page *)f)+off, src, n); }
 static inline void memcpy_from_folio(void *dst, struct folio *f, size_t off, size_t n){ memcpy(dst, (char *)page_address((struct page *)f)+off, n); }
+#endif
 static inline void *kmap_local_folio_offset(struct folio *f, size_t off){ return (char *)page_address((struct page *)f)+off; }
 #ifndef _LKPI_KUNMAP_LOCAL
 #define _LKPI_KUNMAP_LOCAL

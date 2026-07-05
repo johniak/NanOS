@@ -3,6 +3,7 @@
 #ifndef _LINUXKPI_LINUX_SCHED_MM_H
 #define _LINUXKPI_LINUX_SCHED_MM_H
 #include <linux/types.h>
+#include <linux/shrinker.h>   /* ttm_pool reaches struct shrinker + shrinker_alloc + SHRINK_EMPTY via <linux/sched/mm.h> transitively, as in mainline */
 static inline unsigned int memalloc_noreclaim_save(void) { return 0; }
 static inline void memalloc_noreclaim_restore(unsigned int f) { (void)f; }
 static inline unsigned int memalloc_nofs_save(void) { return 0; }

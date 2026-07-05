@@ -2,6 +2,7 @@
 #define _LKPI_SHMEM_FS_H
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/pagemap.h>   /* i915_gem_shmem reaches offset_in_folio/memcpy_to_folio via shmem_fs.h, as in mainline */
 #define VM_NORESERVE 0x00200000
 struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags);
 static inline struct file *shmem_file_setup_with_mnt(struct vfsmount *mnt, const char *name, loff_t size, unsigned long flags){ (void)mnt; return shmem_file_setup(name, size, flags); }

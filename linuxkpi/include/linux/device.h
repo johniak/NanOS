@@ -59,8 +59,10 @@ struct dev_pm_ops;
 struct device_driver {
 	const char *name;
 	struct bus_type *bus;
+	struct module *owner;
 	int (*probe)(struct device *dev);
 	void (*remove)(struct device *dev);
+	void (*shutdown)(struct device *dev);
 	const struct dev_pm_ops *pm;
 	const struct attribute_group **dev_groups;
 };
@@ -74,6 +76,19 @@ struct bus_type {
 	void (*shutdown)(struct device *dev);
 	const struct dev_pm_ops *pm;
 };
+
+/* driver-model driver registration (no global registry — the kext bootstrap launches drivers
+ * directly, so this is a no-op). bus_register/bus_unregister live in <linux/device/bus.h>. */
+static inline int  driver_register(struct device_driver *drv){ (void)drv; return 0; }
+static inline void driver_unregister(struct device_driver *drv){ (void)drv; }
+
+/* device-tree device lookup: no DT on x86/NanOS, so nothing matches (drm_mipi_dsi host binding). */
+struct device_node;
+static inline struct device *bus_find_device_by_of_node(const struct bus_type *bus, const struct device_node *np){ (void)bus; (void)np; return 0; }
+struct fwnode_handle;
+static inline void device_set_node(struct device *dev, struct fwnode_handle *fwnode){ (void)dev; (void)fwnode; }
+/* iterate a device's children: the shim tracks no device hierarchy, so visit none. */
+static inline int device_for_each_child(struct device *dev, void *data, int (*fn)(struct device *, void *)){ (void)dev; (void)data; (void)fn; return 0; }
 
 static inline const char *dev_name(const struct device *dev) {
 	return (dev && dev->init_name) ? dev->init_name : dev->name;
@@ -189,4 +204,7 @@ struct class_attribute_string { struct class_attribute attr; char *str; };
 long show_class_attr_string(const struct class*, const struct class_attribute*, char*);
 #define CLASS_ATTR_STRING(_name,_mode,_str) struct class_attribute_string class_attr_##_name = { __ATTR(_name,_mode,(void*)show_class_attr_string,0), (char*)_str }
 static inline struct fwnode_handle *dev_fwnode(const struct device *d){ (void)d; return 0; }
+/* bus_register/bus_unregister + notifier surface (mirrors mainline's <linux/device.h> pulling in
+ * <linux/device/bus.h>). Included last, after struct bus_type is complete. */
+#include <linux/device/bus.h>
 #endif

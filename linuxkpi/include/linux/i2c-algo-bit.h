@@ -11,7 +11,9 @@ struct i2c_algo_bit_data {
 	int udelay; int timeout;
 	bool can_do_atomic;   /* may the bus be driven from atomic context? */
 };
-static inline int i2c_bit_add_bus(struct i2c_adapter *a){ (void)a; return 0; }
+/* real functions from the vendored drivers/i2c/algos/i2c-algo-bit.c (compiled into the kext). */
+int i2c_bit_add_bus(struct i2c_adapter *a);
+int i2c_bit_add_numbered_bus(struct i2c_adapter *a);
 /* the generic bit-bang algorithm i915_gmbus falls back to; master_xfer/functionality fail (no bus). */
 struct i2c_algorithm;
 extern const struct i2c_algorithm i2c_bit_algo;

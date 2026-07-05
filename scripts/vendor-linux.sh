@@ -75,6 +75,7 @@ FILES=(
   drivers/char/agp/intel-gtt.c
   include/uapi/linux/dma-buf.h
   include/uapi/linux/magic.h
+  include/video/mipi_display.h
   # COPYING for the GPL boundary record
   COPYING
 )

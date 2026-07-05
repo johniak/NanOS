@@ -121,6 +121,8 @@ static inline struct page *alloc_pages(gfp_t gfp, unsigned int order) {
 static inline struct page *alloc_page(gfp_t gfp) { return alloc_pages(gfp, 0); }
 /* NUMA-node-targeted allocation (TTM page pool). Single-node/UMA here, so node is ignored. */
 static inline struct page *alloc_pages_node(int nid, gfp_t gfp, unsigned int order) { (void)nid; return alloc_pages(gfp, order); }
+/* clear_page: zero a page given its DATA address (not a page*); TTM pool clears freshly-alloc'd pages. */
+static inline void clear_page(void *addr) { __builtin_memset(addr, 0, PAGE_SIZE); }
 static inline void __free_page(struct page *p) { free_pages_exact(page_to_virt(p), PAGE_SIZE); }
 /* __get_free_page(s) return the DATA ADDRESS (not a page*), so they bypass mem_map entirely. */
 static inline unsigned long __get_free_page(gfp_t gfp) { return (unsigned long)alloc_pages_exact(PAGE_SIZE, gfp); }
