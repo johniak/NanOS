@@ -93,6 +93,35 @@ void lkpi_spin_probe(void *ra) {
 	}
 }
 
+/* Raw-busy-loop watchdog — separate state from lkpi_spin_probe. lkpi_spin_probe covers the PUMPED
+ * waits (wait_event / dma_fence_wait / wait_for_completion); this one is called from cpu_relax() and
+ * udelay(), the primitives a RAW i915 poll uses (`while (!(readl(reg) & BIT)) cpu_relax();` or a
+ * timeout-less udelay poll). Such a loop never enters the pump, so lkpi_spin_probe never sees it and
+ * no SPIN>2s fires — exactly the signature of the Dell freeze after "FIRST fence signal" (a bare GPU
+ * register/HWSP poll that never completes because the GPU isn't advancing as i915 expects). Its own
+ * g_cr_* state avoids thrashing g_spin_ra (cpu_relax alternating RAs with a pumped macro would reset
+ * that deadline every iteration and silence the pumped watchdog). Logs the spinning site + RFLAGS.IF
+ * once after 3s. */
+static void *g_cr_ra;
+static unsigned long long g_cr_since_us;
+static int g_cr_reported;
+void lkpi_cpu_relax_probe(void *ra) {
+	unsigned long long now = knx_uptime_us();
+	if (ra != g_cr_ra) {
+		g_cr_ra = ra;
+		g_cr_since_us = now;
+		g_cr_reported = 0;
+		return;
+	}
+	if (!g_cr_reported && (now - g_cr_since_us) > 3000000ull) {
+		unsigned long fl;
+		g_cr_reported = 1;
+		__asm__ __volatile__("pushfq; popq %0" : "=r"(fl));
+		printk("lkpi: RAW-SPIN>3s ra=%p IF=%d — timeout-less busy poll (cpu_relax/udelay); GPU register/HWSP never advanced\n",
+		       ra, (int)((fl >> 9) & 1));
+	}
+}
+
 static struct task_struct lkpi_current_task = { .pid = 1, .comm = "virtio_gpu", .mm = 0 };
 struct task_struct *lkpi_current = &lkpi_current_task;
 

@@ -25,8 +25,12 @@ unsigned long lkpi_jiffies(void) {
 	return (unsigned long)(knx_uptime_us() / 1000ull);
 }
 
+void lkpi_cpu_relax_probe(void *ra);
 void udelay(unsigned long usecs) {
 	unsigned long long start = knx_uptime_us();
+	/* Diagnostic: a timeout-less i915 poll that busy-waits with udelay (rather than cpu_relax) is
+	 * localized here too — the raw-loop watchdog only fires when the SAME caller spins > 3s. */
+	lkpi_cpu_relax_probe(__builtin_return_address(0));
 	while (knx_uptime_us() - start < (unsigned long long)usecs)
 		;
 }

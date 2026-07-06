@@ -239,7 +239,19 @@ static inline int seq_write(struct seq_file *m, const void *data, unsigned long 
 
 #ifndef _LKPI_CPU_RELAX
 #define _LKPI_CPU_RELAX
+#ifdef NANOS_HOST_TEST
 static inline void cpu_relax(void) { __asm__ __volatile__("pause" ::: "memory"); }
+#else
+/* Diagnostic (kext): route every cpu_relax through the raw-busy-loop watchdog so a timeout-less i915
+ * register poll (`while (!(readl(reg) & BIT)) cpu_relax();`) that hangs the GPU bring-up is localized
+ * by its return address instead of freezing silently. noinline so __builtin_return_address(0) is the
+ * immediate i915 caller (the spinning function), not an inlined-away frame. */
+void lkpi_cpu_relax_probe(void *ra);
+static __attribute__((__noinline__)) void cpu_relax(void) {
+	lkpi_cpu_relax_probe(__builtin_return_address(0));
+	__asm__ __volatile__("pause" ::: "memory");
+}
+#endif
 #endif
 
 /* wait_bit.h AFTER cpu_relax: its wait_on_bit spins with cpu_relax(), so it must be pulled once that
