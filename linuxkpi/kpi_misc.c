@@ -155,22 +155,48 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 	return f;
 }
 
-/* Pages are pre-populated (one contiguous block, see shmem_file_setup); just hand back `index`. */
+/* Fetch pages[index] with validation. Real Linux shmem_read_mapping_page never returns NULL — always
+ * a valid page or an ERR_PTR — and its callers (i915 gt/shmem_utils.c __shmem_rw) only guard with
+ * IS_ERR(), which rejects [-4095,-1] but NOT NULL and NOT a corrupt pointer. So a NULL (index past the
+ * eagerly-populated backing) or a garbage entry would sail through into kmap()/page_to_virt() and #PF
+ * on the copy. Seen on the Dell: lrc_alloc reading ce->default_state (intel_lrc.c:1021) with a length
+ * past the file → page_to_virt(bad) → cr2 in the 0xffffff.. range. Validate index-in-range AND that
+ * the entry is a real mem_map page; on failure log-once (which case + caller return address) and hand
+ * back ERR_PTR(-EFAULT) so the driver's error path unwinds cleanly instead of faulting. The log names
+ * the root cause on the next boot: OUT-OF-RANGE = a size mismatch (backing smaller than the read);
+ * BAD page = an entry never set to a virt_to_page() mem_map index. */
+static struct page *lkpi_shmem_page_at(struct address_space *mapping, unsigned long index, void *ra)
+{
+	struct page *p;
+	if (!mapping || !mapping->pages || index >= mapping->nrpages) {
+		static int once;
+		if (!once) { once = 1; printk("lkpi shmem: read OUT-OF-RANGE index=%lu nrpages=%lu map=%p ra=%p\n",
+			index, mapping ? mapping->nrpages : 0UL, (void *)mapping, ra); }
+		return (struct page *)(long)-EFAULT;
+	}
+	p = mapping->pages[index];
+	if (!p || (unsigned long)p < (unsigned long)lkpi_mem_map ||
+	    page_to_pfn(p) >= lkpi_mem_map_pfns) {
+		static int once;
+		if (!once) { once = 1; printk("lkpi shmem: read BAD page[%lu]=%p nrpages=%lu ra=%p\n",
+			index, (void *)p, mapping->nrpages, ra); }
+		return (struct page *)(long)-EFAULT;
+	}
+	return p;
+}
+
+/* Pages are pre-populated (one contiguous block, see shmem_file_setup); hand back a validated `index`. */
 struct folio *shmem_read_folio_gfp(struct address_space *mapping, unsigned long index, unsigned gfp)
 {
 	(void)gfp;
-	if (!mapping || !mapping->pages || index >= mapping->nrpages)
-		return 0;
-	return (struct folio *)mapping->pages[index];
+	return (struct folio *)lkpi_shmem_page_at(mapping, index, __builtin_return_address(0));
 }
 
 /* Same backing as shmem_read_folio_gfp, but returns the page (i915 gt/shmem_utils path). */
 struct page *shmem_read_mapping_page_gfp(struct address_space *mapping, unsigned long index, unsigned gfp)
 {
 	(void)gfp;
-	if (!mapping || !mapping->pages || index >= mapping->nrpages)
-		return 0;
-	return mapping->pages[index];
+	return lkpi_shmem_page_at(mapping, index, __builtin_return_address(0));
 }
 
 /* drm_gem unwind / shmem teardown: free the single contiguous backing block (= pages[0]). */
