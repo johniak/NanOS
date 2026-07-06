@@ -135,9 +135,21 @@ static void lkpi_msi_trampoline(void *ctx) {
  * counters — this is a poll, not a delivered interrupt. */
 static volatile int g_irq_polling;
 void lkpi_irq_poll(void) {
+	unsigned long fl = 0;
 	if (g_irq_polling)
 		return;
 	g_irq_polling = 1;
+	/* Run the harvest with interrupts DISABLED — a real device MSI must not be delivered in the
+	 * MIDDLE of a poll-driven handler run. If it were, the driver's hard handler (and the execlists
+	 * submission tasklet it kicks) would re-enter on top of the poll's copy: the tasklet RUN/SCHED
+	 * bits are a non-atomic read-modify-write, so a nested interrupt landing mid-update loses a bit
+	 * and lets the tasklet run twice — double-completing a request and freeing its i915_sw_fence
+	 * under the first completion, so the second call jumps through a freed fence->fn (observed on the
+	 * Dell as a #GP at __i915_sw_fence_complete). Masking makes the poll atomic w.r.t. real delivery,
+	 * exactly the context a real hard IRQ handler already runs in (IF=0). */
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("pushfq; popq %0; cli" : "=r"(fl) : : "memory");
+#endif
 	for (int i = 0; i < LKPI_IRQ_MAX; i++) {
 		struct lkpi_irq_desc *d = &g_irq[i];
 		irqreturn_t r;
@@ -149,6 +161,9 @@ void lkpi_irq_poll(void) {
 		if (r == IRQ_WAKE_THREAD && d->thread_fn)
 			d->thread_fn(LKPI_IRQ_BASE + i, d->dev);
 	}
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("pushq %0; popfq" : : "r"(fl) : "memory", "cc");
+#endif
 	g_irq_polling = 0;
 }
 
