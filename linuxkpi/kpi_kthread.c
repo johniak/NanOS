@@ -106,7 +106,14 @@ static void wq_enqueue(struct workqueue_struct *q, struct work_struct *w) {
 bool queue_work(struct workqueue_struct *q, struct work_struct *w) {
 	if (!q) q = system_wq;
 	if (!q) { if (w->func) w->func(w); return true; }   /* before lkpi_wq_init: inline */
-	if (!g_wq_async) { if (w->func) w->func(w); return true; }
+	if (!g_wq_async) {
+		/* Inline pre-scheduler, but a self-re-queuing work (this path has no re-entrancy guard, unlike
+		 * queue_delayed_work) would recurse to a stack overflow. If we are already deep, log the culprit
+		 * and ENQUEUE so the pump runs it flat instead of on a deeper frame. */
+		if (lkpi_stack_deep()) { lkpi_deep_report("queue_work", __builtin_return_address(0)); wq_enqueue(q, w); return true; }
+		if (w->func) w->func(w);
+		return true;
+	}
 	wq_enqueue(q, w);
 	return true;
 }

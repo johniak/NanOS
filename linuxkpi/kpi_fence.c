@@ -25,6 +25,7 @@
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/jiffies.h>
+#include "lkpi_knx.h"    /* lkpi_stack_deep/lkpi_deep_report — signal-callback recursion tripwire */
 
 /* The global ww_class every dma_resv shares (declared extern in <linux/ww_mutex.h>). */
 struct ww_class reservation_ww_class = { 0 };
@@ -105,6 +106,10 @@ int dma_fence_signal_locked(struct dma_fence *f)
 	if (test_and_set_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &f->flags))
 		return -EINVAL;	/* already signaled */
 	{ static int once; if (!once) { once = 1; printk("lkpi: FIRST fence signal — a GPU request completed\n"); } }
+	/* A fence callback can submit dependent requests that signal MORE fences — an unbounded inline chain
+	 * on our synchronous model. If we are already deep, name the site (the callbacks still run: a fence
+	 * signal cannot be deferred without wedging waiters — but the rip pins the recursion for a real fix). */
+	if (lkpi_stack_deep()) lkpi_deep_report("dma_fence_signal", __builtin_return_address(0));
 	list_for_each_entry_safe(cb, tmp, &f->cb_list, node) {
 		list_del_init(&cb->node);
 		cb->func(f, cb);

@@ -266,6 +266,9 @@ int nkext_init(void)
 #define LKPI_GIT_REV "unknown"
 #endif
 	i915_log("i915: shim build " __DATE__ " " __TIME__ " rev " LKPI_GIT_REV "\n");
+	/* Record the kernel stack top NOW (the probe runs synchronously on this 1 MiB loader stack) so the
+	 * stack-overflow tripwire in the hot inline primitives can name a runaway recursion in the log. */
+	lkpi_stack_baseline();
 
 	/* Warm + prove the free-running monotonic clock. The first read calibrates the TSC via a ~10 ms
 	 * PIT gate; do it here (normal IRQ-on context) so it never lands inside an IRQ-off forcewake/udelay

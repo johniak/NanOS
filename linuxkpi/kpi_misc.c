@@ -33,6 +33,30 @@ struct resource iomem_resource = { .start = 0, .end = ~(resource_size_t)0, .name
 
 /* system_* workqueues are now defined by kpi_kthread.c (real async queues, Task 3). */
 
+/* ---- stack-overflow tripwire (bring-up diagnostics) --------------------------------- *
+ * The i915 probe runs synchronously on the loader's 1 MiB kernel stack (pre-scheduler). A runaway
+ * recursion through an inline-run deferred primitive (unguarded queue_work, a dma_fence_signal
+ * callback chain, an IRQ that re-enters submission) blows the stack and TRIPLE-FAULTS with no trace —
+ * the CPU exception handler can itself fault from exception context (heavy console/FS path), so the
+ * boot log ends mid-sentence with no rip. Capture the stack top once at probe entry; lkpi_stack_deep()
+ * reports when we have descended past a redline, so a hot primitive can name the culprit's return
+ * address via the RELIABLE FS-teed log — from NORMAL context, before the fault — and defer/return. */
+static unsigned long g_lkpi_stack_top;
+void lkpi_stack_baseline(void) { unsigned long sp; __asm__ __volatile__("mov %%rsp,%0" : "=r"(sp)); g_lkpi_stack_top = sp; }
+int lkpi_stack_deep(void) {
+	unsigned long sp;
+	if (!g_lkpi_stack_top) return 0;
+	__asm__ __volatile__("mov %%rsp,%0" : "=r"(sp));
+	return (long)(g_lkpi_stack_top - sp) > (long)(640 * 1024);   /* 640 KiB of the 1 MiB stack consumed */
+}
+/* One global report (rip = the recursing call site), so a runaway loop leaves exactly one log line. */
+void lkpi_deep_report(const char *where, void *ra) {
+	static int once;
+	if (once) return;
+	once = 1;
+	printk("lkpi: DEEP-STACK in %s ra=%p — deferring to break a runaway recursion\n", where, ra);
+}
+
 static struct task_struct lkpi_current_task = { .pid = 1, .comm = "virtio_gpu", .mm = 0 };
 struct task_struct *lkpi_current = &lkpi_current_task;
 

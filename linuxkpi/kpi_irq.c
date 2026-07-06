@@ -101,6 +101,9 @@ void lkpi_irq_dispatch(int irq) {
 		knx_log("lkpi: irq fired>0\n");   /* smoke assertion: an MSI reached a request_irq handler */
 		printk("lkpi: FIRST irq dispatch (irq %d) — a GT/display MSI was delivered\n", irq);
 	}
+	/* An MSI delivered ON TOP of an already-deep i915 call chain runs the handler (and any inline
+	 * tasklet it schedules) on the same stack — a candidate for the overflow. Name it before it dies. */
+	if (lkpi_stack_deep()) lkpi_deep_report("lkpi_irq_dispatch", __builtin_return_address(0));
 
 	irqreturn_t r = IRQ_WAKE_THREAD;      /* h==NULL means "always wake the thread" (Linux default) */
 	if (d->handler)

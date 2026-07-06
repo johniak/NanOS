@@ -60,6 +60,13 @@ void           lkpi_set_log_tee(const char *path);
  * triple-fault-class panic (e.g. a stack overflow during GT resume) survives a power-cycle even
  * when i915 owns the panel and fbcon is no longer scanned out. Pass 0 to detach. */
 void           knx_set_panic_sink(void (*fn)(const char *line));
+/* Stack-overflow tripwire (kpi_misc.c). Call lkpi_stack_baseline() once at probe entry to record the
+ * kernel stack top; lkpi_stack_deep() returns nonzero once the stack has descended past the redline;
+ * lkpi_deep_report() prints the culprit's return address ONCE to the (FS-teed) log. A hot inline
+ * primitive uses these to log + defer a runaway recursion before it triple-faults invisibly. */
+void           lkpi_stack_baseline(void);
+int            lkpi_stack_deep(void);
+void           lkpi_deep_report(const char *where, void *ra);
 /* Real RCU grace period: block until every other online CPU has passed a quiescent state
  * (LinuxKPI synchronize_rcu). On UP this is a barrier. See Scheduler::rcuSynchronize. */
 void           knx_rcu_synchronize(void);
