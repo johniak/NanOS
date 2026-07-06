@@ -106,7 +106,11 @@ static inline unsigned long rounddown_pow_of_two(unsigned long n) {
 
 #define might_sleep()      do {} while (0)
 #define might_sleep_if(c)  do {} while (0)
+/* cond_resched() lives in <linux/sched.h> — it routes through the raw-busy-loop watchdog there.
+ * Only provide the bare fallback if a TU pulled kernel.h without sched.h (keeps include order safe). */
+#ifndef cond_resched
 #define cond_resched()     0
+#endif
 #define cant_sleep()       do {} while (0)
 
 void panic(const char *fmt, ...) __attribute__((noreturn, __format__(__printf__, 1, 2)));

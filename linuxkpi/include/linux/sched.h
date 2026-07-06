@@ -9,7 +9,20 @@
 struct task_struct { int pid; const char *comm; void *mm; void *knx; };
 extern struct task_struct *lkpi_current;
 #define current (lkpi_current)
+/* Diagnostic: schedule()/yield()/cond_resched() are cooperative no-ops (pause / 0) here, so an i915
+ * loop that spins on one of them — `while (!done) cond_resched();` — hangs just as silently as a
+ * cpu_relax poll and the pumped-wait watchdog never sees it. Route them through the raw-busy-loop
+ * watchdog too so ANY spin class (cpu_relax, udelay, schedule, yield, cond_resched) is localized by
+ * caller RA in one boot. Host build keeps the bare no-ops. */
+#undef cond_resched   /* sched.h owns cond_resched; drop any earlier fallback (kernel.h) so ours wins cleanly */
+#ifdef NANOS_HOST_TEST
 static inline void schedule(void){ __asm__ __volatile__("pause"); }
+#define cond_resched() 0
+#else
+void lkpi_cpu_relax_probe(void *ra);
+static __attribute__((__noinline__)) void schedule(void){ lkpi_cpu_relax_probe(__builtin_return_address(0)); __asm__ __volatile__("pause"); }
+#define cond_resched() ({ lkpi_cpu_relax_probe(__builtin_return_address(0)); 0; })
+#endif
 static inline int signal_pending(struct task_struct *t){ (void)t; return 0; }
 static inline int signal_pending_state(unsigned int state, struct task_struct *t){ (void)state;(void)t; return 0; }
 static inline int fatal_signal_pending(struct task_struct *t){ (void)t; return 0; }
@@ -17,7 +30,6 @@ static inline int fatal_signal_pending(struct task_struct *t){ (void)t; return 0
 static inline int need_resched(void){ return 0; }
 static inline void set_current_state(int s){ (void)s; }
 static inline void __set_current_state(int s){ (void)s; }
-#define cond_resched() 0
 /* LONG_MAX. Must shift the UNSIGNED all-ones then cast: `~0L>>1` is an ARITHMETIC shift of the
  * signed -1L and stays -1, which i915's wait_moving_fence returns verbatim as a bogus errno
  * (the Dell GGTT-scratch -EPERM). Every infinite wait (dma_fence_wait / dma_resv_wait_timeout with
