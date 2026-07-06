@@ -1,6 +1,7 @@
 #ifndef _LKPI_I2C_H
 #define _LKPI_I2C_H
 #include <linux/device.h>
+#include <linux/errno.h>       /* EAGAIN for the i2c_transfer retry loop */
 #include <linux/workqueue.h>   /* drm_dp_helper.h embeds work_struct/delayed_work and reaches the
                                 * full definitions only through <linux/i2c.h> (mirrors upstream) */
 struct i2c_algorithm;
@@ -41,9 +42,25 @@ struct i2c_client { struct i2c_adapter *adapter; };
 #define I2C_M_IGNORE_NAK   0x1000
 #define I2C_M_NO_RD_ACK    0x0800
 #define I2C_M_RECV_LEN     0x0400
-static inline int i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n){ (void)a;(void)m;(void)n; return -1; }
-/* __i2c_transfer is the unlocked form; the shim's adapter has no real bus, so both fail alike. */
-static inline int __i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n){ (void)a;(void)m;(void)n; return -1; }
+/* Real i2c_transfer: dispatch to the adapter's own algorithm, exactly like the Linux i2c core.
+ * drm_dp_aux_init() registers aux->ddc with algo->master_xfer = drm_dp_i2c_xfer (I2C-over-AUX),
+ * and intel_gmbus registers gmbus_xfer — so this is what makes DDC/EDID reads work over both the
+ * eDP AUX channel (panel EDID -> fixed mode) and the gmbus HDMI/DVI ports. The old `return -1`
+ * stub (virtio_gpu has no DDC panel) silently failed every drm_do_probe_ddc_edid(), which is why
+ * the Dell eDP panel found no EDID and no fixed mode. Retry on -EAGAIN up to adapter->retries,
+ * mirroring __i2c_transfer in drivers/i2c/i2c-core-base.c. */
+static inline int __i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n){
+	if (!a || !a->algo || !a->algo->master_xfer)
+		return -1;
+	int ret, tries = 0, retries = a->retries > 0 ? a->retries : 0;
+	do {
+		ret = a->algo->master_xfer(a, m, n);
+	} while (ret == -EAGAIN && tries++ < retries);
+	return ret;
+}
+static inline int i2c_transfer(struct i2c_adapter *a, struct i2c_msg *m, int n){
+	return __i2c_transfer(a, m, n);
+}
 static inline void i2c_del_adapter(struct i2c_adapter *a){ (void)a; }
 static inline int i2c_add_adapter(struct i2c_adapter *a){ (void)a; return 0; }
 static inline int i2c_add_numbered_adapter(struct i2c_adapter *a){ (void)a; return 0; }
