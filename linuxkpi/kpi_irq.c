@@ -126,6 +126,36 @@ static void lkpi_msi_trampoline(void *ctx) {
 	lkpi_irq_dispatch((int)(long)ctx);
 }
 
+/* Poll-mode harvest of every bound irq. The cooperative wait pump (lkpi_wait_pump) calls this so a
+ * fence completed by a device MSI still makes progress when that MSI cannot be delivered right now:
+ * the awaited wait runs under spin_lock_irqsave (interrupts CLI'd) or an edge was lost. Each hard
+ * handler reads its own interrupt-identity/CSB registers; when nothing is pending it returns IRQ_NONE
+ * after a couple of MMIO reads, so idle polling is cheap. Reentrancy-guarded: a handler that itself
+ * enters a wait (and thus the pump) must not re-poll and re-run itself. Does NOT bump the fire
+ * counters — this is a poll, not a delivered interrupt. */
+static volatile int g_irq_polling;
+void lkpi_irq_poll(void) {
+	if (g_irq_polling)
+		return;
+	g_irq_polling = 1;
+	for (int i = 0; i < LKPI_IRQ_MAX; i++) {
+		struct lkpi_irq_desc *d = &g_irq[i];
+		irqreturn_t r;
+		if (!d->bound || (!d->handler && !d->thread_fn))
+			continue;
+		r = IRQ_WAKE_THREAD;
+		if (d->handler)
+			r = d->handler(LKPI_IRQ_BASE + i, d->dev);
+		if (r == IRQ_WAKE_THREAD && d->thread_fn)
+			d->thread_fn(LKPI_IRQ_BASE + i, d->dev);
+	}
+	g_irq_polling = 0;
+}
+
+/* kpi_fence.c: register lkpi_irq_poll as a wait-pump source. Declared here (plain, like lkpi_wait_pump)
+ * to avoid a header include cycle; wired on the first MSI bind so any MSI driver gets pump-harvested. */
+void lkpi_set_irq_poll(void (*fn)(void));
+
 int lkpi_irq_bind_msi(unsigned bus, unsigned dev, unsigned func) {
 	int slot = -1;
 	for (int i = 0; i < LKPI_IRQ_MAX; i++) {
@@ -135,6 +165,7 @@ int lkpi_irq_bind_msi(unsigned bus, unsigned dev, unsigned func) {
 		return -1;
 	int irq = LKPI_IRQ_BASE + slot;
 	g_irq[slot].bound = 1;
+	lkpi_set_irq_poll(lkpi_irq_poll);   /* enable pump-driven irq harvest (idempotent across binds) */
 	if (knx_register_msi((unsigned char)bus, (unsigned char)dev, (unsigned char)func,
 	                     lkpi_msi_trampoline, (void *)(long)irq) < 0) {
 		g_irq[slot].bound = 0;

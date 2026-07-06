@@ -78,8 +78,18 @@ void lkpi_spin_probe(void *ra) {
 		return;
 	}
 	if (!g_spin_reported && (now - g_spin_since_us) > 2000000ull) {
+		unsigned long fl;
+		int if_on;
 		g_spin_reported = 1;
-		printk("lkpi: SPIN>2s ra=%p — a wait is starved (its condition is never satisfied)\n", ra);
+		/* Also report the interrupt-enable flag (RFLAGS.IF). This splits the two starvation classes at
+		 * a glance: IF=0 means the wait runs with interrupts DISABLED (an outer spin_lock_irqsave CLI'd
+		 * them), so a device MSI that would complete the awaited fence can never be delivered — the fix
+		 * is to not hold irqsave across the wait, or to harvest the irq source in the pump. IF=1 means
+		 * interrupts are live, so the awaited event genuinely never happens (e.g. the GPU never retired
+		 * the first submission) — a real device-level problem, not a shim starvation. */
+		__asm__ __volatile__("pushfq; popq %0" : "=r"(fl));
+		if_on = (int)((fl >> 9) & 1);
+		printk("lkpi: SPIN>2s ra=%p IF=%d — starved wait (IF=0: MSI blocked by CLI; IF=1: awaited event never occurs)\n", ra, if_on);
 	}
 }
 

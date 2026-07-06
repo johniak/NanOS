@@ -27,3 +27,5 @@ extern "C" {
 
 void lkpi_wait_pump(void) {}
 void lkpi_spin_probe(void *ra) { (void)ra; }
+/* lkpi_set_irq_poll lives in kpi_fence.c (not host-linked); kpi_irq.c calls it on MSI bind. */
+void lkpi_set_irq_poll(void (*fn)(void)) { (void)fn; }

@@ -43,12 +43,21 @@ void lkpi_set_fence_poll(void (*fn)(void)) { lkpi_fence_poll_hook = fn; }
 static void (*lkpi_wq_pump_hook)(void);
 void lkpi_set_wq_pump(void (*fn)(void)) { lkpi_wq_pump_hook = fn; }
 
-/* Called from __wait_event()'s spin (see <linux/wait.h>): pump the registered poll sources (virtio
- * vq + async workqueue) so a cooperative wait on a vq ack/response or a deferred bottom half makes
- * progress. */
+/* Third cooperative-wait hook: kpi_irq.c sets this (on the first MSI bind) to POLL every bound irq
+ * handler as if its line had fired. It closes the case where a fence is completed by a device MSI but
+ * that MSI cannot be delivered right now — the awaited wait runs under spin_lock_irqsave (interrupts
+ * CLI'd), or an edge was lost — so a purely interrupt-driven completion would never arrive. Polling
+ * the handler drives the driver's own IIR/CSB read, harvesting the completion cooperatively. */
+static void (*lkpi_irq_poll_hook)(void);
+void lkpi_set_irq_poll(void (*fn)(void)) { lkpi_irq_poll_hook = fn; }
+
+/* Called from every cooperative wait spin (see <linux/wait.h>, wait_bit.h, completion.h): pump the
+ * registered poll sources — virtio vq, async workqueue drain, and bound-irq harvest — so a wait on a
+ * vq ack, a deferred bottom half, or an MSI-completed fence makes progress. */
 void lkpi_wait_pump(void) {
 	if (lkpi_fence_poll_hook) lkpi_fence_poll_hook();
 	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
+	if (lkpi_irq_poll_hook)   lkpi_irq_poll_hook();
 }
 
 /* Spin watchdog (defined in kpi_misc.c). Declared plain here — same linkage as lkpi_wait_pump — so no
