@@ -134,7 +134,13 @@ static inline int list_empty_careful(const struct list_head *head){ struct list_
  * barrier requirement for a kernel-mode reader (see [[nanos-gpu-plans]] synchronize_rcu note). */
 #define list_add_rcu(new, head)      list_add(new, head)
 #define list_add_tail_rcu(new, head) list_add_tail(new, head)
-#define list_del_rcu(entry)          list_del(entry)
+/* list_del_rcu is the ONE RCU op that CANNOT degrade to list_del: it must leave entry->next intact.
+ * A reader can be mid-traversal parked on the very node being deleted and still advances via
+ * pos->next (i915 gt/intel_breadcrumbs.c signal_irq_work deletes the current rq inside
+ * list_for_each_entry_rcu(&ce->signals) then the loop reads rq->signal_link.next to continue).
+ * The plain list_del zeroes entry->next → the next iteration does container_of(NULL,...) and #PFs.
+ * Unlink from both neighbours, poison only ->prev, leave ->next pointing onward (upstream semantics). */
+static inline void list_del_rcu(struct list_head *entry) { __list_del(entry->prev, entry->next); entry->prev = 0; }
 #define list_for_each_entry_rcu(pos, head, member, ...) list_for_each_entry(pos, head, member)
 #define list_first_or_null_rcu(ptr, type, member) \
 	({ struct list_head *__h = (ptr); __h->next != __h ? list_entry(__h->next, type, member) : (type*)0; })
