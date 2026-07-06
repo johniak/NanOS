@@ -279,6 +279,14 @@ static void timer_thread_body(void *arg) {
 /* Diagnostic/test hook: fire any due timers now (the timer thread calls timers_service in a loop). */
 void lkpi_run_timers(void) { timers_service(); }
 
+/* The cooperative wait pump (registered as the wait-pump hook, called from every __wait_event spin).
+ * Fire due timers FIRST so delayed work armed with a real delay actually runs during a pre-scheduler
+ * wait — jiffies is wall-clock, so a wait that spins `delay` ms crosses the deadline and the handler
+ * fires ITERATIVELY (never recursively; a re-arm sets a future deadline this pass won't re-hit). Then
+ * drain pending immediate work. Before this, the pump only drained the workqueue, so timer-backed
+ * delayed work never advanced during a probe wait. */
+static void lkpi_wq_pump(void) { timers_service(); lkpi_wq_drain(); }
+
 /* ======================= delayed_work ======================= */
 
 static void dwork_timer_fn(struct timer_list *t) {
@@ -289,8 +297,21 @@ static void dwork_timer_fn(struct timer_list *t) {
 bool queue_delayed_work(struct workqueue_struct *q, struct delayed_work *dw, unsigned long delay) {
 	if (!q) q = system_wq;
 	dw->wq = q;
-	if (!g_wq_async || !q) { if (dw->work.func) dw->work.func(&dw->work); return true; }
-	if (delay == 0) { wq_enqueue(q, &dw->work); return true; }
+	/* Respect the delay even in the pre-scheduler INLINE regime (g_wq_async==0). The old shortcut ran
+	 * delayed work inline with the delay DROPPED — which turns any self-re-arming periodic handler into
+	 * unbounded recursion: i915's GT retire_work (intel_gt_requests.c:205) and engine heartbeat
+	 * (intel_engine_heartbeat.c) re-queue THEMSELVES as their first act, so an inline call recurses on
+	 * the same stack until it overflows -> #DF -> triple-fault reboot (observed at the FIRST GT unpark
+	 * inside intel_gt_resume on the Dell, right after the workaround-init log lines). Arm the timer
+	 * instead: jiffies is real wall-clock (knx_uptime_us), the deadline list exists pre-scheduler, and
+	 * the cooperative wait pump services it (lkpi_wq_pump -> timers_service), so the handler fires
+	 * ITERATIVELY at its real deadline (once per `delay`), exactly like mainline's timer->kworker. Only
+	 * delay==0 keeps the immediate path. */
+	if (delay == 0) {
+		if (!g_wq_async || !q) { if (dw->work.func) dw->work.func(&dw->work); return true; }
+		wq_enqueue(q, &dw->work);
+		return true;
+	}
 	dw->timer.function = dwork_timer_fn;
 	mod_timer(&dw->timer, jiffies_now() + delay);
 	return true;
@@ -366,7 +387,7 @@ void lkpi_wq_init(void) {
 	system_highpri_wq = wq_new("system_highpri");
 	system_long_wq    = wq_new("system_long");
 	system_unbound_wq = wq_new("system_unbound");
-	lkpi_set_wq_pump(lkpi_wq_drain);
+	lkpi_set_wq_pump(lkpi_wq_pump);   /* timers + drain, so timer-backed delayed work advances in waits */
 	knx_run_after_scheduler(lkpi_wq_start_workers);
 	knx_log("lkpi: workqueues initialised (inline until scheduler up)\n");
 }
