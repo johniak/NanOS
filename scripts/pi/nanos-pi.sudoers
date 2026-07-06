@@ -1,0 +1,2 @@
+# NanOS pendrak — let 'pi' run the gadget helpers without a password (unattended fast loop).
+pi ALL=(root) NOPASSWD: /usr/local/bin/nanos-apply.sh, /usr/local/bin/nanos-gadget.sh, /usr/local/bin/nanos-lun.sh, /usr/local/bin/nanos-pull.sh

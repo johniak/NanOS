@@ -5,7 +5,8 @@ set -euo pipefail
 
 IMG="${IMG:-/home/pi/nanos/image64.img}"
 STAGE="${STAGE:-/home/pi/nanos/staging}"
-ARM="${ARM:-1}"
+# arm knob: positional arg wins (survives sudo, which scrubs env), else $ARM, else 1.
+ARM="${1:-${ARM:-1}}"
 LUN=/sys/kernel/config/usb_gadget/nanos/functions/mass_storage.0/lun.0
 MNT=/mnt/nanos-root
 LOOP=""

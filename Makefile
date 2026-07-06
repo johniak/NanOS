@@ -1193,6 +1193,18 @@ PI_HOST ?= pi@pendrak.local
 flash-dell-pi: image64
 	PI_HOST=$(PI_HOST) IMG=$(IMAGE64) ./scripts/pi-flash.sh
 
+# kernel-kext — build ONLY the x86_64 kernel + kexts (no ~320 MiB image regen). Feeds update-dell-pi
+# so the fast loop skips the redundant full-image rebuild that update-dell forces via its image64 dep.
+.PHONY: kernel-kext
+kernel-kext:
+	$(DOCKER_RUN) make ARCH=x86_64 _all _kext
+
+# update-dell-pi — FAST loop over the network: push ONLY kernel + i915 kext to the pendrak Pi and
+# run the surgical apply there. Mirrors update-dell. `make update-dell-pi` -> boot Dell -> `make i915-log-pi`.
+.PHONY: update-dell-pi
+update-dell-pi: kernel-kext
+	PI_HOST=$(PI_HOST) KERNEL=$(BINFOLDER)k64/kernel.bin KEXT=$(BINFOLDER)i915.nkext ARM=1 ./scripts/pi-update.sh
+
 run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
