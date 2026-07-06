@@ -13,6 +13,8 @@
 # Env:
 #   KERNEL    kernel binary to push       (default bin/k64/kernel.bin)
 #   KEXT      i915 kext to push           (default bin/i915.nkext)
+#   DMC       i915 DMC firmware to stage  (default bin/firmware/i915/kbl_dmc_ver1_04.bin;
+#             pushed to /nanos/firmware/i915/<name> only if the file exists — absent = skipped)
 #   ARM       '1' to (re)arm i915, '0' no (default 1)
 #   USB_NAME  media-name match (regex)    (default "Kingston|DataTraveler")
 #   NO_EJECT  =1 to leave the stick attached afterwards
@@ -22,6 +24,7 @@ set -euo pipefail
 
 KERNEL="${KERNEL:-bin/k64/kernel.bin}"
 KEXT="${KEXT:-bin/i915.nkext}"
+DMC="${DMC:-bin/firmware/i915/kbl_dmc_ver1_04.bin}"
 ARM="${ARM:-1}"
 USB_NAME="${USB_NAME:-Kingston|DataTraveler}"
 
@@ -55,6 +58,11 @@ note "stick     : $DEV  ($NAME)"
 note "ext part  : $PDEV"
 note "kernel    : $KERNEL  ($(wc -c < "$KERNEL" | tr -d ' ') B)  -> /nanos/core/kernel.bin"
 note "i915 kext : $KEXT  ($(wc -c < "$KEXT" | tr -d ' ') B)  -> /nanos/kext/i915.nkext"
+DMC_NAME=""
+if [ -f "$DMC" ]; then
+    DMC_NAME=$(basename "$DMC")
+    note "dmc fw    : $DMC  ($(wc -c < "$DMC" | tr -d ' ') B)  -> /nanos/firmware/i915/$DMC_NAME"
+fi
 [ "$ARM" = 1 ] && note "arm       : /nanos/config/i915 <- '1'"
 
 diskutil unmountDisk "$DEV" >/dev/null 2>&1 || true
@@ -70,6 +78,14 @@ CMDS=$(mktemp)
     echo "write $KERNEL /nanos/core/kernel.bin"
     echo "rm /nanos/kext/i915.nkext"
     echo "write $KEXT /nanos/kext/i915.nkext"
+    if [ -n "$DMC_NAME" ]; then
+        # request_firmware("i915/kbl_dmc_ver1_04.bin") reads /nanos/firmware/i915/<name>;
+        # the mkdir lines are no-ops if the dirs already exist (debugfs -f keeps going).
+        echo "mkdir /nanos/firmware"
+        echo "mkdir /nanos/firmware/i915"
+        echo "rm /nanos/firmware/i915/$DMC_NAME"
+        echo "write $DMC /nanos/firmware/i915/$DMC_NAME"
+    fi
     if [ "$ARM" = 1 ]; then
         ARMTMP=$(mktemp); printf '1' > "$ARMTMP"
         echo "mkdir /nanos/config"
@@ -91,6 +107,7 @@ check_size() {   # $1 = ext path, $2 = host file
 }
 check_size /nanos/core/kernel.bin "$KERNEL"
 check_size /nanos/kext/i915.nkext "$KEXT"
+[ -n "$DMC_NAME" ] && check_size "/nanos/firmware/i915/$DMC_NAME" "$DMC"
 if [ "$ARM" = 1 ]; then
     got=$(sudo "$DBG" -R "cat /nanos/config/i915" "$PDEV" 2>/dev/null | tr -d '\0')
     [ "$got" = 1 ] || die "arm verify FAILED: knob reads '$got'"
