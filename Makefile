@@ -1187,6 +1187,12 @@ update-dell: image64
 # docs/superpowers/plans/2026-07-05-pi-usb-gadget-dell-boot.md ===
 PI_HOST ?= pi@pendrak.local
 
+# pi-bootstrap — one-time idempotent setup of the pendrak Pi (dwc2 peripheral mode, helpers,
+# sudoers, systemd gadget unit). Needs passwordless sudo for 'pi' and one reboot after first run.
+.PHONY: pi-bootstrap
+pi-bootstrap:
+	PI_HOST=$(PI_HOST) ./scripts/pi-bootstrap.sh
+
 # flash-dell-pi — full image push: rsync the whole image64.img onto the pendrak Pi (rare;
 # use after a partition-layout change or fresh setup). Mirrors flash-dell-armed.
 .PHONY: flash-dell-pi
