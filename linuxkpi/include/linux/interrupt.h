@@ -41,18 +41,36 @@ struct tasklet_struct {
 	};
 	unsigned long data;
 };
-static inline void tasklet_schedule(struct tasklet_struct *t){
-	if (!t) return;
-	if (t->use_callback) { if (t->callback) t->callback(t); }
-	else                 { if (t->func) t->func(t->data); }
+/* We run tasklets synchronously on schedule (no softirq thread). i915's execlists submission tasklet
+ * reschedules ITSELF — from its own body (start_timeslice), from the GT interrupt handler, and via
+ * __execlists_kick — so a naive inline run recurses without bound on the first GPU submission:
+ * stack overflow -> triple-fault reboot (observed on the Dell during intel_gt_resume). Guard with the
+ * upstream RUN/SCHED semantics: tasklet_trylock claims the RUN bit and FAILS while the tasklet is
+ * already on the stack, so both __intel_engine_flush_submission's manual run and a nested schedule
+ * defer instead of recursing. A schedule that loses the race sets SCHED; the owning run loops until
+ * SCHED is clear. tasklet_is_locked (test_bit RUN) and __tasklet_is_enabled (count) stay consistent. */
+static inline int tasklet_trylock(struct tasklet_struct *t){
+	if (!t) return 1;
+	if (t->state & (1UL << TASKLET_STATE_RUN)) return 0;
+	t->state |= (1UL << TASKLET_STATE_RUN);
+	return 1;
 }
-/* Cooperative bring-up: a tasklet runs inline on schedule, so it is never "locked" — trylock always
- * succeeds and the unlock/wait paths are no-ops (used by i915 execlists submission). */
-static inline int  tasklet_trylock(struct tasklet_struct *t){ (void)t; return 1; }
-static inline void tasklet_unlock(struct tasklet_struct *t){ (void)t; }
+static inline void tasklet_unlock(struct tasklet_struct *t){ if (t) t->state &= ~(1UL << TASKLET_STATE_RUN); }
 static inline void tasklet_unlock_wait(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_unlock_spin_wait(struct tasklet_struct *t){ (void)t; }
-static inline void tasklet_hi_schedule(struct tasklet_struct *t){ tasklet_schedule(t); }
+static inline void __lkpi_tasklet_exec(struct tasklet_struct *t){
+	if (!t) return;
+	if (!tasklet_trylock(t)) { t->state |= (1UL << TASKLET_STATE_SCHED); return; }  /* re-entry: defer */
+	do {
+		t->state &= ~(1UL << TASKLET_STATE_SCHED);
+		if (t->count) { t->state |= (1UL << TASKLET_STATE_SCHED); break; }  /* disabled: stay pending */
+		if (t->use_callback) { if (t->callback) t->callback(t); }
+		else                 { if (t->func) t->func(t->data); }
+	} while (t->state & (1UL << TASKLET_STATE_SCHED));
+	tasklet_unlock(t);
+}
+static inline void tasklet_schedule(struct tasklet_struct *t){ __lkpi_tasklet_exec(t); }
+static inline void tasklet_hi_schedule(struct tasklet_struct *t){ __lkpi_tasklet_exec(t); }
 static inline void tasklet_enable(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_disable(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_disable_nosync(struct tasklet_struct *t){ (void)t; }
