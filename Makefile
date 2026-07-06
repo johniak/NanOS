@@ -1182,6 +1182,17 @@ flash-dell-armed: image64
 update-dell: image64
 	KERNEL=$(BINFOLDER)k64/kernel.bin KEXT=$(BINFOLDER)i915.nkext ARM=1 ./scripts/update-dell.sh
 
+# === pendrak — network-attached USB boot device (Pi Zero W presents image64.img to the Dell
+# as a mass-storage gadget; push updates over WiFi, no physical stick swap). See
+# docs/superpowers/plans/2026-07-05-pi-usb-gadget-dell-boot.md ===
+PI_HOST ?= pi@pendrak.local
+
+# flash-dell-pi — full image push: rsync the whole image64.img onto the pendrak Pi (rare;
+# use after a partition-layout change or fresh setup). Mirrors flash-dell-armed.
+.PHONY: flash-dell-pi
+flash-dell-pi: image64
+	PI_HOST=$(PI_HOST) IMG=$(IMAGE64) ./scripts/pi-flash.sh
+
 run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
@@ -1492,6 +1503,13 @@ _image64: _all _userland64 _kext
 	# (linux-firmware licence). The README documents the contract.
 	printf 'NanOS device firmware.\n\nrequest_firmware(name) reads /nanos/firmware/<name>. Empty by default;\nGen9 (Comet Lake UHD) i915 runs execlists with no GuC/HuC/DMC blob. Any blob\nplaced here must be redistributable (linux-firmware licence).\n' > $(BINFOLDER)firmware-README
 	printf "rm /nanos/firmware/README\nwrite $(BINFOLDER)firmware-README /nanos/firmware/README\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null || true
+	# Optional i915 DMC blob (Comet Lake -> kbl_dmc_ver1_04.bin). Staged ONLY if present under
+	# bin/firmware/i915/ (fetch it there out-of-band; it is redistributable linux-firmware). Absent =
+	# skipped, so the empty-by-default contract holds; present = DC5/DC6 display power states work
+	# without a separate reflash. The same blob rides the fast loop via scripts/update-dell.sh.
+	if [ -f $(BINFOLDER)firmware/i915/kbl_dmc_ver1_04.bin ]; then \
+	  printf "mkdir /nanos/firmware/i915\nrm /nanos/firmware/i915/kbl_dmc_ver1_04.bin\nwrite $(BINFOLDER)firmware/i915/kbl_dmc_ver1_04.bin /nanos/firmware/i915/kbl_dmc_ver1_04.bin\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null || true; \
+	fi
 	printf "rm /nanos/core/kernel.bin\nwrite $(KOBJ)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE64_PART)"
 	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot
 	# (loadAllKexts). The PS/2 keyboard + mouse + e1000 NIC drivers live here, NOT in kernel.bin.
