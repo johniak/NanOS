@@ -56,6 +56,35 @@ struct pci_dev *pci_get_domain_bus_and_slot(int domain, unsigned int bus, unsign
 	return p;
 }
 
+/* Scan config space for the next device whose 24-bit class code matches `class`, after `from`
+ * (or from the start if `from` is NULL); return a hand-built pci_dev or NULL when none remain.
+ * i915's intel_detect_pch() calls pci_get_class(PCI_CLASS_BRIDGE_ISA << 8, ...) to find the PCH
+ * LPC bridge (00:1f.0 on the Dell) — without this the PCH goes undetected, pch_type stays
+ * PCH_NONE, HAS_PCH_SPLIT is false, and intel_pps picks the wrong PP register base (0x61200
+ * instead of the PCH's 0xC7200), so panel-power writes land in dead MMIO and eDP never comes up.
+ * Bounded full 0000:00..ff bus scan (probe-time, once); pci_dev_put is a no-op so the build leaks. */
+struct pci_dev *pci_get_class(unsigned int class, struct pci_dev *from) {
+	/* Linear bus/dev/func key so `from` can resume the scan just past the previous match. */
+	unsigned int start = 0;
+	if (from)
+		start = ((unsigned)from->nbus << 8 | (unsigned)from->ndev << 3 | (unsigned)from->nfunc) + 1;
+
+	for (unsigned int key = start; key < (256u << 8); key++) {
+		unsigned char b = (unsigned char)(key >> 8);
+		unsigned char d = (unsigned char)((key >> 3) & 0x1f);
+		unsigned char f = (unsigned char)(key & 0x07);
+		u32 v0 = knx_pci_cfg_read32(b, d, f, 0x00);
+		if (v0 == 0xffffffffu || (v0 & 0xffff) == 0xffff)
+			continue;   /* no device at that slot/func */
+		/* Config 0x08: [baseclass:24][subclass:16][progif:8][revision:0]; class code = v >> 8. */
+		u32 cc = knx_pci_cfg_read32(b, d, f, 0x08) >> 8;
+		if (cc != class)
+			continue;
+		return pci_get_domain_bus_and_slot(0, b, PCI_DEVFN(d, f));
+	}
+	return 0;
+}
+
 /* Fill vendor/device/subsystem/revision from config space for a hand-built pci_dev whose
  * nbus/ndev/nfunc are already set. */
 void lkpi_pci_fill_ids(struct pci_dev *d) {
