@@ -2760,8 +2760,13 @@ $(foreach s,$(LINK_SUPPORT_SRCS),$(eval $(call SUPPORT_OBJ_RULE,$(s))))
 # Built with I915_VINC (adds -I$(I915_SRC) -DI915) so the glue can include i915_params.h and set
 # i915_modparams (enable_guc / inject_probe_failure) type-safely — no shim header keys off -DI915,
 # so the glue's view of every shared struct stays identical to the i915 objects it calls into.
-$(BINFOLDER)i915_entry.o: kext/i915/i915_entry.c
-	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -MMD -MP -c $< -o $@
+# FORCE prereq + -DLKPI_GIT_REV: the entry stamps the running shim's git rev into the boot log so a
+# Dell log unambiguously says WHICH build booted (a commit alone wouldn't retrigger this rule via the
+# .c mtime, so recompile it every make — one tiny file). "-dirty" flags an uncommitted working tree.
+$(BINFOLDER)i915_entry.o: kext/i915/i915_entry.c FORCE
+	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -DLKPI_GIT_REV='"$(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo -dirty)"' -MMD -MP -c $< -o $@
+FORCE:
+.PHONY: FORCE
 I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o
 
 # The link: kext bootstrap + i915 glue + all 276 i915 objects + the TTM/DRM-display SUPPORT set +

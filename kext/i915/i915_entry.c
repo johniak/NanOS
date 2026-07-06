@@ -260,6 +260,12 @@ int nkext_init(void)
 	}
 
 	i915_log("i915: ===== bring-up session armed =====\n");
+	/* Stamp WHICH shim built this kext into the log — otherwise a commit that changes only shim .c
+	 * files leaves no probe-time trace, so a Dell log can't confirm the new code actually booted. */
+#ifndef LKPI_GIT_REV
+#define LKPI_GIT_REV "unknown"
+#endif
+	i915_log("i915: shim build " __DATE__ " " __TIME__ " rev " LKPI_GIT_REV "\n");
 
 	/* Warm + prove the free-running monotonic clock. The first read calibrates the TSC via a ~10 ms
 	 * PIT gate; do it here (normal IRQ-on context) so it never lands inside an IRQ-off forcewake/udelay

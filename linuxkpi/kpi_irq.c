@@ -13,6 +13,7 @@
  * hard-only handler, so this is correct; Task 3 moves thread_fn onto a dedicated irq thread.
  */
 #include <linux/interrupt.h>
+#include <linux/printk.h>    /* bring-up marker tees to the persistent i915 log */
 #include "lkpi_knx.h"
 
 #define LKPI_IRQ_BASE  32          /* shim irq numbers start here (avoid legacy GSI/PIC confusion) */
@@ -96,8 +97,10 @@ void lkpi_irq_dispatch(int irq) {
 	if (!d->handler && !d->thread_fn)
 		return;                    /* no handler installed yet (spurious early MSI) — ignore */
 	d->fires++;
-	if (++g_total_fires == 1)
+	if (++g_total_fires == 1) {
 		knx_log("lkpi: irq fired>0\n");   /* smoke assertion: an MSI reached a request_irq handler */
+		printk("lkpi: FIRST irq dispatch (irq %d) — a GT/display MSI was delivered\n", irq);
+	}
 
 	irqreturn_t r = IRQ_WAKE_THREAD;      /* h==NULL means "always wake the thread" (Linux default) */
 	if (d->handler)
