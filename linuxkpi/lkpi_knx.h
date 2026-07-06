@@ -67,6 +67,10 @@ void           knx_set_panic_sink(void (*fn)(const char *line));
 void           lkpi_stack_baseline(void);
 int            lkpi_stack_deep(void);
 void           lkpi_deep_report(const char *where, void *ra);
+/* NOTE: lkpi_wait_pump / lkpi_spin_probe are NOT declared here. They follow the plain-linkage pattern
+ * (declared in <linux/wait.h> / <linux/wait_bit.h> / <linux/completion.h>, not this extern "C" block),
+ * so a host C++ TU never sees two decls of different language linkage for them. See kpi_misc.c
+ * (lkpi_spin_probe) and kpi_fence.c (lkpi_wait_pump). */
 /* Real RCU grace period: block until every other online CPU has passed a quiescent state
  * (LinuxKPI synchronize_rcu). On UP this is a barrier. See Scheduler::rcuSynchronize. */
 void           knx_rcu_synchronize(void);

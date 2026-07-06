@@ -9,6 +9,14 @@
 #include <linux/delay.h>
 #include "lkpi_knx.h"
 
+/* The sleeping delays (msleep/usleep_range) run in might_sleep context, so they PUMP the cooperative
+ * work sources each turn (lkpi_wait_pump = virtio vq + timers + workqueue drain). Without this, an
+ * i915 poll loop written as `while (!cond) msleep(1)` busy-waits real time but never services the
+ * timer/workqueue whose callback sets `cond` — a silent starvation identical to the wait_bit.h case.
+ * udelay/mdelay deliberately do NOT pump: they are called under spin_lock_irqsave (atomic sections
+ * with interrupts off), where running a work/timer callback would violate the caller's assumptions. */
+void lkpi_wait_pump(void);
+
 /* msleep currently busy-waits on the monotonic clock; a cooperative knx_yield export is
  * added in P1 (threads/workqueue) and wired in here then. */
 
@@ -35,7 +43,7 @@ void msleep(unsigned int msecs) {
 	unsigned long long start = knx_uptime_us();
 	unsigned long long end = start + (unsigned long long)msecs * 1000ull;
 	while (knx_uptime_us() < end)
-		;
+		lkpi_wait_pump();   /* service timers/workqueue so poll-by-msleep loops make progress */
 }
 
 unsigned long msleep_interruptible(unsigned int msecs) {
@@ -44,8 +52,13 @@ unsigned long msleep_interruptible(unsigned int msecs) {
 }
 
 void usleep_range(unsigned long min, unsigned long max) {
+	/* might_sleep context: pump the cooperative work sources while waiting out `min` microseconds,
+	 * so a poll-by-usleep loop does not starve the timer/workqueue that satisfies its condition
+	 * (unlike udelay, which is atomic-section-safe and must not pump). */
+	unsigned long long end = knx_uptime_us() + (unsigned long long)min;
 	(void)max;
-	udelay(min);
+	while (knx_uptime_us() < end)
+		lkpi_wait_pump();
 }
 
 void usleep_range_state(unsigned long min, unsigned long max, unsigned int state) {

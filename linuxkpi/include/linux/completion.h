@@ -12,6 +12,13 @@
 #include <linux/compiler.h>
 #include <asm/barrier.h>
 
+/* wait_for_completion SPINS (no real blocking waitqueue). Pump deferred work each turn so a
+ * completion signalled by a workqueue bottom half / timer is reached instead of starved, and probe a
+ * stuck site — same rationale as <linux/wait_bit.h>. (Declared here: completion.h is included before
+ * wait.h.) */
+void lkpi_wait_pump(void);
+void lkpi_spin_probe(void *ra);
+
 struct completion { volatile unsigned int done; };
 
 #define COMPLETION_INITIALIZER(work) { 0 }
@@ -30,8 +37,12 @@ static inline void complete_all(struct completion *x) {
 }
 
 static inline void wait_for_completion(struct completion *x) {
-	while (__atomic_load_n(&x->done, __ATOMIC_ACQUIRE) == 0)
+	void *ra = __builtin_return_address(0);
+	while (__atomic_load_n(&x->done, __ATOMIC_ACQUIRE) == 0) {
+		lkpi_wait_pump();
+		lkpi_spin_probe(ra);
 		__asm__ __volatile__("pause");
+	}
 	if (x->done != 0x7fffffffu)
 		__atomic_fetch_sub(&x->done, 1u, __ATOMIC_SEQ_CST);
 }

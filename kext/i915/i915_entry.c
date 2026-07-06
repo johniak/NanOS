@@ -344,6 +344,13 @@ int nkext_init(void)
 	 * the same on Gen9, but a firmware-less box then never blocks waiting on a GuC load). */
 	i915_modparams.enable_guc = 0;
 
+	/* Disable hangcheck for GT bring-up. Timers now really fire (kpi_kthread), so a heartbeat could
+	 * run intel_gt_handle_error / a full engine reset from inside the pump MID-probe — dragging in the
+	 * non-pumping wait_on_bit / backoff paths of intel_reset.c before the basics stand. record_defaults
+	 * has its own timeouts, so hangcheck-off blocks nothing in probe. Re-enable once GT submission is
+	 * stable. (Paired with the class-wide wait pump; see linuxkpi/include/linux/wait_bit.h.) */
+	i915_modparams.enable_hangcheck = false;
+
 	/* Optional dial-a-stop: abort probe via i915's own clean unwind at injection point N (see the
 	 * knob comment). 0 = full probe. Lets a crash be walked back to the last clean stage w/o rebuild. */
 	i915_modparams.inject_probe_failure = i915_inject_stop();

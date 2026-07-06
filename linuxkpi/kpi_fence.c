@@ -51,6 +51,10 @@ void lkpi_wait_pump(void) {
 	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
 }
 
+/* Spin watchdog (defined in kpi_misc.c). Declared plain here — same linkage as lkpi_wait_pump — so no
+ * host C++ TU ever sees conflicting language linkage for it (see the note in lkpi_knx.h). */
+void lkpi_spin_probe(void *ra);
+
 /* ---- dma_fence ---------------------------------------------------------------------- */
 
 void dma_fence_init(struct dma_fence *f, const struct dma_fence_ops *ops,
@@ -185,13 +189,17 @@ long dma_fence_wait_timeout(struct dma_fence *f, bool intr, long timeout)
 	 * iteration is tens of nanoseconds, so counting iterations against a jiffies-denominated
 	 * timeout would expire ~10^4 times too early and turn honest waits into spurious -EBUSY. */
 	start = lkpi_jiffies();
-	while (!dma_fence_is_signaled(f)) {
-		if (lkpi_fence_poll_hook)
-			lkpi_fence_poll_hook();
-		__asm__ __volatile__("pause");
-		if (timeout != MAX_SCHEDULE_TIMEOUT &&
-		    (long)(lkpi_jiffies() - start) >= timeout)
-			return 0;	/* timed out */
+	{
+		void *ra = __builtin_return_address(0);
+		while (!dma_fence_is_signaled(f)) {
+			if (lkpi_fence_poll_hook)
+				lkpi_fence_poll_hook();
+			lkpi_spin_probe(ra);   /* name this site if it starves >2 s (e.g. a fence never signalled) */
+			__asm__ __volatile__("pause");
+			if (timeout != MAX_SCHEDULE_TIMEOUT &&
+			    (long)(lkpi_jiffies() - start) >= timeout)
+				return 0;	/* timed out */
+		}
 	}
 	if (timeout == MAX_SCHEDULE_TIMEOUT)
 		return timeout;

@@ -23,6 +23,7 @@
 #include <linux/string.h>
 #include <linux/printk.h>
 #include <asm/cpufeature.h>
+#include "lkpi_knx.h"    /* knx_uptime_us — spin-watchdog clock */
 
 /* ---- global data objects ------------------------------------------------------------ */
 
@@ -55,6 +56,31 @@ void lkpi_deep_report(const char *where, void *ra) {
 	if (once) return;
 	once = 1;
 	printk("lkpi: DEEP-STACK in %s ra=%p — deferring to break a runaway recursion\n", where, ra);
+}
+
+/* ---- spin watchdog (bring-up diagnostics) ------------------------------------------- *
+ * The wait primitives now PUMP on every turn (service timers + workqueue + the virtio vq) so a wait
+ * whose condition is satisfied by deferred work makes progress instead of starving. But a wait whose
+ * condition can NEVER be satisfied still spins forever — silently, at the same code every boot. This
+ * names it: each spin turn passes the caller's return address; once a single ra has been spinning for
+ * more than 2 s, print it ONCE. A new call site restarts the clock, so healthy short waits never fire.
+ * (Deliberately return-address-based rather than a separate watchdog thread: it works pre-scheduler,
+ * needs no IRQ, and pins the exact starved wait for addr2line.) */
+static void *g_spin_ra;
+static unsigned long long g_spin_since_us;
+static int g_spin_reported;
+void lkpi_spin_probe(void *ra) {
+	unsigned long long now = knx_uptime_us();
+	if (ra != g_spin_ra) {           /* a different site is spinning now — restart the deadline */
+		g_spin_ra = ra;
+		g_spin_since_us = now;
+		g_spin_reported = 0;
+		return;
+	}
+	if (!g_spin_reported && (now - g_spin_since_us) > 2000000ull) {
+		g_spin_reported = 1;
+		printk("lkpi: SPIN>2s ra=%p — a wait is starved (its condition is never satisfied)\n", ra);
+	}
 }
 
 static struct task_struct lkpi_current_task = { .pid = 1, .comm = "virtio_gpu", .mm = 0 };

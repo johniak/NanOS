@@ -29,6 +29,11 @@ int  lkpi_irq_bind_msi(unsigned bus, unsigned dev, unsigned func);
  * also the doctest entry point. */
 void lkpi_irq_dispatch(int irq);
 
+/* Bring-up marker: printed ONCE (kpi_irq.c) the first time a tasklet callback actually runs. i915's
+ * execlists submission runs from a tasklet, so this positions the first GPU submission in the boot
+ * log — the point past which a GT hang means "submission ran but the engine never retired". */
+void lkpi_tasklet_first_marker(void);
+
 enum { TASKLET_STATE_SCHED, TASKLET_STATE_RUN };
 struct tasklet_struct {
 	struct tasklet_struct *next;
@@ -65,6 +70,7 @@ static inline void __lkpi_tasklet_exec(struct tasklet_struct *t){
 		do {
 			t->state &= ~(1UL << TASKLET_STATE_SCHED);
 			if (t->count) { t->state |= (1UL << TASKLET_STATE_SCHED); break; }  /* disabled: stay pending */
+			lkpi_tasklet_first_marker();   /* log-once: first tasklet body runs (first submission path) */
 			if (t->use_callback) { if (t->callback) t->callback(t); }
 			else                 { if (t->func) t->func(t->data); }
 		} while (t->state & (1UL << TASKLET_STATE_SCHED));

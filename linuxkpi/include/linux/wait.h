@@ -53,7 +53,8 @@ static inline void init_waitqueue_head(wait_queue_head_t *q) {
  * (the virtio control/cursor vq) so a driver waiting on vq acks/responses at boot — before
  * the scheduler and device IRQ exist — still makes progress (cooperative polling). */
 void lkpi_wait_pump(void);
-#define __wait_event(wq, condition) do { while (!(condition)) { lkpi_wait_pump(); __asm__ __volatile__("pause"); } } while (0)
+void lkpi_spin_probe(void *ra);   /* names a starved wait after ~2 s (kpi_misc.c) */
+#define __wait_event(wq, condition) do { void *__lkpi_ra = __builtin_return_address(0); while (!(condition)) { lkpi_wait_pump(); lkpi_spin_probe(__lkpi_ra); __asm__ __volatile__("pause"); } } while (0)
 
 #define wait_event(wq, condition)                __wait_event(wq, condition)
 #define wait_event_interruptible(wq, condition)  ({ __wait_event(wq, condition); 0; })

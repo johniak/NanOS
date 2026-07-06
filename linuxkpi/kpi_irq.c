@@ -30,6 +30,15 @@ struct lkpi_irq_desc {
 static struct lkpi_irq_desc g_irq[LKPI_IRQ_MAX];
 static unsigned long        g_total_fires;
 
+/* Log-once the first time any tasklet callback runs (see <linux/interrupt.h>). Non-inline so "once"
+ * is a single global flag, not one-per-translation-unit. */
+void lkpi_tasklet_first_marker(void) {
+	static int once;
+	if (once) return;
+	once = 1;
+	printk("lkpi: FIRST tasklet exec — a tasklet body ran (execlists submission path)\n");
+}
+
 static struct lkpi_irq_desc *desc_of(int irq) {
 	int i = irq - LKPI_IRQ_BASE;
 	if (i < 0 || i >= LKPI_IRQ_MAX)

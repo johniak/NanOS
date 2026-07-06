@@ -43,6 +43,12 @@ static kt_lock_t g_lock;                 /* guards all workqueue lists + pending
 static kt_lock_t g_tlock;                /* guards the timer list */
 static volatile int g_wq_async = 0;      /* 0 = run inline (pre-scheduler / LKPI_WQ_INLINE) */
 
+/* Cooperative wait pump (kpi_fence.c): virtio vq + timers_service + workqueue drain. flush_work/
+ * flush_workqueue call it pre-scheduler, where knx_thread_yield()==schedule() is a no-op that cannot
+ * fire the timers a flushed work item may be waiting on — so a bare drain-and-yield would spin
+ * forever if the work is re-armed on a timer (e.g. i915's retire work during intel_gt_wait_for_idle). */
+void lkpi_wait_pump(void);
+
 static unsigned long jiffies_now(void) { return (unsigned long)(knx_uptime_us() / 1000ull); }
 
 /* ======================= workqueues ======================= */
@@ -138,7 +144,8 @@ void flush_work(struct work_struct *w) {
 	int guard = 1 << 20;
 	while ((w->pending || work_is_running(w)) && --guard > 0) {
 		lkpi_wq_drain();
-		knx_thread_yield();
+		if (!g_wq_async) lkpi_wait_pump();   /* pre-scheduler: fire due timers too (yield is a no-op) */
+		else             knx_thread_yield();
 	}
 }
 
@@ -186,7 +193,8 @@ void flush_workqueue(struct workqueue_struct *q) {
 			if (empty) break;
 		}
 		if (--guard <= 0) break;
-		knx_thread_yield();
+		if (!g_wq_async) lkpi_wait_pump();   /* pre-scheduler: fire due timers too (yield is a no-op) */
+		else             knx_thread_yield();
 	}
 }
 
