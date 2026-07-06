@@ -1,0 +1,13 @@
+[Unit]
+Description=NanOS USB mass-storage gadget (pendrak)
+After=sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/nanos-gadget.sh /home/pi/nanos/image64.img
+ExecStop=/bin/sh -c 'echo "" > /sys/kernel/config/usb_gadget/nanos/UDC 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target
