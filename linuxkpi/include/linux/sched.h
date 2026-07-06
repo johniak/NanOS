@@ -18,7 +18,11 @@ static inline int need_resched(void){ return 0; }
 static inline void set_current_state(int s){ (void)s; }
 static inline void __set_current_state(int s){ (void)s; }
 #define cond_resched() 0
-#define MAX_SCHEDULE_TIMEOUT (~0L>>1)
+/* LONG_MAX. Must shift the UNSIGNED all-ones then cast: `~0L>>1` is an ARITHMETIC shift of the
+ * signed -1L and stays -1, which i915's wait_moving_fence returns verbatim as a bogus errno
+ * (the Dell GGTT-scratch -EPERM). Every infinite wait (dma_fence_wait / dma_resv_wait_timeout with
+ * MAX_SCHEDULE_TIMEOUT) that error-checks its result depends on this being positive. */
+#define MAX_SCHEDULE_TIMEOUT ((long)(~0UL >> 1))
 static inline long schedule_timeout(long t){ return t; }
 static inline long io_schedule_timeout(long t){ return t; }
 #define TASK_COMM_LEN 16
