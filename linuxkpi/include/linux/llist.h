@@ -8,15 +8,34 @@ struct llist_head { struct llist_node *first; };
 #define LLIST_HEAD(name) struct llist_head name = LLIST_HEAD_INIT(name)
 static inline void init_llist_head(struct llist_head *h){ h->first=0; }
 static inline bool llist_empty(const struct llist_head *h){ return h->first==0; }
+/* An llist is contracted to be lock-free-safe from ANY context (thread, IRQ, tasklet) — i915's
+ * b->signaled_requests is fed by irq_signal_request() from both a hardirq frame and a thread. On a
+ * real CPU that is a cmpxchg loop; the shim has no SMP but is single-core-preemptible via the inline
+ * IRQ/irq_work model, so an MSI landing between the read of h->first and the store would corrupt the
+ * chain. Make each read-modify-write atomic w.r.t. local interrupt delivery (save/cli/restore); zero
+ * cost on the host doctest build. (Fable audit, window 3.) */
+#ifdef NANOS_HOST_TEST
+#define __LKPI_LLIST_ATOMIC_ENTER(f) do { (f) = 0; } while (0)
+#define __LKPI_LLIST_ATOMIC_LEAVE(f) do { (void)(f); } while (0)
+#else
+#define __LKPI_LLIST_ATOMIC_ENTER(f) __asm__ __volatile__("pushfq; popq %0; cli" : "=r"(f) : : "memory")
+#define __LKPI_LLIST_ATOMIC_LEAVE(f) __asm__ __volatile__("pushq %0; popfq" : : "r"(f) : "memory", "cc")
+#endif
 static inline bool llist_add(struct llist_node *n, struct llist_head *h){
-  struct llist_node *f=h->first; n->next=f; h->first=n; return f==0; }
+  unsigned long __f; bool __e; __LKPI_LLIST_ATOMIC_ENTER(__f);
+  { struct llist_node *first=h->first; n->next=first; h->first=n; __e=(first==0); }
+  __LKPI_LLIST_ATOMIC_LEAVE(__f); return __e; }
 static inline struct llist_node *llist_del_all(struct llist_head *h){
-  struct llist_node *f=h->first; h->first=0; return f; }
+  unsigned long __f; struct llist_node *first; __LKPI_LLIST_ATOMIC_ENTER(__f);
+  first=h->first; h->first=0; __LKPI_LLIST_ATOMIC_LEAVE(__f); return first; }
 /* push a [first..last] chain (last->next already terminated) onto the head; returns was-empty. */
 static inline bool llist_add_batch(struct llist_node *first, struct llist_node *last, struct llist_head *h){
-  struct llist_node *f=h->first; last->next=f; h->first=first; return f==0; }
+  unsigned long __f; bool __e; __LKPI_LLIST_ATOMIC_ENTER(__f);
+  { struct llist_node *old=h->first; last->next=old; h->first=first; __e=(old==0); }
+  __LKPI_LLIST_ATOMIC_LEAVE(__f); return __e; }
 static inline struct llist_node *llist_del_first(struct llist_head *h){
-  struct llist_node *f=h->first; if(f) h->first=f->next; return f; }
+  unsigned long __f; struct llist_node *first; __LKPI_LLIST_ATOMIC_ENTER(__f);
+  first=h->first; if(first) h->first=first->next; __LKPI_LLIST_ATOMIC_LEAVE(__f); return first; }
 #define llist_entry(ptr,type,member) container_of(ptr,type,member)
 /* The NULL-terminated llist walk ends when the current NODE pointer is NULL — i.e. when the
  * iterator, reconstructed from that node via container_of, has its member back at address 0.

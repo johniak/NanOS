@@ -21,10 +21,25 @@ static inline void init_irq_work(struct irq_work *w, void (*f)(struct irq_work *
  * work, set `again` and let the owning frame loop, so the depth stays 1 no matter how deep the request
  * chain. */
 static inline bool irq_work_queue(struct irq_work *w) {
+	unsigned long __fl = 0;
 	if (!w || !w->func) return true;
 	if (w->lkpi_run) { w->lkpi_again = 1; return true; }
 	w->lkpi_run = 1;
+	/* On mainline an irq_work fires in HARDIRQ context (IF=0). Our inline-on-queue model must
+	 * reproduce that: mask interrupts around the callback so a real GT MSI cannot land mid-run and
+	 * mutate the same breadcrumb lists this work is walking. i915's signal_irq_work does a two-store
+	 * __list_del + llist_del_all with no lock of its own (it relies on being hardirq); a nested MSI
+	 * running the execlists tasklet inline would insert_breadcrumb into a half-unlinked ce->signals
+	 * and #PF/#GP. Save/restore (not plain cli/sti) so a queue already inside an IRQ frame stays
+	 * masked on return. (Fable IRQ-vs-thread audit, window 1: __intel_breadcrumbs_park queues this
+	 * from a thread with IF=1.) */
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("pushfq; popq %0; cli" : "=r"(__fl) : : "memory");
+#endif
 	do { w->lkpi_again = 0; w->func(w); } while (w->lkpi_again);
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("pushq %0; popfq" : : "r"(__fl) : "memory", "cc");
+#endif
 	w->lkpi_run = 0;
 	return true;
 }

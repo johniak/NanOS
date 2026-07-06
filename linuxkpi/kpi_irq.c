@@ -155,6 +155,14 @@ void lkpi_irq_poll(void) {
 		irqreturn_t r;
 		if (!d->bound || (!d->handler && !d->thread_fn))
 			continue;
+		/* Re-assert CLI before EACH handler: a prior handler may have run code that unconditionally
+		 * re-enables interrupts (execlists_dequeue_irq's local_irq_enable, or now a real
+		 * spin_unlock_irq), which would leave IF=1 for the next handler and let a real MSI nest on
+		 * top of the poll. gen8_irq_handler zeroes MASTER_IRQ first, so a nested real MSI reads
+		 * IIR=0 and exits spurious — but only if we keep the mask tight per-iteration. */
+#ifndef NANOS_HOST_TEST
+		__asm__ __volatile__("cli" ::: "memory");
+#endif
 		r = IRQ_WAKE_THREAD;
 		if (d->handler)
 			r = d->handler(LKPI_IRQ_BASE + i, d->dev);

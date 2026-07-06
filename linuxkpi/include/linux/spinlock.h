@@ -57,10 +57,26 @@ static inline void __lkpi_irq_restore(unsigned long f) {
 }
 #endif
 
-/* Plain _irq stays a no-op: only the balanced _irqsave/_irqrestore pair disables IRQs, so we never
- * leak a CLI (spin_unlock_irq has no matching saved-flags to restore). */
-static inline void spin_lock_irq(spinlock_t *l)   { __lk_acquire(&l->rlock.lock); }
-static inline void spin_unlock_irq(spinlock_t *l) { __lk_release(&l->rlock.lock); }
+/* Real _irq: unconditional CLI on lock, STI on unlock — exactly mainline's local_irq_disable/enable
+ * semantics (spin_lock_irq/spin_unlock_irq take no saved flags upstream either; any caller for whom
+ * an unconditional STI is wrong is already broken on mainline). i915 execlists_hold/unhold/
+ * cancel_requests take sched_engine->lock via spin_lock_irq and from there reach
+ * __i915_request_unsubmit -> i915_request_cancel_breadcrumb -> list_del_rcu, which upstream REQUIRES
+ * to run irqs-off (GEM_BUG_ON(!irqs_disabled)). Leaving it a no-op let a GT MSI land mid-cancel and
+ * race the breadcrumb lists. These callers are thread-context (preempt/hold/reset), never nested in
+ * an IRQ frame, so the STI-on-unlock returns to the correct state. (Fable audit, window 2.) */
+static inline void spin_lock_irq(spinlock_t *l)   {
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("cli" ::: "memory");
+#endif
+	__lk_acquire(&l->rlock.lock);
+}
+static inline void spin_unlock_irq(spinlock_t *l) {
+	__lk_release(&l->rlock.lock);
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("sti" ::: "memory");
+#endif
+}
 static inline int  spin_trylock_irq(spinlock_t *l) { return __lk_try(&l->rlock.lock); }
 #define spin_trylock_irqsave(l, flags) ({ (flags) = __lkpi_irq_save(); int __ok = spin_trylock(l); if(!__ok) __lkpi_irq_restore(flags); __ok; })
 
