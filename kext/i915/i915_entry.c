@@ -31,10 +31,13 @@
 
 /* ---- arch-provided globals the driver expects (x86 GPU stolen-memory resource) ------------ *
  * On a real x86 kernel this is populated by early PCI quirks (arch/x86/kernel/early-quirks.c)
- * from the host bridge's stolen-memory (BDSM) register. Our port has no early-quirk pass, so it
- * is defined empty here; i915's stolen setup treats a zero region as "no stolen memory".
- * PHASE B (Dell): populate .start/.end from the real BDSM base before enabling stolen-backed BOs. */
+ * from the IGD's stolen-memory (BDSM) register. Our port has no early-quirk pass, so we replicate
+ * that pass in i915_setup_stolen_res() below and call it before probe. A zero region makes i915's
+ * stolen setup report "DSM size = 0M" / "Skip stolen region: failed to setup", which in turn fails
+ * intel_alloc_initial_plane_obj ("Failed to preallocate initial FB") and disables the primary
+ * plane — no scanout. Populating it lets i915 wrap the firmware's existing framebuffer. */
 struct resource intel_graphics_stolen_res = { 0 };
+static void i915_setup_stolen_res(unsigned bus, unsigned dev, unsigned func);  /* defined after i915_log */
 
 /* ---- legacy GMCH GTT backend (intel-gtt.ko) — DEAD on Gen9.5 ------------------------------- *
  * i915's intel_ggtt_gmch.c calls these, but only on the GRAPHICS_VER < 6 path (gen2-5). Comet
@@ -202,6 +205,39 @@ static void i915_log_val(const char *msg, long v)
 	knx_file_append(I915_LOG_PATH, num, i915_strlen(num));
 }
 
+/* Replicate arch/x86/kernel/early-quirks.c gen9_stolen_size() + gen3_stolen_base(): the IGD BDSM
+ * register (config 0x5C) gives the stolen base (bits 31:20), and the GMS field of GGC (config 0x50,
+ * bits 15:8) gives the size. gen9 GMS mapping: 0x00..0x10 = gms*32MB, 0x11..0x16 = 4MB steps from
+ * 4MB, 0x17.. = 4MB steps from 36MB. Comet Lake-U (the Dell) reads BDSM=0x7c800001 (base 0x7c800000)
+ * and GGC=0x01c1 (GMS=0x01 -> 32MB). The range is BIOS-reserved (e820), so NanOS never uses it.
+ * Without this, i915 reports "DSM size = 0M" and fails the initial-FB preallocation. */
+static void i915_setup_stolen_res(unsigned bus, unsigned dev, unsigned func)
+{
+	u32 bsm = knx_pci_cfg_read32((unsigned char)bus, (unsigned char)dev, (unsigned char)func, 0x5C);
+	u32 ggc = knx_pci_cfg_read32((unsigned char)bus, (unsigned char)dev, (unsigned char)func, 0x50);
+	unsigned long base = (unsigned long)(bsm & 0xFFF00000u);
+	unsigned gms = (ggc >> 8) & 0xff;
+	unsigned long size;
+
+	if (gms < 0x11)
+		size = (unsigned long)gms * 32u * 1024u * 1024u;
+	else if (gms < 0x17)
+		size = (unsigned long)(gms - 0x11) * 4u * 1024u * 1024u + 4u * 1024u * 1024u;
+	else
+		size = (unsigned long)(gms - 0x17) * 4u * 1024u * 1024u + 36u * 1024u * 1024u;
+
+	if (!base || !size) {
+		i915_log("i915: stolen-res: BDSM/GMS zero — leaving stolen disabled\n");
+		return;
+	}
+	intel_graphics_stolen_res.start = base;
+	intel_graphics_stolen_res.end   = base + size - 1;
+	intel_graphics_stolen_res.flags = IORESOURCE_MEM;
+	intel_graphics_stolen_res.name  = "Graphics Stolen Memory";
+	i915_log_val("i915: stolen-res base ", (long)base);
+	i915_log_val("i915: stolen-res size (MiB) ", (long)(size >> 20));
+}
+
 int nkext_init(void)
 {
 	const struct pci_driver *drv;
@@ -307,6 +343,11 @@ int nkext_init(void)
 		i915_log_val("i915:   BDSM (0x5C, stolen@)  ", (long)knx_pci_cfg_read32(bus, dev, func, 0x5C));
 		i915_log_val("i915:   ASLS (0xFC, OpRegion) ", (long)knx_pci_cfg_read32(bus, dev, func, 0xFC));
 		i915_log_val("i915:   MSI cap offset        ", (long)pci_find_capability(pdev, 0x05 /*PCI_CAP_ID_MSI*/));
+
+		/* Populate the GPU stolen-memory resource (the x86 early-quirk equivalent) from the BDSM/GGC
+		 * registers dumped just above, so i915's stolen setup finds a real DSM and can wrap the
+		 * firmware's initial framebuffer for scanout instead of "DSM size = 0M". */
+		i915_setup_stolen_res(bus, dev, func);
 
 		i915_log("i915: probe start — narrating via drm_dbg (see log tail)\n");
 		pret = drv->probe(pdev, id);
