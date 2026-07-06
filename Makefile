@@ -1205,6 +1205,18 @@ kernel-kext:
 update-dell-pi: kernel-kext
 	PI_HOST=$(PI_HOST) KERNEL=$(BINFOLDER)k64/kernel.bin KEXT=$(BINFOLDER)i915.nkext ARM=1 ./scripts/pi-update.sh
 
+# pull-dell-pi / pull-files-pi / i915-log-pi — retrieve data NanOS wrote on the Dell out of the Pi
+# backing image. Run ONLY while the Dell is OFF (its writes must be flushed; a live two-writer
+# view would corrupt the fs). pull-files-pi PATHS='/a /b', DEST=dir. pull-dell-pi DEST=file.
+.PHONY: pull-dell-pi pull-files-pi i915-log-pi
+pull-dell-pi:
+	PI_HOST=$(PI_HOST) MODE=image DEST=$(or $(DEST),disk/image64-dell.img) ./scripts/pi-pull.sh
+pull-files-pi:
+	PI_HOST=$(PI_HOST) MODE=files PATHS='$(or $(PATHS),/nanos/logs)' DEST=$(or $(DEST),pull-dell) ./scripts/pi-pull.sh
+i915-log-pi:
+	PI_HOST=$(PI_HOST) MODE=files PATHS=/nanos/logs/i915-boot.txt DEST=$(BINFOLDER)pull ./scripts/pi-pull.sh
+	@echo "----- /nanos/logs/i915-boot.txt -----"; cat $(BINFOLDER)pull/nanos/logs/i915-boot.txt 2>/dev/null || echo "(no i915 log on the image yet)"
+
 run64: image64
 	$(QEMU64) $(QEMU_CPU64) $(QEMU_SMP64) $(QEMU_MEM) -drive file=$(IMAGE64),format=raw $(QEMU_DISPLAY64) $(NIC_NET)
 
