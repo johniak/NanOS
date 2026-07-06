@@ -60,14 +60,21 @@ static inline void tasklet_unlock_wait(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_unlock_spin_wait(struct tasklet_struct *t){ (void)t; }
 static inline void __lkpi_tasklet_exec(struct tasklet_struct *t){
 	if (!t) return;
-	if (!tasklet_trylock(t)) { t->state |= (1UL << TASKLET_STATE_SCHED); return; }  /* re-entry: defer */
-	do {
-		t->state &= ~(1UL << TASKLET_STATE_SCHED);
-		if (t->count) { t->state |= (1UL << TASKLET_STATE_SCHED); break; }  /* disabled: stay pending */
-		if (t->use_callback) { if (t->callback) t->callback(t); }
-		else                 { if (t->func) t->func(t->data); }
-	} while (t->state & (1UL << TASKLET_STATE_SCHED));
-	tasklet_unlock(t);
+	for (;;) {
+		if (!tasklet_trylock(t)) { t->state |= (1UL << TASKLET_STATE_SCHED); return; }  /* re-entry: defer to owner */
+		do {
+			t->state &= ~(1UL << TASKLET_STATE_SCHED);
+			if (t->count) { t->state |= (1UL << TASKLET_STATE_SCHED); break; }  /* disabled: stay pending */
+			if (t->use_callback) { if (t->callback) t->callback(t); }
+			else                 { if (t->func) t->func(t->data); }
+		} while (t->state & (1UL << TASKLET_STATE_SCHED));
+		tasklet_unlock(t);
+		/* Close the lost-kick window: a schedule (e.g. from the GT IRQ) that lands AFTER the while-check
+		 * saw SCHED clear but BEFORE unlock clears RUN would trylock-fail and set SCHED with no softirq
+		 * left to run it — a silently dropped execlists submission => engine stalls (a HANG, not a
+		 * reboot). Re-check after unlock and re-claim; the common path returns on the first pass. */
+		if (t->count || !(t->state & (1UL << TASKLET_STATE_SCHED))) return;
+	}
 }
 static inline void tasklet_schedule(struct tasklet_struct *t){ __lkpi_tasklet_exec(t); }
 static inline void tasklet_hi_schedule(struct tasklet_struct *t){ __lkpi_tasklet_exec(t); }
