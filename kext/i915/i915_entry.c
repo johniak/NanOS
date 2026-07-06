@@ -173,6 +173,14 @@ static void i915_log(const char *msg)
 	knx_file_append(I915_LOG_PATH, msg, i915_strlen(msg));
 }
 
+/* Panic sink (registered via knx_set_panic_sink): persist the one preformatted line the kernel
+ * fault handler hands us to the bring-up log. Log-only — the fault handler already wrote it to the
+ * screen. Called from the #DF/#PF/#GP handler, so it must not itself fault: just a bounded append. */
+static void i915_panic_sink(const char *line)
+{
+	knx_file_append(I915_LOG_PATH, line, i915_strlen(line));
+}
+
 /* Armed iff the first non-space byte of /nanos/config/i915 is '1'. Absent/unreadable/0 -> disarmed. */
 static int i915_armed(void)
 {
@@ -268,6 +276,14 @@ int nkext_init(void)
 	 * persistent log too, so a probe that scrolls the fbcon or hard-hangs still leaves the complete
 	 * narration on the stick (recover with `make i915-log`). */
 	lkpi_set_log_tee(I915_LOG_PATH);
+
+	/* Also persist a kernel panic to the log. A stack-overflow-class fault during GT resume is a
+	 * triple-fault-shaped reboot (the #PF/#GP handler halts, but the double fault ran no code until
+	 * we wired vec 8) — and once i915 has modeset the panel, the fbcon framebuffer the on-screen
+	 * panic writes to is no longer scanned out, so the screen may be blank. Teeing the panic line
+	 * (vec/rip/rsp/cr2) here makes `make i915-log` after a power-cycle reveal exactly where it blew
+	 * up. GT init holds no FS locks, so this VFS append runs cleanly from the #DF (IST1) stack. */
+	knx_set_panic_sink(&i915_panic_sink);
 
 	/* 1) LinuxKPI mem_map first — indexed by every alloc_pages/virt_to_page below. A NULL mem_map
 	 * (OOM: it is one struct page per RAM frame, ~256 MiB on a 16 GiB box) makes every page access

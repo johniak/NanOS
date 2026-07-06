@@ -20,4 +20,11 @@ namespace kernel{
 		static char *itoa(int i,int base);
 		static char *itoa(uint64_t v,int base);    // 64-bit unsigned formatter
 	};
+
+	// Optional tee for kernel panics. When a ring-0 CPU exception halts the machine, faultHandler
+	// also hands one preformatted line to this sink (if registered), so the panic survives on a
+	// persistent channel even when the physical display is owned by a driver that has repointed
+	// scanout away from the fbcon framebuffer (e.g. i915 after modeset — its bring-up log on the USB
+	// root is the readable channel). Registered via knx_set_panic_sink(); NULL = screen only.
+	extern void (*g_panicSink)(const char* line);
 }

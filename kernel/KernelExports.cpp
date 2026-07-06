@@ -103,6 +103,13 @@ int knx_file_append(const char* path, const void* buf, unsigned long len) {
 	return g_kexVfs->write(p, (unsigned) len, off, buf);
 }
 
+// Register a persistent panic sink: faultHandler hands it one preformatted line on a ring-0 CPU
+// exception (see drivers/Console.h + arch fault handler). The i915 bring-up harness points this at
+// its USB-root log so a triple-fault-class kernel panic (e.g. a stack overflow during GPU init)
+// leaves rip/rsp/cr2 readable after a power-cycle, even when i915 owns the panel and the fbcon
+// framebuffer is no longer scanned out. Pass nullptr to detach.
+void knx_set_panic_sink(void (*fn)(const char* line)) { kernel::g_panicSink = fn; }
+
 // Real RCU grace period (LinuxKPI synchronize_rcu). See Scheduler::rcuSynchronize.
 void knx_rcu_synchronize(void)            { Scheduler::rcuSynchronize(); }
 
