@@ -66,11 +66,21 @@ char *kstrdup(const char *s, gfp_t flags);
 #define _LKPI_SLAB_EXTRA
 static inline void *kvmalloc_array(size_t n, size_t s, gfp_t f){ return kmalloc(n*s, f); }
 static inline void *kvcalloc(size_t n, size_t s, gfp_t f){ return kzalloc(n*s, f); }
-struct kmem_cache { size_t size; };
-static inline struct kmem_cache *kmem_cache_create(const char *n, unsigned sz, unsigned al, unsigned long fl, void *ctor){ (void)n;(void)al;(void)fl;(void)ctor; struct kmem_cache *c=(struct kmem_cache*)kmalloc(sizeof(*c),0); if(c)c->size=sz; return c; }
+/* A cache may carry a constructor. In real Linux the ctor runs ONCE when a slab
+ * page is created and objects keep that constructed state across free/reuse
+ * (SLAB_TYPESAFE_BY_RCU) — so callers like i915's __i915_request_create() do NOT
+ * re-initialise ctor-set fields (e.g. rq->submit.fn / rq->semaphore.fn). This shim
+ * has no object pooling: every kmem_cache_alloc() is a fresh kmalloc(). To give
+ * each fresh object the same constructed state the ctor MUST run on every alloc,
+ * exactly as it would on a first-time slab construction. Dropping the ctor (the
+ * old behaviour) left those fields uninitialised — i915 request submit/semaphore
+ * fence ->fn stayed as heap garbage, so the first engine-park kernel-context
+ * request #GP'd on `call *fn` (non-canonical). */
+struct kmem_cache { size_t size; void (*ctor)(void *); };
+static inline struct kmem_cache *kmem_cache_create(const char *n, unsigned sz, unsigned al, unsigned long fl, void (*ctor)(void *)){ (void)n;(void)al;(void)fl; struct kmem_cache *c=(struct kmem_cache*)kmalloc(sizeof(*c),0); if(c){ c->size=sz; c->ctor=ctor; } return c; }
 static inline void kmem_cache_destroy(struct kmem_cache *c){ kfree(c); }
-static inline void *kmem_cache_alloc(struct kmem_cache *c, gfp_t f){ return kmalloc(c->size, f); }
-static inline void *kmem_cache_zalloc(struct kmem_cache *c, gfp_t f){ return kzalloc(c->size, f); }
+static inline void *kmem_cache_alloc(struct kmem_cache *c, gfp_t f){ void *p=kmalloc(c->size, f); if(p&&c->ctor)c->ctor(p); return p; }
+static inline void *kmem_cache_zalloc(struct kmem_cache *c, gfp_t f){ void *p=kzalloc(c->size, f); if(p&&c->ctor)c->ctor(p); return p; }
 static inline void kmem_cache_free(struct kmem_cache *c, void *p){ (void)c; kfree(p); }
 static inline void *memdup_user(const void *src, size_t len){ void *p=kmalloc(len,0); if(p)memcpy(p,src,len); return p; }
 static inline void *vmemdup_user(const void *src, size_t len){ return memdup_user(src,len); }
