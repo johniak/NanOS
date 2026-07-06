@@ -74,7 +74,29 @@ void faultHandler(kernel::Registers* r) {
     kernel::Console::writeHex((unsigned long) r->rbx);
     kernel::Console::write(" rsp=");
     kernel::Console::writeHex((unsigned long) r->rsp);
+    kernel::Console::write(" rdi=");
+    kernel::Console::writeHex((unsigned long) r->rdi);
     kernel::Console::writeLine(" ***");
+    // Backtrace: scan the stack upward for values that fall inside the i915 kext's runtime .text
+    // window and print them — a #GP/#PF in the driver then names its full call chain (map each via
+    // the boot-log delta: link = runtime - 0x29aa1000). Cheap and read-only; the loader stack is
+    // mapped, so scanning a kilobyte above rsp cannot itself fault. Collect first so the same list
+    // goes to the screen AND the persistent sink below.
+    unsigned long bt[12];
+    int btn = 0;
+    if (!(r->cs & 3)) {   // ring-0 fault only (a user fault's stack is the process's, not useful here)
+        const unsigned long* sp = (const unsigned long*) r->rsp;
+        for (int i = 0; i < 160 && btn < 12; i++) {
+            unsigned long v = sp[i];
+            if (v >= 0x2a000000UL && v < 0x2a800000UL)   // i915 kext text window (see boot log addrs)
+                bt[btn++] = v;
+        }
+        if (btn) {
+            kernel::Console::write("    bt:");
+            for (int i = 0; i < btn; i++) { kernel::Console::write(" "); kernel::Console::writeHex(bt[i]); }
+            kernel::Console::writeLine("");
+        }
+    }
     // Tee one compact line to the persistent panic sink (e.g. the i915 bring-up log on the USB
     // root), which is readable after a power-cycle even when the panel is owned by a driver whose
     // scanout no longer points at the fbcon framebuffer. Best-effort, and last: the screen print
@@ -91,11 +113,24 @@ void faultHandler(kernel::Registers* r) {
         panicAppend(line, sizeof line, &pos, "vec=", (unsigned long) r->int_no);
         panicAppend(line, sizeof line, &pos, "rip=", (unsigned long) r->rip);
         panicAppend(line, sizeof line, &pos, "rsp=", (unsigned long) r->rsp);
+        panicAppend(line, sizeof line, &pos, "rdi=", (unsigned long) r->rdi);
         if (r->int_no == 14 || r->int_no == 8)
             panicAppend(line, sizeof line, &pos, "cr2=", (unsigned long) kernel::readCr2());
         if (pos < (int) sizeof line - 1) line[pos++] = '\n';
         line[pos] = 0;
         kernel::g_panicSink(line);
+        // Persist the kext backtrace on its own line so the driver call chain survives the power-cycle.
+        if (btn) {
+            char bl[256];
+            int bp = 0;
+            for (const char* s = "    bt:"; *s; s++) bl[bp++] = *s;
+            bl[bp] = 0;
+            for (int i = 0; i < btn; i++)
+                panicAppend(bl, sizeof bl, &bp, " ", bt[i]);   // "<space><16 hex> "
+            if (bp < (int) sizeof bl - 1) bl[bp++] = '\n';
+            bl[bp] = 0;
+            kernel::g_panicSink(bl);
+        }
     }
     // A kernel fault is unrecoverable: do NOT iret (it would re-fault on the same instruction).
     for (;;)
