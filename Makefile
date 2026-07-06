@@ -2765,9 +2765,13 @@ $(foreach s,$(LINK_SUPPORT_SRCS),$(eval $(call SUPPORT_OBJ_RULE,$(s))))
 # .c mtime, so recompile it every make — one tiny file). "-dirty" flags an uncommitted working tree.
 $(BINFOLDER)i915_entry.o: kext/i915/i915_entry.c FORCE
 	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -DLKPI_GIT_REV='"$(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo -dirty)"' -MMD -MP -c $< -o $@
+# The desktop->panel mirror bridge (post-modeset present callback). Same vendored-include build as
+# the entry glue so <linux/*> + lkpi_knx.h resolve identically.
+$(BINFOLDER)i915_present.o: kext/i915/i915_present.c
+	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -MMD -MP -c $< -o $@
 FORCE:
 .PHONY: FORCE
-I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o
+I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o $(BINFOLDER)i915_present.o
 
 # The link: kext bootstrap + i915 glue + all 276 i915 objects + the TTM/DRM-display SUPPORT set +
 # the shared DRM core/lib + the LinuxKPI shim runtime. No virtio objects. Produces bin/i915.nkext.

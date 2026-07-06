@@ -392,9 +392,31 @@ int nkext_init(void)
 		i915_log_val("i915:   post: pdev->irq   ", (long)pdev->irq);
 		i915_log_val("i915:   post: msi_enabled ", (long)pdev->msi_enabled);
 		i915_log_val("i915:   post: PCI cmd reg ", (long)(knx_pci_cfg_read32(bus, dev, func, 0x04) & 0xffff));
-		if (pret == 0)
+		if (pret == 0) {
 			i915_log("i915: DRIVER BOUND — GPU is up (full probe succeeded)\n");
-		else if (pret == -ENODEV && i915_modparams.inject_probe_failure)
+			/* i915 modeset the panel but scans out its own stolen buffer, while fbcon/nwm still
+			 * draw the now-orphaned bootloader GOP fb -> lit-but-black panel. Mirror the GOP fb
+			 * into the i915 scanout each frame (see kext/i915/i915_present.c). scanout base =
+			 * stolen (DSM) base + plane offset 0 (the [drm] "Initial plane fb bound to 0x0" fb);
+			 * pitch 0 = inherit the GOP fb stride (i915 wrapped that same firmware fb). Log the
+			 * boot fb vs scanout addresses so one Dell boot proves whether they differ. */
+			{
+				extern int i915_present_bringup(unsigned long long scanout_phys,
+								unsigned int scanout_pitch);
+				unsigned long long sc = (unsigned long long)intel_graphics_stolen_res.start;
+				unsigned long long bfb = 0; unsigned int bp = 0, bw = 0, bh = 0; unsigned char bb = 0;
+				knx_boot_fb(&bfb, &bp, &bw, &bh, &bb);
+				i915_log_val("i915:   boot fb phys   ", (long)bfb);
+				i915_log_val("i915:   boot fb pitch  ", (long)bp);
+				i915_log_val("i915:   boot fb w      ", (long)bw);
+				i915_log_val("i915:   boot fb h      ", (long)bh);
+				i915_log_val("i915:   scanout phys   ", (long)sc);
+				if (i915_present_bringup(sc, 0) == 0)
+					i915_log("i915: desktop->panel mirror armed — fbcon/nwm now visible on the eDP panel\n");
+				else
+					i915_log("i915: mirror arm FAILED (no boot fb, or stolen base zero)\n");
+			}
+		} else if (pret == -ENODEV && i915_modparams.inject_probe_failure)
 			i915_log("i915: stopped at the armed inject point (clean -ENODEV unwind)\n");
 		else
 			i915_log("i915: probe FAILED — see the drm_dbg trail above for the failing stage\n");
