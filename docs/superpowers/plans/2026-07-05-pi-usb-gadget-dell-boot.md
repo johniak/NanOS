@@ -702,3 +702,42 @@ git commit --allow-empty -m "docs(pendrak): Dell boot-from-gadget validated end-
 **Type/name consistency:** LUN node path, gadget name `nanos`, image path `/home/pi/nanos/image64.img`, staging `/home/pi/nanos/staging`, helper names (`nanos-gadget.sh`/`nanos-lun.sh`/`nanos-apply.sh`), and env vars (`PI_HOST`, `IMG`, `KERNEL`, `KEXT`, `ARM`) are identical across all tasks and match the spec's Global Constraints.
 
 **Known adjustment point:** Task 6 Step 5 flags that `_all _kext` sub-target names may differ in this tree; the fallback is to mirror whatever the existing `update-dell` (Makefile:1182) depends on for `kernel.bin`/`i915.nkext`.
+
+---
+
+## Execution notes & deviations (implemented 2026-07-06)
+
+Tasks 1–7 implemented and verified end-to-end against the real Pi Zero W. Task 8 (Dell
+boot) remains — human-in-the-loop. Deviations from the plan, all folded into the committed
+scripts:
+
+1. **dwc2 overlay must live under `[all]` (Task 1).** The real blocker was *not* `dr_mode=host`
+   — the `dtoverlay=dwc2` line sat under a `[cm5]` filter section (and `otg_mode=1` under
+   `[cm4]`), so it was silently ignored on the Zero W and the host-only `dwc_otg` driver stayed
+   bound (empty `/sys/class/udc`). Fix: comment the mis-sectioned lines, add
+   `dtoverlay=dwc2,dr_mode=peripheral` under `[all]`, and `modules-load=dwc2` in
+   `cmdline.txt`. `scripts/pi-bootstrap.sh` does this marker-guarded and idempotently.
+
+2. **Root fs is `ext2`, not `ext4` (Task 5).** `blkid` reports the NanOS root partition as
+   `ext2` (no journal). `nanos-apply.sh`/`nanos-pull.sh` detect the `ext2|ext3|ext4` family,
+   not a hardcoded `ext4`.
+
+3. **Arm knob passed as a positional arg (Task 6).** `sudo` scrubs the environment, so
+   `sudo -n ARM=1 nanos-apply.sh` is rejected ("not allowed to set environment variables").
+   `nanos-apply.sh` now reads `ARM="${1:-${ARM:-1}}"` and `pi-update.sh` passes it as `$1`.
+
+4. **macOS rsync is old (Task 4).** The bundled client rejects `--info=progress2`;
+   `pi-flash.sh`/`pi-pull.sh` use `--progress`. `pi-flash.sh` also gained a `trap` that
+   always reattaches the LUN (an early failure had left it detached).
+
+5. **NEW Task 9 — pull NanOS-modified data back (added on user request).** Symmetric to the
+   push: `nanos-pull.sh` read-only loop-mounts the backing image and stages requested paths;
+   `pi-pull.sh` (Mac) does `MODE=files` (default, scp specific paths) or `MODE=image` (rsync
+   the whole image back). Makefile: `pull-files-pi`, `pull-dell-pi`, `i915-log-pi`. **Safety:
+   run only while the Dell is OFF** — its writes must be flushed and a live RW/two-writer view
+   would corrupt the fs. Verified: files pull (config incl. arm knob) and whole-image pull
+   (byte-perfect md5 match to the Pi's current image).
+
+**Verified state:** gadget auto-starts on boot (systemd), enumerates on the Mac as a 335.5 MB
+removable disk ("File-Stor Gadget"), full push is md5-identical, fast surgery is `cmp`-clean,
+pull round-trips correctly, and `pi-bootstrap` is a no-op on re-run.
