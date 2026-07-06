@@ -23,8 +23,26 @@ static inline void __set_current_state(int s){ (void)s; }
  * (the Dell GGTT-scratch -EPERM). Every infinite wait (dma_fence_wait / dma_resv_wait_timeout with
  * MAX_SCHEDULE_TIMEOUT) that error-checks its result depends on this being positive. */
 #define MAX_SCHEDULE_TIMEOUT ((long)(~0UL >> 1))
-static inline long schedule_timeout(long t){ return t; }
-static inline long io_schedule_timeout(long t){ return t; }
+/* Honest cooperative timeout. i915_request_wait_timeout (i915_request.c:92) loops
+ * `timeout = io_schedule_timeout(timeout)` and breaks only when the fence signals or timeout hits 0.
+ * The old no-op (`return t`) never decremented AND never pumped, so if the completion breadcrumb MSI
+ * never arrives the first request wait (park barrier / __engines_record_defaults) busy-spins FOREVER
+ * = silent hang. Instead: pump the deferred sources (timers -> retire/heartbeat, workqueue drain,
+ * fence poll) and burn ~1 real jiffy, then decrement by the REAL time elapsed (timeout is denominated
+ * in jiffies = 1 ms; a bare pump iteration is ~µs, so decrementing per-iteration would expire honest
+ * waits ~1000x too early). A finite timeout therefore actually EXPIRES -> i915 gets -ETIME, wedges the
+ * GT itself, and probe finishes in degraded mode with a COMPLETE log instead of hanging. An infinite
+ * wait (MAX_SCHEDULE_TIMEOUT) never expires but now PUMPS, so deferred work can still make progress. */
+static inline long schedule_timeout(long t){
+	extern void lkpi_wait_pump(void);
+	extern unsigned long lkpi_jiffies(void);
+	unsigned long start = lkpi_jiffies();
+	lkpi_wait_pump();
+	while ((long)(lkpi_jiffies() - start) < 1) __asm__ __volatile__("pause");   /* >= 1 jiffy real */
+	if (t == MAX_SCHEDULE_TIMEOUT) return t;
+	{ long used = (long)(lkpi_jiffies() - start); return t > used ? t - used : 0; }
+}
+static inline long io_schedule_timeout(long t){ return schedule_timeout(t); }
 #define TASK_COMM_LEN 16
 #endif
 

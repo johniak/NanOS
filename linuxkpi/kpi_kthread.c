@@ -24,6 +24,7 @@
 #include <linux/sched.h>     /* full struct task_struct (kthread handle) */
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/printk.h>    /* bring-up markers tee to the persistent i915 log */
 #include "lkpi_knx.h"
 
 /* ---- a genuine tiny spinlock (independent of the no-op shim spinlock) ---- */
@@ -224,6 +225,7 @@ static int g_timers_inited = 0;
 
 int mod_timer(struct timer_list *t, unsigned long expires) {
 	int was;
+	{ static int once; if (!once) { once = 1; printk("lkpi: FIRST timer armed (+%ld ms) — past GT unpark\n", (long)(expires - jiffies_now())); } }
 	kt_lock(&g_tlock);
 	was = t->lkpi_linked;
 	t->expires = expires;
@@ -263,6 +265,7 @@ static void timers_service(void) {
 		kt_unlock(&g_tlock);
 		if (!fire)
 			break;
+		{ static int once; if (!once) { once = 1; printk("lkpi: FIRST timer fired\n"); } }
 		if (fire->function)
 			fire->function(fire);               /* run OUTSIDE the lock */
 	}
@@ -308,7 +311,14 @@ bool queue_delayed_work(struct workqueue_struct *q, struct delayed_work *dw, uns
 	 * ITERATIVELY at its real deadline (once per `delay`), exactly like mainline's timer->kworker. Only
 	 * delay==0 keeps the immediate path. */
 	if (delay == 0) {
-		if (!g_wq_async || !q) { if (dw->work.func) dw->work.func(&dw->work); return true; }
+		/* delay==0 must NOT run inline pre-scheduler either: this is the wakeref put_async path
+		 * (intel_wakeref.c:79 mod_delayed_work(&wf->work, delay=0)) whose handler parks the engine/GT
+		 * -> switch_to_kernel_context emits a request -> its retire calls intel_engine_pm_put_async ->
+		 * mod_delayed_work(delay=0) again -> inline -> park -> ... mutual recursion. ENQUEUE instead;
+		 * the cooperative wait pump drains it in process context, exactly like mainline's kworker.
+		 * wq_enqueue is idempotent (guards on w->pending), so a re-put while queued is a no-op. Inline
+		 * only survives when there is no system_wq yet (before lkpi_wq_init), i.e. no queue to hold it. */
+		if (!q) { if (dw->work.func) dw->work.func(&dw->work); return true; }
 		wq_enqueue(q, &dw->work);
 		return true;
 	}
