@@ -67,6 +67,10 @@ class Gdt64 {
     // TSS), so `ltr 0x30` on every CPU loads a distinct TSS — a shared TSS can't be `ltr`'d twice
     // (the busy bit faults the second CPU), and rsp0/IST must be per-CPU anyway.
     Tss64        tss64 __attribute__((aligned(16)));
+    // #DF (IST1) stack. 4 KiB is enough for the handler's screen dump ALONE — the deep, fault-prone
+    // part (the FS-teed panic sink: ext-append + heap + locks) is now skipped for #DF (see the vec-8
+    // guard in fault_x86_64.cpp), so the handler no longer overflows this stack into a triple fault.
+    // (A larger stack here is per-CPU and pushed the kernel .bss over the 0x800000 VA_USER_BASE ceiling.)
     unsigned char dfStack[4096] __attribute__((aligned(16)));
 public:
     void initialize();                  // build table, lgdt, reload CS/segs, point TSS at IST1

@@ -79,7 +79,11 @@ void faultHandler(kernel::Registers* r) {
     // root), which is readable after a power-cycle even when the panel is owned by a driver whose
     // scanout no longer points at the fbcon framebuffer. Best-effort, and last: the screen print
     // above already happened, so a wedged sink can never suppress the on-screen panic.
-    if (kernel::g_panicSink) {
+    // Skip the FS sink for #DF (vec 8): a stack-overflow double fault runs on the small IST1 stack and
+    // often means we faulted mid-operation (possibly holding the FS lock or with the heap in a partial
+    // state) — the sink's ext-append (locks + allocation) could re-fault and cascade to a triple fault,
+    // losing the on-screen dump too. The screen print above is the reliable channel for #DF.
+    if (kernel::g_panicSink && r->int_no != 8) {
         char line[128];
         int pos = 0;
         for (const char* s = "\n*** KERNEL EXCEPTION "; *s; s++) line[pos++] = *s;
