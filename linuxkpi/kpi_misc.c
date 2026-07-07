@@ -206,9 +206,19 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 	}
 	m->nrpages = npages;
 	m->host = ino;
+	/* i_size must reflect the backing: shmem_pin_map (gt/shmem_utils.c) computes
+	 * n_pages = file->f_mapping->host->i_size >> PAGE_SHIFT, so a zero i_size yields a
+	 * zero-page vmap and a silently-empty default_state. Set the REQUESTED size (rounded to the
+	 * page-granular backing we actually allocated). */
+	ino->i_size = (loff_t)npages * PAGE_SIZE;
 	ino->i_mapping = m;
 	f->f_mapping = m;
 	f->f_inode = ino;
+	/* Born with ONE reference (mainline shmem_file_setup semantics). i915 takes a SECOND via
+	 * shmem_create_from_object() -> atomic_long_inc(&f->f_count) to keep engine->default_state alive
+	 * past drm_gem_object_release()'s fput(). fput() below now honours this count, so the shared
+	 * backing survives until BOTH the object and default_state are released. */
+	atomic_long_set(&f->f_count, 1);
 	return f;
 }
 
@@ -274,14 +284,26 @@ void lkpi_shmem_release(struct file *f)
 	kfree(f);
 }
 
-/* The last reference to a GEM object's backing file is dropped by drm_gem_object_release()
- * via fput() — this is where the pages actually die. The virtio_gpu driver defers this to
- * the RESOURCE_UNREF response callback, and the ctrl queue is processed in order, so the
- * host has always consumed any pending transfer from these pages by the time we free them.
- * Files without a mapping (sync/anon stubs) fall through harmlessly inside the release. */
+/* Drop ONE reference to a backing file; free only when the last one goes.
+ *
+ * A file is born with f_count=1 (shmem_file_setup / anon_inode_getfile). i915 can take a SECOND
+ * ref — shmem_create_from_object() does atomic_long_inc(&f->f_count) so engine->default_state
+ * keeps the object's shmem backing alive after drm_gem_object_release() fput()s it. The old fput()
+ * freed unconditionally, so that first fput() destroyed the file while default_state still pointed
+ * at it: a use-after-free whose freed+zeroed f_mapping surfaced as `lkpi shmem: read OUT-OF-RANGE
+ * map=0x0` when lrc_init_state() later read the golden context — and, because lrc_init_state()
+ * ignores that read's result and still marks the context VALID + restore, the GPU restored an
+ * uninitialised context image (an engine-wedge / probe-hang cascade). Honour the count instead.
+ *
+ * The virtio_gpu driver defers its fput to the RESOURCE_UNREF response callback, and the ctrl queue
+ * is processed in order, so the host has consumed any pending transfer before the count hits zero.
+ * Files without a mapping (sync/anon stubs) are skipped by lkpi_shmem_release harmlessly. */
 void fput(struct file *f)
 {
-	lkpi_shmem_release(f);
+	if (!f)
+		return;
+	if (atomic_long_dec_and_test(&f->f_count))
+		lkpi_shmem_release(f);
 }
 
 /* ---- seq_file (debug/sysfs output sink) --------------------------------------------- */
@@ -429,6 +451,7 @@ struct file *anon_inode_getfile(const char *name, const struct file_operations *
 		return 0;
 	f->f_op = ops;
 	f->private_data = priv;
+	atomic_long_set(&f->f_count, 1);   /* one reference; fput() frees at zero (see fput) */
 	return f;
 }
 

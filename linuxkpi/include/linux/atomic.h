@@ -91,6 +91,7 @@ static inline void atomic_long_sub(long i, atomic_long_t *v){ (void)atomic64_add
 static inline long atomic_long_add_return(long i, atomic_long_t *v){ return atomic64_add_return(i, v); }
 static inline long atomic_long_sub_return(long i, atomic_long_t *v){ return atomic64_add_return(-i, v); }
 static inline void atomic_long_dec(atomic_long_t *v){ (void)atomic64_add_return(-1, v); }
+static inline int atomic_long_dec_and_test(atomic_long_t *v){ return atomic64_add_return(-1, v) == 0; }
 #endif
 
 #ifndef _LKPI_ATOMIC_CMPXCHG64
