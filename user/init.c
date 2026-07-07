@@ -240,13 +240,24 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
 
 /* Run one program to completion inside the auto-test child; returns its exit status
  * (or -1). The sequence must be serial — glkms takes over the scanout, so it may not
- * overlap i915test's engine-reset phase. */
-static int run_and_wait(const char *path, char *const argv[]) {
+ * overlap i915test's engine-reset phase. errlog (optional) captures the child's stderr
+ * by appending it to that file: Mesa narrates loader/driver failures on stderr
+ * (MESA-LOADER/mesa_loge), and without this a GL failure on the Dell shows only the
+ * final tee marker — boot #42 cost a whole flash cycle for exactly that reason. */
+static int run_and_wait(const char *path, char *const argv[], const char *errlog) {
 	int pid, st = -1;
 	if (access(path, X_OK) != 0)
 		return -1;
 	pid = fork();
 	if (pid == 0) {
+		if (errlog) {
+			int efd = open(errlog, O_WRONLY | O_CREAT | O_APPEND, 0666);
+			if (efd >= 0) {
+				dup2(efd, 2);
+				if (efd != 2)
+					close(efd);
+			}
+		}
 		execve(path, argv, environ);
 		_exit(127);
 	}
@@ -281,14 +292,14 @@ static void spawn_i915test_once(void) {
 		struct timespec ts = { 2, 0 };         /* let the VTs/services settle first */
 		nanosleep(&ts, 0);
 		char* a1[] = { (char*) "i915test", (char*) "hang", 0 };
-		run_and_wait(I915TEST_PATH, a1);
+		run_and_wait(I915TEST_PATH, a1, 0);
 		int gfd = open(GLTEST_LOG_U, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 		if (gfd >= 0)
 			close(gfd);
 		char* a2[] = { (char*) "gles2info", 0 };
-		run_and_wait(GLES2INFO_PATH, a2);
+		run_and_wait(GLES2INFO_PATH, a2, GLTEST_LOG_U);
 		char* a3[] = { (char*) "glkms", (char*) "3", 0 };
-		run_and_wait(GLKMS_PATH, a3);
+		run_and_wait(GLKMS_PATH, a3, GLTEST_LOG_U);
 		_exit(0);
 	}
 }
