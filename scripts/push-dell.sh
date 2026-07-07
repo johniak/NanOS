@@ -63,10 +63,15 @@ diskutil unmountDisk "$DEV" >/dev/null 2>&1 || true
 # otherwise eat the password prompt and fail silently).
 sudo -v || die "sudo required to write the raw partition"
 
-# One debugfs script: rm+write+chmod each file (the exact idiom the image build uses).
+# One debugfs script: mkdir parents (no-ops when they exist — debugfs -f keeps going) +
+# rm+write+chmod each file (the exact idiom the image build uses).
 CMDS=$(mktemp)
 {
     for i in "${!SRCS[@]}"; do
+        dir=$(dirname "${DESTS[$i]}"); chain=""
+        while [ "$dir" != "/" ]; do chain="$dir
+$chain"; dir=$(dirname "$dir"); done
+        printf '%s' "$chain" | while IFS= read -r d; do [ -n "$d" ] && echo "mkdir $d"; done
         echo "rm ${DESTS[$i]}"
         echo "write ${SRCS[$i]} ${DESTS[$i]}"
         echo "set_inode_field ${DESTS[$i]} mode 0100755"
