@@ -8,6 +8,7 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/printk.h>
 
 #define IDA_SENTINEL ((void *)1)
 
@@ -70,6 +71,24 @@ void *idr_remove(struct idr *idr, int id) {
 	void *p = idr->slots[id];
 	idr->slots[id] = 0;
 	return (p == IDA_SENTINEL) ? 0 : p;
+}
+
+/* xa_store's backend: INSERT-or-replace at a fixed id — real xarray semantics. This is NOT
+ * idr_replace, which only swaps an already-allocated slot and silently DROPS a store to a
+ * fresh id (that mismatch cost a Dell boot: i915_gem_context_open registers the default
+ * proto-context via xa_store(&proto_context_xa, 0, pc) on a virgin xarray, the entry
+ * vanished, and every EXECBUFFER2 died with -ENOENT in i915_gem_context_lookup). */
+void *idr_store(struct idr *idr, void *ptr, int id) {
+	void *old;
+	if (id < 0)
+		return 0;
+	if (id >= idr->cap && idr_grow(idr, id + 1) < 0) {
+		printk("lkpi idr: idr_store grow FAILED id=%d — entry dropped\n", id);
+		return 0;
+	}
+	old = idr->slots[id];
+	idr->slots[id] = ptr ? ptr : IDA_SENTINEL;
+	return (old == IDA_SENTINEL) ? 0 : old;
 }
 
 void *idr_replace(struct idr *idr, void *ptr, int id) {

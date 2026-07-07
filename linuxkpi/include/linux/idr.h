@@ -36,6 +36,8 @@ int   idr_alloc(struct idr *idr, void *ptr, int start, int end, gfp_t gfp);
 void *idr_find(struct idr *idr, int id);
 void *idr_remove(struct idr *idr, int id);
 void *idr_replace(struct idr *idr, void *ptr, int id);
+/* INSERT-or-replace at a fixed id (real xa_store semantics; idr_replace is replace-only). */
+void *idr_store(struct idr *idr, void *ptr, int id);
 int   idr_is_empty(struct idr *idr);
 
 void  ida_init(struct ida *ida);

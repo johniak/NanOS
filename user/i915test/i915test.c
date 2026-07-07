@@ -11,7 +11,18 @@
  *   GEM_WAIT on the target (implicit exclusive fence from EXEC_OBJECT_WRITE)
  *   mmap the target and assert the dword — GPU-written memory read back by the CPU.
  *
- * Success marker: "i915test: store OK". Every step dies loudly with its errno otherwise.
+ * Success marker: "i915test: store OK".
+ *
+ * Boot #32 taught us to make one run tell everything: the main submit failed with the
+ * errno swallowed (ioctl() is -1/errno per reterr in libc-glue/syscalls.c). So now every
+ * failure prints errno, and when the full store submit fails the test walks a
+ * DISCRIMINATION LADDER of minimal submits:
+ *   B: MI_BATCH_BUFFER_END-only batch, single BO, kernel-placed (no softpin, no NO_RELOC)
+ *      -> exercises context + engine + request + vm-bind alone.
+ *   C: the same NOP batch, softpinned + NO_RELOC
+ *      -> isolates EXEC_OBJECT_PINNED handling.
+ * A-fail+B-fail = the base submit path; A-fail+B-OK+C-fail = softpin; B+C OK = the
+ * two-BO/WRITE-fence shape. Each rung reports OK/errno.
  *
  * NOTE deliberate-hang/engine-reset validation (plan Task 8's one-time test) is NOT here:
  * hangcheck is still disabled in the bring-up glue (i915_entry.c), so a hung batch would
@@ -19,6 +30,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -31,10 +43,11 @@
 #define BATCH_VA   0x100000ull      /* softpin GPU VAs: low, page-aligned, < 4 GiB       */
 #define TARGET_VA  0x180000ull      /* (no EXEC_OBJECT_SUPPORTS_48B_ADDRESS needed)      */
 #define STORE_OFF  64ull            /* store lands at TARGET_VA + 64                      */
+#define NOP_OFF    2048u            /* MI_BB_END-only batch at +2048 in the batch BO      */
 
-static int die(const char *step, long err)
+static int die(const char *step)
 {
-	printf("i915test: FAIL %s (err=%ld)\n", step, err);
+	printf("i915test: FAIL %s (errno=%d)\n", step, errno);
 	return 1;
 }
 
@@ -56,22 +69,54 @@ static void *gem_mmap_wc(int fd, uint32_t handle, uint64_t size, const char *wha
 	mo.handle = handle;
 	mo.flags  = I915_MMAP_OFFSET_WC;
 	if (ioctl(fd, DRM_IOCTL_I915_GEM_MMAP_OFFSET, &mo)) {
-		printf("i915test: MMAP_OFFSET(%s) failed\n", what);
+		printf("i915test: MMAP_OFFSET(%s) failed (errno=%d)\n", what, errno);
 		return 0;
 	}
 	p = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mo.offset);
 	if (p == MAP_FAILED) {
-		printf("i915test: mmap(%s @0x%llx) failed\n", what, (unsigned long long)mo.offset);
+		printf("i915test: mmap(%s @0x%llx) failed (errno=%d)\n",
+		       what, (unsigned long long)mo.offset, errno);
 		return 0;
 	}
 	return p;
+}
+
+/* One EXECBUFFER2 + GEM_WAIT(batch), n objects (batch last). Returns 0 or -errno. */
+static int submit(int fd, struct drm_i915_gem_exec_object2 *obj, int n,
+		  uint64_t ebflags, uint32_t start, uint32_t wait_handle, const char *label)
+{
+	struct drm_i915_gem_execbuffer2 eb;
+	memset(&eb, 0, sizeof eb);
+	eb.buffers_ptr        = (uintptr_t)obj;
+	eb.buffer_count       = n;
+	eb.batch_start_offset = start;
+	eb.batch_len          = 0;              /* 0 = to the end of the batch BO */
+	eb.flags              = ebflags;
+	eb.rsvd1              = 0;              /* default per-file context */
+	if (ioctl(fd, DRM_IOCTL_I915_GEM_EXECBUFFER2, &eb)) {
+		printf("i915test: %s: EXECBUFFER2 errno=%d\n", label, errno);
+		return -errno;
+	}
+	{
+		struct drm_i915_gem_wait w;
+		memset(&w, 0, sizeof w);
+		w.bo_handle  = wait_handle;
+		w.timeout_ns = 10ll * 1000 * 1000 * 1000;   /* 10 s — never open-ended */
+		if (ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &w)) {
+			printf("i915test: %s: GEM_WAIT errno=%d (batch never completed?)\n",
+			       label, errno);
+			return -errno;
+		}
+	}
+	printf("i915test: %s: OK\n", label);
+	return 0;
 }
 
 int main(void)
 {
 	int fd = open("/dev/dri/renderD128", O_RDWR);
 	if (fd < 0)
-		return die("open renderD128", fd);
+		return die("open renderD128");
 
 	/* Narrate what the driver advertises (iris hard-requires softpin). */
 	{
@@ -84,7 +129,7 @@ int main(void)
 		ioctl(fd, DRM_IOCTL_I915_GETPARAM, &gp);
 		printf("i915test: chipset 0x%x softpin %d\n", chipset, softpin);
 		if (!softpin)
-			return die("HAS_EXEC_SOFTPIN", 0);
+			return die("HAS_EXEC_SOFTPIN");
 	}
 
 	{
@@ -92,66 +137,64 @@ int main(void)
 		uint32_t batch  = gem_create(fd, 4096);
 		uint32_t *bb;
 		volatile uint32_t *tp;
+		struct drm_i915_gem_exec_object2 obj[2];
+		int ra;
 		if (!target || !batch)
-			return die("GEM_CREATE", 0);
+			return die("GEM_CREATE");
 		printf("i915test: BOs created (target %u, batch %u)\n", target, batch);
 
 		bb = (uint32_t *)gem_mmap_wc(fd, batch, 4096, "batch");
 		if (!bb)
-			return die("mmap batch", 0);
+			return die("mmap batch");
 		/* gen8+ MI_STORE_DWORD_IMM: (0x20<<23)|2, addr lo/hi (ppgtt, bit22=0), data. */
 		bb[0] = (0x20u << 23) | 2;
 		bb[1] = (uint32_t)(TARGET_VA + STORE_OFF);
 		bb[2] = (uint32_t)((TARGET_VA + STORE_OFF) >> 32);
 		bb[3] = MAGIC;
 		bb[4] = 0x0A << 23;                       /* MI_BATCH_BUFFER_END */
+		bb[NOP_OFF / 4] = 0x0A << 23;             /* rung B/C: NOP-only batch */
 		printf("i915test: batch written (store 0x%08x -> GPU VA 0x%llx)\n",
 		       MAGIC, (unsigned long long)(TARGET_VA + STORE_OFF));
 
-		{
-			struct drm_i915_gem_exec_object2 obj[2];
-			struct drm_i915_gem_execbuffer2 eb;
-			long r;
-			memset(obj, 0, sizeof obj);
-			obj[0].handle = target;               /* batch LAST (no I915_EXEC_BATCH_FIRST) */
-			obj[0].offset = TARGET_VA;
-			obj[0].flags  = EXEC_OBJECT_PINNED | EXEC_OBJECT_WRITE;
-			obj[1].handle = batch;
-			obj[1].offset = BATCH_VA;
-			obj[1].flags  = EXEC_OBJECT_PINNED;
-			memset(&eb, 0, sizeof eb);
-			eb.buffers_ptr  = (uintptr_t)obj;
-			eb.buffer_count = 2;
-			eb.batch_len    = 0;                  /* 0 = to the end of the batch BO */
-			eb.flags        = I915_EXEC_RENDER | I915_EXEC_NO_RELOC;
-			eb.rsvd1        = 0;                  /* default per-file context */
-			r = ioctl(fd, DRM_IOCTL_I915_GEM_EXECBUFFER2, &eb);
-			if (r)
-				return die("EXECBUFFER2", r);
-			printf("i915test: EXECBUFFER2 submitted (rcs, softpin)\n");
+		/* Rung A — the real thing: two BOs, softpinned, store + verify. */
+		memset(obj, 0, sizeof obj);
+		obj[0].handle = target;                   /* batch LAST (no I915_EXEC_BATCH_FIRST) */
+		obj[0].offset = TARGET_VA;
+		obj[0].flags  = EXEC_OBJECT_PINNED | EXEC_OBJECT_WRITE;
+		obj[1].handle = batch;
+		obj[1].offset = BATCH_VA;
+		obj[1].flags  = EXEC_OBJECT_PINNED;
+		ra = submit(fd, obj, 2, I915_EXEC_RENDER | I915_EXEC_NO_RELOC, 0, target,
+			    "store softpin");
+		if (ra == 0) {
+			tp = (volatile uint32_t *)gem_mmap_wc(fd, target, 4096, "target");
+			if (!tp)
+				return die("mmap target");
+			if (tp[STORE_OFF / 4] != MAGIC) {
+				printf("i915test: readback 0x%08x != 0x%08x\n",
+				       tp[STORE_OFF / 4], MAGIC);
+				return die("readback");
+			}
+			printf("i915test: store OK\n");
+			close(fd);
+			return 0;
 		}
 
-		{
-			struct drm_i915_gem_wait w;
-			long r;
-			memset(&w, 0, sizeof w);
-			w.bo_handle  = target;
-			w.timeout_ns = 10ll * 1000 * 1000 * 1000;   /* 10 s — never open-ended */
-			r = ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &w);
-			if (r)
-				return die("GEM_WAIT (batch never completed?)", r);
-			printf("i915test: GEM_WAIT done (request signalled)\n");
-		}
+		/* Rung B — minimal submit: NOP batch, single BO, kernel-placed, relocs allowed
+		 * (none supplied). Isolates context+engine+request+vm-bind from softpin. */
+		memset(obj, 0, sizeof obj);
+		obj[0].handle = batch;
+		submit(fd, obj, 1, I915_EXEC_RENDER, NOP_OFF, batch, "nop unpinned");
 
-		tp = (volatile uint32_t *)gem_mmap_wc(fd, target, 4096, "target");
-		if (!tp)
-			return die("mmap target", 0);
-		if (tp[STORE_OFF / 4] != MAGIC) {
-			printf("i915test: readback 0x%08x != 0x%08x\n", tp[STORE_OFF / 4], MAGIC);
-			return die("readback", 0);
-		}
-		printf("i915test: store OK\n");
+		/* Rung C — the same NOP batch, softpinned + NO_RELOC. Isolates PINNED. */
+		memset(obj, 0, sizeof obj);
+		obj[0].handle = batch;
+		obj[0].offset = BATCH_VA;
+		obj[0].flags  = EXEC_OBJECT_PINNED;
+		submit(fd, obj, 1, I915_EXEC_RENDER | I915_EXEC_NO_RELOC, NOP_OFF, batch,
+		       "nop softpin");
+
+		printf("i915test: ladder done (see errnos above)\n");
+		return 1;
 	}
-	close(fd);
-	return 0;
 }

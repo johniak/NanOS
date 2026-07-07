@@ -13,7 +13,10 @@ static inline void xa_init_flags(struct xarray *xa, unsigned f){ (void)f; idr_in
 static inline void xa_init(struct xarray *xa){ xa_init_flags(xa,0); }
 static inline void xa_destroy(struct xarray *xa){ idr_destroy(&xa->idr); }
 static inline void *xa_load(struct xarray *xa, unsigned long i){ return idr_find(&xa->idr,(int)i); }
-static inline void *xa_store(struct xarray *xa, unsigned long i, void *p, unsigned gfp){ (void)gfp; idr_replace(&xa->idr,p,(int)i); return 0; }
+/* Real xa_store is INSERT-or-replace and returns the previous entry — idr_store (kpi_idr.c),
+ * NOT idr_replace (replace-only, silently drops stores to unallocated ids; that drop broke
+ * i915's default-context registration and cost a Dell boot). */
+static inline void *xa_store(struct xarray *xa, unsigned long i, void *p, unsigned gfp){ (void)gfp; return idr_store(&xa->idr,p,(int)i); }
 /* __xa_store is the caller-locked variant; same effect in the shim (xa_lock is a plain spinlock). */
 static inline void *__xa_store(struct xarray *xa, unsigned long i, void *p, unsigned gfp){ return xa_store(xa,i,p,gfp); }
 static inline void *xa_erase(struct xarray *xa, unsigned long i){ return idr_remove(&xa->idr,(int)i); }
