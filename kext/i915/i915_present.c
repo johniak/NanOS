@@ -3,19 +3,22 @@
  *
  * After the UNMODIFIED i915 probe modesets the Dell's eDP panel, the primary plane scans out the
  * stolen framebuffer i915 wrapped at DSM offset 0 (see the [drm] "Initial plane fb bound to 0x0 in
- * the ggtt" trail). fbcon + nwm, however, keep drawing to the bootloader's GOP framebuffer — the
- * buffer the firmware used to scan out, now ORPHANED once i915 owns the panel. The panel is lit
- * (backlight on, vblanks flowing) but shows the untouched stolen buffer: a black screen.
+ * the ggtt" trail). fbcon + nwm, however, keep drawing to the bootloader's GOP framebuffer. If the
+ * two ever differ, the panel is lit (backlight on, vblanks flowing) but shows the untouched stolen
+ * buffer — this mirror bridges them, exactly like kext/virtio_gpu/virtio_gpu_present.c but with a
+ * CPU memcpy instead of a virtio TRANSFER_TO_HOST_2D.
  *
- * This bridges the two exactly like kext/virtio_gpu/virtio_gpu_present.c, except the "present" is a
- * CPU memcpy instead of a virtio TRANSFER_TO_HOST_2D: the periodic present thread copies what the
- * desktop drew (the GOP fb) into what the panel shows (the i915 scanout) every frame. Nothing
- * reassigns /dev/fb0, so the console VT surface and nwm keep working against the boot fb unchanged
- * — the mirror is a pure read-of-src / write-of-dst overlay. Both buffers are identity-mapped
- * physical memory (NanOS maps all RAM 1:1), so a physical address IS the CPU address.
+ * THE DESTINATION MUST BE THE GTT APERTURE (GMADR/BAR2 + the plane's GGTT offset), NEVER the raw
+ * stolen physical address. On Gen9 the DSM range is claimed by the system agent and CPU accesses
+ * to it are architecturally disallowed (dropped or machine-hanging — boot #28 froze exactly here,
+ * mid-memcpy into BDSM, with no exception and no further log lines). The aperture window is the
+ * one CPU-legal view of stolen: GMADR reads/writes are translated through the GGTT, and i915 kept
+ * the initial plane bound at GGTT 0 ("Initial plane fb bound to 0x0"), so GMADR+0 IS the panel.
  *
- * If the GOP fb and the i915 scanout ever resolve to the same physical buffer, the copy is a
- * harmless self-copy; if they differ (the observed Dell case), it makes the desktop visible.
+ * On this Dell the firmware GOP fb already sits at GMADR+0 (boot fb phys 0x80000000 == BAR2), so
+ * fbcon/nwm writes land in the scanned-out stolen buffer through the aperture and no mirror is
+ * needed at all — i915_entry.c detects that (boot fb == aperture target) and skips the arm. This
+ * mirror only runs in the general case where the plane scans a different GGTT offset.
  */
 #include <linux/types.h>
 #include <linux/string.h>
@@ -45,28 +48,36 @@ static void i915_mirror_flush(void)
 }
 
 /* Arm the desktop->panel mirror after a successful i915 probe.
- *   scanout_phys  — physical base of the i915 primary-plane buffer (stolen base + plane offset 0).
+ *   scanout_phys  — APERTURE address of the plane buffer: GMADR (BAR2) + the plane's GGTT offset.
+ *                   Never the raw stolen physical base — see the header comment.
  *   scanout_pitch — the plane stride in bytes, or 0 to inherit the boot fb's stride.
  * Source geometry is taken from the bootloader GOP fb (knx_boot_fb): i915 wrapped that same
  * firmware framebuffer, so their width/height match. Returns 0 on success, -1 if there is no boot
- * fb or the scanout base is zero (stolen disabled). Never faults — a bad arm just leaves the panel
- * black, same as before. */
+ * fb, no scanout base, or the aperture window cannot be mapped. Never faults — a bad arm just
+ * leaves the panel showing the untouched plane buffer, same as before. */
 int i915_present_bringup(unsigned long long scanout_phys, unsigned int scanout_pitch)
 {
 	unsigned long long src_phys = 0;
 	unsigned int src_pitch = 0, src_w = 0, src_h = 0;
 	unsigned char src_bpp = 0;
-	unsigned int bpl;
+	unsigned int bpl, dst_pitch;
 
 	if (!scanout_phys)
 		return -1;
 	if (!knx_boot_fb(&src_phys, &src_pitch, &src_w, &src_h, &src_bpp) || !src_phys)
 		return -1;
 
+	dst_pitch = scanout_pitch ? scanout_pitch : src_pitch;
+
+	/* The aperture is a PCI BAR window, not RAM — map it explicitly (uncached is fine for a
+	 * write-mostly mirror) instead of assuming the identity map covers it. */
+	g_dst = (unsigned char *)knx_map_mmio(scanout_phys, (unsigned long long)src_h * dst_pitch);
+	if (!g_dst)
+		return -1;
+
 	g_src       = (unsigned char *)(unsigned long)src_phys;
-	g_dst       = (unsigned char *)(unsigned long)scanout_phys;
 	g_src_pitch = src_pitch;
-	g_dst_pitch = scanout_pitch ? scanout_pitch : src_pitch;
+	g_dst_pitch = dst_pitch;
 
 	/* One row is width*4 bytes (32bpp); never copy past either stride. */
 	bpl = src_w * 4u;

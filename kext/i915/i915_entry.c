@@ -397,27 +397,71 @@ int nkext_init(void)
 		i915_log_val("i915:   post: PCI cmd reg ", (long)(knx_pci_cfg_read32(bus, dev, func, 0x04) & 0xffff));
 		if (pret == 0) {
 			i915_log("i915: DRIVER BOUND — GPU is up (full probe succeeded)\n");
-			/* i915 modeset the panel but scans out its own stolen buffer, while fbcon/nwm still
-			 * draw the now-orphaned bootloader GOP fb -> lit-but-black panel. Mirror the GOP fb
-			 * into the i915 scanout each frame (see kext/i915/i915_present.c). scanout base =
-			 * stolen (DSM) base + plane offset 0 (the [drm] "Initial plane fb bound to 0x0" fb);
-			 * pitch 0 = inherit the GOP fb stride (i915 wrapped that same firmware fb). Log the
-			 * boot fb vs scanout addresses so one Dell boot proves whether they differ. */
+			/* Make the desktop visible on the i915-driven panel. The plane scans a stolen
+			 * buffer; the only CPU-legal view of stolen is the GTT APERTURE (GMADR/BAR2 +
+			 * the plane's GGTT offset) — boot #28 froze mid-memcpy writing the raw BDSM
+			 * physical base (Gen9 system agent claims the DSM range; direct CPU access is
+			 * architecturally disallowed, and it died silently with no exception).
+			 *
+			 * Read the live GGTT offset from PLANE_SURF_1_A instead of assuming 0, and
+			 * compare the aperture target against the firmware GOP fb: on this Dell the
+			 * GOP fb IS GMADR+0 (boot fb phys 0x80000000 == BAR2 base), i915 re-bound the
+			 * initial plane at GGTT 0, so fbcon/nwm already draw straight into the panel
+			 * through the aperture and the mirror would be a pure self-copy — skip it.
+			 * Only a genuinely different scanout window arms the per-frame mirror. */
 			{
 				extern int i915_present_bringup(unsigned long long scanout_phys,
 								unsigned int scanout_pitch);
-				unsigned long long sc = (unsigned long long)intel_graphics_stolen_res.start;
-				unsigned long long bfb = 0; unsigned int bp = 0, bw = 0, bh = 0; unsigned char bb = 0;
+				unsigned long long gmadr = (unsigned long long)pdev->resource[2].start;
+				unsigned long long bfb = 0, dst = 0;
+				unsigned int bp = 0, bw = 0, bh = 0; unsigned char bb = 0;
+				unsigned int surf = 0, stride = 0, pitch = 0;
+				volatile unsigned int *mmio;
+
 				knx_boot_fb(&bfb, &bp, &bw, &bh, &bb);
+				/* Display registers need no forcewake and pipe A's power well is up.
+				 * _PLANE_SURF_1_A = 0x7019c (bits 31:12 = GGTT offset of the surface),
+				 * _PLANE_STRIDE_1_A = 0x70188 (linear stride in 64-byte units). */
+				mmio = (volatile unsigned int *)knx_map_mmio(
+					(unsigned long long)pdev->resource[0].start, 0x80000);
+				if (mmio) {
+					surf   = mmio[0x7019c / 4];
+					stride = mmio[0x70188 / 4];
+					pitch  = (stride & 0x3ff) * 64;
+
+					/* Turn framebuffer compression OFF in hardware (the exact write
+					 * ilk_fbc_deactivate does: clear DPFC_CTL_EN in ILK_DPFC_CONTROL,
+					 * FBC_A @ 0x43208). fbcon/nwm render the FRONT buffer with raw CPU
+					 * writes that bypass i915's frontbuffer tracking, so an active FBC
+					 * would keep scanning a stale compressed frame instead of those
+					 * writes (probe enabled it: "Enabling FBC on [PLANE:32:plane 1A]").
+					 * i915 only re-activates FBC on an atomic commit, and nothing
+					 * commits after probe at this bring-up stage, so the disable
+					 * sticks. Drop this once flips go through real KMS with proper
+					 * frontbuffer tracking. (enable_fbc lives in the STATIC
+					 * intel_display_modparams — not reachable pre-probe from here.) */
+					{
+						unsigned int dpfc = mmio[0x43208 / 4];
+						if (dpfc & 0x80000000u) {
+							mmio[0x43208 / 4] = dpfc & ~0x80000000u;
+							i915_log("i915: FBC hw-disabled (untracked CPU frontbuffer rendering)\n");
+						}
+					}
+				}
+				dst = gmadr + (surf & 0xfffff000u);
 				i915_log_val("i915:   boot fb phys   ", (long)bfb);
 				i915_log_val("i915:   boot fb pitch  ", (long)bp);
 				i915_log_val("i915:   boot fb w      ", (long)bw);
 				i915_log_val("i915:   boot fb h      ", (long)bh);
-				i915_log_val("i915:   scanout phys   ", (long)sc);
-				if (i915_present_bringup(sc, 0) == 0)
+				i915_log_val("i915:   PLANE_SURF_1_A ", (long)surf);
+				i915_log_val("i915:   plane pitch    ", (long)pitch);
+				i915_log_val("i915:   aperture target", (long)dst);
+				if (bfb && dst == bfb)
+					i915_log("i915: boot fb IS the live scanout aperture — panel already shows fbcon/nwm, no mirror needed\n");
+				else if (i915_present_bringup(dst, pitch) == 0)
 					i915_log("i915: desktop->panel mirror armed — fbcon/nwm now visible on the eDP panel\n");
 				else
-					i915_log("i915: mirror arm FAILED (no boot fb, or stolen base zero)\n");
+					i915_log("i915: mirror arm FAILED (no boot fb, or aperture map failed)\n");
 			}
 		} else if (pret == -ENODEV && i915_modparams.inject_probe_failure)
 			i915_log("i915: stopped at the armed inject point (clean -ENODEV unwind)\n");
