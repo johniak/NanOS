@@ -463,6 +463,17 @@ int nkext_init(void)
 				else
 					i915_log("i915: mirror arm FAILED (no boot fb, or aperture map failed)\n");
 			}
+			/* Wire /dev/dri/card0 + renderD128 to the driver: probe registered DRM
+			 * minors 0 and 1; i915_drm_node.c forwards SYS_ioctl/SYS_mmap into the
+			 * real drm_ioctl() with a per-process drm_file. Userland oracle:
+			 * drmtest.nxe part 1 (dumb BO + ADDFB + SETCRTC → solid blue panel). */
+			{
+				extern int i915_drm_node_init(struct pci_dev *pdev);
+				if (i915_drm_node_init(pdev) == 0)
+					i915_log("i915: /dev/dri/card0 + renderD128 wired (real DRM ioctl ABI)\n");
+				else
+					i915_log("i915: /dev/dri wiring FAILED (no drm_device in drvdata)\n");
+			}
 		} else if (pret == -ENODEV && i915_modparams.inject_probe_failure)
 			i915_log("i915: stopped at the armed inject point (clean -ENODEV unwind)\n");
 		else

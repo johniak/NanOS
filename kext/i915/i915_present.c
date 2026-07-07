@@ -26,6 +26,7 @@
 
 /* Armed state, published to the present thread (single writer at bring-up, then read-only). */
 static volatile int   g_armed;
+static volatile int   g_suspended;  /* a userland KMS client owns the scanout (i915_drm_node.c) */
 static unsigned char *g_src;        /* GOP boot fb — what fbcon/nwm draw into            */
 static unsigned char *g_dst;        /* i915 scanout — what the eDP panel scans out       */
 static unsigned int   g_src_pitch;  /* source stride (bytes/row)                          */
@@ -40,11 +41,19 @@ static void i915_mirror_flush(void)
 {
 	unsigned int y;
 
-	if (!g_armed)
+	if (!g_armed || g_suspended)
 		return;
 	for (y = 0; y < g_rows; y++)
 		memcpy(g_dst + (unsigned long)y * g_dst_pitch,
 		       g_src + (unsigned long)y * g_src_pitch, g_bpl);
+}
+
+/* Pause/resume the mirror while a userland KMS client (via /dev/dri, i915_drm_node.c) drives the
+ * CRTC — an armed mirror would re-copy the boot fb over every frame the client presents. No-op
+ * when the mirror was never armed (the self-map case). */
+void i915_present_set_suspended(int s)
+{
+	g_suspended = s;
 }
 
 /* Arm the desktop->panel mirror after a successful i915 probe.

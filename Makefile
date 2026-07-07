@@ -2769,9 +2769,15 @@ $(BINFOLDER)i915_entry.o: kext/i915/i915_entry.c FORCE
 # the entry glue so <linux/*> + lkpi_knx.h resolve identically.
 $(BINFOLDER)i915_present.o: kext/i915/i915_present.c
 	$(CXX) $(LINUXKPI_CFLAGS) $(I915_VINC) -MMD -MP -c $< -o $@
+# The /dev/dri node dispatch (per-process drm_file + drm_ioctl + i915 mmap-offset resolution).
+# Needs the i915 include set (i915_drv.h + gem object internals) AND -O2: i915_drv.h's
+# IS_PLATFORM/IS_SUBPLATFORM BUILD_BUG_ON(__builtin_constant_p(...)) only folds under
+# optimization — the same reason every vendored i915 object builds -O2.
+$(BINFOLDER)i915_drm_node.o: kext/i915/i915_drm_node.c
+	$(CXX) $(LINUXKPI_CFLAGS) -O2 $(I915_VINC) -MMD -MP -c $< -o $@
 FORCE:
 .PHONY: FORCE
-I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o $(BINFOLDER)i915_present.o
+I915_GLUE_OBJS=$(BINFOLDER)i915_entry.o $(BINFOLDER)i915_present.o $(BINFOLDER)i915_drm_node.o
 
 # The link: kext bootstrap + i915 glue + all 276 i915 objects + the TTM/DRM-display SUPPORT set +
 # the shared DRM core/lib + the LinuxKPI shim runtime. No virtio objects. Produces bin/i915.nkext.

@@ -45,4 +45,4 @@ if [ -z "$out" ]; then
     die "log empty/absent — harness may not have armed (check knob) or the driver never reached the tee"
 fi
 printf '%s\n' "$out"
-[ -n "$SAVE" ] && { printf '%s\n' "$out" > "$SAVE"; note "saved -> $SAVE"; }
+if [ -n "$SAVE" ]; then printf '%s\n' "$out" > "$SAVE"; note "saved -> $SAVE"; fi
