@@ -18,11 +18,34 @@
  * -> the statically-linked gallium-virgl megadriver. It is also the path Task 9's GBM compositor
  * uses, so the oracle exercises the real stack. */
 #include <stdio.h>
+#include <stdarg.h>
 #include <fcntl.h>     /* open, O_RDWR */
 #include <gbm.h>       /* gbm_create_device — fd-direct EGL platform */
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
+
+/* Tee every marker to the stick (same idiom as i915test): the Dell has no serial console, so
+ * `make i915-log` pulling /nanos/logs/gltest.txt is the only hands-off way to read the verdict.
+ * Append mode — glkms shares the file and each run prints its own header line. */
+#define TEE_PATH "/disks/main/nanos/logs/gltest.txt"
+static FILE *g_tee;
+static int tee_printf(const char *fmt, ...)
+{
+    va_list ap;
+    int r;
+    va_start(ap, fmt);
+    r = vprintf(fmt, ap);
+    va_end(ap);
+    if (g_tee) {
+        va_start(ap, fmt);
+        vfprintf(g_tee, fmt, ap);
+        va_end(ap);
+        fflush(g_tee);
+    }
+    return r;
+}
+#define printf tee_printf
 
 /* Bind libc.ndl's stdio streams to the plain globals Mesa's C++/libdrm TUs reference
  * (nx_stream_bridge.c) — must run before any Mesa/libdrm call. */
@@ -31,6 +54,8 @@ void nx_bind_std_streams(void);
 int main(void)
 {
     nx_bind_std_streams();
+    g_tee = fopen(TEE_PATH, "a");
+    printf("gles2info: ===== run =====%s\n", g_tee ? "" : " [tee unavailable -- console only]");
     int fd = open("/dev/dri/renderD128", O_RDWR);
     if (fd < 0) { printf("gles2info: no-node (/dev/dri/renderD128)\n"); return 1; }
     struct gbm_device *gbm = gbm_create_device(fd);

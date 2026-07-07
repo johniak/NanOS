@@ -234,11 +234,35 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
 
 #define I915_ARM_KNOB_U "/disks/main/nanos/config/i915"
 #define I915TEST_PATH   "/disks/main/nanos/bin/i915test.nxe"
+#define GLES2INFO_PATH  "/disks/main/nanos/bin/gles2info.nxe"
+#define GLKMS_PATH      "/disks/main/nanos/bin/glkms.nxe"
+#define GLTEST_LOG_U    "/disks/main/nanos/logs/gltest.txt"
 
-/* One-shot GPU oracle: when the i915 bring-up harness is armed (same knob the kext
- * reads), auto-run `i915test hang` after boot — every marker lands in
- * /nanos/logs/i915test.txt and the kernel narration in i915-boot.txt, so a Dell
- * iteration is flash -> boot -> power off -> make i915-log, no typing on the target.
+/* Run one program to completion inside the auto-test child; returns its exit status
+ * (or -1). The sequence must be serial — glkms takes over the scanout, so it may not
+ * overlap i915test's engine-reset phase. */
+static int run_and_wait(const char *path, char *const argv[]) {
+	int pid, st = -1;
+	if (access(path, X_OK) != 0)
+		return -1;
+	pid = fork();
+	if (pid == 0) {
+		execve(path, argv, environ);
+		_exit(127);
+	}
+	if (pid > 0)
+		waitpid(pid, &st, 0);
+	return st;
+}
+
+/* One-shot GPU oracle sequence: when the i915 bring-up harness is armed (same knob the
+ * kext reads), auto-run after boot, serially:
+ *   1. i915test hang     -> /nanos/logs/i915test.txt   (execbuf/hang/reset/recovery)
+ *   2. gles2info         -> /nanos/logs/gltest.txt     (Mesa iris renderer + FBO readback)
+ *   3. glkms 3           -> /nanos/logs/gltest.txt     (GL gradient on the panel ~3s, restores)
+ * plus the kernel narration in i915-boot.txt — a Dell iteration is flash -> boot ->
+ * wait -> power off -> make i915-log, no typing on the target (user requirement).
+ * The GL log is truncated per boot so it never accumulates stale runs.
  * Output goes to the boot log (not the console) to keep the login prompt clean.
  * Spawned once; the reaper collects it without respawning (its pid is untracked). */
 static void spawn_i915test_once(void) {
@@ -250,15 +274,22 @@ static void spawn_i915test_once(void) {
 	close(fd);
 	if (ch != '1' || access(I915TEST_PATH, X_OK) != 0)
 		return;
-	console_note("init: i915 armed -- auto-running i915test hang (log: /nanos/logs/i915test.txt)\n");
+	console_note("init: i915 armed -- auto-running i915test + gles2info + glkms (logs: /nanos/logs/)\n");
 	int pid = fork();
 	if (pid == 0) {
 		log_redirect_child();
 		struct timespec ts = { 2, 0 };         /* let the VTs/services settle first */
 		nanosleep(&ts, 0);
-		char* a[] = { (char*) "i915test", (char*) "hang", 0 };
-		execve(I915TEST_PATH, a, environ);
-		_exit(127);
+		char* a1[] = { (char*) "i915test", (char*) "hang", 0 };
+		run_and_wait(I915TEST_PATH, a1);
+		int gfd = open(GLTEST_LOG_U, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		if (gfd >= 0)
+			close(gfd);
+		char* a2[] = { (char*) "gles2info", 0 };
+		run_and_wait(GLES2INFO_PATH, a2);
+		char* a3[] = { (char*) "glkms", (char*) "3", 0 };
+		run_and_wait(GLKMS_PATH, a3);
+		_exit(0);
 	}
 }
 

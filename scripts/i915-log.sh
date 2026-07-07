@@ -53,7 +53,15 @@ if [ -n "$out2" ]; then
 else
     note "(absent — i915test was not run this boot, or /nanos/logs was not writable)"
 fi
+# The GL oracles (gles2info + glkms) tee here (truncated per boot by init's auto-run).
+note "===== /nanos/logs/gltest.txt  (gles2info + glkms tee) ====="
+out3=$(sudo "$DBG" -R "cat /nanos/logs/gltest.txt" "$PDEV" 2>/dev/null || true)
+if [ -n "$out3" ]; then
+    printf '%s\n' "$out3"
+else
+    note "(absent — the GL oracles were not run this boot)"
+fi
 if [ -n "$SAVE" ]; then
-    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; } > "$SAVE"
+    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; } > "$SAVE"
     note "saved -> $SAVE"
 fi

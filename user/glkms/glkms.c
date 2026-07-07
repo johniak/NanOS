@@ -17,8 +17,32 @@
  */
 #include "glkms_init.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <GLES2/gl2.h>
+
+/* Tee every marker to the stick (same idiom as i915test/gles2info): the Dell has no serial
+ * console, so `make i915-log` pulling /nanos/logs/gltest.txt is the hands-off verdict channel.
+ * Only THIS TU is teed — glkms_init.c is shared verbatim with nwm's GL backend, so its lines
+ * stay console-only and main re-prints the mode after a successful open. */
+#define TEE_PATH "/disks/main/nanos/logs/gltest.txt"
+static FILE *g_tee;
+static int tee_printf(const char *fmt, ...)
+{
+	va_list ap;
+	int r;
+	va_start(ap, fmt);
+	r = vprintf(fmt, ap);
+	va_end(ap);
+	if (g_tee) {
+		va_start(ap, fmt);
+		vfprintf(g_tee, fmt, ap);
+		va_end(ap);
+		fflush(g_tee);
+	}
+	return r;
+}
+#define printf tee_printf
 
 /* nx_stream_bridge.c binds libc.ndl's stdio streams to the plain globals Mesa/libdrm reference. */
 void nx_bind_std_streams(void);
@@ -71,8 +95,12 @@ int main(int argc, char **argv)
 	int hold = (argc > 1) ? atoi_simple(argv[1]) : 3;
 	if (hold <= 0) hold = 3;
 
+	g_tee = fopen(TEE_PATH, "a");
+	printf("glkms: ===== run =====%s\n", g_tee ? "" : " [tee unavailable -- console only]");
+
 	struct glkms g;
 	if (glkms_open(&g) != 0) { printf("glkms: open failed\n"); return 1; }
+	printf("glkms: opened %dx%d\n", g.mode_w, g.mode_h);
 
 	GLuint v = compile(GL_VERTEX_SHADER, VS);
 	GLuint f = compile(GL_FRAGMENT_SHADER, FS);
