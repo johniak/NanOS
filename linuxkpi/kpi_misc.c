@@ -122,6 +122,34 @@ void lkpi_cpu_relax_probe(void *ra) {
 	}
 }
 
+/* Sleep-poll watchdog — the THIRD class, separate state again. msleep / usleep_range / schedule_timeout
+ * PUMP the deferred sources but (unlike the pumped waits above) were NOT probed, so an i915 poll written
+ * `while (!cond) msleep(1);` / `... usleep_range() ...` / a schedule_timeout loop spins forever WITHOUT
+ * tripping SPIN>2s or RAW-SPIN — exactly the Dell freeze-after-modeset signature (boot #26: probe never
+ * returned, no watchdog fired, only the independent vblank IRQ flooded the log). Threshold 8 s, ABOVE the
+ * longest legitimate single i915 sleep (panel power-cycle t11_t12 ~6 s, wait_for(..,5000) loops), so a
+ * genuine legit wait never false-fires but an unbounded loop (runs tens of seconds) is named. Own g_sl_*
+ * state so it never thrashes the 2 s / 3 s deadlines. */
+static void *g_sl_ra;
+static unsigned long long g_sl_since_us;
+static int g_sl_reported;
+void lkpi_sleep_probe(void *ra) {
+	unsigned long long now = knx_uptime_us();
+	if (ra != g_sl_ra) {
+		g_sl_ra = ra;
+		g_sl_since_us = now;
+		g_sl_reported = 0;
+		return;
+	}
+	if (!g_sl_reported && (now - g_sl_since_us) > 8000000ull) {
+		unsigned long fl;
+		g_sl_reported = 1;
+		__asm__ __volatile__("pushfq; popq %0" : "=r"(fl));
+		printk("lkpi: SLEEP-SPIN>8s ra=%p IF=%d — timeout-less poll via msleep/usleep_range/schedule_timeout; awaited condition never satisfied\n",
+		       ra, (int)((fl >> 9) & 1));
+	}
+}
+
 static struct task_struct lkpi_current_task = { .pid = 1, .comm = "virtio_gpu", .mm = 0 };
 struct task_struct *lkpi_current = &lkpi_current_task;
 

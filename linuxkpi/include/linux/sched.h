@@ -48,8 +48,17 @@ static inline void __set_current_state(int s){ (void)s; }
 static inline long schedule_timeout(long t){
 	extern void lkpi_wait_pump(void);
 	extern unsigned long lkpi_jiffies(void);
+#ifndef NANOS_HOST_TEST
+	extern void lkpi_sleep_probe(void *ra);
+#endif
 	unsigned long start = lkpi_jiffies();
 	lkpi_wait_pump();
+#ifndef NANOS_HOST_TEST
+	/* Name a schedule_timeout loop that never terminates (>8s). Inline, so the RA is the enclosing
+	 * caller — imprecise but deterministic + mappable; only an INFINITE loop (esp. a repeated
+	 * MAX_SCHEDULE_TIMEOUT) crosses 8s, so finite decrementing waits never false-fire. */
+	lkpi_sleep_probe(__builtin_return_address(0));
+#endif
 	while ((long)(lkpi_jiffies() - start) < 1) __asm__ __volatile__("pause");   /* >= 1 jiffy real */
 	if (t == MAX_SCHEDULE_TIMEOUT) return t;
 	{ long used = (long)(lkpi_jiffies() - start); return t > used ? t - used : 0; }

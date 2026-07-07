@@ -43,11 +43,16 @@ void mdelay(unsigned long msecs) {
 	udelay(msecs * 1000ul);
 }
 
+void lkpi_sleep_probe(void *ra);
+
 void msleep(unsigned int msecs) {
+	void *ra = __builtin_return_address(0);
 	unsigned long long start = knx_uptime_us();
 	unsigned long long end = start + (unsigned long long)msecs * 1000ull;
-	while (knx_uptime_us() < end)
+	while (knx_uptime_us() < end) {
 		lkpi_wait_pump();   /* service timers/workqueue so poll-by-msleep loops make progress */
+		lkpi_sleep_probe(ra);   /* name a `while(!cond) msleep()` that never terminates (>8s) */
+	}
 }
 
 unsigned long msleep_interruptible(unsigned int msecs) {
@@ -59,10 +64,13 @@ void usleep_range(unsigned long min, unsigned long max) {
 	/* might_sleep context: pump the cooperative work sources while waiting out `min` microseconds,
 	 * so a poll-by-usleep loop does not starve the timer/workqueue that satisfies its condition
 	 * (unlike udelay, which is atomic-section-safe and must not pump). */
+	void *ra = __builtin_return_address(0);
 	unsigned long long end = knx_uptime_us() + (unsigned long long)min;
 	(void)max;
-	while (knx_uptime_us() < end)
+	while (knx_uptime_us() < end) {
 		lkpi_wait_pump();
+		lkpi_sleep_probe(ra);   /* name a poll-by-usleep_range loop that never terminates (>8s) */
+	}
 }
 
 void usleep_range_state(unsigned long min, unsigned long max, unsigned int state) {
