@@ -78,6 +78,11 @@ int chroot(const char* path) { (void) path; errno = ENOSYS; return -1; }
  * ENOSYS so the symbol resolves and such a copy fails cleanly rather than silently. */
 int mknod(const char* path, mode_t mode, dev_t dev) { (void) path; (void) mode; (void) dev; errno = ENOSYS; return -1; }
 
+/* mkfifoat: same story as mknod — no FIFO filesystem nodes. Mesa's intel_measure profiler
+ * (INTEL_MEASURE=control=<path>) is the only caller; it aborts loudly on this error, which is
+ * the honest outcome for a genuinely unsupported feature. Never reached in normal rendering. */
+int mkfifoat(int dirfd, const char* path, mode_t mode) { (void) dirfd; (void) path; (void) mode; errno = ENOSYS; return -1; }
+
 /* getrusage: no per-process resource accounting. Zero the struct and succeed (servers query it for
  * optional stats logging; zeros are an honest "not measured"). */
 int getrusage(int who, struct rusage* usage) {

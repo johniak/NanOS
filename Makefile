@@ -444,9 +444,23 @@ define GLAPP_STAGE
 	cp $(BINFOLDER)mknx64            "$(SDK_TC)/bin/x86_64-nanos-mknx"
 endef
 
+# One-time bootstrap for the iris build: compile Mesa's intel_clc HOST tool natively inside
+# a derived image (nanos-sdk-dev + LLVM/clang/libclc 18) and stage it at $(MESA_PORT)/tools/.
+# iris compiles internal OpenCL kernels at build time; there is no Debian intel-clc package.
+mesa-intel-clc:
+	@test -f "$(MESA_PORT)/Dockerfile.intel-clc" || { echo "Dockerfile.intel-clc not found in $(MESA_PORT)"; exit 1; }
+	docker build -f "$(MESA_PORT)/Dockerfile.intel-clc" -t nanos-sdk-dev-clc:latest "$(MESA_PORT)"
+	docker run --rm \
+	  -v "$(MESA_PORT)":/work/port \
+	  -w /work/port nanos-sdk-dev-clc:latest sh /work/port/build-intel-clc.sh
+	@echo "intel_clc staged at $(MESA_PORT)/tools/intel_clc"
+
+# The cross build runs in the -clc image: intel_clc (run at build time for the iris internal
+# shaders) needs the image's shared LLVM-18 + libclc data files at runtime.
 mesa: bin/libc.ndl bin/libc.ndl.a
 	@test -f "$(MESA_PORT)/build.sh" || { echo "mesa port not found at $(MESA_PORT) (fetch mesa-24.2.8 there)"; exit 1; }
 	@test -f "$(SDK_TC)/x86_64-nanos/lib/libdrm.a" || { echo "run 'make libdrm' first (Mesa consumes it)"; exit 1; }
+	@test -x "$(MESA_PORT)/tools/intel_clc" || { echo "run 'make mesa-intel-clc' first (iris needs the host tool)"; exit 1; }
 	$(NXPORT_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/x86_64-nanos/include/"
 	cp kernel/SyscallNr.h            "$(SDK_TC)/x86_64-nanos/include/SyscallNr.h"
@@ -456,7 +470,7 @@ mesa: bin/libc.ndl bin/libc.ndl.a
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(MESA_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
 	  -e PATH="$(MESA_DOCKER_PATH)" \
-	  -w /work/port nanos-sdk-dev:latest sh /work/port/build.sh
+	  -w /work/port nanos-sdk-dev-clc:latest sh /work/port/build.sh
 	@echo "Mesa .a closure + EGL/GLES2/gbm headers installed into $(SDK_TC)/x86_64-nanos"
 
 # gles2info.nxe — Task 8 bring-up oracle (surfaceless/fd-direct EGL + GLES2 renderer string). Links
@@ -875,7 +889,7 @@ externals:
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa gles2info glkms nwm-gl   # never confuse these with the assets/ dir or bin/ files
+.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa mesa-intel-clc gles2info glkms nwm-gl   # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
