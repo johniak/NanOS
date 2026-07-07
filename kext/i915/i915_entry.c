@@ -306,11 +306,14 @@ int nkext_init(void)
 	}
 	i915_log("i915: mem_map init OK\n");
 
-	/* Turn the vendored DRM debug all the way up (CORE|DRIVER|KMS|PRIME|ATOMIC|VBL|STATE|LEASE|DP):
-	 * every drm_dbg/atomic-state dump now flows through printk -> knx_log -> both channels. This is
-	 * exactly the drm.debug=0xff a normal kernel would take for a bring-up, and it is why one armed
-	 * boot is worth many blind ones. */
-	{ extern unsigned long __drm_debug; __drm_debug = 0x1ff; }
+	/* Turn the vendored DRM debug up: CORE|DRIVER|KMS|PRIME|ATOMIC|STATE|LEASE|DP — every
+	 * drm_dbg/atomic-state dump flows through printk -> knx_log -> both channels (drm.debug bring-up).
+	 * DELIBERATELY OMIT DRM_UT_VBL (0x20): once the panel is lit, the vblank IRQ fires ~60x/s and each
+	 * drm_dbg_vbl ("crtc 0 : v p(...)" + "updating vblank count") floods the log — tens of thousands of
+	 * lines that DROWN the post-modeset probe trail and hide WHERE probe stalls before returning (boot
+	 * #26: probe never reached `probe RETURNED`, the log was pure vblank spam). With VBL off the LAST
+	 * drm_dbg line before the log ends pinpoints the stall. Re-add 0x20 only to debug vblank timing. */
+	{ extern unsigned long __drm_debug; __drm_debug = 0x1df; }
 
 	/* 2) DRM core (chrdev/class + drm_core_init_complete) before any probe. */
 	__lkpi_modinit_drm_core_init();
