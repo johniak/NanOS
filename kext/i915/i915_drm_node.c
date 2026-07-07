@@ -140,6 +140,20 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	c = client_get(pid, node);
 	if (!c)
 		return -ENOMEM;
+	/* NWDBG: boot #37 ran the whole test with ZERO nwdbg lines in the log — either this
+	 * function never ran (dispatch went elsewhere) or the cmd compare below never matched.
+	 * Print the first few ioctls unconditionally WITH the compare targets: one boot, no
+	 * assumptions. */
+	{
+		static int nwdbg_first = 10;
+		if (nwdbg_first > 0) {
+			nwdbg_first--;
+			printk("i915 nwdbg: node_ioctl pid=%d node=%d cmd=0x%x (EB2=0x%x WAIT=0x%x)\n",
+			       pid, node, cmd,
+			       (unsigned)DRM_IOCTL_I915_GEM_EXECBUFFER2,
+			       (unsigned)DRM_IOCTL_I915_GEM_WAIT);
+		}
+	}
 	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
 	/* A successful SETCRTC means a KMS client now owns the scanout — stop the mirror
 	 * (node_release resumes it when the client goes away). */

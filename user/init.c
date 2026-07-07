@@ -232,6 +232,36 @@ static int spawn_getty(int n, char* const* env, const char* shell, char* name0)
 #define NWM_PATH     "/disks/main/nanos/bin/nwm.nxe"
 #define GREETER_PATH "/disks/main/nanos/bin/greeter.nxe"
 
+#define I915_ARM_KNOB_U "/disks/main/nanos/config/i915"
+#define I915TEST_PATH   "/disks/main/nanos/bin/i915test.nxe"
+
+/* One-shot GPU oracle: when the i915 bring-up harness is armed (same knob the kext
+ * reads), auto-run `i915test hang` after boot — every marker lands in
+ * /nanos/logs/i915test.txt and the kernel narration in i915-boot.txt, so a Dell
+ * iteration is flash -> boot -> power off -> make i915-log, no typing on the target.
+ * Output goes to the boot log (not the console) to keep the login prompt clean.
+ * Spawned once; the reaper collects it without respawning (its pid is untracked). */
+static void spawn_i915test_once(void) {
+	char ch = 0;
+	int fd = open(I915_ARM_KNOB_U, O_RDONLY);
+	if (fd < 0)
+		return;
+	read(fd, &ch, 1);
+	close(fd);
+	if (ch != '1' || access(I915TEST_PATH, X_OK) != 0)
+		return;
+	console_note("init: i915 armed -- auto-running i915test hang (log: /nanos/logs/i915test.txt)\n");
+	int pid = fork();
+	if (pid == 0) {
+		log_redirect_child();
+		struct timespec ts = { 2, 0 };         /* let the VTs/services settle first */
+		nanosleep(&ts, 0);
+		char* a[] = { (char*) "i915test", (char*) "hang", 0 };
+		execve(I915TEST_PATH, a, environ);
+		_exit(127);
+	}
+}
+
 /* Launch the graphics VT (tty7), display-manager style: we give the child its own session with
  * tty7 as the controlling terminal + stdin/out/err, then exec the GREETER (login), which
  * authenticates a user and execs nwm AS THAT USER — so the desktop never runs as root. If the
@@ -344,6 +374,7 @@ int main(void) {
 	 * independent login sessions. The active VT at boot is tty1, where the user lands. */
 	for (int i = 1; i <= NVT; i++)
 		g_vtpid[i] = spawn_getty(i, newenv, shell, name0);
+	spawn_i915test_once();                    /* i915 harness armed -> one-shot GPU oracle run */
 	long long nwm_started = now_ms();         /* when the current graphics session was launched */
 	int nwm_fastfails = 0;                    /* consecutive immediate exits (broken greeter/nwm) */
 	int nwm_pid = spawn_nwm(newenv, 0);       /* the graphics VT (tty7), if nwm + /dev/fb0 exist */
