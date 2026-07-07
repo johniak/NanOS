@@ -45,4 +45,15 @@ if [ -z "$out" ]; then
     die "log empty/absent — harness may not have armed (check knob) or the driver never reached the tee"
 fi
 printf '%s\n' "$out"
-if [ -n "$SAVE" ]; then printf '%s\n' "$out" > "$SAVE"; note "saved -> $SAVE"; fi
+# The userland oracle tees its markers here too (i915test.c) — no console photos needed.
+note "===== /nanos/logs/i915test.txt  (i915test tee) ====="
+out2=$(sudo "$DBG" -R "cat /nanos/logs/i915test.txt" "$PDEV" 2>/dev/null || true)
+if [ -n "$out2" ]; then
+    printf '%s\n' "$out2"
+else
+    note "(absent — i915test was not run this boot, or /nanos/logs was not writable)"
+fi
+if [ -n "$SAVE" ]; then
+    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; } > "$SAVE"
+    note "saved -> $SAVE"
+fi

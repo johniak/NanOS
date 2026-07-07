@@ -39,6 +39,7 @@
  * Every failure prints errno (ioctl() is -1/errno per reterr in libc-glue/syscalls.c).
  */
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -49,6 +50,29 @@
 #include <stdint.h>
 #include <drm/drm.h>
 #include <drm/i915_drm.h>
+
+/* Every marker is teed to /nanos/logs/i915test.txt (append, flushed per line) so
+ * `make i915-log` pulls the verdict off the stick — no console photos needed. The
+ * macro reroutes all printf call sites below; the tee is best-effort (NULL = console
+ * only, e.g. /nanos/logs not writable). */
+static FILE *g_tee;
+
+static int tee_printf(const char *fmt, ...)
+{
+	va_list ap;
+	int r;
+	va_start(ap, fmt);
+	r = vprintf(fmt, ap);
+	va_end(ap);
+	if (g_tee) {
+		va_start(ap, fmt);
+		vfprintf(g_tee, fmt, ap);
+		va_end(ap);
+		fflush(g_tee);
+	}
+	return r;
+}
+#define printf tee_printf
 
 #define MAGIC      0xC0DE1915u
 #define BATCH_VA   0x100000ull      /* softpin GPU VAs: low, page-aligned, < 4 GiB       */
@@ -280,7 +304,14 @@ static int run_hang(int fd)
 
 int main(int argc, char **argv)
 {
-	int fd = open("/dev/dri/renderD128", O_RDWR);
+	int fd;
+
+	g_tee = fopen("/nanos/logs/i915test.txt", "a");
+	printf("i915test: ===== run '%s' (uptime %lld ms) =====%s\n",
+	       argc > 1 ? argv[1] : "store", now_ms(),
+	       g_tee ? "" : " [tee unavailable -- console only]");
+
+	fd = open("/dev/dri/renderD128", O_RDWR);
 	if (fd < 0)
 		return die("open renderD128");
 

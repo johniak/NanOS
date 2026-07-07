@@ -1528,6 +1528,9 @@ _image64: _all _userland64 _kext
 	# share/terminfo/x} + the /apps bundle root + the /bin link farm, created upfront so every
 	# subsequent install step (and the optional-app blocks below) finds its parent directory.
 	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/firmware\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/icons\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
+	# /nanos/logs must be world-writable: the i915test tee (/nanos/logs/i915test.txt) is
+	# written by the logged-in user, not root; the kernel's i915-boot.txt tee bypasses DAC.
+	-printf "set_inode_field /nanos/logs mode 040777\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	# Optional device-firmware blobs (request_firmware reads /nanos/firmware/<name>). Empty by
 	# default: Gen9 i915 needs no GuC/HuC/DMC blob. Any blob shipped here must be redistributable
 	# (linux-firmware licence). The README documents the contract.
