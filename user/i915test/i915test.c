@@ -19,6 +19,18 @@
  * normal store test to prove the GPU came back alive. Markers:
  *   "i915test: hang recovered (engine reset)" + "i915test: store OK".
  *
+ * Boot #34 falsified the naive recovery check: GEM_WAIT completing does NOT mean the
+ * batch executed — a request skipped as guilty (second hang) or cancelled signals its
+ * fence too, and GEM_WAIT never surfaces fence errors. The post-reset store "succeeded"
+ * but read back 0. So the hang path now self-discriminates:
+ *   - every GEM_WAIT prints its elapsed ms (a "completed" wait that took ~heartbeat
+ *     escalation time = the request itself hung and was shot by hangcheck);
+ *   - RESET_STATS (guilty_count of the default context) printed after every phase —
+ *     guilty=1 after the spin is expected, guilty=2 after the store means the engine
+ *     never really revived and the store was declared the SECOND hang;
+ *   - on a failed readback the store is retried on a FRESH fd (new context + new ppGTT):
+ *     fresh-fd success = per-context/per-vm damage, fresh-fd failure = engine dead.
+ *
  * On a store-submit failure the test walks a DISCRIMINATION LADDER of minimal submits
  * (added after boot #32, where the errno was swallowed and cost a boot):
  *   B: MI_BATCH_BUFFER_END-only batch, single BO, kernel-placed (no softpin, no NO_RELOC)
@@ -31,6 +43,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <stdint.h>
@@ -48,6 +61,27 @@ static int die(const char *step)
 {
 	printf("i915test: FAIL %s (errno=%d)\n", step, errno);
 	return 1;
+}
+
+static long long now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* guilty_count of the default context (RESET_STATS batch_active): the hang-attribution
+ * ledger. guilty going UP across a phase means hangcheck shot THAT phase's batch. */
+static void reset_stats(int fd, const char *when)
+{
+	struct drm_i915_reset_stats rs;
+	memset(&rs, 0, sizeof rs);
+	rs.ctx_id = 0;
+	if (ioctl(fd, DRM_IOCTL_I915_GET_RESET_STATS, &rs))
+		printf("i915test: RESET_STATS %s: errno=%d\n", when, errno);
+	else
+		printf("i915test: RESET_STATS %s: guilty=%u pending=%u resets=%u\n",
+		       when, rs.batch_active, rs.batch_pending, rs.reset_count);
 }
 
 static uint32_t gem_create(int fd, uint64_t size)
@@ -99,16 +133,19 @@ static int submit(int fd, struct drm_i915_gem_exec_object2 *obj, int n,
 	}
 	{
 		struct drm_i915_gem_wait w;
+		long long t0 = now_ms();
 		memset(&w, 0, sizeof w);
 		w.bo_handle  = wait_handle;
 		w.timeout_ns = wait_ns;             /* bounded — never open-ended */
 		if (ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &w)) {
-			printf("i915test: %s: GEM_WAIT errno=%d (batch never completed?)\n",
-			       label, errno);
+			printf("i915test: %s: GEM_WAIT errno=%d after %lld ms\n",
+			       label, errno, now_ms() - t0);
 			return -errno;
 		}
+		/* Elapsed matters: a healthy store completes in ~0 ms; several SECONDS
+		 * means the batch hung and hangcheck force-signalled it (no execution). */
+		printf("i915test: %s: OK (wait %lld ms)\n", label, now_ms() - t0);
 	}
-	printf("i915test: %s: OK\n", label);
 	return 0;
 }
 
@@ -199,19 +236,46 @@ static int run_hang(int fd)
 	sb[0] = (0x31u << 23) | 1;
 	sb[1] = (uint32_t)SPIN_VA;
 	sb[2] = (uint32_t)(SPIN_VA >> 32);
-	printf("i915test: spin batch submitted — expecting hangcheck + engine reset...\n");
+	printf("i915test: spin batch submitted -- expecting hangcheck + engine reset...\n");
 
+	reset_stats(fd, "before spin");
 	memset(obj, 0, sizeof obj);
 	obj[0].handle = spin;
 	obj[0].offset = SPIN_VA;
 	obj[0].flags  = EXEC_OBJECT_PINNED;
 	if (submit(fd, obj, 1, I915_EXEC_RENDER | I915_EXEC_NO_RELOC, 0, spin,
 		   60ll * 1000 * 1000 * 1000, "spin wait"))
-		return die("hang recovery (GEM_WAIT timed out — no engine reset?)");
-	printf("i915test: hang recovered (engine reset)\n");
+		return die("hang recovery (GEM_WAIT timed out -- no engine reset?)");
+	printf("i915test: hang declared + spin request shot down\n");
+	reset_stats(fd, "after spin");         /* guilty=1 expected */
 
-	/* The whole point: the GPU must still execute fresh work after the reset. */
-	return run_store(fd);
+	/* The whole point: the GPU must still execute fresh work after the reset.
+	 * (GEM_WAIT completing proves nothing by itself -- boot #34: a store that was
+	 * itself declared guilty by a SECOND hang also "completed". The readback and
+	 * the guilty counter below are the real verdict.) */
+	if (run_store(fd) == 0) {
+		printf("i915test: hang recovered (engine reset)\n");
+		return 0;
+	}
+	reset_stats(fd, "after failed store"); /* guilty=2 -> engine never revived */
+
+	/* Fresh fd = fresh default context + fresh ppGTT on the same engine:
+	 * success here = the damage is per-context/per-vm; failure = engine dead. */
+	printf("i915test: retrying store on a FRESH fd (new context + vm)...\n");
+	{
+		int fd2 = open("/dev/dri/renderD128", O_RDWR);
+		if (fd2 < 0)
+			return die("open fresh renderD128");
+		if (run_store(fd2) == 0) {
+			printf("i915test: fresh-fd store OK -> per-context damage, engine alive\n");
+			close(fd2);
+			return 1;
+		}
+		reset_stats(fd2, "fresh fd");
+		printf("i915test: fresh-fd store FAILED -> engine did not survive the reset\n");
+		close(fd2);
+	}
+	return 1;
 }
 
 int main(int argc, char **argv)
