@@ -56,6 +56,68 @@ void i915_present_set_suspended(int s)
 	g_suspended = s;
 }
 
+/* ---- scanout snapshot/restore: bring the console back after the last KMS client exits ------ *
+ *
+ * When a /dev/dri client closes, DRM core removes its framebuffers; atomic_remove_fb
+ * (drm_framebuffer.c:969) DISABLES the primary plane (the CRTC/transcoder stays active — full
+ * CRTC teardown is only its -EINVAL retry path, and i915 accepts a planeless active CRTC). The
+ * plane-disable commit zeroes PLANE_CTL/PLANE_SURF *and* the plane's watermarks + DDB slice, so
+ * just setting the enable bit back would scan with zero FIFO allocation (underruns). Instead:
+ * snapshot the full live plane 1A register set right after probe (boot fb on screen), and replay
+ * it when the last client goes away. Register-level glue behind i915's back, same documented
+ * class as the FBC disable in i915_entry.c: nothing commits after probe at this bring-up stage
+ * except our clients, and the next client SETCRTC reprograms everything anyway.
+ *
+ * Offsets (display ver 9, pipe A plane 1 — skl_universal_plane_regs.h / skl_watermark_regs.h):
+ *   PLANE_CTL 0x70180, STRIDE 0x70188, POS 0x7018c, SIZE 0x70190, SURF 0x7019c, OFFSET 0x701a4,
+ *   PLANE_WM_1_A_0..7 0x70240+4*n, PLANE_WM_TRANS 0x70268, PLANE_BUF_CFG 0x7027c.
+ * Guard: TRANS_CONF for transcoder EDP = 0x7f008 (pipe_offsets[TRANSCODER_EDP]=0x7f000 +
+ * _TRANSACONF's 0x8) bit31 — if the transcoder is off, a plane replay cannot help (full modeset
+ * needed); skip and say so. PLANE_SURF is written LAST: it arms the double-buffered update. */
+static volatile unsigned int *g_mmio;
+static unsigned int g_snap_geo[6];   /* CTL, STRIDE, POS, SIZE, OFFSET, SURF */
+static unsigned int g_snap_wm[10];   /* WM0..7, WM_TRANS, BUF_CFG */
+static int g_have_snap;
+
+void i915_scanout_snapshot(volatile unsigned int *mmio)
+{
+	int i;
+	if (!mmio)
+		return;
+	g_mmio = mmio;
+	g_snap_geo[0] = mmio[0x70180 / 4];   /* PLANE_CTL_1_A    */
+	g_snap_geo[1] = mmio[0x70188 / 4];   /* PLANE_STRIDE_1_A */
+	g_snap_geo[2] = mmio[0x7018c / 4];   /* PLANE_POS_1_A    */
+	g_snap_geo[3] = mmio[0x70190 / 4];   /* PLANE_SIZE_1_A   */
+	g_snap_geo[4] = mmio[0x701a4 / 4];   /* PLANE_OFFSET_1_A */
+	g_snap_geo[5] = mmio[0x7019c / 4];   /* PLANE_SURF_1_A   */
+	for (i = 0; i < 8; i++)
+		g_snap_wm[i] = mmio[(0x70240 + 4 * i) / 4];   /* PLANE_WM_1_A_0..7 */
+	g_snap_wm[8] = mmio[0x70268 / 4];    /* PLANE_WM_TRANS_1_A */
+	g_snap_wm[9] = mmio[0x7027c / 4];    /* PLANE_BUF_CFG_1_A  */
+	g_have_snap = 1;
+}
+
+int i915_scanout_restore(void)
+{
+	int i;
+	if (!g_have_snap)
+		return -1;
+	if (!(g_mmio[0x7f008 / 4] & 0x80000000u))   /* TRANS_CONF (EDP) enable */
+		return -2;
+	for (i = 0; i < 8; i++)
+		g_mmio[(0x70240 + 4 * i) / 4] = g_snap_wm[i];
+	g_mmio[0x70268 / 4] = g_snap_wm[8];
+	g_mmio[0x7027c / 4] = g_snap_wm[9];
+	g_mmio[0x70180 / 4] = g_snap_geo[0];
+	g_mmio[0x70188 / 4] = g_snap_geo[1];
+	g_mmio[0x7018c / 4] = g_snap_geo[2];
+	g_mmio[0x70190 / 4] = g_snap_geo[3];
+	g_mmio[0x701a4 / 4] = g_snap_geo[4];
+	g_mmio[0x7019c / 4] = g_snap_geo[5];   /* SURF last — arms the update */
+	return 0;
+}
+
 /* Arm the desktop->panel mirror after a successful i915 probe.
  *   scanout_phys  — APERTURE address of the plane buffer: GMADR (BAR2) + the plane's GGTT offset.
  *                   Never the raw stolen physical base — see the header comment.

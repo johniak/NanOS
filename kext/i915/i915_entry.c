@@ -447,6 +447,15 @@ int nkext_init(void)
 							i915_log("i915: FBC hw-disabled (untracked CPU frontbuffer rendering)\n");
 						}
 					}
+					/* Snapshot the live plane-1A register set (geometry + water-
+					 * marks + DDB) while the boot fb is on screen: when the last
+					 * /dev/dri KMS client exits, DRM disables the plane and the
+					 * panel goes dark — i915_scanout_restore() (i915_present.c)
+					 * replays this snapshot so the console comes back. */
+					{
+						extern void i915_scanout_snapshot(volatile unsigned int *mmio);
+						i915_scanout_snapshot(mmio);
+					}
 				}
 				dst = gmadr + (surf & 0xfffff000u);
 				i915_log_val("i915:   boot fb phys   ", (long)bfb);

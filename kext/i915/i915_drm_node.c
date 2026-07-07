@@ -156,21 +156,36 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 	return 0;
 }
 
+/* Replay the post-probe plane-1A register snapshot (i915_present.c) — DRM core disabled the
+ * plane when it removed the departing client's framebuffers. */
+int i915_scanout_restore(void);
+
 static void node_release(int pid)
 {
-	int i;
-	for (i = 0; i < NODE_MAX_CLIENTS; i++)
+	int i, left = 0, freed = 0;
+	for (i = 0; i < NODE_MAX_CLIENTS; i++) {
 		if (g_cli[i].file && g_cli[i].pid == pid) {
 			drm_file_free(g_cli[i].file);
 			g_cli[i].file = 0;
 			g_cli[i].pid = 0;
-			/* The KMS client is gone — resume the mirror (coarse, same single-
-			 * compositor model as virtio). Note: DRM core removes the client's
-			 * framebuffers on file release, which disables the plane — the panel
-			 * stays dark until the next SETCRTC (no fbdev emulation to fall back
-			 * to). Known bring-up semantics, not a bug. */
-			i915_present_set_suspended(0);
-		}
+			freed = 1;
+		} else if (g_cli[i].file)
+			left++;
+	}
+	if (!freed || left)
+		return;
+	/* Last KMS client gone. drm_file_free -> drm_fb_release -> atomic_remove_fb disabled the
+	 * primary plane (transcoder stays up), blanking the panel. Bring the console back by
+	 * replaying the plane registers snapshotted after probe, then resume the mirror (coarse
+	 * single-compositor model, same as virtio). */
+	{
+		int r = i915_scanout_restore();
+		if (r == 0)
+			knx_log("i915: scanout restored after last KMS client — console visible again\n");
+		else if (r == -2)
+			knx_log("i915: scanout restore skipped — transcoder off (full modeset needed, reboot)\n");
+	}
+	i915_present_set_suspended(0);
 }
 
 static const struct knx_drm_ops g_node_ops = { node_ioctl, node_mmap_offset, node_release };
