@@ -2059,6 +2059,11 @@ DRMTEST_INC=-Iexternal/linux-6.12/include/uapi -Iexternal/linux-6.12/include -Ie
 $(BINFOLDER)drmtest.o: user/drmtest/drmtest.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DRMTEST_INC) $(DYNHDR) -MMD -MP -c $< -o $@
+# i915test — the GEM/execbuf oracle (gem_exec_store): softpinned MI_STORE_DWORD_IMM batch on the
+# render engine, CPU-verified readback. Same vendored-uapi discipline as drmtest.
+$(BINFOLDER)i915test.o: user/i915test/i915test.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DRMTEST_INC) $(DYNHDR) -MMD -MP -c $< -o $@
 # glpix — the render->scanout oracle. Same vendored-uapi discipline as drmtest, and it reuses
 # drmtest's virgl_words.h (build_clear_stream) via -Iuser/drmtest.
 $(BINFOLDER)glpix.o: user/glpix/glpix.c
@@ -2285,6 +2290,7 @@ $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
 $(BINFOLDER)unixtest.nxe:  $(DYN_DEPS) $(BINFOLDER)unixtest.o
 $(BINFOLDER)tcpsrv.nxe:    $(DYN_DEPS) $(BINFOLDER)tcpsrv.o
 $(BINFOLDER)drmtest.nxe:   $(DYN_DEPS) $(BINFOLDER)drmtest.o
+$(BINFOLDER)i915test.nxe:  $(DYN_DEPS) $(BINFOLDER)i915test.o
 $(BINFOLDER)glpix.nxe:     $(DYN_DEPS) $(BINFOLDER)glpix.o
 $(BINFOLDER)nanologin.nxe: $(DYN_DEPS) $(BINFOLDER)nanologin.o
 $(BINFOLDER)greeter.nxe:   $(DYN_DEPS) $(BINFOLDER)greeter.o
@@ -2520,7 +2526,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest glpix malloctest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture drmtest glpix i915test malloctest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter
