@@ -20,10 +20,6 @@
  */
 #include "i915_drv.h"
 #include "gem/i915_gem_object.h"
-#include "gem/i915_gem_context.h"
-#include "gt/intel_context.h"
-#include "gt/intel_timeline.h"
-#include "gt/intel_gt.h"
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
@@ -88,49 +84,6 @@ static struct node_client *client_get(int pid, int node)
 	}
 }
 
-/* NWDBG (boot #36 born-complete hunt): i915_request_completed() reported the SPIN batch
- * complete while it was physically spinning the engine — i.e. the timeline's HWSP seqno
- * slot read a value it should not hold. Prime suspect: two timelines sharing one HWSP
- * GGTT slot or physical page, so foreign breadcrumbs scribble each other. After every
- * EXECBUFFER2/GEM_WAIT dump the fd's default-context timeline next to the kernel
- * context's — a collision shows up as equal hwsp_off/ggtt/phys. Remove once trusted. */
-static void nwdbg_dump_tl(const char *tag, int pid, struct intel_timeline *tl)
-{
-	unsigned long long gg = 0, phys = 0;
-	if (!tl) {
-		printk("i915 nwdbg: pid=%d %s timeline NULL\n", pid, tag);
-		return;
-	}
-	if (tl->hwsp_ggtt) {
-		gg = (unsigned long long)tl->hwsp_ggtt->node.start;
-		if (tl->hwsp_ggtt->obj && tl->hwsp_ggtt->obj->mm.pages &&
-		    tl->hwsp_ggtt->obj->mm.pages->sgl)
-			phys = (unsigned long long)sg_phys(tl->hwsp_ggtt->obj->mm.pages->sgl);
-	}
-	printk("i915 nwdbg: pid=%d %s seqno=%u hwsp_off=0x%x *hwsp=%u ggtt=0x%llx phys=0x%llx\n",
-	       pid, tag, tl->seqno, tl->hwsp_offset,
-	       tl->hwsp_seqno ? *tl->hwsp_seqno : 0xdeadu, gg, phys);
-}
-
-static void nwdbg_after_gem(int pid, struct drm_file *file)
-{
-	struct drm_i915_private *i915 = to_i915(g_ddev);
-	struct intel_engine_cs *rcs = to_gt(i915)->engine[RCS0];
-	struct i915_gem_context *ctx;
-	struct intel_context *ce;
-	if (rcs && rcs->kernel_context)
-		nwdbg_dump_tl("kctx", pid, rcs->kernel_context->timeline);
-	ctx = i915_gem_context_lookup(file->driver_priv, 0);
-	if (IS_ERR_OR_NULL(ctx))
-		return;
-	ce = i915_gem_context_get_engine(ctx, 0);
-	if (!IS_ERR_OR_NULL(ce)) {
-		nwdbg_dump_tl("uctx", pid, ce->timeline);
-		intel_context_put(ce);
-	}
-	i915_gem_context_put(ctx);
-}
-
 static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
@@ -140,27 +93,11 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	c = client_get(pid, node);
 	if (!c)
 		return -ENOMEM;
-	/* NWDBG: boot #37 ran the whole test with ZERO nwdbg lines in the log — either this
-	 * function never ran (dispatch went elsewhere) or the cmd compare below never matched.
-	 * Print the first few ioctls unconditionally WITH the compare targets: one boot, no
-	 * assumptions. */
-	{
-		static int nwdbg_first = 10;
-		if (nwdbg_first > 0) {
-			nwdbg_first--;
-			printk("i915 nwdbg: node_ioctl pid=%d node=%d cmd=0x%x (EB2=0x%x WAIT=0x%x)\n",
-			       pid, node, cmd,
-			       (unsigned)DRM_IOCTL_I915_GEM_EXECBUFFER2,
-			       (unsigned)DRM_IOCTL_I915_GEM_WAIT);
-		}
-	}
 	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
 	/* A successful SETCRTC means a KMS client now owns the scanout — stop the mirror
 	 * (node_release resumes it when the client goes away). */
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
 		i915_present_set_suspended(1);
-	if (r == 0 && (cmd == DRM_IOCTL_I915_GEM_EXECBUFFER2 || cmd == DRM_IOCTL_I915_GEM_WAIT))
-		nwdbg_after_gem(pid, c->file);
 	return r;
 }
 
