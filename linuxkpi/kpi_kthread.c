@@ -414,5 +414,9 @@ void lkpi_wq_init(void) {
 	system_unbound_wq = wq_new("system_unbound");
 	lkpi_set_wq_pump(lkpi_wq_pump);   /* timers + drain, so timer-backed delayed work advances in waits */
 	knx_run_after_scheduler(lkpi_wq_start_workers);
+	{	/* the call_rcu quarantine drainer (kpi_rcu.c) starts with the same deferral */
+		extern void lkpi_rcu_init(void);
+		lkpi_rcu_init();
+	}
 	knx_log("lkpi: workqueues initialised (inline until scheduler up)\n");
 }

@@ -50,6 +50,7 @@
 #include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <stdint.h>
 #include <drm/drm.h>
 #include <drm/i915_drm.h>
@@ -288,6 +289,52 @@ static int run_store(int fd, uint64_t base, const char *tag)
 	return 1;
 }
 
+/* Silent single store for the churn-stress loop: same mechanics as run_store rung A but
+ * no narration (50 iterations would drown the tee) — the caller reports the tally. */
+static int stress_store(int fd, uint64_t base)
+{
+	uint64_t target_va = base + 0x80000ull;
+	uint32_t target = gem_create(fd, 4096);
+	uint32_t batch  = gem_create(fd, 4096);
+	uint32_t *bb;
+	volatile uint32_t *tp;
+	struct drm_i915_gem_exec_object2 obj[2];
+	struct drm_i915_gem_execbuffer2 eb;
+	struct drm_i915_gem_wait w;
+	if (!target || !batch)
+		return 1;
+	bb = (uint32_t *)gem_mmap_wc(fd, batch, 4096, "stress batch");
+	if (!bb)
+		return 1;
+	bb[0] = (0x20u << 23) | 2;
+	bb[1] = (uint32_t)(target_va + STORE_OFF);
+	bb[2] = (uint32_t)((target_va + STORE_OFF) >> 32);
+	bb[3] = MAGIC;
+	bb[4] = 0x0A << 23;
+	memset(obj, 0, sizeof obj);
+	obj[0].handle = target;
+	obj[0].offset = target_va;
+	obj[0].flags  = EXEC_OBJECT_PINNED | EXEC_OBJECT_WRITE;
+	obj[1].handle = batch;
+	obj[1].offset = base;
+	obj[1].flags  = EXEC_OBJECT_PINNED;
+	memset(&eb, 0, sizeof eb);
+	eb.buffers_ptr  = (uintptr_t)obj;
+	eb.buffer_count = 2;
+	eb.flags        = I915_EXEC_RENDER | I915_EXEC_NO_RELOC;
+	if (ioctl(fd, DRM_IOCTL_I915_GEM_EXECBUFFER2, &eb))
+		return 1;
+	memset(&w, 0, sizeof w);
+	w.bo_handle  = target;
+	w.timeout_ns = 10ll * 1000 * 1000 * 1000;
+	if (ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &w))
+		return 1;
+	tp = (volatile uint32_t *)gem_mmap_wc(fd, target, 4096, "stress target");
+	if (!tp || tp[STORE_OFF / 4] != MAGIC)
+		return 1;
+	return 0;
+}
+
 /* Deliberate hang: a batch that MI_BATCH_BUFFER_STARTs to its own beginning spins the
  * render engine forever. With hangcheck live, the heartbeat declares a hang within a few
  * periods and resets the engine; the spun request then signals (with an error the fence
@@ -334,26 +381,45 @@ static int run_hang(int fd)
 
 	/* Phase 2 — store AFTER the hang on the same context (boot #34's failure). */
 	post = run_store(fd, 0x300000ull, "post-hang store");
-	if (pre == 0 && post == 0) {
-		printf("i915test: hang recovered (engine reset)\n");
-		return 0;
-	}
 	reset_stats(fd, "after post-hang store");
-
-	/* Phase 3 — fresh fd = fresh default context + fresh ppGTT on the same engine:
-	 * success = per-context/per-vm damage; failure = the engine itself is sick. */
-	printf("i915test: retrying store on a FRESH fd (new context + vm)...\n");
-	{
-		int fd2 = open("/dev/dri/renderD128", O_RDWR);
-		if (fd2 < 0)
-			return die("open fresh renderD128");
-		if (run_store(fd2, 0x100000ull, "fresh-fd store") == 0)
-			printf("i915test: fresh-fd store OK -> per-context damage, engine alive\n");
-		else {
-			reset_stats(fd2, "fresh fd");
-			printf("i915test: fresh-fd store FAILED -> the engine itself is sick\n");
+	if (pre == 0 && post == 0) {
+		/* Phase 2b — churn stress: 50 more stores on the recovered context, all softpinned
+		 * at ONE base so every iteration evicts the previous vma (bind/unbind + request
+		 * alloc/retire + fence/resv churn — a taste of what Mesa iris will generate). */
+		int i, ok = 0;
+		for (i = 0; i < 50; i++) {
+			if (stress_store(fd, 0x500000ull) != 0)
+				break;
+			ok++;
 		}
-		close(fd2);
+		printf("i915test: stress %d/50 %s\n", ok, ok == 50 ? "OK" : "FAILED");
+		if (ok == 50) {
+			printf("i915test: hang recovered (engine reset)\n");
+			return 0;
+		}
+		return 1;
+	}
+
+	/* Phase 3 — a FRESH PROCESS (the DRM node keys clients by pid, so a second fd in THIS
+	 * process would get the SAME drm_file/context/vm — boots #35-#38's 'fresh fd' tested
+	 * nothing). A forked child = new pid = new drm_file + default context + ppGTT:
+	 * success = per-context/per-vm damage; failure = the engine itself is sick. */
+	printf("i915test: retrying store from a FRESH PROCESS (new drm_file/context/vm)...\n");
+	{
+		int st = -1, cpid = fork();
+		if (cpid == 0) {
+			int fd2 = open("/dev/dri/renderD128", O_RDWR);
+			if (fd2 < 0)
+				_exit(2);
+			_exit(run_store(fd2, 0x100000ull, "fresh-process store") == 0 ? 0 : 1);
+		}
+		if (cpid < 0)
+			return die("fork");
+		waitpid(cpid, &st, 0);
+		if (WIFEXITED(st) && WEXITSTATUS(st) == 0)
+			printf("i915test: fresh-process store OK -> per-context damage, engine alive\n");
+		else
+			printf("i915test: fresh-process store FAILED (status %d) -> the engine itself is sick\n", st);
 	}
 	return 1;
 }

@@ -2689,7 +2689,7 @@ LINUXKPI_OBJS=$(BINFOLDER)kpi_slab.o $(BINFOLDER)kpi_print.o $(BINFOLDER)kpi_idr
   $(BINFOLDER)kpi_sort.o $(BINFOLDER)kpi_time.o $(BINFOLDER)kpi_string.o \
   $(BINFOLDER)kpi_mm.o $(BINFOLDER)kpi_dma.o $(BINFOLDER)kpi_pci.o \
   $(BINFOLDER)kpi_sg.o $(BINFOLDER)kpi_fence.o $(BINFOLDER)kpi_misc.o \
-  $(BINFOLDER)kpi_irq.o $(BINFOLDER)kpi_kthread.o \
+  $(BINFOLDER)kpi_irq.o $(BINFOLDER)kpi_kthread.o $(BINFOLDER)kpi_rcu.o \
   $(BINFOLDER)kpi_firmware.o $(BINFOLDER)kpi_iomap.o $(BINFOLDER)kpi_shrinker.o
 # Vendored Linux virtio core objects (built from external/linux-6.12 via the rules above).
 VIRTIO_CORE_OBJS=$(BINFOLDER)virtio_ring.o $(BINFOLDER)virtio_pci_modern_dev.o

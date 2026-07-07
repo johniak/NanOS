@@ -25,16 +25,28 @@
 #define rcu_read_lock_bh()     do {} while (0)
 #define rcu_read_unlock_bh()   do {} while (0)
 
+struct rcu_head;
 #ifdef NANOS_HOST_TEST
+/* Host doctest: no scheduler, no concurrency — inline callbacks stay correct there. */
 #define synchronize_rcu()           smp_mb()
 #define synchronize_rcu_expedited() smp_mb()
+#define call_rcu(head, func)        ((func)(head))
+#define rcu_barrier()               synchronize_rcu()
 #else
 void knx_rcu_synchronize(void);   /* kexports.def; real grace period (Scheduler::rcuSynchronize) */
 #define synchronize_rcu()           knx_rcu_synchronize()
 #define synchronize_rcu_expedited() knx_rcu_synchronize()
+/* THE QUARANTINE (kpi_rcu.c): call_rcu enqueues; a dedicated drainer thread runs the
+ * callbacks only after a real grace period. Inline invocation was an SMP use-after-free
+ * window on every rcu-freed object (intel_context/timeline/vma_resource churn). */
+void lkpi_call_rcu(struct rcu_head *head, void (*func)(struct rcu_head *));
+void lkpi_kfree_rcu_off(struct rcu_head *head, unsigned long off);
+void lkpi_rcu_drain(void);
+#define call_rcu(head, func)   lkpi_call_rcu((head), (func))
+/* rcu_barrier promises every queued callback has RUN — drain synchronously (teardown
+ * paths; the caller is a schedulable thread). */
+#define rcu_barrier()          lkpi_rcu_drain()
 #endif
-#define call_rcu(head, func)   ((func)(head))
-#define rcu_barrier()          synchronize_rcu()
 #define cond_synchronize_rcu(oldstate)  synchronize_rcu()
 #define get_state_synchronize_rcu()     (0UL)
 #define start_poll_synchronize_rcu()    (0UL)
@@ -56,16 +68,22 @@ void knx_rcu_synchronize(void);   /* kexports.def; real grace period (Scheduler:
 
 struct rcu_head { void *next; void (*func)(struct rcu_head *); };
 
-/* kfree_rcu(ptr, rcu_member): with call_rcu running the callback inline (see above), the object
- * can be freed immediately — no reader can still hold it (readers never sleep, are never preempted).
- * Both the 2-arg (offset form) and 1-arg mightsleep form reduce to a plain kfree. */
 #ifdef __cplusplus
 extern "C" void kfree(const void *);
 #else
 void kfree(const void *);
 #endif
+#ifdef NANOS_HOST_TEST
 #define kfree_rcu(ptr, rhf)      kfree(ptr)
 #define kfree_rcu_mightsleep(ptr) kfree(ptr)
+#else
+/* kfree_rcu(ptr, rcu_member): the upstream offset encoding — a "func" below 4096 is the
+ * rcu_head's offset inside its container; the drain kfrees (head - offset) after the
+ * grace period. The mightsleep form has no rcu_head, so it waits a grace period inline. */
+#define kfree_rcu(ptr, rhf) \
+	lkpi_kfree_rcu_off(&(ptr)->rhf, (unsigned long)__builtin_offsetof(__typeof__(*(ptr)), rhf))
+#define kfree_rcu_mightsleep(ptr) do { synchronize_rcu(); kfree(ptr); } while (0)
+#endif
 /* RCU-head lifetime hooks are debug-only; no-ops here. */
 #define init_rcu_head(head)               do { (void)(head); } while (0)
 #define init_rcu_head_on_stack(head)      do { (void)(head); } while (0)
