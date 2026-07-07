@@ -273,6 +273,12 @@ void lkpi_shmem_release(struct file *f)
 	if (!f || !f->f_mapping)
 		return;
 	lkpi_shmem_releases++;
+	/* Mirror the setup-side stat line: boot #40 printed setups=64 releases=0 MID-test (the
+	 * counter fires every 64 setups, before drm_file close + the async i915 free worker ran)
+	 * — a release-side line distinguishes "frees are just late" from a real leak. */
+	if ((lkpi_shmem_releases & 0x3f) == 0)
+		printk("lkpi shmem: setups=%lu releases=%lu\n",
+		       lkpi_shmem_setups, lkpi_shmem_releases);
 	m = f->f_mapping;
 	if (m->pages) {
 		if (m->nrpages && m->pages[0])
