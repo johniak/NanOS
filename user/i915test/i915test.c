@@ -370,9 +370,12 @@ static int run_hang(int fd)
 	memset(obj, 0, sizeof obj);
 	obj[0].handle = spin;
 	obj[0].offset = SPIN_VA;
-	/* WRITE: GEM_WAIT without I915_WAIT_ALL waits only for WRITE-usage fences (upstream
-	 * dma_resv_usage_rw), so a read-only batch fence would be skipped by a correct kernel. */
-	obj[0].flags  = EXEC_OBJECT_PINNED | EXEC_OBJECT_WRITE;
+	/* NO EXEC_OBJECT_WRITE here: upstream rejects a WRITE-flagged batch object outright
+	 * ("Attempting to use self-modifying batch buffer", execbuffer.c eb_add_vma -> -EINVAL;
+	 * boot #39 hit exactly that). The read-usage fence the batch gets is enough — the
+	 * GEM_WAIT ioctl always waits with I915_WAIT_ALL (i915_gem.c wait ioctl), so it does
+	 * not skip read fences. */
+	obj[0].flags  = EXEC_OBJECT_PINNED;
 	spun = submit(fd, obj, 1, I915_EXEC_RENDER | I915_EXEC_NO_RELOC, 0, spin,
 		      60ll * 1000 * 1000 * 1000, "spin wait");
 	if (spun)
