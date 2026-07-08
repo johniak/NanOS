@@ -782,6 +782,42 @@ int main(void)
 {
 #ifdef NWM_GL
 	nx_bind_std_streams();   /* before any printf: Mesa/libdrm C++ TUs reference the stream globals */
+	/* Persist every nwm/glkms/Mesa diagnostic: stdout/stderr point at tty7 (a graphics VT —
+	 * invisible, gone at power-off), which is exactly how Dell boot #47 lost the name of the GL
+	 * call that failed. TEE (not redirect) through a logger child so the markers still reach
+	 * tty7/serial — smoke-virtio-gpu-gl's oracle greps the serial log for "nwm: GL compositor
+	 * active" — while a copy lands on the stick for `make i915-log`. O_APPEND: the greeter
+	 * respawns nwm per login and every session must survive; image64-gl ships empty logs.
+	 * Silently keep plain tty7 if the logs dir is absent (dev images). */
+	{
+		int lfd = open("/disks/main/nanos/logs/nwm.txt", O_WRONLY | O_CREAT | O_APPEND, 0666);
+		if (lfd >= 0) {
+			int tp[2];
+			if (pipe(tp) == 0) {
+				int lpid = fork();
+				if (lpid == 0) {
+					/* logger: copy nwm's (and its clients') output to BOTH destinations.
+					 * fd 1 is still the original tty7 here — dup2 below only changes the parent. */
+					close(tp[1]);
+					char lbuf[512];
+					int ln;
+					while ((ln = (int) read(tp[0], lbuf, sizeof lbuf)) > 0) {
+						write(1, lbuf, (size_t) ln);
+						write(lfd, lbuf, (size_t) ln);
+					}
+					_exit(0);
+				}
+				close(tp[0]);
+				if (lpid > 0) {
+					dup2(tp[1], 1);
+					dup2(tp[1], 2);
+				}
+				close(tp[1]);
+			}
+			close(lfd);
+			printf("nwm: ===== run (GL build) =====\n");
+		}
+	}
 #endif
 	int fbfd = open("/dev/fb0", O_RDWR);
 	if (fbfd < 0) { printf("nwm: no /dev/fb0\n"); return 1; }

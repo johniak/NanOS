@@ -241,6 +241,11 @@ void glkms_close(struct glkms *g)
 	}
 	if (g->surf) gbm_surface_destroy(g->surf);
 	if (g->gbm)  gbm_device_destroy(g->gbm);
+	/* We owned the scanout (crtc_set) and just removed its framebuffer, which disabled the
+	 * primary plane. Hand the panel back to the boot fb NOW — see the define in glkms_init.h
+	 * for why waiting for the fd-close replay is not enough. Best-effort by design. */
+	if (g->crtc_set && g->fd >= 0)
+		drmIoctl(g->fd, NANOS_DRM_IOCTL_SCANOUT_RESTORE, 0);
 	if (g->fd >= 0) close(g->fd);
 	memset(g, 0, sizeof *g);
 	g->fd = -1;

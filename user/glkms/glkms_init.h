@@ -34,6 +34,15 @@ struct glkms {
 	int                 crtc_set;  /* first swap does SetCrtc, later swaps re-SetCrtc (no flip evt yet) */
 };
 
+/* NanOS-private DRM ioctl (i915 node only): replay the boot-scanout plane registers immediately.
+ * glkms_close() issues it after retiring its framebuffers — removing the fb that was live scanout
+ * makes DRM core DISABLE the primary plane, and the kext's node_release replay never fires while
+ * Mesa's dup'd screen fd keeps the device open in a still-running process (Dell boot #47: nwm's
+ * GL→CPU fallback left the panel black while the CPU compositor drew into an unscanned fb0).
+ * Value = _IO('d', 0x9f); must match kext/i915/i915_drm_node.c. Best-effort: other drivers
+ * (virtio_gpu on QEMU) reject the unknown command and the caller ignores the result. */
+#define NANOS_DRM_IOCTL_SCANOUT_RESTORE 0x649f
+
 /* Print hook for every glkms_init diagnostic line (stage failures, mode line). Defaults to plain
  * printf (console) so nwm's GL backend is unchanged; the glkms oracle points it at its tee_printf
  * so stage verdicts land in /nanos/logs/gltest.txt — the only channel `make i915-log` can read

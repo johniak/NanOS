@@ -61,7 +61,16 @@ if [ -n "$out3" ]; then
 else
     note "(absent — the GL oracles were not run this boot)"
 fi
+# The GL compositor's own diagnostics (nwm.c redirects stdout/stderr here on the GL build):
+# glkms stage/swap failures with errno, frame telemetry, Mesa loader/driver stderr.
+note "===== /nanos/logs/nwm.txt  (nwm-gl stdout/stderr) ====="
+out4=$(sudo "$DBG" -R "cat /nanos/logs/nwm.txt" "$PDEV" 2>/dev/null || true)
+if [ -n "$out4" ]; then
+    printf '%s\n' "$out4"
+else
+    note "(absent — nwm-gl never started, or a non-GL nwm build)"
+fi
 if [ -n "$SAVE" ]; then
-    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; } > "$SAVE"
+    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; printf '===== nwm tee =====\n%s\n' "$out4"; } > "$SAVE"
     note "saved -> $SAVE"
 fi

@@ -531,7 +531,12 @@ image64-gl: nwm-gl
 	@test -f $(IMAGE64) || { echo "run 'make image64' first"; exit 1; }
 	cp $(IMAGE64) $(IMAGE64_GL)
 	$(DOCKER_RUN) sh -c 'printf "rm /nanos/bin/nwm.nxe\nwrite $(BINFOLDER)nwm-gl.nxe /nanos/bin/nwm.nxe\nset_inode_field /nanos/bin/nwm.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_GL_PART)"'
-	@echo "image64-gl -> $(IMAGE64_GL) (nwm = GPU-native GL compositor)"
+	@# Start with EMPTY logs: the base image64.img has usually been booted by QEMU smoke gates,
+	@# whose runs append to /nanos/logs — flashing those to the Dell mixes stale QEMU verdicts
+	@# (boot #47: "renderer=virgl" + two "no-gbm" in gltest.txt were smoke residue, not Dell
+	@# output). debugfs rm of an absent file just warns; the build must not fail on it.
+	$(DOCKER_RUN) sh -c 'printf "rm /nanos/logs/i915-boot.txt\nrm /nanos/logs/i915test.txt\nrm /nanos/logs/gltest.txt\nrm /nanos/logs/nwm.txt\n" | debugfs -w "$(IMAGE64_GL_PART)"' || true
+	@echo "image64-gl -> $(IMAGE64_GL) (nwm = GPU-native GL compositor, logs wiped)"
 
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
 ifeq ($(ARCH),x86_64)

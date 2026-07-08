@@ -44,6 +44,10 @@ static struct node_client g_cli[NODE_MAX_CLIENTS];
  * client presents. (In the self-map case the mirror is never armed and this is a no-op.) */
 void i915_present_set_suspended(int s);
 
+/* Replay the post-probe plane-1A register snapshot (i915_present.c) — used both when the last
+ * client goes away (node_release) and on explicit client request (see the private ioctl below). */
+int i915_scanout_restore(void);
+
 /* Find (or lazily create) the drm_file for `pid` on the given node kind. */
 static struct node_client *client_get(int pid, int node)
 {
@@ -84,12 +88,32 @@ static struct node_client *client_get(int pid, int node)
 	}
 }
 
+/* NanOS-private ioctl: replay the boot-scanout snapshot NOW (same i915_scanout_restore() the
+ * node_release path uses). Needed because node_release only fires when a process's LAST DRM fd
+ * closes — but Mesa (iris) dups the screen fd, so a compositor that tears down its GL/KMS state
+ * mid-session (nwm's CPU fallback after a GL failure) keeps the device open: its RmFB made DRM
+ * core disable the primary plane, and nothing ever brought the panel back (Dell boot #47: desktop
+ * flashed once, then black while the CPU compositor drew into an unscanned fb0). Value must match
+ * user/glkms/glkms_init.h (NANOS_DRM_IOCTL_SCANOUT_RESTORE): _IO('d', 0x9f) — the last driver-
+ * private command nr, far above anything i915 defines, so it can never shadow a real ioctl. */
+#define NANOS_DRM_IOCTL_SCANOUT_RESTORE 0x649f
+
 static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
 	long r;
 	if (!g_ddev)
 		return -ENODEV;
+	if (cmd == NANOS_DRM_IOCTL_SCANOUT_RESTORE) {
+		int rr = i915_scanout_restore();
+		(void)arg;
+		if (rr == 0)
+			knx_log("i915: scanout restored on client request — boot fb scanning again\n");
+		else
+			knx_log("i915: client scanout-restore FAILED (no snapshot or transcoder off)\n");
+		i915_present_set_suspended(0);
+		return rr == 0 ? 0 : -EIO;
+	}
 	lkpi_set_current_client(pid);   /* drm_ioctl logs current->comm/pid — name the real client */
 	c = client_get(pid, node);
 	if (!c)
@@ -156,10 +180,6 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 	*len  = obj->base.size;
 	return 0;
 }
-
-/* Replay the post-probe plane-1A register snapshot (i915_present.c) — DRM core disabled the
- * plane when it removed the departing client's framebuffers. */
-int i915_scanout_restore(void);
 
 static void node_release(int pid)
 {
