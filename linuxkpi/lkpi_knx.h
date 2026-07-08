@@ -87,6 +87,13 @@ int            knx_boot_fb(unsigned long long *addr, unsigned int *pitch, unsign
 struct knx_drm_ops;
 void           knx_drm_register(const struct knx_drm_ops *ops);
 int            knx_getpid(void);
+/* Short process name (Linux `comm`) for a pid; -1 + a "pid<N>" fallback for an unknown pid. */
+int            knx_process_comm(int pid, char *buf, int n);
+
+/* Shim helper (kpi_misc.c, not a kernel export): stamp the shim's `current` task with the
+ * calling process's pid + comm so DRM core log lines name the REAL client (glkms/nwm/...)
+ * instead of the static placeholder. Call at every drm-node entry point (ioctl/release). */
+void           lkpi_set_current_client(int pid);
 
 #ifdef __cplusplus
 }

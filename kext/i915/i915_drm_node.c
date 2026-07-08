@@ -90,6 +90,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	long r;
 	if (!g_ddev)
 		return -ENODEV;
+	lkpi_set_current_client(pid);   /* drm_ioctl logs current->comm/pid — name the real client */
 	c = client_get(pid, node);
 	if (!c)
 		return -ENOMEM;
@@ -163,6 +164,7 @@ int i915_scanout_restore(void);
 static void node_release(int pid)
 {
 	int i, left = 0, freed = 0;
+	lkpi_set_current_client(pid);   /* drm_file_free logs current->comm too */
 	for (i = 0; i < NODE_MAX_CLIENTS; i++) {
 		if (g_cli[i].file && g_cli[i].pid == pid) {
 			drm_file_free(g_cli[i].file);

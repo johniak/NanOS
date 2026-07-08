@@ -68,15 +68,21 @@ void lkpi_deep_report(const char *where, void *ra) {
  * needs no IRQ, and pins the exact starved wait for addr2line.) */
 static void *g_spin_ra;
 static unsigned long long g_spin_since_us;
+static unsigned long long g_spin_last_us;
 static int g_spin_reported;
 void lkpi_spin_probe(void *ra) {
 	unsigned long long now = knx_uptime_us();
-	if (ra != g_spin_ra) {           /* a different site is spinning now — restart the deadline */
+	/* New site OR a >100 ms gap at the same site = a new wait episode, not the same spin —
+	 * pump turns are back-to-back, so consecutive short waits from one callsite must not
+	 * accumulate into a false report (see the raw/sleep probes below for the Dell evidence). */
+	if (ra != g_spin_ra || (now - g_spin_last_us) > 100000ull) {
 		g_spin_ra = ra;
 		g_spin_since_us = now;
 		g_spin_reported = 0;
+		g_spin_last_us = now;
 		return;
 	}
+	g_spin_last_us = now;
 	if (!g_spin_reported && (now - g_spin_since_us) > 2000000ull) {
 		unsigned long fl;
 		int if_on;
@@ -89,7 +95,8 @@ void lkpi_spin_probe(void *ra) {
 		 * the first submission) — a real device-level problem, not a shim starvation. */
 		__asm__ __volatile__("pushfq; popq %0" : "=r"(fl));
 		if_on = (int)((fl >> 9) & 1);
-		printk("lkpi: SPIN>2s ra=%p IF=%d — starved wait (IF=0: MSI blocked by CLI; IF=1: awaited event never occurs)\n", ra, if_on);
+		printk("lkpi: SPIN>2s ra=%p IF=%d spun=%llums — starved wait (IF=0: MSI blocked by CLI; IF=1: awaited event never occurs)\n",
+		       ra, if_on, (now - g_spin_since_us) / 1000ull);
 	}
 }
 
@@ -104,21 +111,29 @@ void lkpi_spin_probe(void *ra) {
  * once after 3s. */
 static void *g_cr_ra;
 static unsigned long long g_cr_since_us;
+static unsigned long long g_cr_last_us;
 static int g_cr_reported;
 void lkpi_cpu_relax_probe(void *ra) {
 	unsigned long long now = knx_uptime_us();
-	if (ra != g_cr_ra) {
+	/* Episode boundary: a genuine busy loop calls cpu_relax back-to-back (sub-µs gaps), so a
+	 * >100 ms silence at the same ra means a NEW wait from the same callsite, not the same
+	 * spin. Without this, consecutive short waits sharing one wait_for instantiation (GT
+	 * workaround MMIO polls, AUX retries) accumulated across the whole probe and false-fired
+	 * (Dell boots #40-44: RAW-SPIN at the same two ra's every boot, yet every wait completed). */
+	if (ra != g_cr_ra || (now - g_cr_last_us) > 100000ull) {
 		g_cr_ra = ra;
 		g_cr_since_us = now;
 		g_cr_reported = 0;
+		g_cr_last_us = now;
 		return;
 	}
+	g_cr_last_us = now;
 	if (!g_cr_reported && (now - g_cr_since_us) > 3000000ull) {
 		unsigned long fl;
 		g_cr_reported = 1;
 		__asm__ __volatile__("pushfq; popq %0" : "=r"(fl));
-		printk("lkpi: RAW-SPIN>3s ra=%p IF=%d — timeout-less busy poll (cpu_relax/udelay); GPU register/HWSP never advanced\n",
-		       ra, (int)((fl >> 9) & 1));
+		printk("lkpi: RAW-SPIN>3s ra=%p IF=%d spun=%llums — timeout-less busy poll (cpu_relax/udelay); GPU register/HWSP never advanced\n",
+		       ra, (int)((fl >> 9) & 1), (now - g_cr_since_us) / 1000ull);
 	}
 }
 
@@ -132,26 +147,45 @@ void lkpi_cpu_relax_probe(void *ra) {
  * state so it never thrashes the 2 s / 3 s deadlines. */
 static void *g_sl_ra;
 static unsigned long long g_sl_since_us;
+static unsigned long long g_sl_last_us;
 static int g_sl_reported;
 void lkpi_sleep_probe(void *ra) {
 	unsigned long long now = knx_uptime_us();
-	if (ra != g_sl_ra) {
+	/* Episode boundary, same idea as the raw probe above but with a 1 s gap: a sleep-poll's
+	 * iterations are at most the sleep length apart (i915 polls sleep 1-200 ms), so >1 s of
+	 * silence at the same ra is a separate wait, not the same loop. The PPS panel-power waits
+	 * all funnel through ONE wait_panel_status callsite and false-fired cumulatively. */
+	if (ra != g_sl_ra || (now - g_sl_last_us) > 1000000ull) {
 		g_sl_ra = ra;
 		g_sl_since_us = now;
 		g_sl_reported = 0;
+		g_sl_last_us = now;
 		return;
 	}
+	g_sl_last_us = now;
 	if (!g_sl_reported && (now - g_sl_since_us) > 8000000ull) {
 		unsigned long fl;
 		g_sl_reported = 1;
 		__asm__ __volatile__("pushfq; popq %0" : "=r"(fl));
-		printk("lkpi: SLEEP-SPIN>8s ra=%p IF=%d — timeout-less poll via msleep/usleep_range/schedule_timeout; awaited condition never satisfied\n",
-		       ra, (int)((fl >> 9) & 1));
+		printk("lkpi: SLEEP-SPIN>8s ra=%p IF=%d spun=%llums — timeout-less poll via msleep/usleep_range/schedule_timeout; awaited condition never satisfied\n",
+		       ra, (int)((fl >> 9) & 1), (now - g_sl_since_us) / 1000ull);
 	}
 }
 
-static struct task_struct lkpi_current_task = { .pid = 1, .comm = "virtio_gpu", .mm = 0 };
+/* The default comm names driver-internal contexts (probe, kthreads). DRM-node entry points stamp
+ * the REAL client's pid+comm via lkpi_set_current_client below, so drm_ioctl/drm_release log
+ * lines say which process (glkms/gles2info/nwm) issued the call — the old hard-coded
+ * "virtio_gpu" labelled every i915 client on the Dell with the wrong driver's name. */
+static struct task_struct lkpi_current_task = { .pid = 1, .comm = "lkpi", .mm = 0 };
 struct task_struct *lkpi_current = &lkpi_current_task;
+
+static char lkpi_client_comm[16];
+void lkpi_set_current_client(int pid)
+{
+	lkpi_current_task.pid = pid;
+	knx_process_comm(pid, lkpi_client_comm, sizeof(lkpi_client_comm));
+	lkpi_current_task.comm = lkpi_client_comm;
+}
 
 /* ---- shmem page provider (gem_shmem backing store) ---------------------------------- */
 

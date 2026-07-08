@@ -43,6 +43,7 @@ int     lapicAllocVector();
 // so the C-ABI knx_getpid/knx_drm_register wrappers inside that block can call them.
 int  syscallCurrentPid();
 void drmNodesRegister(const struct knx_drm_ops* ops);
+int  processCommFor(int pid, char* buf, int n);
 
 // MSI handler slot + trampoline (Phase 1: one active NIC vector). arch::registerTrapHandler installs
 // msiTrampoline on the LAPIC vector msiSetup allocated; it forwards to the module's handler + ctx.
@@ -147,6 +148,10 @@ int knx_add_input_dev(CharDevice* dev) {
 // extern "C" block), so DrmDevice.cpp (which calls kernel::syscallCurrentPid) links correctly.
 int  knx_getpid(void)                            { return syscallCurrentPid(); }
 void knx_drm_register(const struct knx_drm_ops* ops) { drmNodesRegister(ops); }
+// Short process name (Linux `comm`) for a pid — lets the DRM shim label its log lines with the
+// real client (glkms/gles2info/nwm) instead of a hard-coded driver name. Returns 0, or -1 for an
+// unknown pid (buf gets a "pid<N>" fallback so callers can print it either way).
+int  knx_process_comm(int pid, char* buf, int n)  { return processCommFor(pid, buf, n); }
 
 // ---- PCI access for driver modules (the e1000 NIC kext binds its device through these) ----
 // The (bus,dev,func) triple is the stable handle; a driver finds it once via knx_pci_find then
@@ -349,6 +354,30 @@ void runAfterSchedulerHooks() {
 int syscallCurrentPid() {
 	Process* p = ProcTable::current();
 	return p ? p->pid : 0;
+}
+int processCommFor(int pid, char* buf, int n) {
+	if (!buf || n <= 0)
+		return -1;
+	Process* p = ProcTable::byPid(pid);
+	if (p && p->comm[0]) {
+		int i = 0;
+		for (; i < n - 1 && p->comm[i]; i++)
+			buf[i] = p->comm[i];
+		buf[i] = 0;
+		return 0;
+	}
+	// Unknown pid (or unnamed): still give the caller something printable.
+	{
+		char tmp[16];
+		int t = 0, i = 0, v = pid < 0 ? 0 : pid;
+		do { tmp[t++] = (char) ('0' + v % 10); v /= 10; } while (v && t < 15);
+		if (i < n - 1) buf[i++] = 'p';
+		if (i < n - 1) buf[i++] = 'i';
+		if (i < n - 1) buf[i++] = 'd';
+		while (t > 0 && i < n - 1) buf[i++] = tmp[--t];
+		buf[i] = 0;
+	}
+	return -1;
 }
 static const struct knx_drm_ops* g_drmOps;   // retained for the process-exit release hook below
 void drmNodesRegister(const struct knx_drm_ops* ops) {
