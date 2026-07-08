@@ -11,6 +11,7 @@
 #include "glkms_init.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>    /* malloc/free: the full EGL config list is driver-sized, not a fixed 32 */
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -82,7 +83,14 @@ static int kms_pick(struct glkms *g)
 }
 
 /* Choose an ES2 window config whose native visual id matches our GBM format (required so the EGL
- * window surface and the gbm_surface agree on pixel layout). */
+ * window surface and the gbm_surface agree on pixel layout).
+ *
+ * Scan EVERY matching config, not a 32-slot prefix: EGL sorts deeper color buffers first, and a
+ * hardware driver's list is huge (iris: 16F/2101010 x MSAA x depth variants), so the 24-bit
+ * XRGB8888 entry lands far past any small prefix (Dell boot #44: the old cfgs[0] fallback picked
+ * an incompatible deep format -> eglCreateWindowSurface EGL_BAD_MATCH). ARGB8888 is accepted as
+ * second choice — Mesa's dri2_drm_config_is_compatible explicitly allows ARGB<->XRGB mixing on a
+ * GBM surface. Anything else can only fail surface creation, so fail HERE, loudly, instead. */
 static int egl_pick_config(struct glkms *g)
 {
 	static const EGLint attr[] = {
@@ -94,24 +102,45 @@ static int egl_pick_config(struct glkms *g)
 		EGL_ALPHA_SIZE, 0,
 		EGL_NONE
 	};
-	EGLConfig cfgs[32];
-	EGLint n = 0;
-	if (!eglChooseConfig(g->dpy, attr, cfgs, 32, &n) || n <= 0) {
-		printf("glkms: eglChooseConfig failed n=%d (0x%x)\n", n, eglGetError());
+	static const EGLint want[] = { (EGLint)GLKMS_FORMAT, (EGLint)GBM_FORMAT_ARGB8888 };
+	EGLint total = 0;
+	if (!eglChooseConfig(g->dpy, attr, 0, 0, &total) || total <= 0) {
+		printf("glkms: eglChooseConfig failed n=%d (0x%x)\n", total, eglGetError());
 		return -1;
 	}
-	for (int i = 0; i < n; i++) {
-		EGLint vid = 0;
-		if (eglGetConfigAttrib(g->dpy, cfgs[i], EGL_NATIVE_VISUAL_ID, &vid) &&
-		    vid == (EGLint)GLKMS_FORMAT) {
-			g->cfg = cfgs[i];
-			return 0;
+	EGLConfig *cfgs = malloc(sizeof(EGLConfig) * total);
+	if (!cfgs) {
+		printf("glkms: config list alloc failed (n=%d)\n", total);
+		return -1;
+	}
+	EGLint n = 0;
+	if (!eglChooseConfig(g->dpy, attr, cfgs, total, &n) || n <= 0) {
+		printf("glkms: eglChooseConfig failed n=%d (0x%x)\n", n, eglGetError());
+		free(cfgs);
+		return -1;
+	}
+	for (unsigned w = 0; w < sizeof(want) / sizeof(want[0]); w++) {
+		for (int i = 0; i < n; i++) {
+			EGLint vid = 0;
+			if (eglGetConfigAttrib(g->dpy, cfgs[i], EGL_NATIVE_VISUAL_ID, &vid) &&
+			    vid == want[w]) {
+				g->cfg = cfgs[i];
+				free(cfgs);
+				return 0;
+			}
 		}
 	}
-	/* No exact native-visual match: fall back to the first config. XRGB8888 is what virgl
-	 * exposes, so this path is a safety net, not the expected one. */
-	g->cfg = cfgs[0];
-	return 0;
+	/* Neither XRGB8888 nor ARGB8888: dump what the driver DOES offer so the pulled log names
+	 * the candidates (fourccs) instead of a bare failure. */
+	printf("glkms: no [AX]RGB8888 config among %d; visuals:", n);
+	for (int i = 0; i < n && i < 12; i++) {
+		EGLint vid = 0;
+		eglGetConfigAttrib(g->dpy, cfgs[i], EGL_NATIVE_VISUAL_ID, &vid);
+		printf(" 0x%x", vid);
+	}
+	printf("%s\n", n > 12 ? " ..." : "");
+	free(cfgs);
+	return -1;
 }
 
 int glkms_open(struct glkms *g)
