@@ -23,10 +23,14 @@ int DrmDevice::mmapAt(uint64_t off, uint64_t* physOut, unsigned* lenOut) {
 }
 
 void DrmDevice::close() {
-	// No per-fd identity in the current fd layer: on any close we drop this process's drm_file
-	// and all its GEM handles. nwm/Mesa hold the node open for their lifetime, so a process that
-	// closes a dup'd fd early loses its handles — the recorded follow-on is per-fd identity.
-	if (m_ops && m_ops->release) m_ops->release(curPid());
+	// Deliberately a no-op. The kext keys drm_files by pid (not fd), and userland routinely
+	// churns short-lived descriptors on an in-use node: dup(), Mesa's loader reopening the node
+	// by path, libdrm's drmGetDevices2 sniff-open. Releasing here destroyed the process's whole
+	// GPU state mid-render — the next drm_file reissued the same GEM handle numbers and Mesa's
+	// bufmgr handle table aliased old/new buffers (Dell boot #43: gles2info clear-readback BAD,
+	// glkms dead at EGL device setup). The drm_file now dies with the process: procExit/procKill
+	// call kernel::drmProcessExit(pid) (KernelExports.cpp). A process that closes its last DRM
+	// fd and lives on keeps its drm_file until exit — accepted for the per-process model.
 }
 
 }

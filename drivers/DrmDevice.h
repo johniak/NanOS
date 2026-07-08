@@ -19,7 +19,8 @@ public:
 	int mmapInfo(uint64_t*, unsigned*) override { return -22; }          /* DRM mmap is offset-based only (Task 5) */
 	// Offset-aware GEM mmap: resolve a fake offset to a physical range via the kext table.
 	int mmapAt(uint64_t off, uint64_t* physOut, unsigned* lenOut) override;
-	// On last close for the calling process, release its drm_file + GEM handles (Task 4).
+	// fd closes are NOT release points (see DrmDevice.cpp) — the drm_file is per-process and
+	// dies with the process (drmProcessExit below), never with an individual descriptor.
 	void close() override;
 private:
 	const struct knx_drm_ops* m_ops;
@@ -28,4 +29,7 @@ private:
 // Create /dev/dri/card0 + /dev/dri/renderD128 backed by the kext's op table.
 // Kernel build only (defined in KernelExports.cpp, where the /dev SynthFs root lives).
 void drmNodesRegister(const struct knx_drm_ops* ops);
+// Release the dying process's per-pid drm_file (+ GEM handles). Called from procExit/procKill;
+// a no-op for processes that never touched /dev/dri (defined in KernelExports.cpp).
+void drmProcessExit(int pid);
 }

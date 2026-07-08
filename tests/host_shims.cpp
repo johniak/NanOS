@@ -40,6 +40,7 @@ extern "C" int   knx_thread_should_stop(void) { return 0; }
 extern "C" void  knx_thread_stop(void *) {}
 extern "C" void  knx_thread_yield(void) {}
 extern "C" void  knx_thread_msleep(unsigned) {}
+extern "C" void  knx_rcu_synchronize(void) {}   // host doctest is single-threaded: a grace period is instant
 extern "C" void  knx_run_after_scheduler(void (*fn)(void)) { if (fn) fn(); }
 // knx_file_read stand-in for the request_firmware doctest: a single settable fake file. The test
 // registers a path+blob via lkpi_test_set_file, then request_firmware resolves that exact path.

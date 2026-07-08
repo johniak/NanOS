@@ -13,6 +13,7 @@
 #include "ThreadArea.h"   // UserDesc: CLONE_SETTLS reads the child's TLS base from it
 #include "String.h"
 #include "Console.h"     // surface a short staging read on the console (real-HW diagnostic)
+#include "DrmDevice.h"   // drmProcessExit: a dying process's drm_file is released HERE, not per fd close
 #include "memory_manager.h"   // malloc/free: process-table snapshots go on the heap, not the
                               // 8 KB kernel stack (the table now holds up to ProcTable::MAX)
 #include <arch/usermode.h>
@@ -467,6 +468,7 @@ void procExit() {
 	p->exited = true;
 	p->sys->closeAll();      // drop fd/pipe refcounts NOW so peers (e.g. a window server) see
 	                         // EOF at exit, not only when the parent reaps this zombie
+	drmProcessExit(p->pid);  // release the per-process drm_file + GEM handles (never per fd close)
 	orphanCheckOnExit(p);    // re-parent fallout: SIGHUP+SIGCONT any newly-orphaned stopped group
 	// POSIX: our children are now orphans — re-home them on init (pid 1) so they stay reapable
 	// (their pid would otherwise name a dead parent forever, leaking the slot + 8 KB stack).
@@ -622,6 +624,7 @@ static void procKill(int sig) {
 	p->exitCode = sig;
 	p->exited = true;
 	p->sys->closeAll();      // release fds/pipes at death so peers see EOF before the reap
+	drmProcessExit(p->pid);  // release the per-process drm_file, same as procExit
 	orphanCheckOnExit(p);    // same orphan-group handling as a normal exit
 	// Re-home our children on init (pid 1) so they stay reapable after we die — identical to
 	// procExit. A signal death must do this too, or grandchildren name a freed parent slot and

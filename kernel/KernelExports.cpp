@@ -350,14 +350,26 @@ int syscallCurrentPid() {
 	Process* p = ProcTable::current();
 	return p ? p->pid : 0;
 }
+static const struct knx_drm_ops* g_drmOps;   // retained for the process-exit release hook below
 void drmNodesRegister(const struct knx_drm_ops* ops) {
 	if (!g_root)
 		return;
 	SynthNode* dri = g_root->addDir(g_root->dev(), "dri");
 	if (!dri)
 		return;
+	g_drmOps = ops;
 	g_root->addChar(dri, "card0",      new DrmDevice(ops, KNX_DRM_NODE_PRIMARY), 0666);
 	g_root->addChar(dri, "renderD128", new DrmDevice(ops, KNX_DRM_NODE_RENDER),  0666);
+}
+// Release the dying process's drm_file (+ all GEM handles/contexts). Called from procExit and
+// procKill — NOT from fd close: the kext keys drm_files by pid, and userland churns short-lived
+// fds on the same node mid-render (dup/loader reopen/libdrm's drmGetDevices2 sniff). Releasing on
+// any close destroyed the process's whole GPU state mid-init; the fresh drm_file then reissued
+// the same GEM handle numbers and Mesa's handle table silently aliased old and new buffers
+// (Dell boot #43: gles2info clear-readback BAD, glkms dead at eglInitialize's device setup).
+void drmProcessExit(int pid) {
+	if (g_drmOps && g_drmOps->release)
+		g_drmOps->release(pid);
 }
 
 // Spawn the framebuffer present thread, if a display kext registered a flush callback. Called
