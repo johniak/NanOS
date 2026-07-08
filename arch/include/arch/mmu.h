@@ -30,7 +30,13 @@ constexpr uint64_t VA_MODULE_BASE   = 0x40000000;   // .ndl load band (1 GiB)
 constexpr uint64_t VA_MODULE_STRIDE = 0x00400000;   // per-module spacing (4 MiB)
 constexpr uint64_t VA_MODULE_MAX    = 0x48000000;   // +128 MiB (32 modules)
 constexpr uint64_t VA_HEAP_BASE     = 0x48000000;   // brk/sbrk anonymous heap
-constexpr uint64_t VA_HEAP_MAX      = 0x4C000000;   // +64 MiB
+// 64 MiB -> 128 MiB (x86_64 only; i686 keeps its own NX_BRK_MAX in arch/x86). A GL desktop
+// process genuinely needs more than 64 MiB of heap: nwm-gl holds ~41 MiB of CPU scene/wallpaper/
+// chrome buffers at 1920x1080, Mesa/iris adds its own arena, and every tiled-texture upload
+// mallocs a ~8 MiB bounce buffer (iris_map_tiled_memcpy) — the old cap made that malloc fail
+// after a few frames on the Dell (assert "map->buffer", boot #48). The band up to VA_MMAP_BASE
+// was unused VA, so the extension is free; brk stays uint32-plumbed (fits well below 4 GiB).
+constexpr uint64_t VA_HEAP_MAX      = 0x50000000;   // +128 MiB (abuts VA_MMAP_BASE)
 constexpr uint64_t VA_MMAP_BASE     = 0x50000000;   // anonymous/file-backed mmap
 constexpr uint64_t VA_MMAP_MAX      = 0x54000000;   // +64 MiB
 constexpr uint64_t VA_FB_BASE       = 0x58000000;   // user framebuffer window (1.375 GiB)

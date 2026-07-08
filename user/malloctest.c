@@ -49,5 +49,28 @@ int main(void) {
 	}
 
 	printf("malloctest: MALLOC_ALIGN16 PASS\n");
+
+	/* Heap-ceiling gate: a GL desktop process needs WELL over the historical 64 MiB brk cap
+	 * (VA_HEAP_MAX raised to 128 MiB after Dell boot #48 — nwm-gl held ~41 MiB of scene buffers
+	 * and iris mallocs a ~8 MiB tiled-upload bounce per frame, so the 64 MiB ceiling made that
+	 * malloc fail: assert "map->buffer", iris_resource.c). Mimic that shape: hold 72 MiB in
+	 * 8 MiB chunks (past the old cap), touch every page so the frames are really mapped, then
+	 * free. Values stay modest so the -m 512 QEMU smoke can commit them comfortably. */
+	{
+		enum { CHUNK = 8u << 20, COUNT = 9 };   /* 9 x 8 MiB = 72 MiB > old 64 MiB ceiling */
+		void *chunks[COUNT];
+		for (int i = 0; i < COUNT; i++) {
+			chunks[i] = malloc(CHUNK);
+			if (!chunks[i]) {
+				printf("malloctest: HEAP_BIG FAIL (chunk %d of %d x 8 MiB)\n", i, COUNT);
+				return 1;
+			}
+			for (size_t off = 0; off < CHUNK; off += 4096)
+				((volatile char *)chunks[i])[off] = (char) i;
+		}
+		for (int i = 0; i < COUNT; i++)
+			free(chunks[i]);
+		printf("malloctest: HEAP_BIG PASS\n");
+	}
 	return 0;
 }
