@@ -181,8 +181,15 @@ static void i915_panic_sink(const char *line)
 	knx_file_append(I915_LOG_PATH, line, i915_strlen(line));
 }
 
-/* Armed iff the first non-space byte of /nanos/config/i915 is '1'. Absent/unreadable/0 -> disarmed. */
-static int i915_armed(void)
+/* Arm MODE from the first non-space byte of /nanos/config/i915:
+ *   '1' -> BRING-UP HARNESS: full drm debug for the whole session, and init auto-runs
+ *          i915test/gles2info/glkms (init.c keys the auto-run on '1' specifically).
+ *   '2' -> DESKTOP: driver comes up with the same narrated probe, but after DRIVER BOUND the
+ *          drm debug mask drops to 0 (a composing desktop issues ~10^2 GEM ioctls per frame —
+ *          per-ioctl drm_dbg would grow i915-boot.txt without bound and throttle everything),
+ *          and NO auto-tests run (glkms would steal the compositor's scanout mid-session).
+ *   absent/unreadable/other -> 0, disarmed (safe no-op in the default image). */
+static int i915_arm_mode(void)
 {
 	char buf[8];
 	unsigned long n = 0;
@@ -192,7 +199,11 @@ static int i915_armed(void)
 	buf[n < sizeof(buf) ? n : sizeof(buf) - 1] = 0;
 	for (p = buf; *p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'; p++)
 		;
-	return *p == '1';
+	if (*p == '1')
+		return 1;
+	if (*p == '2')
+		return 2;
+	return 0;
 }
 
 /* Tee a marker plus a small integer (probe return code / inject stage) to both channels — knx_log /
@@ -254,12 +265,14 @@ int nkext_init(void)
 	int ret;
 
 	/* 0) arm gate. Disarmed = a safe no-op (default image); nothing below runs. */
-	if (!i915_armed()) {
-		knx_log("i915: not armed (write '1' to " I915_ARM_KNOB " to bring up) — skipping\n");
+	int arm_mode = i915_arm_mode();
+	if (!arm_mode) {
+		knx_log("i915: not armed (write '1' harness / '2' desktop to " I915_ARM_KNOB ") — skipping\n");
 		return 0;
 	}
 
-	i915_log("i915: ===== bring-up session armed =====\n");
+	i915_log(arm_mode == 2 ? "i915: ===== armed: DESKTOP mode =====\n"
+	                       : "i915: ===== bring-up session armed =====\n");
 	/* Stamp WHICH shim built this kext into the log — otherwise a commit that changes only shim .c
 	 * files leaves no probe-time trace, so a Dell log can't confirm the new code actually booted. */
 #ifndef LKPI_GIT_REV
@@ -400,6 +413,16 @@ int nkext_init(void)
 		i915_log_val("i915:   post: PCI cmd reg ", (long)(knx_pci_cfg_read32(bus, dev, func, 0x04) & 0xffff));
 		if (pret == 0) {
 			i915_log("i915: DRIVER BOUND — GPU is up (full probe succeeded)\n");
+			/* Desktop mode: probe is the last thing worth narrating — from here the GL
+			 * compositor drives the GPU at frame rate, and per-ioctl drm_dbg would append
+			 * to i915-boot.txt on every GEM call, growing the log without bound (and the
+			 * VFS append throttles the very ioctls it logs). Errors (drm_err/WARN) don't
+			 * consult __drm_debug and still reach both channels via the tee. */
+			if (arm_mode == 2) {
+				extern unsigned long __drm_debug;
+				__drm_debug = 0;
+				i915_log("i915: desktop mode — drm debug off (errors still logged)\n");
+			}
 			/* Make the desktop visible on the i915-driven panel. The plane scans a stolen
 			 * buffer; the only CPU-legal view of stolen is the GTT APERTURE (GMADR/BAR2 +
 			 * the plane's GGTT offset) — boot #28 froze mid-memcpy writing the raw BDSM

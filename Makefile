@@ -1186,6 +1186,17 @@ flash-dell-armed: image64
 	IMAGE=$(IMAGE64) FORCE=1 NO_EJECT=1 ./scripts/flash-usb.sh
 	VALUE=1 ./scripts/arm-i915.sh
 
+# flash-dell-gl — the GL DESKTOP on the Dell: flash the image64-gl variant (nwm.nxe = the
+# Mesa-linked GPU compositor) and arm i915 in DESKTOP mode ('2'): driver up with the narrated
+# probe, then drm debug off and NO auto-test harness — glkms would steal the compositor's
+# scanout mid-session, and per-ioctl drm_dbg at frame rate would grow i915-boot.txt without
+# bound. Boot flow on the Dell: fbcon -> greeter (tty7, fb0) -> login -> nwm-gl via KMS.
+.PHONY: flash-dell-gl
+flash-dell-gl: image64
+	$(MAKE) image64-gl
+	IMAGE=$(IMAGE64_GL) FORCE=1 NO_EJECT=1 ./scripts/flash-usb.sh
+	VALUE=2 ./scripts/arm-i915.sh
+
 # update-dell — the FAST i915 inner loop: rebuild, then push ONLY the changed kernel + i915 kext
 # onto the stick with host debugfs (~6 MiB) and re-arm, skipping the ~320 MiB whole-disk dd that
 # flash-dell-armed does. Both files live on the ext root, the same partition the image build itself
