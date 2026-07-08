@@ -19,6 +19,7 @@
 #include <sys/statvfs.h>
 #include <sys/utsname.h>
 #include <sys/time.h>   /* setitimer/getitimer: alarm() is implemented over ITIMER_REAL */
+#include "SyscallNr.h"  /* SYS_kcmp — the one number syscall() forwards (see below) */
 
 extern char** environ;
 
@@ -143,8 +144,38 @@ int setpriority(int which, int who, int prio) { (void) which; (void) who; (void)
 /* syscall(): NanOS has no Linux-style numeric syscall multiplexer in userland — syscalls are
  * exposed as named libc functions (libc.ndl imports). Ports that call syscall() directly (htop's
  * capget capability probe) get -ENOSYS; those paths are not reached at runtime here (every NanOS
- * process runs as root, so htop never probes capabilities). */
-long syscall(long number, ...) { (void) number; errno = ENOSYS; return -1; }
+ * process runs as root, so htop never probes capabilities).
+ *
+ * The ONE forwarded number is SYS_kcmp: Mesa's os_same_file_description() calls
+ * syscall(SYS_kcmp, pid, pid, KCMP_FILE, fd1, fd2) to decide whether two DRM fds share a GEM
+ * handle namespace. Without it Mesa returns "can't tell" and iris falls back to a dma-buf
+ * PRIME export/import roundtrip NanOS doesn't support (Dell boot #45: PRIME_HANDLE_TO_FD
+ * ret=-22 -> gbm_bo_get_handle()==0 -> drmModeAddFB "no buffer object handle" -> no scanout). */
+long syscall(long number, ...) {
+	if (number == SYS_kcmp) {
+		va_list ap;
+		long a[5];
+		va_start(ap, number);
+		for (int i = 0; i < 5; i++)
+			a[i] = va_arg(ap, long);
+		va_end(ap);
+		long r;
+#if defined(__x86_64__)
+		register long r10 __asm__("r10") = a[3];
+		register long r8  __asm__("r8")  = a[4];
+		__asm__ __volatile__("syscall" : "=a"(r)
+			: "a"((long) SYS_kcmp), "D"(a[0]), "S"(a[1]), "d"(a[2]), "r"(r10), "r"(r8)
+			: "rcx", "r11", "memory");
+#else
+		__asm__ __volatile__("int $0x80"
+			: "=a"(r) : "a"((long) SYS_kcmp), "b"(a[0]), "c"(a[1]), "d"(a[2]), "S"(a[3]), "D"(a[4])
+			: "memory");
+#endif
+		if (r < 0) { errno = (int) -r; return -1; }
+		return r;
+	}
+	(void) number; errno = ENOSYS; return -1;
+}
 
 /* realpath: canonicalize PATH lexically (make absolute via getcwd if relative, then collapse
  * ".", ".." and duplicate slashes) and confirm it exists via stat(). Intermediate symlinks are

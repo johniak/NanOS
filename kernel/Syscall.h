@@ -22,6 +22,7 @@ namespace kernel {
 #define ENOENT 2
 #define E2BIG 7
 #define EBADF 9
+#define EPERM 1
 #define EAGAIN 11
 #define EFAULT 14
 #define EINVAL 22
@@ -262,6 +263,16 @@ public:
 	// dup/dup2 alias an existing descriptor's backing (sharing a pipe end / file / console).
 	int pipe(int out[2]);
 	int dup(int fd);
+	// kcmp(2), KCMP_FILE only, same-process only: do fd1 and fd2 refer to the same underlying
+	// kernel object? NanOS fds are VALUE copies (shareInto/dup duplicates the Fd entry — there is
+	// no shared "file description" object as on Linux), so identity is judged by the backing:
+	// pipe pointer + end, socket pointer, console VT, else the resolved device/file path. For
+	// device nodes path identity IS kernel-object identity (char devices are refcounted per path;
+	// DRM drm_files are keyed by pid alone) — exactly the question the one real caller (Mesa iris
+	// deciding whether two fds share a GEM handle namespace) needs answered. Deviation from
+	// Linux: two independent open()s of the same REGULAR file compare equal here (offsets are
+	// per-fd either way on NanOS). Returns 0 same, 1 different, -EBADF/-EPERM/-EOPNOTSUPP.
+	int kcmp(int pid1, int pid2, int type, int fd1, int fd2);
 	int dup2(int oldfd, int newfd);
 	// Non-blocking poll scan: fills each pollfd's revents and returns the number of fds that
 	// are ready (revents != 0). Blocking + timeout are handled by the dispatch.

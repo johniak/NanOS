@@ -278,6 +278,30 @@ int Syscalls::dup(int fd) {
 	return n;
 }
 
+// kcmp(2) KCMP_FILE — see the semantics comment in Syscall.h. Only the calling process's own
+// fd table is reachable here (Syscalls is per-process), so cross-pid comparison is refused.
+int Syscalls::kcmp(int pid1, int pid2, int type, int fd1, int fd2) {
+	if (type != 0)              // KCMP_FILE only (Linux linux/kcmp.h: KCMP_FILE == 0)
+		return -EOPNOTSUPP;
+	if (pid1 != pid2)           // cross-process compare: unsupported (Linux would want PTRACE)
+		return -EPERM;
+	RecursiveGuard g(m_fdLock);
+	if (!valid(fd1) || !valid(fd2))
+		return -EBADF;
+	if (fd1 == fd2)
+		return 0;
+	Fd& a = fds[fd1];   // non-const: String::compareTo is non-const; entries are lock-held stable
+	Fd& b = fds[fd2];
+	if (a.pipe || b.pipe)
+		return (a.pipe == b.pipe && a.pipeWrite == b.pipeWrite) ? 0 : 1;
+	if (a.sock || b.sock)
+		return (a.sock == b.sock) ? 0 : 1;
+	if (a.isConsole || b.isConsole)
+		return (a.isConsole == b.isConsole && a.vt == b.vt) ? 0 : 1;
+	// files + char devices: path identity (value-copied entries — see header comment)
+	return (a.isChar == b.isChar && a.path.compareTo(b.path) == 0) ? 0 : 1;
+}
+
 int Syscalls::dup2(int oldfd, int newfd) {
 	RecursiveGuard g(m_fdLock);   // close(newfd) below re-enters (recursive lock)
 	if (!valid(oldfd))

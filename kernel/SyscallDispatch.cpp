@@ -575,6 +575,11 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 	case SYS_dup2:
 		ret = g_sys->dup2((int) a0, (int) a1);
 		break;
+	case SYS_kcmp:
+		// kcmp(pid1, pid2, type, idx1, idx2) — KCMP_FILE fd comparison (Mesa iris GEM-namespace
+		// probe). Same-process only; see Syscalls::kcmp for the NanOS identity semantics.
+		ret = g_sys->kcmp((int) a0, (int) a1, (int) a2, (int) a3, (int) a4);
+		break;
 	case SYS_poll: {
 		// a0 = struct pollfd*, a1 = nfds, a2 = timeout ms (-1 = infinite, 0 = non-blocking).
 		PollFd* pfds = (PollFd*) a0;

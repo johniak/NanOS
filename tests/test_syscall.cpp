@@ -95,6 +95,44 @@ TEST_CASE("console fd answers the termios ioctls so isatty() recognizes it") {
 	CHECK(sc.ioctl(fd, 0x5401 /* TCGETS */, termios_buf) < 0);
 }
 
+TEST_CASE("kcmp(KCMP_FILE) reports fd identity per the NanOS semantics") {
+	Syscalls sc(mountFixture(), sink);
+	const int pid = 7;   // kcmp only checks pid1 == pid2 (same-process compare)
+
+	// dup shares the underlying object -> same
+	int fd = sc.open("/hello.txt", 0);
+	REQUIRE(fd >= 3);
+	int d = sc.dup(fd);
+	REQUIRE(d >= 0);
+	CHECK(sc.kcmp(pid, pid, 0, fd, d) == 0);
+	CHECK(sc.kcmp(pid, pid, 0, fd, fd) == 0);   // trivially same fd
+
+	// two independent opens of the same path: SAME on NanOS (documented deviation — fd
+	// entries are value copies; path identity is the only kernel-object identity there is)
+	int fd2 = sc.open("/hello.txt", 0);
+	REQUIRE(fd2 >= 0);
+	CHECK(sc.kcmp(pid, pid, 0, fd, fd2) == 0);
+
+	// different paths -> different
+	REQUIRE(sc.mkdir("/kc", 0755) == 0);
+	int other = sc.open("/kc/y", O_CREAT);
+	REQUIRE(other >= 0);
+	CHECK(sc.kcmp(pid, pid, 0, fd, other) == 1);
+
+	// pipe: the two ends are distinct objects; a dup'd end matches its original
+	int p[2];
+	REQUIRE(sc.pipe(p) == 0);
+	CHECK(sc.kcmp(pid, pid, 0, p[0], p[1]) == 1);
+	int pr = sc.dup(p[0]);
+	CHECK(sc.kcmp(pid, pid, 0, p[0], pr) == 0);
+	CHECK(sc.kcmp(pid, pid, 0, fd, p[0]) == 1);   // file vs pipe -> different
+
+	// errors: bad fd, cross-pid, unsupported type
+	CHECK(sc.kcmp(pid, pid, 0, fd, 99) == -EBADF);
+	CHECK(sc.kcmp(pid, pid + 1, 0, fd, d) == -EPERM);
+	CHECK(sc.kcmp(pid, pid, 1 /* KCMP_VM */, fd, d) == -EOPNOTSUPP);
+}
+
 TEST_CASE("console termios round-trips and TCSETS drives canonical/raw") {
 	Syscalls sc(mountFixture(), sink);
 	// TCGETS returns the real cooked defaults (not a zeroed struct): ICANON + ECHO set.

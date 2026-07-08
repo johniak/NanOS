@@ -117,6 +117,8 @@
 #define SYS_futex 202
 #define SYS_set_thread_area 205   /* unused on x86_64 (TLS via arch_prctl); kept for the dispatch */
 #define SYS_getrandom 318
+#define SYS_kcmp 312         /* KCMP_FILE only — Mesa's os_same_file_description (GEM handle
+                              * namespace sharing); see Syscalls::kcmp for the NanOS semantics */
 #define SYS_clock_gettime 228
 #define SYS_set_tid_address 218
 #define SYS_tkill 200
@@ -265,6 +267,7 @@
 #define SYS_set_tid_address 258
 #define SYS_clock_gettime 265
 #define SYS_getrandom 355
+#define SYS_kcmp 341         /* real Linux i386 number; here so the shared dispatch compiles */
 #define SYS_ioctl 54
 #define SYS_fcntl 55
 #define SYS_mmap2 192
