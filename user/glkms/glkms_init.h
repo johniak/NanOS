@@ -34,6 +34,12 @@ struct glkms {
 	int                 crtc_set;  /* first swap does SetCrtc, later swaps re-SetCrtc (no flip evt yet) */
 };
 
+/* Print hook for every glkms_init diagnostic line (stage failures, mode line). Defaults to plain
+ * printf (console) so nwm's GL backend is unchanged; the glkms oracle points it at its tee_printf
+ * so stage verdicts land in /nanos/logs/gltest.txt — the only channel `make i915-log` can read
+ * (Dell boot #43 failed inside glkms_open and the stage marker was console-only, i.e. lost). */
+extern int (*glkms_printf)(const char *fmt, ...);
+
 /* Full init: open card0, GBM device + scanout surface at the connector's preferred mode, EGL GBM
  * display + ES2 context, make current. On success the caller may issue GL and call glkms_swap. */
 int  glkms_open(struct glkms *g);

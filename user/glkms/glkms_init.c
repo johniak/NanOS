@@ -10,6 +10,7 @@
  */
 #include "glkms_init.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -22,6 +23,20 @@
 #include <GLES2/gl2.h>
 
 #define GLKMS_FORMAT GBM_FORMAT_XRGB8888
+
+/* Diagnostic print hook (glkms_init.h): default = plain printf, so nwm's GL backend behaves as
+ * before; the glkms oracle repoints it at its tee so stage verdicts reach gltest.txt. */
+static int glkms_printf_default(const char *fmt, ...)
+{
+	va_list ap;
+	int r;
+	va_start(ap, fmt);
+	r = vprintf(fmt, ap);
+	va_end(ap);
+	return r;
+}
+int (*glkms_printf)(const char *fmt, ...) = glkms_printf_default;
+#define printf glkms_printf
 
 /* KMS discovery: pick a connector that advertises a mode, and a crtc that can drive it. Mirrors
  * glpix's raw probe but via libdrm's drmMode* wrappers. */

@@ -88,7 +88,13 @@ int main(void)
     glClearColor(1.f, 0.f, 1.f, 1.f); glClear(GL_COLOR_BUFFER_BIT); glFinish();
     unsigned char px[4] = {0};
     glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    printf(px[0] > 200 && px[1] < 50 && px[2] > 200 ? "gles2info: clear-readback OK\n"
-                                                    : "gles2info: clear-readback BAD\n");
+    if (px[0] > 200 && px[1] < 50 && px[2] > 200)
+        printf("gles2info: clear-readback OK\n");
+    else
+        /* Print the evidence, not just the verdict: zeros = the readback staging path returned
+         * nothing; garbage = wrong buffer/format. glerr says whether GL itself flagged anything.
+         * (Boot #43 printed only BAD and cost a flash cycle to learn which.) */
+        printf("gles2info: clear-readback BAD px=%02x,%02x,%02x,%02x glerr=0x%x\n",
+               px[0], px[1], px[2], px[3], glGetError());
     return !(px[0] > 200);
 }

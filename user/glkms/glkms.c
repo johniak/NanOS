@@ -97,9 +97,10 @@ int main(int argc, char **argv)
 
 	g_tee = fopen(TEE_PATH, "a");
 	printf("glkms: ===== run =====%s\n", g_tee ? "" : " [tee unavailable -- console only]");
+	glkms_printf = tee_printf;   /* stage verdicts from glkms_init.c must reach the tee too */
 
 	struct glkms g;
-	if (glkms_open(&g) != 0) { printf("glkms: open failed\n"); return 1; }
+	if (glkms_open(&g) != 0) { printf("glkms: open failed (egl 0x%x)\n", eglGetError()); return 1; }
 	printf("glkms: opened %dx%d\n", g.mode_w, g.mode_h);
 
 	GLuint v = compile(GL_VERTEX_SHADER, VS);
