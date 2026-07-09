@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>     /* DIAG: per-swap step timing to localise the post-modeset present freeze */
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <gbm.h>
@@ -187,12 +188,30 @@ fail:
 	return -1;
 }
 
+/* DIAG (Dell GL-desktop freeze): the post-modeset present stalls after frame 0. This names the
+ * exact stalling call and its wall-clock cost for the first few swaps, so one boot decides
+ * render-side (eglSwapBuffers waits on the GPU) vs display-side (drmModeSetCrtc waits on
+ * flip-done/vblank — suspected, the log shows "master control interrupt lied DE PORT/PIPE"), and
+ * a hard hang (last line has no "done") vs a ~10s wait_for_completion_timeout limp (elapsed ms).
+ * Self-limiting to 8 swaps; remove once the freeze is root-caused. */
+static long glkms_now_ms(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (long)t.tv_sec * 1000L + t.tv_nsec / 1000000L;
+}
+
 int glkms_swap(struct glkms *g)
 {
+	static int g_sw;
+	int dbg = g_sw < 8;
+	long t0 = dbg ? glkms_now_ms() : 0, t1;
+	if (dbg) printf("glkms DIAG swap #%d: eglSwapBuffers...\n", g_sw);
 	if (!eglSwapBuffers(g->dpy, g->esurf)) {
 		printf("glkms: eglSwapBuffers failed (0x%x)\n", eglGetError());
 		return -1;
 	}
+	if (dbg) { t1 = glkms_now_ms(); printf("glkms DIAG swap #%d: eglSwapBuffers done %ldms; lock+AddFB...\n", g_sw, t1 - t0); }
 	struct gbm_bo *bo = gbm_surface_lock_front_buffer(g->surf);
 	if (!bo) { printf("glkms: gbm_surface_lock_front_buffer failed\n"); return -1; }
 
@@ -208,12 +227,14 @@ int glkms_swap(struct glkms *g)
 	}
 	/* No page-flip events yet (DrmDevice::read is the follow-on) → SetCrtc every swap. Tearing is
 	 * accepted at bring-up. */
+	if (dbg) { t1 = glkms_now_ms(); printf("glkms DIAG swap #%d: AddFB done %ldms; drmModeSetCrtc...\n", g_sw, t1 - t0); }
 	if (drmModeSetCrtc(g->fd, g->crtc_id, fb, 0, 0, &g->conn_id, 1, &g->mode)) {
 		printf("glkms: drmModeSetCrtc failed (%d)\n", errno);
 		drmModeRmFB(g->fd, fb);
 		gbm_surface_release_buffer(g->surf, bo);
 		return -1;
 	}
+	if (dbg) { t1 = glkms_now_ms(); printf("glkms DIAG swap #%d: SetCrtc done %ldms (TOTAL)\n", g_sw, t1 - t0); g_sw++; }
 
 	/* retire the previous front buffer now that the new one owns the scanout */
 	if (g->front) {
