@@ -43,6 +43,12 @@ public:
 	// privatized), so a syscall- or IRQ-context access to it #PFs. Allocating above the
 	// window keeps the identity valid in every address space.
 	uint64_t allocAbove(uint64_t minPa);
+	// `count` CONSECUTIVE free frames at or above minPa — physically-contiguous block
+	// allocation (GEM buffer objects, large DMA). Returns the base physical address, 0 = no
+	// such run. Same minPa rationale as allocAbove: callers touching the block from process
+	// context must stay above every privatized per-process VA window.
+	uint64_t allocContigAbove(uint64_t minPa, uint64_t count);
+	void freeContig(uint64_t pa, uint64_t count);   // return a contiguous run to the pool
 	void free(uint64_t pa);    // return a frame to the pool
 
 	bool isUsed(uint64_t frameIndex) const;

@@ -18,6 +18,14 @@ void               knx_log(const char *s);
 unsigned long long knx_uptime_us(void);
 /* top of physical RAM in bytes (highest usable address); LinuxKPI sizes its mem_map against it. */
 unsigned long long knx_ram_top(void);
+/* Physically-contiguous frame-pool block (bytes rounded to whole pages) at/above min_pa; 0 = no
+ * such run. The GEM backing store: the byte heap is capped (512 MiB minus the mem_map), the frame
+ * pool is the rest of RAM. min_pa >= 0x60000000 keeps the block identity-visible under process
+ * CR3 (above every privatized per-process VA window). Free with the SAME byte count. */
+unsigned long long knx_alloc_frames(unsigned long long bytes, unsigned long long min_pa);
+void               knx_free_frames(unsigned long long pa, unsigned long long bytes);
+unsigned long long knx_heap_free(void);    /* byte-heap telemetry for OOM diagnostics */
+unsigned long long knx_heap_total(void);
 
 /* PCI + MMIO + DMA + IRQ (kexports.def). knx_pci_bar / knx_map_mmio are 64-bit: real hardware
  * (e.g. the Dell's Comet Lake GPU) places GTTMMADR/GTT BARs above 4 GiB, and the kernel MMU

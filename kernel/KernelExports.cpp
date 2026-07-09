@@ -9,6 +9,7 @@
 #include "MsiRouter.h"   // MSI/MSI-X capability walk + programming (host-tested)
 #include "knx_net.h"   // knx_map_mmio / knx_dma_alloc / knx_add_net_dev / knx_netif_rx (NetCore.cpp)
 #include "memory_manager.h"
+#include "FrameAllocator.h" // knx_alloc_frames: contiguous frame-pool blocks (GEM backing)
 #include "Fbdev.h"          // FbInfo
 #include "Fb0Device.h"      // /dev/fb0 over a kext framebuffer
 #include "DrmDevice.h"      // /dev/dri/card0 + renderD128 forwarder
@@ -56,6 +57,29 @@ extern "C" {
 
 void* knx_malloc(unsigned n)              { return malloc(n); }
 void  knx_free(void* p)                   { free(p); }
+
+// Physically-contiguous frame-pool block: `bytes` rounded up to whole frames, allocated at or
+// above `min_pa`. Backing store for BIG page-granular buffers (GEM objects) that would otherwise
+// starve the byte heap — the heap is capped (512 MiB, and the LinuxKPI mem_map alone eats
+// ~64 B/page of RAM out of it), while the frame pool is ALL remaining RAM. Callers touch the
+// block via the identity map from process context too (i915 ioctls run under the process CR3),
+// so min_pa must clear every privatized per-process VA window — pass >= 0x60000000 (above
+// VA_FB_MAX). Returns the physical base (== virtual, identity map), 0 when no contiguous run
+// exists (caller falls back to the heap).
+unsigned long long knx_alloc_frames(unsigned long long bytes, unsigned long long min_pa) {
+	if (!bytes) return 0;
+	return g_frames.allocContigAbove(min_pa, (bytes + 4095ull) >> 12);
+}
+void knx_free_frames(unsigned long long pa, unsigned long long bytes) {
+	if (!pa || !bytes) return;
+	g_frames.freeContig(pa, (bytes + 4095ull) >> 12);
+}
+// Byte-heap telemetry for kext OOM diagnostics: a failed GEM backing alloc can name the
+// requested size next to what the heap could still give (Dell boot #49: GL_OUT_OF_MEMORY
+// with zero kernel-side evidence).
+unsigned long long knx_heap_free(void)  { return (unsigned long long) heapFreeBytes(); }
+unsigned long long knx_heap_total(void) { return (unsigned long long) heapTotalBytes(); }
+
 void  knx_log(const char* s)              { Console::write(s); }
 unsigned long long knx_uptime_us(void) {
 	// Prefer the free-running TSC clock: it advances inside IRQ-disabled busy-polls (e.g. i915

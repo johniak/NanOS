@@ -86,6 +86,40 @@ uint64_t FrameAllocator::allocAbove(uint64_t minPa) {
 	return 0;
 }
 
+uint64_t FrameAllocator::allocContigAbove(uint64_t minPa, uint64_t count) {
+	if (count == 0)
+		return 0;
+	SpinIrqGuard g(m_lock);
+	uint64_t start = (minPa + FRAME_SIZE - 1) / FRAME_SIZE;
+	uint64_t run = 0;      // consecutive free frames ending just before `f`
+	for (uint64_t f = start; f < m_frameCount; f++) {
+		// word-skip: a fully-used word can never extend a run — jump past it
+		if ((f & 31) == 0 && m_bitmap[f >> 5] == 0xFFFFFFFFu) {
+			run = 0;
+			f += 31;
+			continue;
+		}
+		if (test(f)) {
+			run = 0;
+			continue;
+		}
+		if (++run == count) {
+			uint64_t base = f + 1 - count;
+			for (uint64_t i = base; i <= f; i++)
+				set(i);
+			return base * FRAME_SIZE;
+		}
+	}
+	return 0;   // no contiguous run of `count` free frames above minPa
+}
+
+void FrameAllocator::freeContig(uint64_t pa, uint64_t count) {
+	SpinIrqGuard g(m_lock);
+	uint64_t base = pa / FRAME_SIZE;
+	for (uint64_t i = 0; i < count && base + i < m_frameCount; i++)
+		clear(base + i);
+}
+
 void FrameAllocator::free(uint64_t pa) {
 	SpinIrqGuard g(m_lock);
 	clear(pa / FRAME_SIZE);
