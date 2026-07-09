@@ -84,6 +84,7 @@ static int g_started = 0;                 /* have we spawned the desktop yet? (o
 static volatile int g_force_full = 0;     /* next present() must repaint the WHOLE screen (after acquire) */
 #ifdef NWM_GL
 static int g_gl = 0;                       /* GL present backend live (Task 10); 0 => CPU fb0 path */
+static int g_gl_fell_back = 0;             /* GL died mid-session: first CPU frame prints a liveness marker */
 #endif
 static uint32_t *g_bd;                     /* screen-aligned blurred-backdrop scratch     */
 static uint32_t *g_bdlo;                   /* downsample scratch ((xres/F)*(yres/F) px)   */
@@ -553,9 +554,14 @@ static void present_gl(void)
 	clock_gettime(CLOCK_MONOTONIC, &t1);
 	if (rc != 0) {
 		printf("nwm: GL backend disabled, CPU fallback\n");
-		nw_gl_shutdown();
+		/* WEDGED teardown, not the graceful one: a context that just failed a frame can hold
+		 * unsignalled fences, and eglTerminate/gbm-destroy wait on those forever — the graceful
+		 * path here is what froze the desktop after the fallback (Dell boot #49, QEMU repro). */
+		nw_gl_shutdown_wedged();
 		g_gl = 0;
 		g_force_full = 1;                        /* next present() (CPU) repaints the whole screen */
+		S.dirty = 1;                             /* make the CPU takeover present immediately */
+		g_gl_fell_back = 1;                      /* one-shot: the first CPU frame prints a marker */
 		return;
 	}
 	{
@@ -585,6 +591,16 @@ static void present(void)
 #endif
 	if (!g_own)
 		return;                                  /* another VT owns the framebuffer — never touch it */
+#ifdef NWM_GL
+	if (g_gl_fell_back) {
+		/* One-shot proof the event loop reached the CPU present path after the GL teardown —
+		 * pulled off the stick by `make i915-log` (Dell boot #49: desktop went inert after the
+		 * fallback and there was no way to tell a frozen loop from an unscanned fb0). Printed on
+		 * ANY present (even a bare cursor move), before the no-change early-out. */
+		printf("nwm: CPU fallback presenting (loop alive)\n");
+		g_gl_fell_back = 0;
+	}
+#endif
 	if (!S.dirty && S.cursor_x == g_prev_cx && S.cursor_y == g_prev_cy)
 		return;                                  /* nothing changed */
 	/* Erase the old cursor (cursor-free scene at the OLD position) only when the cursor moved; the

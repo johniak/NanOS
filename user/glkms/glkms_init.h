@@ -61,3 +61,12 @@ int  glkms_swap(struct glkms *g);
 /* Release EGL/GBM/KMS state. Safe to call on a partially-initialised struct (glkms_open cleans up
  * itself on failure, but glkms_close is idempotent for the success path teardown). */
 void glkms_close(struct glkms *g);
+
+/* WEDGED teardown — for the mid-session failure path (nwm's GL->CPU fallback) ONLY. A context
+ * that just failed a frame may have unsignalled fences, and the graceful teardown (eglMakeCurrent/
+ * eglTerminate/gbm destroy) waits on them WITHOUT timeout — that hang froze the desktop after the
+ * fallback (Dell boot #49, reproduced on QEMU: the event loop never returned from teardown). This
+ * variant touches NOTHING that can block: restore the boot scanout (register replay) and close our
+ * fd, deliberately LEAKING the EGL/GBM objects — the process keeps running, the kernel reclaims
+ * everything at process exit. Graceful glkms_close remains for healthy teardowns. */
+void glkms_close_wedged(struct glkms *g);

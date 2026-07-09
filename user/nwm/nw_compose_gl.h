@@ -51,6 +51,11 @@ void nw_gl_set_radius(int radius);
 /* Release EGL/GBM/KMS + all GL resources. Idempotent; safe on a never-initialised backend. */
 void nw_gl_shutdown(void);
 
+/* Mid-session FAILURE teardown (the GL->CPU fallback): the wedged context's fences could make a
+ * graceful teardown block forever (Dell boot #49 desktop freeze). Restores the scanout + closes
+ * the DRM fd only, deliberately leaking the GL state — never blocks. */
+void nw_gl_shutdown_wedged(void);
+
 /* 1 while the GL backend is live, 0 once it has never initialised or has fallen back to CPU. */
 int  nw_gl_active(void);
 

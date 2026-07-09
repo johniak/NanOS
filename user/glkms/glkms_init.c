@@ -228,25 +228,49 @@ int glkms_swap(struct glkms *g)
 
 void glkms_close(struct glkms *g)
 {
+	/* Stage markers: a mid-session teardown (nwm's GL->CPU fallback) has HUNG inside this
+	 * function (QEMU repro of Dell boot #49: the loop never came back; last output was the
+	 * fallback line). Each stage prints BEFORE it runs so the pulled log names the hang. */
+	printf("glkms: close: egl teardown\n");
 	if (g->dpy != EGL_NO_DISPLAY) {
 		eglMakeCurrent(g->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 		if (g->ctx   != EGL_NO_CONTEXT) eglDestroyContext(g->dpy, g->ctx);
 		if (g->esurf != EGL_NO_SURFACE) eglDestroySurface(g->dpy, g->esurf);
 		eglTerminate(g->dpy);
 	}
+	printf("glkms: close: retire front fb\n");
 	if (g->front) {
 		drmModeRmFB(g->fd, g->front_fb);
 		gbm_surface_release_buffer(g->surf, g->front);
 		g->front = 0;
 	}
+	printf("glkms: close: gbm teardown\n");
 	if (g->surf) gbm_surface_destroy(g->surf);
 	if (g->gbm)  gbm_device_destroy(g->gbm);
 	/* We owned the scanout (crtc_set) and just removed its framebuffer, which disabled the
 	 * primary plane. Hand the panel back to the boot fb NOW — see the define in glkms_init.h
 	 * for why waiting for the fd-close replay is not enough. Best-effort by design. */
-	if (g->crtc_set && g->fd >= 0)
+	if (g->crtc_set && g->fd >= 0) {
+		printf("glkms: close: scanout restore\n");
 		drmIoctl(g->fd, NANOS_DRM_IOCTL_SCANOUT_RESTORE, 0);
+	}
 	if (g->fd >= 0) close(g->fd);
+	printf("glkms: close: done\n");
+	memset(g, 0, sizeof *g);
+	g->fd = -1;
+	g->dpy = EGL_NO_DISPLAY;
+}
+
+/* See glkms_init.h: failure-path teardown that cannot block — scanout back to the boot fb,
+ * close our fd, LEAK the (possibly wedged) EGL/GBM state on purpose. */
+void glkms_close_wedged(struct glkms *g)
+{
+	if (g->crtc_set && g->fd >= 0) {
+		printf("glkms: wedged close: scanout restore\n");
+		drmIoctl(g->fd, NANOS_DRM_IOCTL_SCANOUT_RESTORE, 0);
+	}
+	if (g->fd >= 0) close(g->fd);
+	printf("glkms: wedged close: done (EGL/GBM state leaked by design)\n");
 	memset(g, 0, sizeof *g);
 	g->fd = -1;
 	g->dpy = EGL_NO_DISPLAY;

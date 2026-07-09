@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <unistd.h>          /* read/close (the fail-after fault-injection knob) */
 #include <GLES2/gl2.h>
 
 /* ---- window geometry (mirror nw_compose.c's frame_w/frame_h) ---------------------------------- */
@@ -391,6 +392,28 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 {
 	if (!g_ok) return -1;
 
+	/* Fault injection: fail this frame (as a real GL error would) once N frames have presented —
+	 * the QEMU repro for the Dell boot #49 aftermath, where the mid-session GL->CPU fallback left
+	 * the desktop frozen. Knob = marker file with the frame count (like nwm-solid); absent = off. */
+	{
+		static long fail_after = -2;                 /* -2 unread, -1 off, >=0 armed */
+		static long frames_done;
+		if (fail_after == -2) {
+			fail_after = -1;
+			int ffd = open("/disks/main/nanos/nwm-gl-fail-after", O_RDONLY);
+			if (ffd >= 0) {
+				char nb[16];
+				int nn = (int) read(ffd, nb, sizeof nb - 1);
+				close(ffd);
+				if (nn > 0) { nb[nn] = 0; fail_after = atol(nb); }
+			}
+		}
+		if (fail_after >= 0 && frames_done++ >= fail_after) {
+			printf("nw_gl: FAULT-INJECT failing frame %ld (knob nwm-gl-fail-after)\n", frames_done);
+			return -1;
+		}
+	}
+
 	/* Recompose the desktop into the CURSOR-FREE offscreen scene only when something other than the
 	 * pointer changed. A bare cursor move skips this whole (TCG-expensive) Mesa composite + blur +
 	 * upload path and just re-presents g_scene_tex with the cursor at its new spot — so the pointer
@@ -568,8 +591,24 @@ void nw_gl_set_radius(int radius) { if (radius >= 0 && radius <= 20) g_radius = 
 
 void nw_gl_wallpaper_changed(void) { g_wall_dirty = 1; }
 
+/* Mid-session FAILURE teardown: the context just failed a frame, so it may hold unsignalled
+ * fences — every graceful teardown call (glDelete*, eglMakeCurrent, eglTerminate, gbm destroy)
+ * can wait on them WITHOUT timeout, and that hang froze the desktop after the GL->CPU fallback
+ * (Dell boot #49, reproduced on QEMU with the fail-after knob). Touch NOTHING that can block:
+ * restore the scanout + close our DRM fd (glkms_close_wedged) and leak the GL state — the CPU
+ * compositor takes over, the kernel reclaims the rest at process exit. */
+void nw_gl_shutdown_wedged(void)
+{
+	printf("nw_gl: wedged shutdown (GL state leaked, scanout restored)\n");
+	if (g_ok) glkms_close_wedged(&g_kms);
+	if (g_chrome_px) { free(g_chrome_px); g_chrome_px = 0; }   /* plain malloc — safe to free */
+	g_ok = 0; g_sw = g_sh = 0;
+	g_chrome_ready = 0; g_wall_dirty = 1;
+}
+
 void nw_gl_shutdown(void)
 {
+	printf("nw_gl: shutdown: delete GL objects\n");   /* stage marker — see glkms_close() */
 	for (int i = 0; i < NW_MAX_WINDOWS; i++) {
 		if (g_win_tex[i]) { glDeleteTextures(1, &g_win_tex[i]); g_win_tex[i] = 0; }
 		g_win_tw[i] = g_win_th[i] = 0; g_win_gen[i] = 0;
