@@ -28,6 +28,7 @@
 #include "nw_settings_path.h"     /* per-user prefs file in $HOME (writable by the desktop user) */
 #ifdef NWM_GL
 #include "nw_compose_gl.h"        /* Task 10: GL ES present backend (Mesa-linked build only) */
+#include "glkms_init.h"           /* glkms_diag(): lossless startup markers for the Dell GL freeze */
 #endif
 #include "SyscallNr.h"           /* SYS_reboot for the Shutdown button */
 #include "open/nwspawn.h"         /* the AF_UNIX launch socket `open` connects to */
@@ -834,6 +835,11 @@ int main(void)
 			printf("nwm: ===== run (GL build) =====\n");
 		}
 	}
+	/* LOSSLESS startup trace (Dell GL freeze / 3x-login): each nwm-gl run is a fresh process the
+	 * greeter execs, so tag it by pid; the death point of a run that never reaches the loop lands in
+	 * gldiag.txt with a synchronous write (survives the reboot that swallows nwm.txt). Remove with
+	 * the other DIAG. */
+	glkms_diag("nwm-gl: START pid=%d\n", getpid());
 #endif
 	int fbfd = open("/dev/fb0", O_RDWR);
 	if (fbfd < 0) { printf("nwm: no /dev/fb0\n"); return 1; }
@@ -872,8 +878,10 @@ int main(void)
 #ifdef NWM_GL
 	/* Task 10: try the GL ES present backend (card0 + GBM + EGL). NWM_NO_GL=1 or no DRM node
 	 * (plain QEMU) => stay on the CPU fb0 path. The scene is composed identically either way. */
+	glkms_diag("nwm-gl: fb0 %ux%u ok; nw_gl_init...\n", g_xres, g_yres);
 	if (!getenv("NWM_NO_GL") && nw_gl_init((int) g_xres, (int) g_yres) == 0) {
 		g_gl = 1;
+		glkms_diag("nwm-gl: nw_gl_init OK (g_gl=1), entering present loop\n");
 		nw_gl_build_cursor();
 		nw_gl_set_radius(g_set.corner_radius);
 		printf("nwm: GL compositor active\n");

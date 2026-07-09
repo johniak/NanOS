@@ -425,7 +425,8 @@ int main(void) {
 	 * with a short backoff so a crash-looping child can't spin). Other reaped pids (dropbear, an
 	 * orphaned grandchild) are just collected. */
 	for (;;) {
-		int w = waitpid(-1, 0, 0);
+		int st = 0;
+		int w = waitpid(-1, &st, 0);
 		if (w < 0) {                          // nothing to reap right now — back off briefly
 			struct timespec ts = { 0, 200 * 1000 * 1000 };
 			nanosleep(&ts, 0);
@@ -438,6 +439,18 @@ int main(void) {
 			 * missing nwm, tty7 unavailable). Don't respawn a broken binary forever: after a couple
 			 * of immediate exits bypass the greeter and try nwm directly, and after a few give up so
 			 * the text VTs stay clean and usable. */
+			/* LOSSLESS: record HOW the graphics session died (Dell GL freeze / 3x-login diag). A
+			 * user #PF in the compositor arrives here as SIGSEGV (nwm dies, we respawn -> another
+			 * login); a kernel #PF would have reset the whole box instead of reaching this reap. A
+			 * synchronous write survives a later reboot. Remove with the other GL DIAG. */
+			{
+				char m[96];
+				int n = WIFSIGNALED(st)
+					? snprintf(m, sizeof m, "init: graphics pid=%d KILLED by signal %d\n", w, WTERMSIG(st))
+					: snprintf(m, sizeof m, "init: graphics pid=%d exited status %d\n", w, WEXITSTATUS(st));
+				int fd = open("/disks/main/nanos/logs/gldiag.txt", O_WRONLY | O_CREAT | O_APPEND, 0666);
+				if (fd >= 0) { if (n > 0) write(fd, m, n); close(fd); }
+			}
 			int fast = (now_ms() - nwm_started) < 700;
 			nwm_fastfails = fast ? nwm_fastfails + 1 : 0;
 			nanosleep(&bo, 0);
