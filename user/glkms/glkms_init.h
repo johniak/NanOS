@@ -49,6 +49,11 @@ struct glkms {
  * (Dell boot #43 failed inside glkms_open and the stage marker was console-only, i.e. lost). */
 extern int (*glkms_printf)(const char *fmt, ...);
 
+/* LOSSLESS DIAG sink: write() one formatted line straight to /disks/main/nanos/logs/gldiag.txt,
+ * bypassing the buffered printf->pipe->logger->nwm.txt path that loses its tail on a Dell reboot.
+ * Used by the GL-freeze bring-up markers (glkms_swap, nw_gl_frame). Remove with them. */
+void glkms_diag(const char *fmt, ...);
+
 /* Full init: open card0, GBM device + scanout surface at the connector's preferred mode, EGL GBM
  * display + ES2 context, make current. On success the caller may issue GL and call glkms_swap. */
 int  glkms_open(struct glkms *g);

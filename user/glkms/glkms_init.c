@@ -38,6 +38,34 @@ static int glkms_printf_default(const char *fmt, ...)
 	return r;
 }
 int (*glkms_printf)(const char *fmt, ...) = glkms_printf_default;
+
+/* LOSSLESS diagnostic sink (glkms_init.h). The Dell GL-desktop freeze ends in a reboot, and the
+ * normal diagnostic path — printf -> stdio (fully buffered on a pipe) -> logger child -> nwm.txt —
+ * loses its tail on reset (proven: Dell boot #54 kept every ext-written line but only the buffered
+ * `enter #0`). This bypasses stdio and the pipe entirely: one write() straight to a dedicated file.
+ * NanOS ext writes flush synchronously (Syscall.cpp fsync is a no-op for exactly this reason), so
+ * the line is on the USB stick before write() returns; the fsync() is belt-and-suspenders. Remove
+ * with the DIAG call sites once the freeze is root-caused. */
+void glkms_diag(const char *fmt, ...)
+{
+	static int fd = -2;
+	char buf[256];
+	va_list ap;
+	int n;
+	if (fd == -2)
+		fd = open("/disks/main/nanos/logs/gldiag.txt", O_WRONLY | O_CREAT | O_APPEND, 0666);
+	if (fd < 0)
+		return;
+	va_start(ap, fmt);
+	n = vsnprintf(buf, sizeof buf, fmt, ap);
+	va_end(ap);
+	if (n < 0)
+		return;
+	if (n > (int)sizeof buf)
+		n = sizeof buf;
+	write(fd, buf, n);
+	fsync(fd);
+}
 #define printf glkms_printf
 
 /* KMS discovery: pick a connector that advertises a mode, and a crtc that can drive it. Mirrors
@@ -206,12 +234,12 @@ int glkms_swap(struct glkms *g)
 	static int g_sw;
 	int dbg = g_sw < 8;
 	long t0 = dbg ? glkms_now_ms() : 0, t1;
-	if (dbg) printf("glkms DIAG swap #%d: eglSwapBuffers...\n", g_sw);
+	if (dbg) glkms_diag("glkms DIAG swap #%d: eglSwapBuffers...\n", g_sw);
 	if (!eglSwapBuffers(g->dpy, g->esurf)) {
 		printf("glkms: eglSwapBuffers failed (0x%x)\n", eglGetError());
 		return -1;
 	}
-	if (dbg) { t1 = glkms_now_ms(); printf("glkms DIAG swap #%d: eglSwapBuffers done %ldms; lock+AddFB...\n", g_sw, t1 - t0); }
+	if (dbg) { t1 = glkms_now_ms(); glkms_diag("glkms DIAG swap #%d: eglSwapBuffers done %ldms; lock+AddFB...\n", g_sw, t1 - t0); }
 	struct gbm_bo *bo = gbm_surface_lock_front_buffer(g->surf);
 	if (!bo) { printf("glkms: gbm_surface_lock_front_buffer failed\n"); return -1; }
 
@@ -227,14 +255,14 @@ int glkms_swap(struct glkms *g)
 	}
 	/* No page-flip events yet (DrmDevice::read is the follow-on) → SetCrtc every swap. Tearing is
 	 * accepted at bring-up. */
-	if (dbg) { t1 = glkms_now_ms(); printf("glkms DIAG swap #%d: AddFB done %ldms; drmModeSetCrtc...\n", g_sw, t1 - t0); }
+	if (dbg) { t1 = glkms_now_ms(); glkms_diag("glkms DIAG swap #%d: AddFB done %ldms; drmModeSetCrtc...\n", g_sw, t1 - t0); }
 	if (drmModeSetCrtc(g->fd, g->crtc_id, fb, 0, 0, &g->conn_id, 1, &g->mode)) {
 		printf("glkms: drmModeSetCrtc failed (%d)\n", errno);
 		drmModeRmFB(g->fd, fb);
 		gbm_surface_release_buffer(g->surf, bo);
 		return -1;
 	}
-	if (dbg) { t1 = glkms_now_ms(); printf("glkms DIAG swap #%d: SetCrtc done %ldms (TOTAL)\n", g_sw, t1 - t0); g_sw++; }
+	if (dbg) { t1 = glkms_now_ms(); glkms_diag("glkms DIAG swap #%d: SetCrtc done %ldms (TOTAL)\n", g_sw, t1 - t0); g_sw++; }
 
 	/* retire the previous front buffer now that the new one owns the scanout */
 	if (g->front) {

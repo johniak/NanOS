@@ -398,7 +398,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 	 * swap. Self-limiting to 8 frames; remove once root-caused. */
 	static int g_dbgf;
 	int dbgf = g_dbgf < 8;
-	if (dbgf) printf("nw_gl_frame: enter #%d (scene_dirty=%d)\n", g_dbgf, scene_dirty);
+	if (dbgf) glkms_diag("nw_gl_frame: enter #%d (scene_dirty=%d)\n", g_dbgf, scene_dirty);
 
 	/* Fault injection: fail this frame (as a real GL error would) once N frames have presented —
 	 * the QEMU repro for the Dell boot #49 aftermath, where the mid-session GL->CPU fallback left
@@ -577,7 +577,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 	}
 
 	if (glGetError() != GL_NO_ERROR) return -1;
-	if (dbgf) { printf("nw_gl_frame: pre-swap #%d\n", g_dbgf); g_dbgf++; }
+	if (dbgf) { glkms_diag("nw_gl_frame: pre-swap #%d\n", g_dbgf); g_dbgf++; }
 	return glkms_swap(&g_kms);
 }
 

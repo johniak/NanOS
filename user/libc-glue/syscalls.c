@@ -642,6 +642,26 @@ int termmode(int raw) {
 	return sys3(SYS_termmode, raw, 0, 0);
 }
 
+/* DIAG (Dell GL-desktop freeze) — LOSSLESS, remove once root-caused. The freeze ends in a reboot
+ * that swallows the buffered stdout->pipe->nwm.txt tail, and a kernel-side ioctl log made it worse
+ * (a synchronous USB write from the compositor's ioctl context, ~10^2 GEM calls/frame). So log from
+ * the calling process straight to a file with a synchronous ext write() BEFORE and AFTER the truly
+ * BLOCKING DRM ioctls: EXECBUFFER2 (0x69 submission), GEM_WAIT (0x6c), SYNCOBJ_WAIT (0xca),
+ * TIMELINE_WAIT (0xcf). GEM_SET_DOMAIN (0x4b) is deliberately NOT logged — it is high-volume upload
+ * traffic and Dell boot #53 proved it is not the stall (frames 0-4 finished their uploads). A
+ * trailing "enter" with no matching "ret" is the hang site; all "enter"+"ret" then silence = the
+ * stall is elsewhere in Mesa. DRM ioctls carry _IOC type 'd'; gate on that. */
+#include <fcntl.h>
+static void drm_ioctl_diag(const char *buf, int n) {
+	static int fd = -2;
+	if (fd == -2)
+		fd = open("/disks/main/nanos/logs/gldiag.txt", O_WRONLY | O_CREAT | O_APPEND, 0666);
+	if (fd < 0 || n <= 0)
+		return;
+	write(fd, buf, n);
+	fsync(fd);   /* no-op today (ext writes flush synchronously), correct-intent for the future */
+}
+
 /* ioctl(2): used for the framebuffer (FBIOGET_*SCREENINFO). The single pointer arg is
  * passed through to the device. */
 int ioctl(int fd, unsigned long request, ...) {
@@ -649,7 +669,21 @@ int ioctl(int fd, unsigned long request, ...) {
 	va_start(ap, request);
 	void* arg = va_arg(ap, void*);
 	va_end(ap);
-	return reterr(sys3(SYS_ioctl, fd, (int) request, (int) arg));
+	unsigned type = (unsigned) (request >> 8) & 0xffu;
+	unsigned nr   = (unsigned) request & 0xffu;
+	static int diag_left = 200;
+	int diag = (type == 'd' && diag_left > 0 &&
+		    (nr == 0x69 || nr == 0x6c || nr == 0xca || nr == 0xcf));
+	int ret;
+	char b[64];
+	if (diag)
+		drm_ioctl_diag(b, snprintf(b, sizeof b, "drm ioctl ENTER nr=0x%x\n", nr));
+	ret = reterr(sys3(SYS_ioctl, fd, (int) request, (int) arg));
+	if (diag) {
+		drm_ioctl_diag(b, snprintf(b, sizeof b, "drm ioctl ret   nr=0x%x r=%d\n", nr, ret));
+		diag_left--;
+	}
+	return ret;
 }
 
 /* 5-argument syscall (i386: ebx/ecx/edx/esi/edi; x86_64: rdi/rsi/rdx/r10/r8) for mmap, which

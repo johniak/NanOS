@@ -118,22 +118,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	c = client_get(pid, node);
 	if (!c)
 		return -ENOMEM;
-	/* DIAG (Dell GL freeze): the compositor hangs inside eglSwapBuffers on ~frame 5, and NONE of the
-	 * shim wait-watchdogs fired — so name the exact DRM ioctl it is stuck in. Log the potentially-
-	 * BLOCKING i915/core ioctls around drm_ioctl: EXECBUFFER2 (0x69 submission), GEM_WAIT (0x6c),
-	 * GEM_SET_DOMAIN (0x4b implicit sync), SYNCOBJ_WAIT (0xca) / TIMELINE_WAIT (0xcf). A trailing
-	 * "enter" with no matching "ret" is the hang site (kernel block); "enter"+"ret" then silence =
-	 * the freeze is in userland Mesa, not a DRM ioctl. Low volume (~handful/frame). Remove after. */
-	{
-		extern int printk(const char *, ...);
-		unsigned nr = cmd & 0xffu;
-		int blk = (nr == 0x69 || nr == 0x6c || nr == 0x4b || nr == 0xca || nr == 0xcf);
-		if (blk)
-			printk("i915 DIAG ioctl ENTER nr=0x%x pid=%d\n", nr, pid);
-		r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
-		if (blk)
-			printk("i915 DIAG ioctl ret   nr=0x%x r=%ld\n", nr, r);
-	}
+	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
 	/* A successful SETCRTC means a KMS client now owns the scanout — stop the mirror
 	 * (node_release resumes it when the client goes away). */
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
