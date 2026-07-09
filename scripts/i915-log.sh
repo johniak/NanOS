@@ -70,7 +70,17 @@ if [ -n "$out4" ]; then
 else
     note "(absent — nwm-gl never started, or a non-GL nwm build)"
 fi
+# LOSSLESS GL-freeze trace: glkms_diag()/the libc ioctl wrapper write() step + blocking-DRM-ioctl
+# markers straight here with a synchronous ext write, so this tail survives a Dell reboot even when
+# nwm.txt (buffered stdout->pipe->logger) loses it. This is the file that names the freeze.
+note "===== /nanos/logs/gldiag.txt  (LOSSLESS GL-freeze trace) ====="
+out5=$(sudo "$DBG" -R "cat /nanos/logs/gldiag.txt" "$PDEV" 2>/dev/null || true)
+if [ -n "$out5" ]; then
+    printf '%s\n' "$out5"
+else
+    note "(absent — nwm-gl never reached a GL frame, or a non-GL build)"
+fi
 if [ -n "$SAVE" ]; then
-    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; printf '===== nwm tee =====\n%s\n' "$out4"; } > "$SAVE"
+    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; printf '===== nwm tee =====\n%s\n' "$out4"; printf '===== gldiag =====\n%s\n' "$out5"; } > "$SAVE"
     note "saved -> $SAVE"
 fi
