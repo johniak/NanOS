@@ -39,8 +39,21 @@ constexpr uint64_t VA_HEAP_BASE     = 0x48000000;   // brk/sbrk anonymous heap
 constexpr uint64_t VA_HEAP_MAX      = 0x50000000;   // +128 MiB (abuts VA_MMAP_BASE)
 constexpr uint64_t VA_MMAP_BASE     = 0x50000000;   // anonymous/file-backed mmap
 constexpr uint64_t VA_MMAP_MAX      = 0x54000000;   // +64 MiB
-constexpr uint64_t VA_FB_BASE       = 0x58000000;   // user framebuffer window (1.375 GiB)
-constexpr uint64_t VA_FB_MAX        = VA_FB_BASE + 0x4000000;   // +64 MiB (bounds the fb window for enum)
+// Device/GEM mmap window (fb0 LFB + every iris GEM BO). ENLARGED 64 MiB -> 192 MiB (x86_64 only;
+// i686 keeps its hardcoded 0x58000000 + 64 MiB in arch/x86/mm/mmu_x86.cpp). A 1080p GL desktop keeps
+// many ~8 MiB textures CPU-mapped at once (offscreen scene FBO + blur ping-pong + wallpaper +
+// per-window textures + iris upload-staging), and iris CACHES those maps — so the old 64 MiB window
+// filled after ~8 buffers and every glTexImage2D then died GL_OUT_OF_MEMORY with ZERO kernel-side
+// evidence: the mmap simply returned -ENOMEM because VIRTUAL ADDRESS SPACE, not physical RAM, was
+// exhausted (SyscallDispatch mmap fb-window path, fbNext + bytes > mmuFbMax). Seen on the Dell once
+// the probe came up and the desktop reached the panel, but nwm's GL compositor wedged to the CPU
+// fallback. Base dropped to abut the anon window (reclaims the old 0x54000000-0x58000000 gap); top
+// raised to the frame-pool floor. MUST NOT exceed FRAMES_MIN_PA (linuxkpi/kpi_mm.c, 0x60000000):
+// GEM backing frames are identity-accessed under the process CR3, so they have to sit above every
+// user VA window — the window ends EXACTLY at that floor, preserving the invariant with no
+// frame-pool change.
+constexpr uint64_t VA_FB_BASE       = 0x54000000;   // device/GEM mmap window (abuts the anon window)
+constexpr uint64_t VA_FB_MAX        = 0x60000000;   // +192 MiB, ends at FRAMES_MIN_PA (frame-pool floor)
 
 // Build the kernel page tables (identity-map all RAM), reserve the arch windows,
 // load the directory and enable paging.
