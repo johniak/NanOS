@@ -46,6 +46,109 @@ void lkpi_tasklet_first_marker(void) {
 	printk("lkpi: FIRST tasklet exec — a tasklet body ran (execlists submission path)\n");
 }
 
+/* ---- tasklet body + deferred (softirq-like) drain (P6/Task 3) ------------------------------
+ * __lkpi_tasklet_exec runs the body under the atomic RUN/SCHED guard (semantics documented in
+ * <linux/interrupt.h>). tasklet_schedule() from thread context calls it inline; from interrupt
+ * context it calls lkpi_tasklet_enqueue() instead, and lkpi_tasklet_drain() runs the body later in
+ * thread context (the wait pump / drm-node ioctl). This keeps the execlists submission + fence-signal
+ * chain OFF the IRQ stack and out of IRQ-enabled-lock re-entry (g_xhciLock via the log tee). */
+void __lkpi_tasklet_exec(struct tasklet_struct *t) {
+	if (!t)
+		return;
+	for (;;) {
+		if (!tasklet_trylock(t)) {                    /* already running: defer to the owner */
+			__atomic_fetch_or(&t->state, 1UL << TASKLET_STATE_SCHED, __ATOMIC_RELEASE);
+			return;
+		}
+		do {
+			__atomic_fetch_and(&t->state, ~(1UL << TASKLET_STATE_SCHED), __ATOMIC_ACQ_REL);
+			if (t->count) {                           /* disabled: stay pending */
+				__atomic_fetch_or(&t->state, 1UL << TASKLET_STATE_SCHED, __ATOMIC_RELEASE);
+				break;
+			}
+			lkpi_tasklet_first_marker();
+			if (t->use_callback) { if (t->callback) t->callback(t); }
+			else                 { if (t->func) t->func(t->data); }
+		} while (t->state & (1UL << TASKLET_STATE_SCHED));
+		tasklet_unlock(t);
+		/* Re-check after unlock: a schedule that landed after the while-check but before RUN cleared
+		 * would trylock-fail and set SCHED with nothing left to run it — a dropped execlists
+		 * submission => engine stall. Re-claim; the common path returns on the first pass. */
+		if (t->count || !(t->state & (1UL << TASKLET_STATE_SCHED)))
+			return;
+	}
+}
+
+#ifndef LKPI_TASKLET_INLINE
+static struct tasklet_struct *g_tl_head, *g_tl_tail;  /* pending list, linked via t->next */
+static volatile int g_tl_spin;                        /* cli + test-and-set guard for the list + QUEUED */
+static volatile int g_tl_draining;                    /* re-entrancy guard (a body may enter a wait) */
+
+static unsigned long tl_lock(void) {
+	unsigned long fl;
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("pushfq; popq %0; cli" : "=r"(fl) : : "memory");
+#else
+	fl = 0;
+#endif
+	while (__atomic_test_and_set(&g_tl_spin, __ATOMIC_ACQUIRE))
+		__asm__ __volatile__("pause");
+	return fl;
+}
+static void tl_unlock(unsigned long fl) {
+	__atomic_clear(&g_tl_spin, __ATOMIC_RELEASE);
+#ifndef NANOS_HOST_TEST
+	__asm__ __volatile__("pushq %0; popfq" : : "r"(fl) : "memory", "cc");
+#else
+	(void)fl;
+#endif
+}
+
+/* Interrupt context: mark SCHED and put the tasklet on the pending list (once). The QUEUED bit dedups
+ * repeated kicks before the drain gets to it. */
+void lkpi_tasklet_enqueue(struct tasklet_struct *t) {
+	unsigned long fl;
+	if (!t)
+		return;
+	__atomic_fetch_or(&t->state, 1UL << TASKLET_STATE_SCHED, __ATOMIC_RELEASE);
+	fl = tl_lock();
+	if (!(t->state & (1UL << TASKLET_STATE_QUEUED))) {
+		t->state |= (1UL << TASKLET_STATE_QUEUED);
+		t->next = 0;
+		if (g_tl_tail) g_tl_tail->next = t; else g_tl_head = t;
+		g_tl_tail = t;
+	}
+	tl_unlock(fl);
+}
+
+/* Thread context: run every pending tasklet body. Re-entrancy-guarded (a body that itself enters a
+ * cooperative wait -> pump -> drain must not re-drain the same list). */
+void lkpi_tasklet_drain(void) {
+	if (g_tl_draining)
+		return;
+	g_tl_draining = 1;
+	for (;;) {
+		struct tasklet_struct *t;
+		unsigned long fl = tl_lock();
+		t = g_tl_head;
+		if (t) {
+			g_tl_head = t->next;
+			if (!g_tl_head) g_tl_tail = 0;
+			t->next = 0;
+			t->state &= ~(1UL << TASKLET_STATE_QUEUED);
+		}
+		tl_unlock(fl);
+		if (!t)
+			break;
+		__lkpi_tasklet_exec(t);
+	}
+	g_tl_draining = 0;
+}
+#else
+void lkpi_tasklet_enqueue(struct tasklet_struct *t) { __lkpi_tasklet_exec(t); }
+void lkpi_tasklet_drain(void) { }
+#endif
+
 static struct lkpi_irq_desc *desc_of(int irq) {
 	int i = irq - LKPI_IRQ_BASE;
 	if (i < 0 || i >= LKPI_IRQ_MAX)

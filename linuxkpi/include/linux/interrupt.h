@@ -34,7 +34,7 @@ void lkpi_irq_dispatch(int irq);
  * log — the point past which a GT hang means "submission ran but the engine never retired". */
 void lkpi_tasklet_first_marker(void);
 
-enum { TASKLET_STATE_SCHED, TASKLET_STATE_RUN };
+enum { TASKLET_STATE_SCHED, TASKLET_STATE_RUN, TASKLET_STATE_QUEUED };
 struct tasklet_struct {
 	struct tasklet_struct *next;
 	unsigned long state;
@@ -46,44 +46,36 @@ struct tasklet_struct {
 	};
 	unsigned long data;
 };
-/* We run tasklets synchronously on schedule (no softirq thread). i915's execlists submission tasklet
- * reschedules ITSELF — from its own body (start_timeslice), from the GT interrupt handler, and via
- * __execlists_kick — so a naive inline run recurses without bound on the first GPU submission:
- * stack overflow -> triple-fault reboot (observed on the Dell during intel_gt_resume). Guard with the
- * upstream RUN/SCHED semantics: tasklet_trylock claims the RUN bit and FAILS while the tasklet is
- * already on the stack, so both __intel_engine_flush_submission's manual run and a nested schedule
- * defer instead of recursing. A schedule that loses the race sets SCHED; the owning run loops until
- * SCHED is clear. tasklet_is_locked (test_bit RUN) and __tasklet_is_enabled (count) stay consistent. */
+/* i915's execlists submission tasklet reschedules ITSELF — from its own body (start_timeslice), from
+ * the GT interrupt handler, and via __execlists_kick — so a naive inline run recurses without bound on
+ * the first GPU submission. Guard with the upstream RUN/SCHED semantics: tasklet_trylock claims the RUN
+ * bit and FAILS while the tasklet is already running, so a nested schedule and __intel_engine_flush_
+ * submission's manual run defer instead of recursing. The RMW is ATOMIC: under SMP the body must run on
+ * exactly one CPU (a double-run frees an i915_sw_fence under the first completion -> #GP in the
+ * second), and with the deferred-tasklet path below the drain and an inline run can now race across
+ * CPUs. A schedule that loses the race sets SCHED; the owner loops until SCHED is clear. */
 static inline int tasklet_trylock(struct tasklet_struct *t){
 	if (!t) return 1;
-	if (t->state & (1UL << TASKLET_STATE_RUN)) return 0;
-	t->state |= (1UL << TASKLET_STATE_RUN);
-	return 1;
+	unsigned long prev = __atomic_fetch_or(&t->state, 1UL << TASKLET_STATE_RUN, __ATOMIC_ACQUIRE);
+	return (prev & (1UL << TASKLET_STATE_RUN)) ? 0 : 1;
 }
-static inline void tasklet_unlock(struct tasklet_struct *t){ if (t) t->state &= ~(1UL << TASKLET_STATE_RUN); }
+static inline void tasklet_unlock(struct tasklet_struct *t){ if (t) __atomic_fetch_and(&t->state, ~(1UL << TASKLET_STATE_RUN), __ATOMIC_RELEASE); }
 static inline void tasklet_unlock_wait(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_unlock_spin_wait(struct tasklet_struct *t){ (void)t; }
-static inline void __lkpi_tasklet_exec(struct tasklet_struct *t){
-	if (!t) return;
-	for (;;) {
-		if (!tasklet_trylock(t)) { t->state |= (1UL << TASKLET_STATE_SCHED); return; }  /* re-entry: defer to owner */
-		do {
-			t->state &= ~(1UL << TASKLET_STATE_SCHED);
-			if (t->count) { t->state |= (1UL << TASKLET_STATE_SCHED); break; }  /* disabled: stay pending */
-			lkpi_tasklet_first_marker();   /* log-once: first tasklet body runs (first submission path) */
-			if (t->use_callback) { if (t->callback) t->callback(t); }
-			else                 { if (t->func) t->func(t->data); }
-		} while (t->state & (1UL << TASKLET_STATE_SCHED));
-		tasklet_unlock(t);
-		/* Close the lost-kick window: a schedule (e.g. from the GT IRQ) that lands AFTER the while-check
-		 * saw SCHED clear but BEFORE unlock clears RUN would trylock-fail and set SCHED with no softirq
-		 * left to run it — a silently dropped execlists submission => engine stalls (a HANG, not a
-		 * reboot). Re-check after unlock and re-claim; the common path returns on the first pass. */
-		if (t->count || !(t->state & (1UL << TASKLET_STATE_SCHED))) return;
-	}
-}
-static inline void tasklet_schedule(struct tasklet_struct *t){ __lkpi_tasklet_exec(t); }
-static inline void tasklet_hi_schedule(struct tasklet_struct *t){ __lkpi_tasklet_exec(t); }
+
+/* Run the tasklet body (RUN/SCHED-guarded). Defined out-of-line in kpi_irq.c so the deferred-tasklet
+ * drain there can also invoke it. P6/Task 3: tasklet_schedule() reached from INTERRUPT context
+ * (lkpi_in_irq!=0 — the GT hard handler / the wait-pump poll harvest) must NOT run the body on the IRQ
+ * stack (deep chain + it re-enters IRQ-enabled locks like g_xhciLock via the log tee = the Dell
+ * freeze). Linux runs tasklets in softirq, not hardirq: mirror that by ENQUEUEing, and let the
+ * cooperative wait pump / drm-node ioctl drain it in thread context. A schedule from THREAD context
+ * still runs inline, so callers that expect synchronous submission are unaffected. */
+extern volatile int lkpi_in_irq;
+void __lkpi_tasklet_exec(struct tasklet_struct *t);
+void lkpi_tasklet_enqueue(struct tasklet_struct *t);
+void lkpi_tasklet_drain(void);
+static inline void tasklet_schedule(struct tasklet_struct *t){ if (lkpi_in_irq) lkpi_tasklet_enqueue(t); else __lkpi_tasklet_exec(t); }
+static inline void tasklet_hi_schedule(struct tasklet_struct *t){ if (lkpi_in_irq) lkpi_tasklet_enqueue(t); else __lkpi_tasklet_exec(t); }
 static inline void tasklet_enable(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_disable(struct tasklet_struct *t){ (void)t; }
 static inline void tasklet_disable_nosync(struct tasklet_struct *t){ (void)t; }

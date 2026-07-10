@@ -54,10 +54,17 @@ void lkpi_set_irq_poll(void (*fn)(void)) { lkpi_irq_poll_hook = fn; }
 /* Called from every cooperative wait spin (see <linux/wait.h>, wait_bit.h, completion.h): pump the
  * registered poll sources — virtio vq, async workqueue drain, and bound-irq harvest — so a wait on a
  * vq ack, a deferred bottom half, or an MSI-completed fence makes progress. */
+/* Deferred-tasklet drain (kpi_irq.c): the irq poll above runs handlers in interrupt context, where
+ * i915's execlists tasklet is ENQUEUED rather than run inline (P6/Task 3). Drain it here, in thread
+ * context, so a waiter whose fence the submission would signal makes progress. Plain linkage, like
+ * lkpi_wait_pump itself (see the note in lkpi_knx.h). */
+void lkpi_tasklet_drain(void);
+
 void lkpi_wait_pump(void) {
 	if (lkpi_fence_poll_hook) lkpi_fence_poll_hook();
 	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
 	if (lkpi_irq_poll_hook)   lkpi_irq_poll_hook();
+	lkpi_tasklet_drain();     /* run any execlists tasklet the poll deferred (thread context) */
 }
 
 /* Spin watchdog (defined in kpi_misc.c). Declared plain here — same linkage as lkpi_wait_pump — so no
