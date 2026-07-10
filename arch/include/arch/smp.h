@@ -14,7 +14,11 @@ namespace arch {
 
 // Upper bound on logical CPUs, visible to MI code (the scheduler keeps per-CPU arrays sized by
 // this). Must match the MD per-CPU table (arch::MAX_CPUS in percpu_x86_64.h).
-static const int SMP_MAX_CPUS = 32;
+// 32 -> 16 (2026-07-10): the per-CPU static cost is dominated by the 16 KiB AP boot stacks
+// (smp_x86_64.cpp) — 32 CPUs held ~0.5 MiB of .bss while the kernel image sits within ~16 KiB
+// of its 8 MiB VA_USER_BASE ceiling (adding the per-task FXSAVE pointers tipped it over). The
+// target hardware (Dell Latitude 5310, i5-10310U) has 8 logical CPUs; 16 leaves 2x headroom.
+static const int SMP_MAX_CPUS = 16;
 
 // A function each application processor runs once it is in long mode on the kernel CR3.
 typedef void (*ApEntry)();

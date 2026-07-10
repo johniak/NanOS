@@ -138,7 +138,11 @@ unsigned rtcEpoch() { return 1781000000u; }
 bool archHwRandom(unsigned*) { return false; }
 unsigned archEntropyTick() { return 0; }
 }
-extern "C" void archContextSwitch(uintptr_t*, uintptr_t) {}   // C linkage (see arch/sched.h)
+extern "C" void archContextSwitch(uintptr_t*, uintptr_t, void*, void*) {}   // C linkage (see arch/sched.h)
+namespace arch {
+void archFpuCapture(void*) {}          // host: no live FPU context to snapshot
+void archFpuLoad(const void*) {}
+}
 
 // /proc/meminfo data sources live in the kernel (Kernel.cpp, not in the test build);
 // stub them with fixed figures so SynthFs links and the meminfo file is readable.

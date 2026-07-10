@@ -10,9 +10,21 @@
 [EXTERN schedulerRunCurrentBody]
 [EXTERN schedForkFinish]         ; kernel/Scheduler.cpp — finish_task_switch for the fork child
 
-; void archContextSwitch(uintptr_t* saveOldKesp /*rdi*/, uintptr_t newKesp /*rsi*/)
+; void archContextSwitch(uintptr_t* saveOldKesp /*rdi*/, uintptr_t newKesp /*rsi*/,
+;                        void* saveOldFx /*rdx*/, void* loadNewFx /*rcx*/)
 ;   Save the callee-saved GPRs + CR3 + rsp of the current task into *saveOldKesp, then load
-;   the next task's context. Stack after the 7 pushes (low -> high address, rsp at the low end):
+;   the next task's context.
+;   rdx/rcx = the outgoing/incoming tasks' 512-byte 16-aligned FXSAVE areas (null = skip).
+;   Ring 3 is built SSE-ON while the kernel is -mno-sse, so the live XMM0-15/MXCSR/x87 state
+;   here is exactly the interrupted user task's — it MUST travel with the task: a deferred
+;   preemption on ret-to-ring3 lands mid-computation (not at a call boundary), so without this
+;   the resumed task continued with ANOTHER task's registers (silent data corruption; on the
+;   Dell: "impossible" SIGSEGVs inside a fuzz-proven PNG decoder under boot context-switch
+;   pressure). fxsave runs before the GPR pushes (pushes don't touch XMM); fxrstor runs right
+;   after the stack switch while rcx is still intact (the CR3 compare below clobbers rcx) —
+;   both areas are identity-mapped kernel memory visible under either CR3, so ordering vs the
+;   address-space reload is free.
+;   Stack after the 7 pushes (low -> high address, rsp at the low end):
 ;     [rsp]      cr3   (popped first)
 ;     [rsp+8]    r15
 ;     [rsp+16]   r14
@@ -23,6 +35,10 @@
 ;     [rsp+56]   return address
 ;   archTaskBootstrap and archForkChild fabricate stacks that MUST match this pop order.
 archContextSwitch:
+    test rdx, rdx
+    jz .nofxsave
+    fxsave [rdx]             ; park the outgoing task's FPU/SSE state in its own area
+.nofxsave:
     push rbx
     push rbp
     push r12
@@ -33,6 +49,10 @@ archContextSwitch:
     push rax
     mov [rdi], rsp           ; *saveOldKesp = current rsp
     mov rsp, rsi             ; rsp = newKesp (switch stacks)
+    test rcx, rcx
+    jz .nofxrstor
+    fxrstor [rcx]            ; load the incoming task's FPU/SSE state (before rcx is clobbered)
+.nofxrstor:
     pop rax                  ; rax = the next task's saved cr3
     mov rcx, cr3             ; rcx = the current (outgoing) cr3
     cmp rax, rcx

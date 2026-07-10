@@ -27,7 +27,20 @@ enum TaskState { TASK_READY, TASK_RUNNING, TASK_BLOCKED, TASK_STOPPED, TASK_DONE
 // fixed-point with FSHIFT=11 (FIXED_1 = 2048). Pure -> host-tested.
 void loadDecay(unsigned load[3], int runnable);
 
+// Write the ABI-default FXSAVE image (FCW=0x037F, MXCSR=0x1F80, all else zero) into a task's
+// FPU area. Used by allocSlot for fresh tasks and by execve (fresh image -> default FPU state).
+void fpuInitImage(unsigned char* fx);
+
 struct Task {
+	// FPU/SSE context (x86_64): the FXSAVE image of this task's ring-3 XMM0-15/MXCSR/x87 state,
+	// saved/restored by archContextSwitch. HEAP-allocated per task (an inline array at 1032 tasks
+	// added ~0.5 MiB of .bss and overflowed the kernel-image budget below VA_USER_BASE); fxRaw is
+	// the malloc'd block (freed by reap), fx the 16-byte-aligned view of it (FXSAVE ISA requires
+	// 16-byte alignment). Initialized to the ABI-default image (MXCSR=0x1F80 all-masked,
+	// FCW=0x037F) by fpuInitImage; fork/clone overwrite it with the parent's LIVE state
+	// (archFpuCapture). Unused-but-harmless on i686, whose frozen userland predates SSE codegen.
+	unsigned char* fx;      // 512-byte FXSAVE area, 16-aligned (inside fxRaw)
+	unsigned char* fxRaw;   // owning heap block (512+16); freed on reap
 	uintptr_t kesp;         // saved kernel esp (the whole context lives on the stack)
 	uintptr_t esp0;         // top of this task's kernel stack (TSS.esp0 when it runs)
 	TaskState state;

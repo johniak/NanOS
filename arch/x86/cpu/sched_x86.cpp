@@ -22,6 +22,12 @@ extern "C" void schedPreempt() { kernel::Scheduler::preempt(); }
 
 namespace arch {
 
+// FPU/SSE context helpers are x86_64-only (the frozen i686 userland predates SSE codegen and its
+// switch.S ignores the extra archContextSwitch args). No-ops so the shared MI code links.
+void archFpuCapture(void*) {}
+void archFpuLoad(const void*) {}
+
+
 uint64_t archKernelCr3() { return kernel::readCr3(); }   // kernel dir at create time
 
 void halt_or_hlt() { __asm__ __volatile__("sti; hlt"); }

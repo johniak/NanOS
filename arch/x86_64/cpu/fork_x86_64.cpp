@@ -24,8 +24,23 @@ extern "C" void ret_from_fork();   // switch64.S
 
 namespace arch {
 
+// Snapshot the LIVE FPU/SSE state into a task's FXSAVE area. The kernel is -mno-sse, so at any
+// point inside a syscall the live XMM/MXCSR/x87 state is exactly the calling user task's — a
+// forked/cloned child must inherit it (control words like MXCSR rounding mode are callee-saved
+// ABI state and POSIX-inherit across fork; the parent's own area may be stale here, it is only
+// written when the parent switches out).
+void archFpuCapture(void* fx) {
+	__asm__ __volatile__("fxsave (%0)" : : "r"(fx) : "memory");
+}
+
+// Counterpart: load an FXSAVE image into the live registers (execve's fresh-image FPU reset).
+void archFpuLoad(const void* fx) {
+	__asm__ __volatile__("fxrstor (%0)" : : "r"(fx) : "memory");
+}
+
 void archForkChild(kernel::Task* child, TrapFrame* parentTf, uint64_t childCr3) {
 	kernel::Registers* parent = (kernel::Registers*) parentTf;
+	archFpuCapture(child->fx);   // child inherits the parent's live FPU/SSE state
 
 	// Copy the parent's full trap frame to the top of the child's kernel stack.
 	unsigned char* top = (unsigned char*) child->esp0;
@@ -52,6 +67,7 @@ void archForkChild(kernel::Task* child, TrapFrame* parentTf, uint64_t childCr3) 
 // phys (the thread keeps the parent's address space); the context-switch frame still reloads
 // it so archContextSwitch's CR3 compare/write lands on a valid (here, unchanged) PML4.
 void archCloneChild(kernel::Task* child, TrapFrame* parentTf, uint64_t cr3, uintptr_t childUserEsp) {
+	archFpuCapture(child->fx);   // a new thread starts with the caller's live FPU/SSE state
 	kernel::Registers* parent = (kernel::Registers*) parentTf;
 
 	unsigned char* top = (unsigned char*) child->esp0;

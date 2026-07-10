@@ -189,10 +189,23 @@ static int findFreeSlot() {
 	return (g_ntasks < MAXTASKS) ? g_ntasks++ : -1;
 }
 
+// Write the ABI-default FXSAVE image into a task's FPU area: x87 FCW = 0x037F (all exceptions
+// masked, 64-bit precision, round-nearest) and MXCSR = 0x1F80 (all SSE exceptions masked) — the
+// SysV process-entry state. Everything else (XMM contents, tags) zero. A zeroed area alone would
+// be WRONG: MXCSR=0 unmasks every SSE exception, so the first inexact result would #XF. Offsets
+// per the FXSAVE layout: FCW at +0 (2 bytes), MXCSR at +24 (4 bytes).
+void fpuInitImage(unsigned char* fx) {
+	for (int i = 0; i < 512; i++) fx[i] = 0;
+	fx[0] = 0x7F; fx[1] = 0x03;                     // FCW = 0x037F
+	fx[24] = 0x80; fx[25] = 0x1F;                   // MXCSR = 0x00001F80
+}
+
 static Task* allocSlot(int id) {
 	unsigned char* stk = (unsigned char*) malloc(KSTACK_SIZE);   // per-task kernel stack (heap)
 	if (!stk)
 		return 0;                                                // out of memory -> fork -EAGAIN
+	unsigned char* fxRaw = (unsigned char*) malloc(512 + 16);    // FXSAVE area (16-aligned view)
+	if (!fxRaw) { free(stk); return 0; }
 	for (int g = 0; g < KSTACK_GUARD_WORDS; g++)                 // stamp the bottom guard band
 		((volatile unsigned long long*) stk)[g] = KSTACK_CANARY;
 	// Claim a slot under the runqueue lock (findFreeSlot scans g_tasks + bumps g_ntasks). malloc
@@ -200,7 +213,7 @@ static Task* allocSlot(int id) {
 	unsigned long f = arch::cpuIrqSave();
 	g_rqLock.lock();
 	int i = findFreeSlot();
-	if (i < 0) { g_rqLock.unlock(); arch::cpuIrqRestore(f); free(stk); return 0; }   // table full
+	if (i < 0) { g_rqLock.unlock(); arch::cpuIrqRestore(f); free(stk); free(fxRaw); return 0; }   // table full
 	Task* t = &g_tasks[i];
 	t->id = id;
 	t->body = 0;
@@ -213,6 +226,9 @@ static Task* allocSlot(int id) {
 	t->runningCpu = -1;        // SMP: not running on any CPU until pickReady claims it
 	t->isIdle = false;
 	t->esp0 = ((uintptr_t) (stk + KSTACK_SIZE)) & ~(uintptr_t) 15;   // 16-aligned TSS.esp0
+	t->fxRaw = fxRaw;
+	t->fx = (unsigned char*) (((uintptr_t) fxRaw + 15) & ~(uintptr_t) 15);
+	fpuInitImage(t->fx);       // fresh tasks start with the ABI-default FPU/SSE state
 	g_rqLock.unlock();
 	arch::cpuIrqRestore(f);
 	return t;
@@ -389,7 +405,7 @@ void Scheduler::schedule() {
 	// lock was released above BEFORE the kesp save, so a remote pickReady sees `prev` still
 	// RUNNING/runningCpu!=-1 (the gate) and won't claim it until finishSwitch clears runningCpu on
 	// the far side. The switch itself runs lock-free; finishSwitch re-takes g_rqLock.
-	arch::archContextSwitch(&prev->kesp, next->kesp);
+	arch::archContextSwitch(&prev->kesp, next->kesp, prev->fx, next->fx);
 	{
 		unsigned long f2 = arch::cpuIrqSave();
 		g_rqLock.lock();
@@ -686,6 +702,7 @@ static void reapLocked(Task* t) {
 	if (!t)
 		return;
 	if (t->kstack) { free(t->kstack); t->kstack = 0; }   // return the kernel stack to the heap
+	if (t->fxRaw)  { free(t->fxRaw); t->fxRaw = 0; t->fx = 0; }
 	t->state = TASK_FREE;       // slot becomes reusable by findFreeSlot() (with a fresh stack)
 }
 
@@ -717,7 +734,7 @@ void Scheduler::start() {
 	arch::cpuIrqRestore(f);
 	// Switch from the throwaway boot context into the first task; never returns here.
 	static uintptr_t throwaway;
-	arch::archContextSwitch(&throwaway, first->kesp);
+	arch::archContextSwitch(&throwaway, first->kesp, 0, first->fx);   // boot context: no FPU to save
 }
 
 // SMP: an application processor enters the scheduler. Like start(), but it switches into THIS
@@ -739,7 +756,7 @@ void Scheduler::apEnter() {
 	g_rqLock.unlock();
 	arch::cpuIrqRestore(f);
 	static uintptr_t apThrowaway[arch::SMP_MAX_CPUS];
-	arch::archContextSwitch(&apThrowaway[cpu], idle->kesp);   // -> idleBody on idle's own kstack
+	arch::archContextSwitch(&apThrowaway[cpu], idle->kesp, 0, idle->fx);   // -> idleBody on idle's own kstack
 }
 
 void Scheduler::runCurrentBody() {

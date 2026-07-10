@@ -21,7 +21,27 @@ struct TrapFrame;   // opaque syscall trap frame (the x86 Registers)
 
 // Save the current context (callee-saved regs + esp + CR3) into *saveOldKesp, then
 // load newKesp's context. Returns (on this task) when something switches back to it.
-extern "C" void archContextSwitch(uintptr_t* saveOldKesp, uintptr_t newKesp);
+//
+// saveOldFx/loadNewFx: per-task 512-byte 16-aligned FXSAVE areas (Task::fx). Ring-3 code is
+// built SSE-ON while the kernel is -mno-sse, so at every switch the LIVE XMM0-15/MXCSR/x87
+// state is exactly the outgoing user task's — and it was previously NOT saved at all: a
+// deferred preemption on ret-to-ring3 lands mid-computation (not at a call boundary), so the
+// resumed task continued with ANOTHER task's registers. Silent data corruption; on the Dell it
+// presented as "impossible" SIGSEGVs inside a fuzz-proven PNG decoder under boot-time context-
+// switch pressure. Either pointer may be null: null saveOldFx skips the save (boot/throwaway
+// contexts), null loadNewFx skips the restore. On i686 (cdecl) the extra args are ignored by
+// the unchanged 32-bit switch.S — its userland is frozen and predates this fix.
+extern "C" void archContextSwitch(uintptr_t* saveOldKesp, uintptr_t newKesp,
+                                  void* saveOldFx, void* loadNewFx);
+
+// Capture the LIVE FPU/SSE state into a task's FXSAVE area — fork/clone inherit the parent's
+// x87/MXCSR control state (POSIX: the child is a copy; rounding modes must survive fork).
+// x86_64 only; the i686 impl is a no-op (its userland does not use SSE).
+void archFpuCapture(void* fx);
+
+// Load a FXSAVE area into the LIVE FPU/SSE registers — execve resets the surviving task to the
+// ABI-default state without waiting for the next context switch. i686: no-op.
+void archFpuLoad(const void* fx);
 
 // Fabricate a fresh task's kernel stack so the first archContextSwitch into the
 // returned kesp "returns" into the task trampoline (which runs the task body).

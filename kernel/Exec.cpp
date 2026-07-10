@@ -141,6 +141,13 @@ int execProgram(Vfs* vfs, const char* path) {
 	// syncs to the foreground group before its own tcsetpgrp would SIGTTIN-stop itself at boot.
 	g_consolePgrp = ProcTable::current()->pgid;
 	kernelSyscalls()->resetForRun();
+	// First ring-3 entry of PID 1: the live FPU/SSE state is still whatever the firmware left
+	// (arbitrary MXCSR!). Load the ABI-default image, same as execve does for every later exec.
+	{
+		Task* self = Scheduler::current();
+		fpuInitImage(self->fx);
+		arch::archFpuLoad(self->fx);
+	}
 	arch::archEnterUser(entry, esp, space);   // never returns
 	return 0;                                 // unreachable
 }
@@ -283,6 +290,12 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
 	credOnExec(p->cred, st.uid, st.gid, st.mode);   // honor setuid/setgid bits (su/sudo/passwd)
 	kernelSyscalls()->resetForRun();
+
+	// Fresh image -> ABI-default FPU/SSE state: reset the task's FXSAVE area AND the live
+	// registers (no context switch necessarily happens between here and the iretq, so writing
+	// only the area would leave the OLD program's MXCSR/x87 control live in the new image).
+	fpuInitImage(self->fx);
+	arch::archFpuLoad(self->fx);
 
 	arch::archFrameToUser(tf, entry, esp);   // iret will enter the new program ...
 	arch::mmuSwitch(newSpace);               // ... under the new address space.

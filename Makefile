@@ -976,7 +976,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-vt smoke-smp verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-vt smoke-smp verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -1025,6 +1025,10 @@ smoke-usb-storm: image64
 # line in i915-boot.txt (kernel-cred append) and the i915 pulse flight recorder must be alive.
 smoke-evidence: image64
 	bash scripts/smoke-evidence.sh
+
+# FPU/SSE context-switch integrity gate: XMM/MXCSR must survive preemption (per-task FXSAVE).
+smoke-fpu: image64
+	bash scripts/smoke-fpu.sh
 
 # Regression gate for the xHCI-DMA-under-user-CR3 fault: rebuilds the kernel with the endpoint ring
 # forced into the user-window VA range and asserts root-on-USB boots with no kernel exception (the
@@ -1118,7 +1122,7 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
 	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + i915 (link/load/harness) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
@@ -2072,9 +2076,9 @@ LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/l
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
 # Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
 # -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm notepad form rustform nwexp settings terminal about crashtest socktest pingtest nettest unixtest tcpsrv nanologin greeter dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture usbstorm
+USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm notepad form rustform nwexp settings terminal about crashtest socktest pingtest nettest unixtest tcpsrv nanologin greeter dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture usbstorm fputorture
 SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm greeter socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom notepad form rustform nwexp settings terminal about crashtest pthrtest pthrstress pfract smptorture nettorture usbstorm
+APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom notepad form rustform nwexp settings terminal about crashtest pthrtest pthrstress pfract smptorture nettorture usbstorm fputorture
 # Shared libraries (.ndl) shipped to /nanos/lib (see _image).
 USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
@@ -2329,6 +2333,7 @@ $(BINFOLDER)dirname.nxe:   $(DYN_DEPS) $(BINFOLDER)dirname.o $(SBASE_UTIL_DIRNAM
 $(BINFOLDER)sigtest.nxe:   $(DYN_DEPS) $(BINFOLDER)sigtest.o
 $(BINFOLDER)crashtest.nxe: $(DYN_DEPS) $(BINFOLDER)crashtest.o
 $(BINFOLDER)usbstorm.nxe:  $(DYN_DEPS) $(BINFOLDER)usbstorm.o
+$(BINFOLDER)fputorture.nxe: $(DYN_DEPS) $(BINFOLDER)fputorture.o
 $(BINFOLDER)socktest.nxe:  $(DYN_DEPS) $(BINFOLDER)socktest.o
 $(BINFOLDER)pingtest.nxe:  $(DYN_DEPS) $(BINFOLDER)pingtest.o
 $(BINFOLDER)nettest.nxe:   $(DYN_DEPS) $(BINFOLDER)nettest.o
@@ -2571,7 +2576,7 @@ _userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm drmtest glpix i915test malloctest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter

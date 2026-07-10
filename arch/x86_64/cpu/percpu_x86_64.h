@@ -18,7 +18,7 @@ struct PerCpu {
 	uint32_t inIrq;            // [40] interrupt nesting depth on this cpu
 };
 
-static const int MAX_CPUS = 32;
+static const int MAX_CPUS = 16;   // matches arch::SMP_MAX_CPUS (smp.h) — see the note there
 extern PerCpu g_percpu[MAX_CPUS];          // gs base on cpu i = &g_percpu[i]
 
 // Set up the calling CPU's per-CPU block + point its GS base at it (kernel-only; uses wrmsr).
