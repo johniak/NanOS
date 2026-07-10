@@ -17,6 +17,13 @@ struct UsbMsc {
 
 // Configure the bulk endpoints on the controller and reset the MSC state. Returns 0 on success.
 int usbMscInit(UsbMsc* m, int slot, int epIn, int epOut);
+// SCSI TEST UNIT READY (0x00): 0 if ready (PASSED), <0 on CHECK CONDITION.
+int usbMscTestUnitReady(UsbMsc* m);
+// SCSI REQUEST SENSE (0x03): drains 18 bytes of sense (clears a pending UNIT ATTENTION). 0 on success.
+int usbMscRequestSense(UsbMsc* m, uint8_t* senseKey, uint8_t* asc);
+// Spin TEST UNIT READY (clearing sense each round) until the LUN is ready or `tries` runs out.
+// Returns 0 if it reached ready, <0 otherwise (caller should still attempt READ CAPACITY).
+int usbMscWaitReady(UsbMsc* m, int tries);
 // SCSI READ CAPACITY(10): fills *blocks (block count) and *blockSize. Returns 0 on success.
 int usbMscReadCapacity(UsbMsc* m, uint32_t* blocks, uint32_t* blockSize);
 // SCSI READ(10): read `count` blocks starting at `lba` into buf. Returns 0 on success, <0 on error.

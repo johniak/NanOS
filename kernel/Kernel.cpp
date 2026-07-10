@@ -151,10 +151,23 @@ static BlockDevice* usbStorageDiscover() {
 		UsbMsc* msc = new UsbMsc();
 		if (usbMscInit(msc, dev->slot, epIn, epOut) != 0)
 			continue;
-		uint32_t blocks = 0, bsize = 0;
-		int rcCap = usbMscReadCapacity(msc, &blocks, &bsize);
+		// A removable gadget/stick asserts UNIT ATTENTION on first access and answers CHECK CONDITION
+		// until a REQUEST SENSE clears it. Clear it (TEST UNIT READY + REQUEST SENSE) and retry READ
+		// CAPACITY, so the device isn't wrongly skipped here (which falls back to a nonexistent ATA
+		// disk on a USB-boot Dell → "init failed to load"). A fast flash stick is ready immediately,
+		// so this is a no-op for it.
+		uint8_t sk = 0, asc = 0;
+		usbMscRequestSense(msc, &sk, &asc);        // drain any pending sense first
+		int ready = usbMscWaitReady(msc, 16);
 		bdPut("  MSC slot="); bdNum(dev->slot);
 		bdPut(" epIn="); bdNum(epIn); bdPut(" epOut="); bdNum(epOut);
+		bdPut(" ready="); bdNum(ready); bdPut(" sense="); bdNum(sk); bdPut("/"); bdNum(asc);
+		uint32_t blocks = 0, bsize = 0;
+		int rcCap = -1;
+		for (int rtry = 0; rtry < 4 && rcCap != 0; rtry++) {
+			rcCap = usbMscReadCapacity(msc, &blocks, &bsize);
+			if (rcCap != 0) usbMscRequestSense(msc, 0, 0);   // clear CHECK CONDITION between tries
+		}
 		bdPut(" readCap="); bdNum(rcCap);
 		if (rcCap != 0) {
 			bdPut(" FAIL phase="); bdNum(g_usbMscFailPhase);

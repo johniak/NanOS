@@ -17,8 +17,11 @@ int UsbMscBlockDevice::readSectors(uint64_t lba, unsigned count, void* buf) {
     // abort a file (e.g. init reading the tty7 greeter) and fall back to the wrong behaviour.
     for (unsigned i = 0; i < count; i++) {
         int rc = -1;
-        for (int tries = 0; tries < 4 && rc < 0; tries++)
+        for (int tries = 0; tries < 4 && rc < 0; tries++) {
             rc = usbMscRead10(m_msc, (uint32_t)(lba + i), 1, p + (uint64_t)i * bs);
+            if (rc < 0)
+                usbMscRequestSense(m_msc, 0, 0);   // clear a pending UNIT ATTENTION before retrying
+        }
         if (rc < 0)
             return -1;
     }
@@ -30,8 +33,11 @@ int UsbMscBlockDevice::writeSectors(uint64_t lba, unsigned count, const void* bu
     const uint8_t* p = (const uint8_t*) buf;
     for (unsigned i = 0; i < count; i++) {             // one WRITE(10) per sector — see readSectors
         int rc = -1;                                   // WRITE(10) is idempotent, so a retry is safe
-        for (int tries = 0; tries < 4 && rc < 0; tries++)
+        for (int tries = 0; tries < 4 && rc < 0; tries++) {
             rc = usbMscWrite10(m_msc, (uint32_t)(lba + i), 1, p + (uint64_t)i * bs);
+            if (rc < 0)
+                usbMscRequestSense(m_msc, 0, 0);   // clear a pending UNIT ATTENTION before retrying
+        }
         if (rc < 0)
             return -1;
     }

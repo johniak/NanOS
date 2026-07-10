@@ -71,6 +71,40 @@ int usbMscInit(UsbMsc* m, int slot, int epIn, int epOut) {
     return 0;
 }
 
+// SCSI TEST UNIT READY (0x00): no data phase. Returns 0 (PASSED) when the LUN is ready, <0 when it
+// answers CHECK CONDITION (e.g. not-ready / UNIT ATTENTION pending).
+int usbMscTestUnitReady(UsbMsc* m) {
+    uint8_t cdb[6] = { 0x00, 0, 0, 0, 0, 0 };
+    return bot(m, cdb, 6, arch::USB_IN, 0, 0);
+}
+
+// SCSI REQUEST SENSE (0x03): read 18 bytes of sense data. Its side effect is what matters — reading
+// the sense CLEARS a pending UNIT ATTENTION on the device, so the next command succeeds. Fills
+// *senseKey (low nibble of byte 2) and *asc (byte 12) when provided. Returns 0 on success.
+int usbMscRequestSense(UsbMsc* m, uint8_t* senseKey, uint8_t* asc) {
+    uint8_t cdb[6] = { 0x03, 0, 0, 0, 18, 0 };
+    uint8_t reply[18] = {0};
+    if (bot(m, cdb, 6, arch::USB_IN, reply, 18) < 0) return -1;
+    if (senseKey) *senseKey = reply[2] & 0x0F;
+    if (asc)      *asc      = reply[12];
+    return 0;
+}
+
+// Bring a freshly-attached LUN to a ready state before READ CAPACITY. A removable device — a Linux
+// g_mass_storage gadget, or a real stick after a medium change — asserts UNIT ATTENTION / "not
+// ready" on first access and answers with CHECK CONDITION until a REQUEST SENSE clears it. A minimal
+// driver that just fails the first command skips such a device (it drops out of storage discovery,
+// falling back to a nonexistent ATA disk → "init failed to load"). A fast flash stick stays ready,
+// so this is a no-op for it. Spin TEST UNIT READY, clearing sense each round. Best-effort: even if
+// we never see PASSED, the caller still tries READ CAPACITY (with its own retries).
+int usbMscWaitReady(UsbMsc* m, int tries) {
+    for (int i = 0; i < tries; i++) {
+        if (usbMscTestUnitReady(m) == 0) return 0;   // ready
+        usbMscRequestSense(m, 0, 0);                 // clear UNIT ATTENTION / drain sense
+    }
+    return usbMscTestUnitReady(m) == 0 ? 0 : -1;
+}
+
 int usbMscReadCapacity(UsbMsc* m, uint32_t* blocks, uint32_t* blockSize) {
     uint8_t cdb[10] = { 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     uint8_t reply[8] = {0};
