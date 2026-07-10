@@ -843,10 +843,39 @@ int main(void)
 #endif
 	int fbfd = open("/dev/fb0", O_RDWR);
 	if (fbfd < 0) { printf("nwm: no /dev/fb0\n"); return 1; }
+	/* fb0 geometry, VALIDATED with a bounded retry. Previously var/fix were read into UNINITIALIZED
+	 * stack with the ioctl return value ignored: if /dev/fb0 was not yet reporting a usable mode when
+	 * an early greeter-spawned nwm raced the i915 driver settling its display power domains, the
+	 * garbage/degenerate dimensions drove the ~50 MB geometry-sized mallocs and memsets below straight
+	 * into a SIGSEGV — the process died before "fb0 ok", the greeter relogged, and it repeated several
+	 * times until the fb settled. Zero the structs, check the ioctls, and require a sane mode; retry
+	 * (~4 s budget) so nwm waits out the settle instead of crash-looping the login. */
 	struct fb_var var; struct fb_fix fix;
-	ioctl(fbfd, FBIOGET_VSCREENINFO, &var);
-	ioctl(fbfd, FBIOGET_FSCREENINFO, &fix);
+	int fb_ok = 0;
+	for (int tries = 0; tries < 200; tries++) {
+		memset(&var, 0, sizeof var);
+		memset(&fix, 0, sizeof fix);
+		int rv = ioctl(fbfd, FBIOGET_VSCREENINFO, &var);
+		int rf = ioctl(fbfd, FBIOGET_FSCREENINFO, &fix);
+		if (rv == 0 && rf == 0 &&
+		    var.xres >= 320 && var.xres <= 16384 &&
+		    var.yres >= 200 && var.yres <= 16384 &&
+		    fix.line_length >= var.xres * 4 &&
+		    fix.smem_len >= (uint32_t) fix.line_length * var.yres) {
+			fb_ok = 1;
+			break;
+		}
+#ifdef NWM_GL
+		glkms_diag("nwm-gl: fb0 not ready (rv=%d rf=%d xres=%u yres=%u pitch=%u smem=%u) retry=%d\n",
+		           rv, rf, var.xres, var.yres, fix.line_length, fix.smem_len, tries);
+#endif
+		poll(0, 0, 20);   /* 20 ms; up to ~4 s total for the i915 fb backing to settle */
+	}
+	if (!fb_ok) { printf("nwm: /dev/fb0 never reported a usable mode\n"); return 1; }
 	g_xres = var.xres; g_yres = var.yres; g_pitch = fix.line_length;
+#ifdef NWM_GL
+	glkms_diag("nwm-gl: fb0 mode %ux%u pitch=%u smem=%u — mmap...\n", g_xres, g_yres, g_pitch, fix.smem_len);
+#endif
 	g_fb = (uint8_t *) mmap(0, fix.smem_len, 3, 1, fbfd, 0);
 	if (g_fb == (uint8_t *) -1 || !g_fb) { printf("nwm: fb mmap failed\n"); return 1; }
 	size_t fbpx = (size_t) g_xres * g_yres * 4;
@@ -870,8 +899,17 @@ int main(void)
 	g_bd_surf.stride = (int) g_xres; nw_surface_noclip(&g_bd_surf);
 	g_bdc.bd = &g_bd_surf; g_bdc.lo = g_bdlo; g_bdc.lo_cap = lopx;
 	g_bdc.factor = NW_BD_DOWNSAMPLE; g_bdc.radius = NW_BD_BLUR_RADIUS; g_bdc.passes = NW_BD_BLUR_PASSES;
+#ifdef NWM_GL
+	glkms_diag("nwm-gl: compositor buffers allocated; apply_settings...\n");
+#endif
 	apply_settings();                          /* load /nanos/config/settings.yaml (or defaults) */
+#ifdef NWM_GL
+	glkms_diag("nwm-gl: settings applied; refresh_wallpaper...\n");
+#endif
 	refresh_wallpaper();                       /* render the wallpaper per the chosen mode */
+#ifdef NWM_GL
+	glkms_diag("nwm-gl: wallpaper rendered\n");
+#endif
 	g_fb_surf.px = (uint32_t *) g_fb; g_fb_surf.w = (int) g_xres; g_fb_surf.h = (int) g_yres;
 	g_fb_surf.stride = (int) (g_pitch / 4); nw_surface_noclip(&g_fb_surf);
 
