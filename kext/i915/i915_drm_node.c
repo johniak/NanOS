@@ -102,6 +102,10 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
 	long r;
+	/* Thread context (per DRM ioctl, ~every frame): drain any log lines the inline i915 interrupt
+	 * handlers buffered — they cannot append to the USB-backed log from IRQ context without
+	 * re-entering g_xhciLock and deadlocking (see kpi_print.c tee ring). */
+	lkpi_log_flush();
 	if (!g_ddev)
 		return -ENODEV;
 	if (cmd == NANOS_DRM_IOCTL_SCANOUT_RESTORE) {

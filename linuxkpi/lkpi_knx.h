@@ -63,6 +63,17 @@ int            knx_file_append(const char *path, const void *buf, unsigned long 
 /* Tee every subsequent printk line to `path` too (bring-up debug: the full drm_dbg trail survives a
  * screen-scroll / hard hang). Pass 0 to stop teeing. Inert unless called — set by the i915 harness. */
 void           lkpi_set_log_tee(const char *path);
+/* Interrupt-context depth for the log tee. kpi_irq.c bumps this around every inline handler / thread_fn
+ * run (lkpi_irq_dispatch + the wait-pump poll harvest). printk's persistent tee consults it: a line
+ * emitted while lkpi_in_irq!=0 must NOT touch the VFS/USB directly — knx_file_append takes the
+ * non-recursive, IRQ-enabled g_xhciLock, and an MSI landing on a CPU that already holds it (mid file
+ * append) would self-deadlock (see Spinlock.h SpinIrqGuard note). Such lines are staged into a RAM ring
+ * and drained by lkpi_log_flush() from thread context instead. */
+extern volatile int lkpi_in_irq;
+/* Drain any tee lines buffered while in interrupt context to the persistent log. MUST be called only
+ * from thread context (never holding g_xhciLock): the drm-node ioctl entry calls it every DRM ioctl
+ * (~per frame), so buffered IRQ-context drm errors reach the USB log promptly and survive a reboot. */
+void           lkpi_log_flush(void);
 /* Register a persistent panic sink: the kernel fault handler hands it one preformatted line
  * (vec/rip/rsp/cr2) on a ring-0 CPU exception. The i915 harness points it at its bring-up log so a
  * triple-fault-class panic (e.g. a stack overflow during GT resume) survives a power-cycle even

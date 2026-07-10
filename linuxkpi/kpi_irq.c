@@ -30,6 +30,13 @@ struct lkpi_irq_desc {
 static struct lkpi_irq_desc g_irq[LKPI_IRQ_MAX];
 static unsigned long        g_total_fires;
 
+/* Nonzero while an i915 handler / thread_fn is running inline in interrupt context (below). The
+ * printk persistent tee reads this: a drm_err logged from here must be RAM-buffered rather than
+ * written straight to the USB log, because knx_file_append takes the IRQ-enabled, non-recursive
+ * g_xhciLock and an MSI re-entering it mid file-append self-deadlocks. Bumped around the handler
+ * calls, not the whole dispatch, so the pre-handler bookkeeping still logs normally. */
+volatile int lkpi_in_irq;
+
 /* Log-once the first time any tasklet callback runs (see <linux/interrupt.h>). Non-inline so "once"
  * is a single global flag, not one-per-translation-unit. */
 void lkpi_tasklet_first_marker(void) {
@@ -115,10 +122,12 @@ void lkpi_irq_dispatch(int irq) {
 	if (lkpi_stack_deep()) lkpi_deep_report("lkpi_irq_dispatch", __builtin_return_address(0));
 
 	irqreturn_t r = IRQ_WAKE_THREAD;      /* h==NULL means "always wake the thread" (Linux default) */
+	lkpi_in_irq++;                        /* the tee RAM-buffers anything logged from here (deadlock-safe) */
 	if (d->handler)
 		r = d->handler(irq, d->dev);
 	if (r == IRQ_WAKE_THREAD && d->thread_fn)
 		d->thread_fn(irq, d->dev);        /* interim inline; Task 3 moves this to an irq thread */
+	lkpi_in_irq--;
 }
 
 /* The kernel MSI trampoline (knx_register_msi's handler) forwards here with ctx = the irq number. */
@@ -139,6 +148,7 @@ void lkpi_irq_poll(void) {
 	if (g_irq_polling)
 		return;
 	g_irq_polling = 1;
+	lkpi_in_irq++;                 /* handlers run below are interrupt context too — tee must RAM-buffer */
 	/* Run the harvest with interrupts DISABLED — a real device MSI must not be delivered in the
 	 * MIDDLE of a poll-driven handler run. If it were, the driver's hard handler (and the execlists
 	 * submission tasklet it kicks) would re-enter on top of the poll's copy: the tasklet RUN/SCHED
@@ -172,6 +182,7 @@ void lkpi_irq_poll(void) {
 #ifndef NANOS_HOST_TEST
 	__asm__ __volatile__("pushq %0; popfq" : : "r"(fl) : "memory", "cc");
 #endif
+	lkpi_in_irq--;
 	g_irq_polling = 0;
 }
 

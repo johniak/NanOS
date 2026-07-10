@@ -251,6 +251,74 @@ static int g_log_tee_busy;   /* re-entrancy guard: the VFS append itself may pri
 
 void lkpi_set_log_tee(const char *path) { g_log_tee_path = path; }
 
+#ifndef NANOS_HOST_TEST
+/* ---- interrupt-context tee ring ---------------------------------------------------------
+ * A printk emitted while in interrupt/atomic context CANNOT append straight to the USB-backed log:
+ * knx_file_append -> xhciSubmit takes the IRQ-enabled, non-recursive g_xhciLock, so an MSI that
+ * re-enters it on a CPU already holding it (mid file-append) self-deadlocks — the freeze we hit on
+ * the Dell after the GPU came up (drm_err logged from the inline DE/GT handler). Such lines are
+ * staged here and drained by lkpi_log_flush() from thread context (the drm-node ioctl entry calls it
+ * ~every frame). Guarded by a cli + test-and-set lock so head/tail stay sane under SMP; the slow USB
+ * append in the flush runs OUTSIDE the lock. On overflow the oldest bytes drop (a marker is emitted). */
+extern volatile int lkpi_in_irq;
+
+#define TEE_RING_SZ 16384
+static char              g_tee_ring[TEE_RING_SZ];
+static volatile unsigned g_tee_head;    /* next write index */
+static volatile unsigned g_tee_tail;    /* next read index  */
+static volatile int      g_tee_dropped; /* set once if the ring ever overflowed */
+static volatile int      g_tee_spin;    /* 0 = free, 1 = held */
+
+static unsigned long tee_lock(void) {
+	unsigned long fl;
+	__asm__ __volatile__("pushfq; popq %0; cli" : "=r"(fl) : : "memory");
+	while (__atomic_test_and_set(&g_tee_spin, __ATOMIC_ACQUIRE))
+		__asm__ __volatile__("pause");
+	return fl;
+}
+static void tee_unlock(unsigned long fl) {
+	__atomic_clear(&g_tee_spin, __ATOMIC_RELEASE);
+	__asm__ __volatile__("pushq %0; popfq" : : "r"(fl) : "memory", "cc");
+}
+
+/* Append n bytes to the ring, dropping oldest bytes on overflow. Caller holds tee_lock(). */
+static void tee_ring_put(const char *s, unsigned n) {
+	for (unsigned i = 0; i < n; i++) {
+		unsigned nh = (g_tee_head + 1) % TEE_RING_SZ;
+		if (nh == g_tee_tail) {                       /* full: evict the oldest byte */
+			g_tee_tail = (g_tee_tail + 1) % TEE_RING_SZ;
+			g_tee_dropped = 1;
+		}
+		g_tee_ring[g_tee_head] = s[i];
+		g_tee_head = nh;
+	}
+}
+
+/* Drain the interrupt-context ring to the persistent log. Thread context only (never holding
+ * g_xhciLock). Copies out under the lock, appends to USB unlocked, loops until empty. */
+void lkpi_log_flush(void) {
+	char staging[512];
+	if (!g_log_tee_path || g_log_tee_busy)            /* not set up, or already inside an append */
+		return;
+	g_log_tee_busy = 1;                               /* hold for the whole drain: an append may printk */
+	for (;;) {
+		unsigned n = 0;
+		unsigned long fl = tee_lock();
+		while (n < sizeof(staging) && g_tee_tail != g_tee_head) {
+			staging[n++] = g_tee_ring[g_tee_tail];
+			g_tee_tail = (g_tee_tail + 1) % TEE_RING_SZ;
+		}
+		tee_unlock(fl);
+		if (n == 0)                                   /* ring empty: nothing (more) to persist */
+			break;
+		knx_file_append(g_log_tee_path, staging, n);
+	}
+	g_log_tee_busy = 0;
+}
+#else
+void lkpi_log_flush(void) {}
+#endif
+
 int printk(const char *fmt, ...) {
 	char line[512];
 	va_list ap; va_start(ap, fmt);
@@ -266,9 +334,27 @@ int printk(const char *fmt, ...) {
 	if (g_log_tee_path && !g_log_tee_busy) {
 		unsigned long n = 0;
 		while (out[n]) n++;
-		g_log_tee_busy = 1;
-		knx_file_append(g_log_tee_path, out, n);
-		g_log_tee_busy = 0;
+		/* Unsafe to touch the USB-backed log from interrupt/atomic context (g_xhciLock re-entry
+		 * deadlock, see the tee ring above): lkpi_in_irq marks an inline i915 handler run, and IF=0
+		 * marks any interrupts-disabled window. Stage such lines; otherwise flush the backlog first,
+		 * then append this line — all from safe thread context. */
+		int unsafe = lkpi_in_irq;
+		if (!unsafe) {
+			unsigned long rf;
+			__asm__ __volatile__("pushfq; popq %0" : "=r"(rf));
+			if (!(rf & 0x200))          /* RFLAGS.IF clear => interrupts disabled */
+				unsafe = 1;
+		}
+		if (unsafe) {
+			unsigned long fl = tee_lock();
+			tee_ring_put(out, (unsigned)n);
+			tee_unlock(fl);
+		} else {
+			lkpi_log_flush();           /* drain any IRQ-context backlog before this line */
+			g_log_tee_busy = 1;
+			knx_file_append(g_log_tee_path, out, n);
+			g_log_tee_busy = 0;
+		}
 	}
 #endif
 	return r;
