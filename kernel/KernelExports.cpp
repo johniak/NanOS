@@ -2,6 +2,7 @@
 #include "SynthFs.h"
 #include "Vfs.h"            // knx_file_read: read firmware blobs through the VFS
 #include "String.h"         // Vfs::read takes a String path
+#include "SyscallDispatch.h" // KernelCredScope: kernel-internal VFS ops bypass the current process's DAC
 #include "CharDevice.h"
 #include "Console.h"
 #include "Scheduler.h"
@@ -119,6 +120,13 @@ int knx_file_read(const char* path, void* buf, unsigned long max, unsigned long*
 int knx_file_append(const char* path, const void* buf, unsigned long len) {
 	if (!g_kexVfs || !path || !buf) return -2;
 	String p((char*) path);
+	// Kernel-cred scope: this export serves kernel/kext evidence channels (panic sink, printk
+	// tee) that run with an ARBITRARY process current — e.g. the ring3 #PF handler appends while
+	// the crashed uid-1000 process is current, and the root-owned i915-boot.txt then fails DAC
+	// with -EACCES (that was the Dell's vanished [ring3 fault]/watchdog evidence; QEMU repro:
+	// scratch/repro-ring3-sink.sh). Kernel-internal writes are kernel context, not the
+	// interrupted process's request.
+	KernelCredScope kc;
 	// Vfs::append holds the VFS lock across stat+write: the old stat-here/write-there pair let two
 	// concurrent appenders (panic sink vs printk tee, both extending i915-boot.txt) read the same
 	// size and overwrite each other's extension — lines silently vanished.

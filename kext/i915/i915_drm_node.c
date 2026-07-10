@@ -98,11 +98,21 @@ static struct node_client *client_get(int pid, int node)
  * private command nr, far above anything i915 defines, so it can never shadow a real ioctl. */
 #define NANOS_DRM_IOCTL_SCANOUT_RESTORE 0x649f
 
+/* Pulse telemetry (read by i915_entry.c's pulse thread): a frozen desktop's post-mortem then shows
+ * whether an ioctl is IN FLIGHT (enters != exits) and which one — the freeze trace's "ENTER 0xc3,
+ * no ret" from the kernel's own vantage point. Volatile, monotonic, torn reads harmless. */
+volatile unsigned long g_nioctl_enters, g_nioctl_exits;
+volatile unsigned int  g_nioctl_last_nr;
+volatile int           g_nioctl_last_pid;
+
 static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
 	long r;
 	void lkpi_tasklet_drain(void);
+	g_nioctl_enters++;
+	g_nioctl_last_nr = cmd & 0xff;   /* low byte = the DRM ioctl nr (matches the gldiag trace) */
+	g_nioctl_last_pid = pid;
 	/* Cross-core gate FIRST (kpi_misc.c): a DRM ioctl executes the whole i915 stack in this
 	 * process's context on whatever core the scheduler picked, under the shim's no-op locks —
 	 * it must never run concurrently with the kworker/ktimers/krcu daemons or another client.
@@ -116,6 +126,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	lkpi_tasklet_drain();
 	if (!g_ddev) {
 		lkpi_gate_exit();
+		g_nioctl_exits++;
 		return -ENODEV;
 	}
 	if (cmd == NANOS_DRM_IOCTL_SCANOUT_RESTORE) {
@@ -127,6 +138,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 			knx_log("i915: client scanout-restore FAILED (no snapshot or transcoder off)\n");
 		i915_present_set_suspended(0);
 		lkpi_gate_exit();
+		g_nioctl_exits++;
 		return rr == 0 ? 0 : -EIO;
 	}
 	/* Re-base the stack-overflow tripwire onto THIS ioctl's per-task 128 KiB heap stack (the probe
@@ -139,6 +151,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	c = client_get(pid, node);
 	if (!c) {
 		lkpi_gate_exit();
+		g_nioctl_exits++;
 		return -ENOMEM;
 	}
 	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
@@ -147,6 +160,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
 		i915_present_set_suspended(1);
 	lkpi_gate_exit();
+	g_nioctl_exits++;
 	return r;
 }
 

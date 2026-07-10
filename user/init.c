@@ -458,7 +458,10 @@ int main(void) {
 			 * user's desktop without re-prompting (user/greeter.c consumes the flag one-shot).
 			 * Cap it so a hard crash-loop still surfaces the login prompt within a few respawns. */
 			static int gfx_resumes = 0;
-			if (WIFSIGNALED(st) && !fast && gfx_resumes < 3) {
+			/* Budget 6, not 3: the Dell's decoder-crash pattern was FOUR signaled deaths before a
+			 * clean start, so a 3-resume budget still surfaced one extra login prompt. The fast-fail
+			 * loop breaker above (nwm_fastfails) keeps a hard crash-loop from cycling forever. */
+			if (WIFSIGNALED(st) && !fast && gfx_resumes < 6) {
 				int rf = open("/tmp/nanos-gfx-resume", O_WRONLY | O_CREAT | O_TRUNC, 0600);
 				if (rf >= 0) { write(rf, "1", 1); close(rf); }
 				gfx_resumes++;

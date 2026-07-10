@@ -80,7 +80,28 @@ if [ -n "$out5" ]; then
 else
     note "(absent — nwm-gl never reached a GL frame, or a non-GL build)"
 fi
+# Kernel-side flight recorder (i915_entry.c pulse thread): one line every ~2 s with the in-flight
+# ioctl + gate hold + tee backlog. The LAST lines localize a silent freeze; only show the tail of
+# the current boot (from the last boot banner).
+note "===== /nanos/logs/pulse.txt  (2s kernel flight recorder — this boot's tail) ====="
+out6=$(sudo "$DBG" -R "cat /nanos/logs/pulse.txt" "$PDEV" 2>/dev/null || true)
+if [ -n "$out6" ]; then
+    printf '%s\n' "$out6" | awk '/pulse ===== boot =====/{n=NR} {l[NR]=$0} END{for(i=(n?n:1);i<=NR;i++) print l[i]}' | tail -30
+else
+    note "(absent — pulse thread never ran, or pre-pulse build)"
+fi
+# Always keep a machine-readable copy under scratch/dell-logs/ (latest.txt + a timestamped one),
+# so the log can be analysed straight from the repo without copy-pasting terminal output.
+AUTODIR="$(cd "$(dirname "$0")/.." && pwd)/scratch/dell-logs"
+mkdir -p "$AUTODIR"
+STAMP=$(date +%Y%m%d-%H%M%S)
+dump() {
+    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; printf '===== nwm tee =====\n%s\n' "$out4"; printf '===== gldiag =====\n%s\n' "$out5"; printf '===== pulse =====\n%s\n' "$out6"; } > "$1"
+}
+dump "$AUTODIR/latest.txt"
+dump "$AUTODIR/$STAMP.txt"
+note "saved -> $AUTODIR/latest.txt (+ $STAMP.txt)"
 if [ -n "$SAVE" ]; then
-    { printf '%s\n' "$out"; printf '===== i915test tee =====\n%s\n' "$out2"; printf '===== gltest tee =====\n%s\n' "$out3"; printf '===== nwm tee =====\n%s\n' "$out4"; printf '===== gldiag =====\n%s\n' "$out5"; } > "$SAVE"
+    dump "$SAVE"
     note "saved -> $SAVE"
 fi

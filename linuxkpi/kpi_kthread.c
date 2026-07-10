@@ -295,6 +295,7 @@ static void timers_service(void) {
 }
 
 static void timer_thread_body(void *arg) {
+	void lkpi_log_flush(void);
 	(void)arg;
 	while (!knx_thread_should_stop()) {
 		/* Run the FULL pump, not just timers: with latch-only MSI dispatch (kpi_irq.c) the GT/display
@@ -305,6 +306,11 @@ static void timer_thread_body(void *arg) {
 			lkpi_wait_pump();        /* timers + wq drain + irq harvest + tasklet drain, gated */
 			lkpi_gate_exit();
 		}
+		/* Persist any staged evidence lines (IRQ/IF=0 printk, ring3-fault marks) OUTSIDE the gate:
+		 * the flush is pure ring-drain + VFS append, touches no driver state, and must keep working
+		 * precisely when the compositor is frozen mid-ioctl and stops draining the ring itself —
+		 * before this, staged watchdog lines died in RAM with the freeze they were meant to name. */
+		lkpi_log_flush();
 		knx_thread_msleep(4);   /* ~4 ms timer resolution; sleep so we don't hog the CPU */
 	}
 }

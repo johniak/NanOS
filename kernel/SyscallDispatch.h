@@ -24,4 +24,18 @@ void futexWakeAddr(const void* space, void* uaddr, int n);
 // Called before a thread's kernel stack is reaped (execve sibling-teardown / exit_group) so the
 // futex buckets never keep a pointer into the freed kstack the waiter node lived on.
 void futexRemoveTask(const void* space, Task* t);
+
+// Kernel-context credential scope (per CPU, depth-counted): while entered, the VFS credProvider
+// reports "kernel context" (no DAC) instead of the CURRENT process's Cred. For kernel-INTERNAL
+// VFS ops that run with an arbitrary process current — the ring3-fault evidence append, the lkpi
+// printk-tee flush — which must not fail -EACCES just because the interrupted process is
+// unprivileged. NEVER use on behalf of a user request.
+void kernelCredEnter();
+void kernelCredExit();
+struct KernelCredScope {
+	KernelCredScope()  { kernelCredEnter(); }
+	~KernelCredScope() { kernelCredExit(); }
+	KernelCredScope(const KernelCredScope&) = delete;
+	KernelCredScope& operator=(const KernelCredScope&) = delete;
+};
 }

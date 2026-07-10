@@ -1157,9 +1157,24 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 	return ret;
 }
 
+// Kernel-context credential override, per CPU. Kernel-INTERNAL VFS ops run with whatever process
+// happens to be current: a ring-3 #PF handler appending the [ring3 fault] evidence line, an lkpi
+// kernel thread flushing the printk tee, a DRM-ioctl prologue draining staged log lines — all of
+// them execute while an arbitrary, possibly unprivileged process is current. Without this
+// override, knx_file_append("/nanos/logs/i915-boot.txt") from nwm's (uid jan) context got -EACCES
+// on the root-owned log and the Dell's entire post-bind evidence channel silently vanished
+// (QEMU repro: scratch/repro-ring3-sink.sh; VFSAP write=-EACCES). Per-CPU is sound because the
+// VFS never yields mid-op (the vfsLock is never held across a sleep) and kernel sections are
+// non-preemptive. Depth-counted so nested kernel ops compose.
+static volatile int g_kernelCredOverride[arch::SMP_MAX_CPUS];
+void kernelCredEnter() { g_kernelCredOverride[arch::smpThisCpu()]++; }
+void kernelCredExit()  { g_kernelCredOverride[arch::smpThisCpu()]--; }
+
 // The VFS asks this for the calling process's credentials when it enforces DAC. Before pid 1
 // exists (early boot) it returns 0, which the VFS treats as a root/kernel context (no checks).
 static const Cred* currentCred() {
+	if (g_kernelCredOverride[arch::smpThisCpu()])
+		return 0;                          // kernel-internal op: root/kernel context, no DAC
 	Process* p = ProcTable::current();
 	return p ? &p->cred : 0;
 }

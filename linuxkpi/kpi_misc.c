@@ -91,6 +91,17 @@ void lkpi_deep_report(const char *where, void *ra) {
 static volatile unsigned char g_gate_word;      /* test-and-set cell */
 static void * volatile        g_gate_owner;     /* knx_cur_task() of the holder */
 static int                    g_gate_depth;     /* recursion depth (owner-only access) */
+static unsigned long long     g_gate_since_us;  /* acquire time of the CURRENT hold (owner-only) */
+
+/* Diagnostic snapshot for the i915 pulse thread (racy by design — a torn read of a moving gate is
+ * still a truthful "someone holds it"; only a STUCK owner produces a stable owner + growing held). */
+void lkpi_gate_debug(void **owner, int *depth, unsigned long long *held_us)
+{
+	void *o = g_gate_owner;
+	*owner = o;
+	*depth = o ? g_gate_depth : 0;
+	*held_us = o ? knx_uptime_us() - g_gate_since_us : 0;
+}
 
 /* `pause` on the x86 kext target; bare barrier on the host doctest build (may be ARM). */
 #ifdef NANOS_HOST_TEST
@@ -119,6 +130,7 @@ void lkpi_gate_enter(void) {
 	}
 	g_gate_owner = self;
 	g_gate_depth = 1;
+	g_gate_since_us = knx_uptime_us();
 }
 
 int lkpi_gate_try_enter(void) {
@@ -128,6 +140,7 @@ int lkpi_gate_try_enter(void) {
 		return 0;
 	g_gate_owner = self;
 	g_gate_depth = 1;
+	g_gate_since_us = knx_uptime_us();
 	return 1;
 }
 

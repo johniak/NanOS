@@ -294,13 +294,25 @@ static void tee_ring_put(const char *s, unsigned n) {
 	}
 }
 
+/* Unflushed bytes waiting in the IRQ-context ring (+dropped flag) — the i915 pulse thread reports
+ * this so a post-mortem log shows whether evidence was still stuck in RAM at the freeze. */
+unsigned lkpi_tee_backlog(int *dropped) {
+	if (dropped)
+		*dropped = g_tee_dropped;
+	return (g_tee_head + TEE_RING_SZ - g_tee_tail) % TEE_RING_SZ;
+}
+
 /* Drain the interrupt-context ring to the persistent log. Thread context only (never holding
- * g_xhciLock). Copies out under the lock, appends to USB unlocked, loops until empty. */
+ * g_xhciLock). Copies out under the lock, appends to USB unlocked, loops until empty.
+ * Single-flighted with an ATOMIC claim on g_log_tee_busy: it is called from BOTH the DRM-ioctl
+ * prologue and the ktimers thread (the flusher that persists evidence when the compositor is
+ * frozen and no ioctls flow), and a plain check-then-set would let two threads drain at once. */
 void lkpi_log_flush(void) {
 	char staging[512];
-	if (!g_log_tee_path || g_log_tee_busy)            /* not set up, or already inside an append */
+	if (!g_log_tee_path)                              /* not set up */
 		return;
-	g_log_tee_busy = 1;                               /* hold for the whole drain: an append may printk */
+	if (__atomic_exchange_n(&g_log_tee_busy, 1, __ATOMIC_ACQUIRE))
+		return;                                       /* another thread is already flushing/appending */
 	for (;;) {
 		unsigned n = 0;
 		unsigned long fl = tee_lock();
@@ -313,7 +325,7 @@ void lkpi_log_flush(void) {
 			break;
 		knx_file_append(g_log_tee_path, staging, n);
 	}
-	g_log_tee_busy = 0;
+	__atomic_store_n(&g_log_tee_busy, 0, __ATOMIC_RELEASE);
 }
 #else
 void lkpi_log_flush(void) {}

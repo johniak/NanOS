@@ -178,7 +178,59 @@ static void i915_log(const char *msg)
  * screen. Called from the #DF/#PF/#GP handler, so it must not itself fault: just a bounded append. */
 static void i915_panic_sink(const char *line)
 {
-	knx_file_append(I915_LOG_PATH, line, i915_strlen(line));
+	/* The append used to fail -EACCES here: it runs with the CRASHED process current (e.g. nwm as
+	 * uid jan) and the log is root-owned — knx_file_append now enters a kernel-cred scope
+	 * (QEMU repro + fix: scratch/repro-ring3-sink.sh / kernel/SyscallDispatch.cpp). Surface any
+	 * residual failure on the console so a silent evidence gap can never reopen unnoticed. */
+	if (knx_file_append(I915_LOG_PATH, line, i915_strlen(line)) < 0)
+		knx_log("i915: panic-sink append FAILED\n");
+}
+
+/* ---- pulse: a 2 s kernel-side flight recorder --------------------------------------------- *
+ * The Dell freezes die SILENT: the compositor stops mid-ioctl, no watchdog line survives, and the
+ * only artifact is a gldiag trace ending at "ENTER 0xc3". This thread appends one line every ~2 s
+ * to its own log, from a plain kernel thread that takes NO lkpi gate and touches NO driver state:
+ *
+ *   pulse t=<ms> ioctl=<enters>/<exits> last=<nr>@<pid> gate=<owner> d=<depth> held=<ms> tee=<B>[!]
+ *
+ * Post-mortem reading: enters==exits -> the freeze is in userspace (Mesa/nwm spin), not a stuck
+ * ioctl. enters>exits + growing held -> the in-flight ioctl (last=) wedged under the gate; the
+ * SLEEP-SPIN/GATE-WAIT lines (now flushed by ktimers independent of nwm) say where. Pulse itself
+ * stopping while the storm assertions say the kernel is alive -> the VFS/USB append path is the
+ * wedge. tee=<bytes>! (dropped) -> evidence outran the flush. */
+#define I915_PULSE_PATH "/disks/main/nanos/logs/pulse.txt"
+extern volatile unsigned long g_nioctl_enters, g_nioctl_exits;   /* i915_drm_node.c */
+extern volatile unsigned int  g_nioctl_last_nr;
+extern volatile int           g_nioctl_last_pid;
+void lkpi_gate_debug(void **owner, int *depth, unsigned long long *held_us);   /* kpi_misc.c */
+unsigned lkpi_tee_backlog(int *dropped);                                        /* kpi_print.c */
+#include <linux/printk.h>                                                       /* snprintf */
+
+static void i915_pulse_body(void *arg)
+{
+	(void)arg;
+	knx_file_append(I915_PULSE_PATH, "pulse ===== boot =====\n", 23);
+	for (;;) {
+		char line[160];
+		void *owner; int depth, dropped, n;
+		unsigned long long held_us;
+		knx_thread_msleep(2000);
+		lkpi_gate_debug(&owner, &depth, &held_us);
+		n = snprintf(line, sizeof(line),
+		             "pulse t=%llu ioctl=%lu/%lu last=0x%x@%d gate=%p d=%d held=%llu tee=%u%s\n",
+		             knx_uptime_us() / 1000ull,
+		             g_nioctl_enters, g_nioctl_exits, g_nioctl_last_nr, g_nioctl_last_pid,
+		             owner, depth, held_us / 1000ull,
+		             lkpi_tee_backlog(&dropped), dropped ? "!" : "");
+		if (n > 0)
+			knx_file_append(I915_PULSE_PATH, line, (unsigned long)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
+	}
+}
+
+static void i915_pulse_start(void)
+{
+	if (!knx_thread_spawn(i915_pulse_body, 0, "i915pulse"))
+		knx_log("i915: pulse thread spawn FAILED\n");
 }
 
 /* Arm MODE from the first non-space byte of /nanos/config/i915:
@@ -306,6 +358,11 @@ int nkext_init(void)
 	 * (vec/rip/rsp/cr2) here makes `make i915-log` after a power-cycle reveal exactly where it blew
 	 * up. GT init holds no FS locks, so this VFS append runs cleanly from the #DF (IST1) stack. */
 	knx_set_panic_sink(&i915_panic_sink);
+
+	/* Flight recorder: one telemetry line every ~2 s from an ungated kernel thread (see
+	 * i915_pulse_body above) — the post-mortem channel that localizes a silent desktop freeze
+	 * (stuck ioctl vs userspace vs a wedged VFS/USB append path). Spawned post-scheduler. */
+	knx_run_after_scheduler(i915_pulse_start);
 
 	/* 1) LinuxKPI mem_map first — indexed by every alloc_pages/virt_to_page below. A NULL mem_map
 	 * (OOM: it is one struct page per RAM frame, ~256 MiB on a 16 GiB box) makes every page access
