@@ -16,6 +16,12 @@
 #include "Signal.h"          // SIGSEGV
 #include "vt/VtManager.h"    // force the text console visible so a kernel panic is on screen
 
+namespace kernel {
+// Filled by the scheduler's stack-overflow canary (Scheduler.cpp); persisted here so an overflowed
+// task that goes on to fault names itself on the durable sink. Empty ("\0") when no overflow was seen.
+extern char g_kstackOverflowNote[];
+}
+
 namespace {
 
 // Append a 0-terminated "name=<16 hex>" pair into buf at *pos (bounded). Used only to build the
@@ -47,6 +53,36 @@ void faultHandler(kernel::Registers* r) {
             kernel::Console::write(" proc="); kernel::Console::write(cp->comm);
         }
         kernel::Console::writeLine("]");
+        // Tee the same line to the persistent panic sink so the nwm-death mask (a user #PF while nwm
+        // owns the graphics VT — the fbcon text above is NOT scanned out) leaves cr2/rip/comm on the
+        // USB log and survives the reboot. Best-effort, after the screen print. Self-limited so a
+        // crash-loop can't hammer the stick. (Diagnostic — remove with the rest once root-caused.)
+        static int ring3_sink_left = 16;
+        if (kernel::g_panicSink && ring3_sink_left > 0) {
+            ring3_sink_left--;
+            char line[128];
+            int pos = 0;
+            for (const char* s = "\n[ring3 fault "; *s; s++) line[pos++] = *s;
+            line[pos] = 0;
+            panicAppend(line, sizeof line, &pos, "vec=", (unsigned long) r->int_no);
+            if (r->int_no == 14)
+                panicAppend(line, sizeof line, &pos, "cr2=", (unsigned long) kernel::readCr2());
+            panicAppend(line, sizeof line, &pos, "rip=", (unsigned long) r->rip);
+            panicAppend(line, sizeof line, &pos, "rsp=", (unsigned long) r->rsp);
+            if (kernel::Process* cp = kernel::ProcTable::current()) {
+                for (const char* s = "comm="; *s && pos < (int) sizeof line - 1; s++) line[pos++] = *s;
+                for (const char* s = cp->comm; *s && pos < (int) sizeof line - 2; s++) line[pos++] = *s;
+            }
+            if (pos < (int) sizeof line - 1) line[pos++] = '\n';
+            line[pos] = 0;
+            kernel::g_panicSink(line);
+            // If the scheduler's canary saw a stack overflow, this SIGSEGV is likely its downstream
+            // corruption — persist the culprit's name once (emit-and-clear so it prints a single time).
+            if (kernel::g_kstackOverflowNote[0]) {
+                kernel::g_panicSink(kernel::g_kstackOverflowNote);
+                kernel::g_kstackOverflowNote[0] = 0;
+            }
+        }
         kernel::killCurrentProcess(SIGSEGV);   // terminates current + reschedules; does NOT return
         return;                                // (unreachable)
     }
@@ -101,11 +137,17 @@ void faultHandler(kernel::Registers* r) {
     // root), which is readable after a power-cycle even when the panel is owned by a driver whose
     // scanout no longer points at the fbcon framebuffer. Best-effort, and last: the screen print
     // above already happened, so a wedged sink can never suppress the on-screen panic.
-    // Skip the FS sink for #DF (vec 8): a stack-overflow double fault runs on the small IST1 stack and
-    // often means we faulted mid-operation (possibly holding the FS lock or with the heap in a partial
-    // state) — the sink's ext-append (locks + allocation) could re-fault and cascade to a triple fault,
-    // losing the on-screen dump too. The screen print above is the reliable channel for #DF.
-    if (kernel::g_panicSink && r->int_no != 8) {
+    // #DF (vec 8, the stack-overflow double fault) was previously SKIPPED here: it runs on the small
+    // IST1 stack and often faulted mid-operation (FS lock held / heap partial), so the sink's ext-append
+    // could re-fault and cascade to a triple fault, losing the on-screen dump too. But while i915 owns
+    // the panel that on-screen dump is invisible (fbcon is not scanned out), so a persisted line is the
+    // ONLY evidence — attempt it ONCE behind a latch: a re-fault then triple-faults, which a #DF was
+    // heading toward anyway; the latch stops infinite sink re-entry if we somehow survive.
+    static bool df_sink_tried = false;
+    bool do_sink = (r->int_no != 8) || !df_sink_tried;
+    if (r->int_no == 8)
+        df_sink_tried = true;
+    if (kernel::g_panicSink && do_sink) {
         char line[128];
         int pos = 0;
         for (const char* s = "\n*** KERNEL EXCEPTION "; *s; s++) line[pos++] = *s;
@@ -119,6 +161,12 @@ void faultHandler(kernel::Registers* r) {
         if (pos < (int) sizeof line - 1) line[pos++] = '\n';
         line[pos] = 0;
         kernel::g_panicSink(line);
+        // If the scheduler's canary saw a stack overflow earlier, this ring-0 fault is very likely its
+        // downstream corruption — name the culprit task on the durable sink (emit-and-clear, once).
+        if (kernel::g_kstackOverflowNote[0]) {
+            kernel::g_panicSink(kernel::g_kstackOverflowNote);
+            kernel::g_kstackOverflowNote[0] = 0;
+        }
         // Persist the kext backtrace on its own line so the driver call chain survives the power-cycle.
         if (btn) {
             char bl[256];

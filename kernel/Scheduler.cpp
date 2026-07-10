@@ -30,13 +30,32 @@ static Spinlock g_rqLock;
 // stack — is allocated from the heap on create and freed on reap, so the live task count is
 // bounded by RAM, not by a static array (which at this ceiling would be tens of MB).
 static const int MAXTASKS = ProcTable::MAX + 8;
-// 32 KiB per-task kernel stack. The stacks are heap-allocated, so an overflow scribbles the
-// adjacent heap block (the heap's boundary-tag/canary check, mm/Heap.cpp, now turns that into a
-// clean panic instead of silent corruption). The deep cost is the ext write + JBD2 journal path:
-// several extent-tree helpers each hold a block-sized scratch buffer (char buf[4096]) and nest a
-// few levels, and a keyboard IRQ can land on top — which overran 8 and even 16 KiB. (The longer-
-// term fix is to take those block buffers off the stack; this sizing + the canary cover it now.)
-static const int KSTACK_SIZE = 32768;
+// 128 KiB per-task kernel stack (was 32 KiB). The stacks are heap-allocated, so an overflow
+// scribbles the adjacent heap block (the heap's boundary-tag check, mm/Heap.cpp, turns THAT into a
+// clean panic). 32 KiB covered the ext/JBD2 depth (nested extent-tree helpers each with a char[4096]
+// scratch, plus a keyboard IRQ on top — which overran 8 and even 16 KiB). It does NOT survive the
+// i915 runtime bottom half: an execbuf ioctl + an MSI landing mid-syscall (the execlists tasklet runs
+// INLINE, kpi_irq.c) + dma_fence_signal callback chains inline + retire all stack on ONE kernel stack.
+// 128 KiB gives that chain headroom; the guard band below names any task that still descends into its
+// bottom 64 bytes before it corrupts a neighbour. (Longer-term fix: move the i915 bottom half off the
+// IRQ stack — kpi_irq.c "Task 3 moves thread_fn to an irq thread".)
+static const int KSTACK_SIZE = 131072;
+
+// Stack-overflow tripwire. allocSlot stamps the bottom KSTACK_GUARD_WORDS qwords of every heap stack
+// with KSTACK_CANARY; schedule() checks the outgoing task's band on each switch. The stack grows DOWN
+// toward kstack[0], so RSP entering the bottom 64 bytes clobbers the band before running off the
+// malloc block — caught here from normal context and teed to the persistent panic sink, so the
+// offending task's name survives the reboot even when a driver owns the panel. (The old lkpi_stack_deep
+// tripwire is dead at runtime: its baseline is the probe's 1 MiB loader stack, far BELOW these heap
+// stacks, so its signed depth goes negative and never fires again.)
+static const unsigned long long KSTACK_CANARY = 0x4b5354414b4e4152ULL;   /* "KSTAKNAR" */
+static const int KSTACK_GUARD_WORDS = 8;                                 /* 64-byte guard band */
+// One preformatted line naming the task that overflowed its stack. checkStackCanary fills it (plain
+// byte writes — safe under any lock/IRQ state); the fault handler persists it to the panic sink if the
+// corrupted task later faults. We must NOT write the sink (a synchronous ext/USB append) from schedule()
+// itself: it can run under g_rqLock with IRQs off, where the sink could deadlock (FS-lock vs rqLock) or
+// hang on a masked USB IRQ. So detection stays here; durable persistence happens in the fault path.
+char g_kstackOverflowNote[96] = { 0 };
 
 static Task g_tasks[MAXTASKS];
 static int g_ntasks = 0;
@@ -174,6 +193,8 @@ static Task* allocSlot(int id) {
 	unsigned char* stk = (unsigned char*) malloc(KSTACK_SIZE);   // per-task kernel stack (heap)
 	if (!stk)
 		return 0;                                                // out of memory -> fork -EAGAIN
+	for (int g = 0; g < KSTACK_GUARD_WORDS; g++)                 // stamp the bottom guard band
+		((volatile unsigned long long*) stk)[g] = KSTACK_CANARY;
 	// Claim a slot under the runqueue lock (findFreeSlot scans g_tasks + bumps g_ntasks). malloc
 	// already ran above so the lock order stays rqLock -> heap (we never call malloc holding it).
 	unsigned long f = arch::cpuIrqSave();
@@ -295,11 +316,46 @@ extern "C" void schedForkFinish() {
 	arch::cpuIrqRestore(f);
 }
 
+// Stack-overflow tripwire: if the outgoing task descended into its 64-byte bottom guard band, its
+// canary words are clobbered. Detect + print to the console (safe under any lock/IRQ state) and record
+// the culprit's name into g_kstackOverflowNote; the fault handler persists that note to the sink if the
+// corrupted task later faults. Deliberately NO sink write here (see g_kstackOverflowNote). Report ONCE.
+static void checkStackCanary(Task* t) {
+	static bool reported = false;
+	if (reported || !t || !t->kstack)
+		return;
+	const volatile unsigned long long* g = (const volatile unsigned long long*) t->kstack;
+	for (int i = 0; i < KSTACK_GUARD_WORDS; i++) {
+		if (g[i] == KSTACK_CANARY)
+			continue;
+		reported = true;
+		int id = t->id;
+		const char* comm = (t->proc && t->proc->comm[0]) ? t->proc->comm : "?";
+		Console::write("\n*** KSTACK OVERFLOW: task id=");
+		Console::writeHex(id);
+		Console::write(" comm="); Console::write(comm);
+		Console::writeLine(" descended into its guard band ***");
+		int p = 0;
+		for (const char* s = "kstack overflow id=0x"; *s && p < 88; s++) g_kstackOverflowNote[p++] = *s;
+		for (int sh = 28; sh >= 0 && p < 88; sh -= 4) {
+			int nib = (id >> sh) & 0xf;
+			g_kstackOverflowNote[p++] = (char) (nib < 10 ? '0' + nib : 'a' + nib - 10);
+		}
+		for (const char* s = " comm="; *s && p < 88; s++) g_kstackOverflowNote[p++] = *s;
+		for (const char* s = comm; *s && p < 93; s++) g_kstackOverflowNote[p++] = *s;
+		g_kstackOverflowNote[p++] = '\n';
+		g_kstackOverflowNote[p] = 0;
+		return;
+	}
+}
+
 void Scheduler::schedule() {
 	// Pick + claim under a brief interrupts-off section (so the local timer IRQ's onTick can't
 	// interleave on the shared g_tasks states) AND under the BKL the caller already holds (so a
 	// remote CPU's schedule() can't claim the same task). The claim (READY->RUNNING) is therefore
 	// atomic across CPUs.
+	checkStackCanary(curTask());                  // BEFORE the lock/IRQ-off region: report is Console +
+	                                              // a static note only, never a sink write from here
 	unsigned long flags = arch::cpuIrqSave();
 	g_rqLock.lock();                              // SMP: serialize the pick+claim across CPUs
 	int cpu = arch::smpThisCpu();

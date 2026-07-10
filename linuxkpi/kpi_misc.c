@@ -48,7 +48,14 @@ int lkpi_stack_deep(void) {
 	unsigned long sp;
 	if (!g_lkpi_stack_top) return 0;
 	__asm__ __volatile__("mov %%rsp,%0" : "=r"(sp));
-	return (long)(g_lkpi_stack_top - sp) > (long)(640 * 1024);   /* 640 KiB of the 1 MiB stack consumed */
+	/* The redline depends on which stack the baseline was captured on. The probe runs on the loader's
+	 * 1 MiB stack — a low BSS address (< 128 MiB) — so keep the 640 KiB redline there. At RUNTIME the
+	 * i915 DRM node entry re-baselines onto its per-task 128 KiB heap stack — a high address
+	 * (>= 512 MiB) — where the redline is 112 KiB, 16 KiB below the scheduler's guard band so the deep
+	 * SITE (ra) is named BEFORE the canary trips. On a foreign higher stack the signed depth is
+	 * negative, so a stale baseline simply never fires — safe. */
+	long redline = (g_lkpi_stack_top < 0x08000000UL) ? (long)(640 * 1024) : (long)(112 * 1024);
+	return (long)(g_lkpi_stack_top - sp) > redline;
 }
 /* One global report (rip = the recursing call site), so a runaway loop leaves exactly one log line. */
 void lkpi_deep_report(const char *where, void *ra) {

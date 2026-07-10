@@ -114,6 +114,12 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 		i915_present_set_suspended(0);
 		return rr == 0 ? 0 : -EIO;
 	}
+	/* Re-base the stack-overflow tripwire onto THIS ioctl's per-task 128 KiB heap stack (the probe
+	 * baseline was the loader's 1 MiB stack, far below — so lkpi_stack_deep was inert at runtime). Now
+	 * a runaway execbuf -> inline execlists tasklet -> dma_fence_signal callback chain that descends
+	 * past the runtime redline names its call site (ra) via the FS-teed log BEFORE the scheduler's
+	 * guard band trips. */
+	lkpi_stack_baseline();
 	lkpi_set_current_client(pid);   /* drm_ioctl logs current->comm/pid — name the real client */
 	c = client_get(pid, node);
 	if (!c)

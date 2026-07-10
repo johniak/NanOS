@@ -201,8 +201,12 @@ long dma_fence_wait_timeout(struct dma_fence *f, bool intr, long timeout)
 	{
 		void *ra = __builtin_return_address(0);
 		while (!dma_fence_is_signaled(f)) {
-			if (lkpi_fence_poll_hook)
-				lkpi_fence_poll_hook();
+			/* Pump ALL cooperative sources, not just the fence-poll hook: i915 never registers a
+			 * fence-poll hook (only virtio_gpu does), and its completion depends on the workqueue
+			 * drain (engine-park/retire chains are enqueued flat), armed timers, and the bound-IRQ
+			 * harvest. Polling only the fence hook here starved every plain i915 dma-fence wait —
+			 * it progressed solely if a real MSI happened to land mid-spin. */
+			lkpi_wait_pump();
 			lkpi_spin_probe(ra);   /* name this site if it starves >2 s (e.g. a fence never signalled) */
 			__asm__ __volatile__("pause");
 			if (timeout != MAX_SCHEDULE_TIMEOUT &&
