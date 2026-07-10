@@ -14,6 +14,10 @@ extern "C" {
 
 void              *knx_malloc(unsigned size);
 void               knx_free(void *p);
+/* kernel_fpu_begin/end backing: save/restore the calling user task's live FPU/SSE state
+ * around explicit ring-0 FPU use (Linux contract: no sleeping in between). */
+void               knx_fpu_begin(void);
+void               knx_fpu_end(void);
 void               knx_log(const char *s);
 unsigned long long knx_uptime_us(void);
 /* top of physical RAM in bytes (highest usable address); LinuxKPI sizes its mem_map against it. */

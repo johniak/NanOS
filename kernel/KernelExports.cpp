@@ -24,6 +24,8 @@
 #include <arch/input.h>
 #include <arch/console.h>   // consoleSerialOut
 #include <arch/cpu.h>       // arch::monotonicUs (free-running clock for knx_uptime_us)
+#include <arch/sched.h>     // archFpuCapture/archFpuLoad (knx_fpu_begin/end)
+#include <arch/smp.h>       // SMP_MAX_CPUS / smpThisCpu (per-CPU FPU stash)
 #include <arch/bootinfo.h>  // bootFramebuffer (mirror source for a display kext)
 #include <stdint.h>
 #include <string.h>
@@ -142,6 +144,26 @@ void knx_set_panic_sink(void (*fn)(const char* line)) { kernel::g_panicSink = fn
 
 // Real RCU grace period (LinuxKPI synchronize_rcu). See Scheduler::rcuSynchronize.
 void knx_rcu_synchronize(void)            { Scheduler::rcuSynchronize(); }
+
+// kernel_fpu_begin/end for LinuxKPI (Linux contract: NO sleeping in between). In kernel
+// context the live FPU/SSE registers belong to the CALLING USER TASK — the kernel and all
+// kexts are -mno-sse, so the only legitimate ring-0 FPU users are explicit brackets like
+// i915's movntdqa WC-memcpy (currently compiled in but dead: the SSE4.1 static branch is
+// hard-off in the shim). Without a real save/restore such code would corrupt the user's
+// XMM state OUTSIDE the context-switch fxsave points — the same silent-corruption class as
+// the switch64.S leak. Depth-counted per CPU: only the outermost begin/end saves/restores.
+namespace { alignas(16) unsigned char g_kfpuArea[arch::SMP_MAX_CPUS][512]; }
+static int g_kfpuDepth[arch::SMP_MAX_CPUS];
+void knx_fpu_begin(void) {
+	int cpu = arch::smpThisCpu();
+	if (g_kfpuDepth[cpu]++ == 0)
+		arch::archFpuCapture(g_kfpuArea[cpu]);
+}
+void knx_fpu_end(void) {
+	int cpu = arch::smpThisCpu();
+	if (--g_kfpuDepth[cpu] == 0)
+		arch::archFpuLoad(g_kfpuArea[cpu]);
+}
 
 // Register a device IRQ-line handler. The module sees an opaque frame (void*); arch's
 // IrqHandler takes its TrapFrame*, same calling convention, so the cast is safe.

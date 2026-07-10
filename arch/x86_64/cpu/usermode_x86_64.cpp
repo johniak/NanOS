@@ -7,6 +7,7 @@
  */
 #include <arch/usermode.h>
 #include <arch/mmu.h>
+#include <arch/sched.h>         // archFpuCapture/archFpuLoad — the signal-frame FPU snapshot
 #include "PagingControl.h"
 #include "FrameAllocator.h"
 #include "Interrupt64.h"        // kernel::Registers (x86_64 TrapFrame)
@@ -133,6 +134,35 @@ struct SigContext {
 	uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
 	uint64_t oldmask;
 };
+// The 512-byte FXSAVE snapshot of the interrupted FPU/SSE state sits ABOVE the SigContext
+// (higher address), at this 16-aligned offset — the trampoline stays layout-agnostic (it
+// only needs rsp at the SigContext), and both sides derive the fx address the same way.
+const uint64_t SIG_CTX_STRIDE = (sizeof(SigContext) + 15) & ~15ull;   // 160
+
+// The ABI-default FPU image a handler starts from (like Linux's fpu__clear_user_states):
+// the interrupted code's rounding mode / exception masks must not leak INTO the handler.
+const unsigned char* sigDefaultFx() {
+	alignas(16) static unsigned char img[512];
+	if (img[0] != 0x7F) {              // idempotent one-time init (FCW low byte)
+		img[24] = 0x80; img[25] = 0x1F;   // MXCSR = 0x1F80 (all exceptions masked)
+		img[1]  = 0x03; img[0]  = 0x7F;   // FCW = 0x037F (x87 default; write LAST: init flag)
+	}
+	return img;
+}
+
+// MXCSR_MASK as reported by fxsave (byte 28); reserved bits set in a user frame would make
+// fxrstor #GP in KERNEL context, so sigreturn sanitizes against this mask. 0 -> SDM default.
+uint32_t mxcsrMask() {
+	static uint32_t mask;
+	if (!mask) {
+		alignas(16) unsigned char probe[512];
+		memset(probe, 0, sizeof(probe));
+		arch::archFpuCapture(probe);
+		uint32_t m; memcpy(&m, probe + 28, 4);
+		mask = m ? m : 0xFFBF;
+	}
+	return mask;
+}
 }
 
 void archPushSignalFrame(TrapFrame* tf, uintptr_t handler, uintptr_t restorer,
@@ -143,8 +173,13 @@ void archPushSignalFrame(TrapFrame* tf, uintptr_t handler, uintptr_t restorer,
 	if (restartAction == SIG_FRAME_RESTART) { resumeRip = r->rip - 2; resumeRax = origRax; }  // back over `syscall` (2 bytes)
 	else if (restartAction == SIG_FRAME_EINTR) { resumeRax = (uint64_t) (-4L); }              // -EINTR
 
+	usp -= 128;                              // skip the red zone: SysV lets the interrupted
+	                                         // LEAF function keep live data in [rsp-128, rsp)
 	usp &= ~0xFull;                          // keep the user stack 16-aligned
-	usp -= sizeof(SigContext);
+	usp -= 512;                              // 16-aligned FXSAVE area (above the SigContext)
+	archFpuCapture((void*) usp);             // snapshot the interrupted task's live FPU/SSE
+	archFpuLoad(sigDefaultFx());             // ... and hand the handler the ABI-default state
+	usp -= SIG_CTX_STRIDE;                   // SigContext + pad; keeps usp 16-aligned here
 	SigContext* ctx = (SigContext*) usp;
 	ctx->rip = resumeRip; ctx->rflags = r->rflags; ctx->rsp = r->rsp; ctx->rbp = r->rbp;
 	ctx->rax = resumeRax; ctx->rbx = r->rbx; ctx->rcx = r->rcx; ctx->rdx = r->rdx;
@@ -162,6 +197,16 @@ void archPushSignalFrame(TrapFrame* tf, uintptr_t handler, uintptr_t restorer,
 int archSigreturn(TrapFrame* tf, uint64_t* oldMaskOut) {
 	kernel::Registers* r = (kernel::Registers*) tf;
 	const SigContext* ctx = (const SigContext*) r->rsp;   // sigtramp left rsp at the context
+	// Restore the interrupted FPU/SSE snapshot (pushed above the SigContext). The frame is
+	// user memory: sanitize MXCSR against the hardware mask (reserved bits -> fxrstor #GP in
+	// kernel context) and skip a misaligned frame outright rather than fault.
+	uint64_t fxva = r->rsp + SIG_CTX_STRIDE;
+	if ((fxva & 15) == 0) {
+		unsigned char* fx = (unsigned char*) fxva;
+		uint32_t mx; memcpy(&mx, fx + 24, 4);
+		if (mx & ~mxcsrMask()) { mx = 0x1F80; memcpy(fx + 24, &mx, 4); }
+		archFpuLoad(fx);
+	}
 	uint64_t savedRax = ctx->rax;
 	r->rip = ctx->rip;
 	r->rflags = (ctx->rflags & 0xCD5ull) | 0x202ull;
@@ -169,6 +214,12 @@ int archSigreturn(TrapFrame* tf, uint64_t* oldMaskOut) {
 	r->rbp = ctx->rbp; r->r8 = ctx->r8; r->r9 = ctx->r9; r->r10 = ctx->r10; r->r11 = ctx->r11;
 	r->r12 = ctx->r12; r->r13 = ctx->r13; r->r14 = ctx->r14; r->r15 = ctx->r15;
 	r->rsp = ctx->rsp; r->rax = savedRax;
+	// sigreturn resumes an ARBITRARY interrupted context, not a call site: the sysret fast
+	// exit architecturally consumes rcx (rip) and r11 (rflags) — live registers of the
+	// interrupted code. Flip the frame marker so the syscall stub exits via iretq instead
+	// (full restore; the frame's rip/cs/rflags/rsp/ss tail is exactly what iretq wants).
+	// See syscall_entry64.S (.iret_exit).
+	r->int_no = 0x101;
 	if (oldMaskOut) *oldMaskOut = ctx->oldmask;
 	return (int) savedRax;
 }

@@ -8,6 +8,13 @@
 # 4 forked workers park unique patterns in xmm8-11 + a unique MXCSR rounding mode, busy-spin
 # through timer preemptions at -smp 4, and verify the registers survived.
 #
+# Phase 2 gates the SIGNAL path of the same class: a SIGALRM handler hostile-clobbers
+# xmm8-11 + MXCSR while the loop runs. It flushed out (and now guards) FIVE sigframe bugs:
+# no FPU state in the frame, handler-entry rsp misalignment (compiled movaps spills #GP'd),
+# red-zone clobber of the interrupted leaf frame, sysret eating rcx/r11 on sigreturn (fixed
+# with an iretq exit), and sigreturn truncating the restored rax to 32 bits via the int-typed
+# syscall-result plumbing.
+#
 # PASS iff serial shows "FPUTORTURE PASS leaks=0" and no worker crashed.
 set -u
 IMG=disk/image64.img

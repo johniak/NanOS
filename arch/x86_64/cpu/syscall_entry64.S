@@ -66,6 +66,13 @@ syscall_entry:
     pop rbx
     pop rax
 
+    ; sigreturn marks the frame int_no 0x100 -> 0x101 (archSigreturn): it resumes an
+    ; ARBITRARY interrupted context, and sysret would architecturally clobber its live
+    ; rcx (<- rip) and r11 (<- rflags). Exit via iretq for that case — the frame tail
+    ; (rip/cs/rflags/rsp/ss) is already exactly what iretq wants.
+    test byte [rsp], 1           ; [rsp] = int_no low byte (0x00 fast path / 0x01 iretq)
+    jnz .iret_exit
+
     add rsp, 16                  ; drop int_no + err_code
     pop rcx                      ; rip  -> rcx for sysret
     add rsp, 8                   ; skip cs
@@ -75,3 +82,8 @@ syscall_entry:
     ; loads the user rsp and discards the ss slot implicitly (it was pushed below rsp).
     swapgs                       ; GS.base -> user
     o64 sysret                   ; sysretq: CS=STAR[63:48]+16|3, SS=+8|3, RIP=rcx, RFLAGS=r11
+
+.iret_exit:
+    add rsp, 16                  ; drop int_no + err_code
+    swapgs                       ; GS.base -> user
+    iretq                        ; full restore: rip/cs/rflags/rsp/ss (rcx/r11 untouched)

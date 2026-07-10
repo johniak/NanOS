@@ -60,7 +60,12 @@ extern "C" void syscall_dispatch64(kernel::Registers* r) {
 	// AMD64 SysV syscall ABI: nr=rax, args=rdi,rsi,rdx,r10,r8,r9.
 	long ret = kernel::kernelSyscall((int) r->rax, r->rdi, r->rsi, r->rdx, r->r10, r->r8,
 			r->r9, (arch::TrapFrame*) r);
-	r->rax = (uint64_t) ret;
+	// sigreturn (frame marked 0x101 by archSigreturn) restored the FULL interrupted context
+	// into the frame, including the original 64-bit rax. Writing the plumbed return value
+	// here would truncate it: the int-typed dispatch chain sign-extends the low 32 bits —
+	// exactly the "impossible" corruption of any 64-bit value held in rax across a signal.
+	if (r->int_no != 0x101)
+		r->rax = (uint64_t) ret;
 	if (kernel::kernelSyscalls()->hasExited())
 		kernel::procExit();                          // does not return
 	if ((r->cs & 3) == 3)
