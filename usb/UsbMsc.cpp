@@ -7,6 +7,15 @@ namespace kernel {
 // references it via the extern to stay mutually exclusive with MSC commands.
 Spinlock g_usbHcLock;
 
+// Boot-diagnostic snapshot of the last bot() outcome — the storage-discovery log reads these to
+// explain WHY a device was accepted or skipped. A slow/removable gadget (g_mass_storage) can fail
+// the data or CSW phase (e.g. UNIT ATTENTION after a medium change → CSW status != PASSED) where a
+// plain flash stick does not. Phase: 0=ok, 1=CBW-out short, 2=data short, 3=CSW-in short,
+// 4=CSW signature bad, 5=CSW bCSWStatus != PASSED.
+int     g_usbMscFailPhase = 0;
+int     g_usbMscDataMoved = 0;   // bytes actually moved on a phase-2 (data) short
+uint8_t g_usbMscCswStatus = 0;   // bCSWStatus on a phase-5 failure (01=Failed, 02=Phase Error)
+
 static int bulk(int slot, int ep, arch::UsbDir dir, void* data, uint32_t len) {
     auto ops = arch::usbHcOps(); if (!ops) return -1;
     arch::UsbTransfer t{}; t.slot = slot; t.endpoint = ep; t.type = arch::USB_BULK; t.dir = dir;
@@ -32,7 +41,7 @@ static int bot(UsbMsc* m, const uint8_t* cdb, int cdbLen, arch::UsbDir dataDir, 
     cbw[14] = (uint8_t)cdbLen;                                     // bCBWCBLength
     for (int i = 0; i < cdbLen && i < 16; i++) cbw[15 + i] = cdb[i];
 
-    if (bulk(m->slot, m->epOut, arch::USB_OUT, cbw, 31) < 31) return -1;
+    if (bulk(m->slot, m->epOut, arch::USB_OUT, cbw, 31) < 31) { g_usbMscFailPhase = 1; return -1; }
     if (dataLen) {
         int ep = (dataDir == arch::USB_IN) ? m->epIn : m->epOut;
         // The data phase MUST move the whole dataLen. A real xHCI device can complete a bulk-IN
@@ -44,12 +53,13 @@ static int bot(UsbMsc* m, const uint8_t* cdb, int cdbLen, arch::UsbDir dataDir, 
         // command login" and no tty7 login. QEMU always transfers the full 512 B, so it never hit
         // this. Treat any short/failed data phase as a command failure (the block layer retries).
         int moved = bulk(m->slot, ep, dataDir, data, dataLen);
-        if (moved < 0 || (uint32_t) moved != dataLen) return -1;
+        if (moved < 0 || (uint32_t) moved != dataLen) { g_usbMscFailPhase = 2; g_usbMscDataMoved = moved; return -1; }
     }
     uint8_t csw[13] = {0};
-    if (bulk(m->slot, m->epIn, arch::USB_IN, csw, 13) < 13) return -1;
-    if (!(csw[0] == 0x55 && csw[1] == 0x53 && csw[2] == 0x42 && csw[3] == 0x53)) return -1;  // "USBS"
-    if (csw[12] != 0) return -1;                                                              // bCSWStatus != PASSED
+    if (bulk(m->slot, m->epIn, arch::USB_IN, csw, 13) < 13) { g_usbMscFailPhase = 3; return -1; }
+    if (!(csw[0] == 0x55 && csw[1] == 0x53 && csw[2] == 0x42 && csw[3] == 0x53)) { g_usbMscFailPhase = 4; return -1; }  // "USBS"
+    if (csw[12] != 0) { g_usbMscFailPhase = 5; g_usbMscCswStatus = csw[12]; return -1; }                                // bCSWStatus != PASSED
+    g_usbMscFailPhase = 0;
     return 0;
 }
 

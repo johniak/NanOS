@@ -95,11 +95,42 @@ static unsigned firstPartitionLba(BlockDevice* dev) {
 	return firstFsPartitionLba(dev);   // MBR + GPT (the image is GPT after the Limine switch)
 }
 
+// ---- Boot-time USB/root diagnostics ----
+// Tee the storage-discovery + root-mount decisions to the screen AND accumulate them into a buffer
+// flushed to /disks/main/nanos/logs/boot-usb.txt once the root mounts, so a Dell USB boot leaves a
+// log we can pull over pendrak instead of photographing the panel. If the root never mounts (the
+// failure we are chasing) the screen copy is the fallback — see how the i915 harness logs the same
+// way via knx_file_append.
+static char g_bootDiag[4096];
+static unsigned g_bootDiagLen = 0;
+static void bdPut(const char* s) {
+	for (const char* p = s; *p && g_bootDiagLen < sizeof(g_bootDiag) - 1; p++)
+		g_bootDiag[g_bootDiagLen++] = *p;
+	Console::write(s);
+}
+static void bdNum(long v) {
+	if (v < 0) { bdPut("-"); v = -v; }
+	if (!v) { bdPut("0"); return; }
+	char t[24]; int i = 0; unsigned long u = (unsigned long) v;
+	while (u) { t[i++] = (char) ('0' + u % 10); u /= 10; }
+	char r[24]; int j = 0; while (i) r[j++] = t[--i]; r[j] = 0;
+	bdPut(r);
+}
+// Best-effort persist: only lands if /disks/main mounted writable. Rewrites from offset 0 with the
+// whole (monotonically growing) buffer, so later calls supersede earlier ones.
+static void bdFlushToDisk(Vfs* vfs) {
+	if (!vfs) return;
+	String path("/disks/main/nanos/logs/boot-usb.txt");
+	vfs->create(path, 0644);   // create if absent; harmless if it already exists
+	vfs->write(path, g_bootDiagLen, 0, g_bootDiag);
+}
+
 // Discover USB mass-storage devices on the in-kernel USB host controller: enumerate each port,
 // bind any Mass-Storage interface to a UsbMsc + UsbMscBlockDevice, register it, and return the
 // first one found (the live-USB root candidate). No-op (returns null) if no controller / no device.
 static BlockDevice* usbStorageDiscover() {
 	BlockDevice* first = 0;
+	bdPut("== boot-usb == usbDeviceCount="); bdNum(usbDeviceCount()); bdPut("\n");
 	for (int i = 0; i < usbDeviceCount(); i++) {
 		const UsbDevice* dev = usbDeviceAt(i);
 		bool isMsc = false;
@@ -121,8 +152,17 @@ static BlockDevice* usbStorageDiscover() {
 		if (usbMscInit(msc, dev->slot, epIn, epOut) != 0)
 			continue;
 		uint32_t blocks = 0, bsize = 0;
-		if (usbMscReadCapacity(msc, &blocks, &bsize) != 0)
+		int rcCap = usbMscReadCapacity(msc, &blocks, &bsize);
+		bdPut("  MSC slot="); bdNum(dev->slot);
+		bdPut(" epIn="); bdNum(epIn); bdPut(" epOut="); bdNum(epOut);
+		bdPut(" readCap="); bdNum(rcCap);
+		if (rcCap != 0) {
+			bdPut(" FAIL phase="); bdNum(g_usbMscFailPhase);
+			bdPut(" csw="); bdNum(g_usbMscCswStatus);
+			bdPut(" moved="); bdNum(g_usbMscDataMoved); bdPut("\n");
 			continue;
+		}
+		bdPut(" blocks="); bdNum((long) blocks); bdPut(" bsize="); bdNum((long) bsize); bdPut("\n");
 		BlockDevice* bd = new UsbMscBlockDevice(msc, "usb0");
 		DeviceManager::registerDevice(bd);
 		if (!first)
@@ -225,6 +265,9 @@ static void initTaskBody() {
 	int rc = execProgram(g_vfs, "/disks/main/nanos/core/init.nxe");
 	Console::write("init failed to load, code ");
 	Console::writeLine(rc);
+	// Persist the failure to the pullable boot log too (best-effort; supersedes the mount-time flush).
+	bdPut("init exec /disks/main/nanos/core/init.nxe rc="); bdNum(rc); bdPut("\n");
+	bdFlushToDisk(g_vfs);
 }
 
 // Register a scheduler kernel thread (idle/clock) as a process so it shows up in
@@ -395,14 +438,29 @@ void Kernel::start() {
 	BlockDevice* rootDev = hd0;
 	if (usb0) {
 		unsigned char mbr[512];
-		if (usb0->readSectors(0, 1, mbr) == 0 && mbr[510] == 0x55 && mbr[511] == 0xAA) {
+		int rcMbr = usb0->readSectors(0, 1, mbr);
+		bdPut("root: usb0 present, MBR read="); bdNum(rcMbr);
+		if (rcMbr == 0) { bdPut(" sig="); bdNum(mbr[510]); bdPut(","); bdNum(mbr[511]); }
+		bdPut("\n");
+		if (rcMbr == 0 && mbr[510] == 0x55 && mbr[511] == 0xAA) {
 			rootDev = usb0;
 			Console::writeLine("Root: USB mass-storage device (usb0)");
+			bdPut("root: -> usb0 SELECTED\n");
+		} else {
+			bdPut("root: -> usb0 REJECTED, fallback to ATA hd0\n");
 		}
+	} else {
+		bdPut("root: usb0 == NULL (no MSC accepted) -> fallback to ATA hd0\n");
 	}
+	unsigned rootLba = firstPartitionLba(rootDev);
+	bdPut("mount /disks/main lba="); bdNum((long) rootLba); bdPut("\n");
 	okBegin("Mounting ext filesystem at /disks/main");
-	mountVolume(vfs, root, "main", rootDev, firstPartitionLba(rootDev));   // USB-or-ATA, MBR-discovered
+	mountVolume(vfs, root, "main", rootDev, rootLba);   // USB-or-ATA, MBR-discovered
 	okEnd();
+	// First point the root is (supposedly) writable: try to persist the diagnostics so far. If this
+	// lands, pendrak `make pull-files-pi PATHS=/nanos/logs` retrieves it; if the mount failed, it
+	// silently no-ops and the screen copy is all we get.
+	bdFlushToDisk(vfs);
 
 	// Phase 6: exercise the read-write path on the real disk and report persistence.
 	extRwSelftest(vfs);

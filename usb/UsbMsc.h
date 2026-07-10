@@ -24,5 +24,11 @@ int usbMscRead10(UsbMsc* m, uint32_t lba, uint32_t count, void* buf);
 // SCSI WRITE(10): write `count` blocks starting at `lba` from buf. Returns 0 on success, <0 on error.
 int usbMscWrite10(UsbMsc* m, uint32_t lba, uint32_t count, const void* buf);
 
+// Boot-diagnostic snapshot of the last bot() failure (set on the return path; 0 = last op OK). Read
+// by the storage-discovery boot log to explain why a device was skipped. See UsbMsc.cpp for phases.
+extern int     g_usbMscFailPhase;   // 0=ok 1=CBW 2=data-short 3=CSW-short 4=CSW-sig 5=CSW-status
+extern int     g_usbMscDataMoved;   // bytes moved on a phase-2 short
+extern uint8_t g_usbMscCswStatus;   // bCSWStatus on a phase-5 failure
+
 }  // namespace kernel
 #endif
