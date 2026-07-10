@@ -9,6 +9,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+/* Last decode-failure reason (static string), for the caller's diagnostics: a wallpaper that
+ * falls back to the gradient can then say WHY (e.g. "IDAT crc" = the file bytes read off the
+ * medium are corrupt — a storage/transfer bug, not a bad image). */
+static const char *g_png_err = "";
+const char *png_last_error(void) { return g_png_err; }
+
 /* ---- DEFLATE (RFC 1951) inflate ------------------------------------------------------------ */
 
 struct instate {
@@ -51,6 +57,10 @@ static int construct(struct huff *h, const short *length, int n)
 {
 	int symbol, len, left;
 	short offs[16];
+	/* Reject out-of-range code lengths up front: a corrupt stream can hand us lengths outside
+	 * [0,15], and count[length]++ would then write outside the 16-entry stack array. */
+	for (symbol = 0; symbol < n; symbol++)
+		if (length[symbol] < 0 || length[symbol] > 15) return -1;
 	for (len = 0; len <= 15; len++) h->count[len] = 0;
 	for (symbol = 0; symbol < n; symbol++) h->count[length[symbol]]++;
 	if (h->count[0] == n) return 0;
@@ -76,7 +86,7 @@ static int codes(struct instate *s, const struct huff *lencode, const struct huf
 	static const short lext[29] = { 0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0 };
 	static const short dists[30] = { 1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577 };
 	static const short dext[30] = { 0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13 };
-	int symbol, len, dist, i;
+	int symbol, len, dist, i, b;
 	do {
 		symbol = decode(s, lencode);
 		if (symbol < 0) return symbol;
@@ -84,11 +94,15 @@ static int codes(struct instate *s, const struct huff *lencode, const struct huf
 		else if (symbol > 256) {
 			symbol -= 257;
 			if (symbol >= 29) return -1;
-			len = lens[symbol] + bits(s, lext[symbol]);
+			b = bits(s, lext[symbol]);
+			if (b < 0) return -1;              /* truncated stream: -1 must not join the arithmetic */
+			len = lens[symbol] + b;
 			symbol = decode(s, distcode);
 			if (symbol < 0) return symbol;
-			dist = dists[symbol] + bits(s, dext[symbol]);
-			if ((unsigned) dist > s->outcnt) return -1;
+			b = bits(s, dext[symbol]);
+			if (b < 0) return -1;
+			dist = dists[symbol] + b;
+			if (dist <= 0 || (unsigned) dist > s->outcnt) return -1;
 			for (i = 0; i < len; i++) { if (put(s, s->out[s->outcnt - dist])) return -1; }
 		}
 	} while (symbol != 256);
@@ -116,10 +130,15 @@ static int dynamic_block(struct instate *s)
 	short lcount[16], lsym[288], dcount[16], dsym[30];
 	short lengths[288 + 32];
 	struct huff lc = { lcount, lsym }, dc = { dcount, dsym };
-	int nlen, ndist, ncode, index, err, symbol, len;
-	nlen = bits(s, 5) + 257; ndist = bits(s, 5) + 1; ncode = bits(s, 4) + 4;
+	int nlen, ndist, ncode, index, err, symbol, len, b;
+	/* Every bits() below can hit end-of-input and return -1; joining that -1 into the arithmetic
+	 * (e.g. lengths[x] = -1) corrupts the Huffman tables — construct() would count[-1]++ off the
+	 * front of a stack array. Truncated input (a short/corrupt read) must fail, not compute. */
+	b = bits(s, 5); if (b < 0) return -1; nlen  = b + 257;
+	b = bits(s, 5); if (b < 0) return -1; ndist = b + 1;
+	b = bits(s, 4); if (b < 0) return -1; ncode = b + 4;
 	if (nlen > 286 || ndist > 30) return -1;
-	for (index = 0; index < ncode; index++) lengths[order[index]] = (short) bits(s, 3);
+	for (index = 0; index < ncode; index++) { b = bits(s, 3); if (b < 0) return -1; lengths[order[index]] = (short) b; }
 	for (; index < 19; index++) lengths[order[index]] = 0;
 	err = construct(&lc, lengths, 19);
 	if (err) return -1;
@@ -130,9 +149,9 @@ static int dynamic_block(struct instate *s)
 		if (symbol < 16) lengths[index++] = (short) symbol;
 		else {
 			len = 0;
-			if (symbol == 16) { if (index == 0) return -1; len = lengths[index - 1]; symbol = 3 + bits(s, 2); }
-			else if (symbol == 17) symbol = 3 + bits(s, 3);
-			else symbol = 11 + bits(s, 7);
+			if (symbol == 16) { if (index == 0) return -1; len = lengths[index - 1]; b = bits(s, 2); if (b < 0) return -1; symbol = 3 + b; }
+			else if (symbol == 17) { b = bits(s, 3); if (b < 0) return -1; symbol = 3 + b; }
+			else { b = bits(s, 7); if (b < 0) return -1; symbol = 11 + b; }
 			if (index + symbol > nlen + ndist) return -1;
 			while (symbol--) lengths[index++] = (short) len;
 		}
@@ -180,6 +199,26 @@ static long inflate_raw(const uint8_t *in, unsigned inlen, uint8_t *out, unsigne
 
 static unsigned be32(const uint8_t *p) { return ((unsigned) p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
 
+/* PNG CRC-32 (ISO 3309, poly 0xEDB88320), over chunk type+data. Verifying it turns a silently
+ * corrupted read (bad medium, storage-stack bug) into a clean decode failure with a named chunk,
+ * instead of feeding garbage lengths/streams to the inflater. Table built on first use. */
+static uint32_t png_crc32(const uint8_t *p, size_t n)
+{
+	static uint32_t tab[256];
+	static int init = 0;
+	if (!init) {
+		for (uint32_t i = 0; i < 256; i++) {
+			uint32_t c = i;
+			for (int k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+			tab[i] = c;
+		}
+		init = 1;
+	}
+	uint32_t c = 0xFFFFFFFFu;
+	for (size_t i = 0; i < n; i++) c = tab[(c ^ p[i]) & 0xFF] ^ (c >> 8);
+	return c ^ 0xFFFFFFFFu;
+}
+
 static int paeth(int a, int b, int c)
 {
 	int p = a + b - c, pa = p > a ? p - a : a - p, pb = p > b ? p - b : b - p, pc = p > c ? p - c : c - p;
@@ -190,7 +229,8 @@ static int paeth(int a, int b, int c)
 uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 {
 	static const uint8_t sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
-	if (len < 8 || memcmp(data, sig, 8) != 0) return 0;
+	g_png_err = "";
+	if (len < 8 || memcmp(data, sig, 8) != 0) { g_png_err = "signature"; return 0; }
 
 	unsigned w = 0, h = 0;
 	int bitdepth = 0, colortype = 0, interlace = 0;
@@ -203,7 +243,18 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 		unsigned clen = be32(data + off);
 		const uint8_t *ctype = data + off + 4;
 		const uint8_t *cdata = data + off + 8;
-		if (off + 12 + clen > len) break;
+		/* Overflow-safe bounds: the old `off + 12 + clen > len` wraps when a corrupted length
+		 * field is huge (e.g. 0xFFFFFFF8), passing the check and sending clen into memcpy. Compare
+		 * against the REMAINING bytes instead — len - off >= 8 holds here, and clen is capped so
+		 * `12 + clen` cannot wrap either. */
+		if (clen > 0x7FFFFFFFu || 12u + clen > len - off) { g_png_err = "chunk bounds"; break; }
+		if (png_crc32(ctype, 4 + (size_t) clen) != be32(cdata + clen)) {
+			/* Bytes on the wire don't match what the encoder wrote: the READ is corrupt. Fail the
+			 * whole decode — decoding around corruption just moves the garbage into pixels. */
+			g_png_err = "chunk crc (corrupt read)";
+			free(idat);
+			return 0;
+		}
 		if (memcmp(ctype, "IHDR", 4) == 0 && clen >= 13) {
 			w = be32(cdata); h = be32(cdata + 4);
 			bitdepth = cdata[8]; colortype = cdata[9]; interlace = cdata[12];
@@ -220,7 +271,10 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 		off += 12 + clen;   /* length + type + data + CRC */
 	}
 
-	if (!idat || w == 0 || h == 0 || bitdepth != 8 || interlace != 0) { free(idat); return 0; }
+	if (!idat || w == 0 || h == 0 || bitdepth != 8 || interlace != 0) { g_png_err = "header"; free(idat); return 0; }
+	/* Dimension sanity: (stride+1)*h below is 32-bit — absurd header values (only reachable via
+	 * corruption, real assets are screen-sized) would wrap it and desync every later buffer size. */
+	if (w > 16384 || h > 16384) { g_png_err = "dimensions"; free(idat); return 0; }
 	int channels;
 	switch (colortype) {
 	case 0: channels = 1; break;   /* greyscale */
@@ -228,9 +282,9 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 	case 3: channels = 1; break;   /* palette index */
 	case 4: channels = 2; break;   /* grey + alpha */
 	case 6: channels = 4; break;   /* RGBA */
-	default: free(idat); return 0;
+	default: g_png_err = "colortype"; free(idat); return 0;
 	}
-	if (colortype == 3 && paln == 0) { free(idat); return 0; }
+	if (colortype == 3 && paln == 0) { g_png_err = "palette"; free(idat); return 0; }
 
 	/* Decompress: zlib stream = 2-byte header + DEFLATE (we ignore the trailing Adler-32). */
 	unsigned stride = w * (unsigned) channels;
@@ -239,7 +293,7 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 	if (!raw) { free(idat); return 0; }
 	long got = (idatlen > 2) ? inflate_raw(idat + 2, idatlen - 2, raw, rawlen) : -1;
 	free(idat);
-	if (got != (long) rawlen) { free(raw); return 0; }
+	if (got != (long) rawlen) { g_png_err = "inflate"; free(raw); return 0; }
 
 	/* Defilter in place into contiguous pixel rows (drop the per-row filter byte). */
 	uint8_t *img = (uint8_t *) malloc((size_t) stride * h);
@@ -261,7 +315,7 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *wout, int *hout)
 			case 2: v += b; break;
 			case 3: v += (a + b) / 2; break;
 			case 4: v += paeth(a, b, c); break;
-			default: free(raw); free(img); return 0;
+			default: g_png_err = "filter"; free(raw); free(img); return 0;
 			}
 			row[x] = (uint8_t) v;
 		}

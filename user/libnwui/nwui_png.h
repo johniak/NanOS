@@ -19,4 +19,8 @@ uint32_t *png_decode(const uint8_t *data, unsigned len, int *w, int *h);
  * failure (missing file, unsupported/corrupt PNG, OOM). Caller frees. */
 uint32_t *nwui_image_load_png(const char *path, int *w, int *h);
 
+/* Why the last png_decode() returned 0 — a short static string ("chunk crc (corrupt read)",
+ * "inflate", ...), "" if it succeeded. For callers' fallback diagnostics; never NULL. */
+const char *png_last_error(void);
+
 #endif /* NWUI_PNG_H */

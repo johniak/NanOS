@@ -658,6 +658,15 @@ static void present(void)
 	g_prev_cx = S.cursor_x; g_prev_cy = S.cursor_y;
 }
 
+/* Wallpaper-load diagnostics: on the GL build every step goes to the lossless gldiag trace (the
+ * greeter relogin bug hid a SIGSEGV exactly in this window — between "refresh_wallpaper..." and
+ * "wallpaper rendered" — so each stage names itself); a plain fbdev build compiles them away. */
+#ifdef NWM_GL
+#define WALLDIAG(...) glkms_diag(__VA_ARGS__)
+#else
+#define WALLDIAG(...) do {} while (0)
+#endif
+
 /* Linearly interpolate two 0x00RRGGBB pixels, per channel; t is the weight of `b` in 16.16
  * (0 -> a, 65536 -> b). The building block of bilinear sampling. */
 static uint32_t lerp_px(uint32_t a, uint32_t b, unsigned t)
@@ -684,16 +693,24 @@ static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 	for (;;) {
 		if (got == cap) { cap = cap ? cap * 2 : (1u << 20); uint8_t *n = (uint8_t *) realloc(file, cap); if (!n) { free(file); close(fd); return 0; } file = n; }
 		int r = read(fd, file + got, cap - got);
-		if (r < 0) { free(file); close(fd); return 0; }
+		if (r < 0) { WALLDIAG("nwm-gl: wallpaper read err after %u bytes — gradient fallback\n", got); free(file); close(fd); return 0; }
 		if (r == 0) break;
 		got += (unsigned) r;
 	}
 	close(fd);
+	WALLDIAG("nwm-gl: wallpaper slurped %u bytes; decode...\n", got);
 
 	int iw = 0, ih = 0;
 	uint32_t *src = png_decode(file, got, &iw, &ih);
 	free(file);
-	if (!src || iw <= 0 || ih <= 0) { free(src); return 0; }
+	if (!src || iw <= 0 || ih <= 0) {
+		/* "chunk crc (corrupt read)" here = the bytes read off the stick don't match what the
+		 * encoder wrote — a storage-path corruption caught red-handed, not a bad asset. */
+		WALLDIAG("nwm-gl: wallpaper png FAILED (%s) — gradient fallback\n", png_last_error());
+		free(src);
+		return 0;
+	}
+	WALLDIAG("nwm-gl: wallpaper decoded %dx%d; scale...\n", iw, ih);
 	for (size_t i = 0; i < (size_t) iw * ih; i++) src[i] &= 0x00ffffffu;  /* opaque wallpaper: drop alpha */
 
 	/* Cover-fit: source pixels per screen pixel = min(iw/w, ih/h) in 16.16 fixed point (the smaller
@@ -723,6 +740,7 @@ static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 		}
 	}
 	free(src);
+	WALLDIAG("nwm-gl: wallpaper scaled to %ux%u\n", w, h);
 	return 1;
 }
 
@@ -731,11 +749,14 @@ static int load_wallpaper(uint32_t *dst, unsigned w, unsigned h)
 static void refresh_wallpaper(void)
 {
 	if (g_set.wallpaper == NW_WALL_GRADIENT) {
+		WALLDIAG("nwm-gl: wallpaper mode=gradient\n");
 		nw_render_wallpaper(&g_wall_surf);
 	} else if (g_set.wallpaper == NW_WALL_SOLID) {
 		size_t n = (size_t) g_xres * g_yres;
+		WALLDIAG("nwm-gl: wallpaper mode=solid\n");
 		for (size_t i = 0; i < n; i++) g_wall[i] = g_set.wallpaper_color;
 	} else {                                   /* NW_WALL_BRANDED */
+		WALLDIAG("nwm-gl: wallpaper mode=branded\n");
 		if (!load_wallpaper(g_wall, g_xres, g_yres))
 			nw_render_wallpaper(&g_wall_surf);
 	}
