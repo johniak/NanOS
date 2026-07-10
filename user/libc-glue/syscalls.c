@@ -671,9 +671,13 @@ int ioctl(int fd, unsigned long request, ...) {
 	va_end(ap);
 	unsigned type = (unsigned) (request >> 8) & 0xffu;
 	unsigned nr   = (unsigned) request & 0xffu;
-	static int diag_left = 200;
-	int diag = (type == 'd' && diag_left > 0 &&
-		    (nr == 0x69 || nr == 0x6c || nr == 0xca || nr == 0xcf));
+	/* Freeze localization: the previous selective set (0x69/0x6c/0xca/0xcf) left the last op before
+	 * the hang as "EXECBUFFER2 ret r=0" then silence — i.e. the stall is in an UNLOGGED ioctl
+	 * (GEM_SET_DOMAIN 0x4b was excluded) or CPU-side Mesa. Log EVERY DRM ioctl (_IOC type 'd') now, so
+	 * a trailing "ENTER" with no "ret" names the exact hung ioctl; all-paired then silence = CPU-side.
+	 * Higher cap because GEM_SET_DOMAIN is high-volume, but the frame-2 hang lands well inside it. */
+	static int diag_left = 2000;
+	int diag = (type == 'd' && diag_left > 0);
 	int ret;
 	char b[64];
 	if (diag)
