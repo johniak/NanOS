@@ -49,15 +49,24 @@ static void present_flush(void)
 	if (g_present_suspended)   /* a KMS client owns the CRTC — don't fight its scanout */
 		return;
 
-	objs = virtio_gpu_array_alloc(1);
-	if (!objs)
+	/* Driver code on the kernel present thread — cross-core gate like every thread entry
+	 * (kpi_misc.c). TRY: if a DRM client owns the gate this frame, skip the mirror flush
+	 * (it re-runs ~30 fps; dropping one console frame beats stalling the present thread). */
+	if (!lkpi_gate_try_enter())
 		return;
+
+	objs = virtio_gpu_array_alloc(1);
+	if (!objs) {
+		lkpi_gate_exit();
+		return;
+	}
 	virtio_gpu_array_add_obj(objs, &g_bo->base.base);
 
 	virtio_gpu_cmd_transfer_to_host_2d(g_vgdev, 0, g_w, g_h, 0, 0, objs, NULL);
 	virtio_gpu_cmd_resource_flush(g_vgdev, g_resid, 0, 0, g_w, g_h, NULL, NULL);
 	virtio_gpu_notify(g_vgdev);
 	lkpi_wait_pump();
+	lkpi_gate_exit();
 }
 
 int virtio_gpu_fbcon_bringup(struct virtio_device *vdev)

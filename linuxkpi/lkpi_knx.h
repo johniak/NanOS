@@ -106,6 +106,23 @@ int            knx_boot_fb(unsigned long long *addr, unsigned int *pitch, unsign
 struct knx_drm_ops;
 void           knx_drm_register(const struct knx_drm_ops *ops);
 int            knx_getpid(void);
+/* Opaque identity of the current execution context (scheduler Task*). Stable across yields and CPU
+ * migration (a CPU id is NOT — flush_work yields mid-section). Pre-scheduler: the boot CPU's idle
+ * task, one consistent pointer. Keys the recursion check of the cross-core gate below. */
+void          *knx_cur_task(void);
+/* ---- cross-core execution gate (kpi_misc.c) --------------------------------------------------
+ * The shim's spinlock/mutex/rwlock are cooperative NO-OPS: correct for ONE executor + local-CLI
+ * IRQ exclusion, but the Dell has 4 cores and the shim spawns real worker/timer/rcu threads — so
+ * i915 code was genuinely concurrent with zero exclusion (proven by drm_WARN_ON(async_put_wakeref),
+ * unreachable under a real mutex). The gate restores the one-executor contract: every THREAD entry
+ * into lkpi/i915 (DRM ioctl, wait pump, worker/timer/rcu daemons) runs under one global gate,
+ * recursive per task so the pump's re-entry under a "held" no-op lock stays legal. Hard-IRQ frames
+ * never take it — lkpi_irq_dispatch is latch-only, handlers run via the pump harvest.
+ * enter blocks (pause-spin + periodic yield, watchdog names the owner after 2 s); try returns 0
+ * instead of blocking (daemon loops skip a round and sleep rather than pile up spinning). */
+void           lkpi_gate_enter(void);
+void           lkpi_gate_exit(void);
+int            lkpi_gate_try_enter(void);
 /* Short process name (Linux `comm`) for a pid; -1 + a "pid<N>" fallback for an unknown pid. */
 int            knx_process_comm(int pid, char *buf, int n);
 

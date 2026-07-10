@@ -65,6 +65,81 @@ void lkpi_deep_report(const char *where, void *ra) {
 	printk("lkpi: DEEP-STACK in %s ra=%p — deferring to break a runaway recursion\n", where, ra);
 }
 
+/* ---- cross-core execution gate ------------------------------------------------------- *
+ * The shim's spinlock/mutex/rwlock are cooperative NO-OPS — correct for ONE executor plus
+ * local-CLI IRQ exclusion, and every prior race fix (irq_work under cli, real spin_lock_irq,
+ * atomic llists) reasons per-core. But on the Dell the shim itself spawns real kernel threads
+ * (a kworker per workqueue + ktimers + the rcu drainer) and nwm's DRM ioctls run on whatever
+ * core the scheduler picked — so retire/heartbeat/async-put work bodies executed i915 code
+ * CONCURRENTLY with the ioctl path under zero exclusion. Proof from the Dell freeze log:
+ * drm_WARN_ON(power_domains->async_put_wakeref) at intel_display_power.c:613 fired — that WARN
+ * is structurally unreachable when power_domains->lock is a real mutex (every caller handles
+ * the pending case under it), so two contexts WERE inside the "locked" region at once.
+ *
+ * The gate restores the one-executor contract the whole shim is built on: every thread-context
+ * entry into lkpi/i915 serializes on ONE global owner, recursive per scheduler task
+ * (knx_cur_task — NOT a CPU id: flush_work/cancel_work_sync yield mid-section and a task can
+ * resume on another core). Same-task re-entry (the pump running under a "held" no-op lock,
+ * nested waits, work run from inside a wait) stays legal exactly as before; a second task
+ * spins/skips. Hard-IRQ frames never take the gate: lkpi_irq_dispatch is latch-only and the
+ * handlers run in the pump harvest, which sits under the caller's gate.
+ *
+ * enter() blocks: pause-spin, yielding the CPU every ~4k turns so a mid-yield owner always has
+ * a core to resume on, and a one-shot watchdog names the wait after 2 s. try_enter() returns 0
+ * instead of blocking — the daemon loops (kworker/ktimers/rcu) skip their round and sleep, so
+ * idle daemons never pile up spinning while the desktop holds the gate frame-long. */
+static volatile unsigned char g_gate_word;      /* test-and-set cell */
+static void * volatile        g_gate_owner;     /* knx_cur_task() of the holder */
+static int                    g_gate_depth;     /* recursion depth (owner-only access) */
+
+/* `pause` on the x86 kext target; bare barrier on the host doctest build (may be ARM). */
+#ifdef NANOS_HOST_TEST
+static inline void gate_relax(void) { __asm__ __volatile__("" ::: "memory"); }
+#else
+static inline void gate_relax(void) { __asm__ __volatile__("pause"); }
+#endif
+
+void lkpi_gate_enter(void) {
+	void *self = knx_cur_task();
+	if (g_gate_owner == self) { g_gate_depth++; return; }
+	{
+		unsigned long long t0 = knx_uptime_us();
+		int reported = 0;
+		unsigned turns = 0;
+		while (__atomic_test_and_set(&g_gate_word, __ATOMIC_ACQUIRE)) {
+			gate_relax();
+			if ((++turns & 0xFFF) == 0)
+				knx_thread_yield();       /* let a yielded owner (flush_work) finish */
+			if (!reported && knx_uptime_us() - t0 > 2000000ull) {
+				reported = 1;
+				printk("lkpi: GATE-WAIT>2s task=%p owner=%p ra=%p — long i915 section or a wedged owner\n",
+				       self, g_gate_owner, __builtin_return_address(0));
+			}
+		}
+	}
+	g_gate_owner = self;
+	g_gate_depth = 1;
+}
+
+int lkpi_gate_try_enter(void) {
+	void *self = knx_cur_task();
+	if (g_gate_owner == self) { g_gate_depth++; return 1; }
+	if (__atomic_test_and_set(&g_gate_word, __ATOMIC_ACQUIRE))
+		return 0;
+	g_gate_owner = self;
+	g_gate_depth = 1;
+	return 1;
+}
+
+void lkpi_gate_exit(void) {
+	if (g_gate_owner != knx_cur_task())
+		return;                            /* defensive: exit without enter — drop, don't corrupt */
+	if (--g_gate_depth == 0) {
+		g_gate_owner = 0;
+		__atomic_clear(&g_gate_word, __ATOMIC_RELEASE);
+	}
+}
+
 /* ---- spin watchdog (bring-up diagnostics) ------------------------------------------- *
  * The wait primitives now PUMP on every turn (service timers + workqueue + the virtio vq) so a wait
  * whose condition is satisfied by deferred work makes progress instead of starving. But a wait whose

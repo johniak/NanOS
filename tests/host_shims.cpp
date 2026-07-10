@@ -40,6 +40,9 @@ extern "C" int   knx_thread_should_stop(void) { return 0; }
 extern "C" void  knx_thread_stop(void *) {}
 extern "C" void  knx_thread_yield(void) {}
 extern "C" void  knx_thread_msleep(unsigned) {}
+// One constant identity: the host doctest is single-threaded, so the cross-core gate always sees
+// the same "task" and recurses instead of ever spinning.
+extern "C" void *knx_cur_task(void) { return (void *)1; }
 extern "C" void  knx_rcu_synchronize(void) {}   // host doctest is single-threaded: a grace period is instant
 extern "C" void  knx_run_after_scheduler(void (*fn)(void)) { if (fn) fn(); }
 // knx_file_read stand-in for the request_firmware doctest: a single settable fake file. The test

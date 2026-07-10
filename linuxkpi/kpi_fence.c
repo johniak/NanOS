@@ -61,10 +61,16 @@ void lkpi_set_irq_poll(void (*fn)(void)) { lkpi_irq_poll_hook = fn; }
 void lkpi_tasklet_drain(void);
 
 void lkpi_wait_pump(void) {
+	/* Cross-core gate (kpi_misc.c): the pump executes driver bottom halves (irq harvest, work
+	 * bodies, timer handlers) in THIS thread's context — under no-op shim locks that must never
+	 * run concurrently with another thread's i915 section. Waits inside a gated section (DRM
+	 * ioctl) re-enter recursively; a stray wait from an ungated kernel path serializes here. */
+	lkpi_gate_enter();
 	if (lkpi_fence_poll_hook) lkpi_fence_poll_hook();
 	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
 	if (lkpi_irq_poll_hook)   lkpi_irq_poll_hook();
 	lkpi_tasklet_drain();     /* run any execlists tasklet the poll deferred (thread context) */
+	lkpi_gate_exit();
 }
 
 /* Spin watchdog (defined in kpi_misc.c). Declared plain here — same linkage as lkpi_wait_pump — so no

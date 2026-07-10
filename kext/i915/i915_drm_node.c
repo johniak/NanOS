@@ -102,16 +102,22 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
 	long r;
-	/* Thread context (per DRM ioctl, ~every frame): (1) drain log lines the inline i915 interrupt
-	 * handlers buffered — they cannot append to the USB-backed log from IRQ context without
-	 * re-entering g_xhciLock and deadlocking (see kpi_print.c tee ring); (2) run any execlists tasklet
-	 * the GT interrupt deferred (P6/Task 3), so submission makes progress even if this frame doesn't
-	 * wait on a fence. */
 	void lkpi_tasklet_drain(void);
+	/* Cross-core gate FIRST (kpi_misc.c): a DRM ioctl executes the whole i915 stack in this
+	 * process's context on whatever core the scheduler picked, under the shim's no-op locks —
+	 * it must never run concurrently with the kworker/ktimers/krcu daemons or another client.
+	 * Recursive per task, so every wait/pump inside the ioctl re-enters legally. */
+	lkpi_gate_enter();
+	/* Thread context (per DRM ioctl, ~every frame): (1) drain log lines buffered from IRQ/atomic
+	 * context — they cannot append to the USB-backed log there without re-entering g_xhciLock and
+	 * deadlocking (see kpi_print.c tee ring); (2) run any execlists tasklet the GT harvest
+	 * deferred (P6/Task 3), so submission makes progress even if this frame doesn't wait. */
 	lkpi_log_flush();
 	lkpi_tasklet_drain();
-	if (!g_ddev)
+	if (!g_ddev) {
+		lkpi_gate_exit();
 		return -ENODEV;
+	}
 	if (cmd == NANOS_DRM_IOCTL_SCANOUT_RESTORE) {
 		int rr = i915_scanout_restore();
 		(void)arg;
@@ -120,6 +126,7 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 		else
 			knx_log("i915: client scanout-restore FAILED (no snapshot or transcoder off)\n");
 		i915_present_set_suspended(0);
+		lkpi_gate_exit();
 		return rr == 0 ? 0 : -EIO;
 	}
 	/* Re-base the stack-overflow tripwire onto THIS ioctl's per-task 128 KiB heap stack (the probe
@@ -130,19 +137,37 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	lkpi_stack_baseline();
 	lkpi_set_current_client(pid);   /* drm_ioctl logs current->comm/pid — name the real client */
 	c = client_get(pid, node);
-	if (!c)
+	if (!c) {
+		lkpi_gate_exit();
 		return -ENOMEM;
+	}
 	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
 	/* A successful SETCRTC means a KMS client now owns the scanout — stop the mirror
 	 * (node_release resumes it when the client goes away). */
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
 		i915_present_set_suspended(1);
+	lkpi_gate_exit();
 	return r;
 }
 
 /* Resolve a GEM mmap fake-offset (bytes, from MODE_MAP_DUMB / GEM_MMAP_OFFSET) to the physical
  * range of the object's backing pages. The DRM vma manager keys nodes by page start. */
+static int node_mmap_offset_gated(uint64_t off, uint64_t *phys, uint64_t *len);
+
 static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len)
+{
+	int r;
+	(void)pid;
+	if (!g_ddev)
+		return -ENODEV;
+	/* Same one-executor rule as node_ioctl: the vma lookup + pin walk driver state. */
+	lkpi_gate_enter();
+	r = node_mmap_offset_gated(off, phys, len);
+	lkpi_gate_exit();
+	return r;
+}
+
+static int node_mmap_offset_gated(uint64_t off, uint64_t *phys, uint64_t *len)
 {
 	struct drm_vma_offset_node *vnode;
 	struct i915_mmap_offset *mmo;
@@ -150,9 +175,6 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 	struct scatterlist *sg;
 	unsigned long long p0 = 0, expect = 0;
 	int r;
-	(void)pid;
-	if (!g_ddev)
-		return -ENODEV;
 
 	drm_vma_offset_lock_lookup(g_ddev->vma_offset_manager);
 	vnode = drm_vma_offset_exact_lookup_locked(g_ddev->vma_offset_manager,
@@ -198,6 +220,7 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 static void node_release(int pid)
 {
 	int i, left = 0, freed = 0;
+	lkpi_gate_enter();              /* drm_file_free tears down GEM/KMS state — one-executor rule */
 	lkpi_set_current_client(pid);   /* drm_file_free logs current->comm too */
 	for (i = 0; i < NODE_MAX_CLIENTS; i++) {
 		if (g_cli[i].file && g_cli[i].pid == pid) {
@@ -208,8 +231,10 @@ static void node_release(int pid)
 		} else if (g_cli[i].file)
 			left++;
 	}
-	if (!freed || left)
+	if (!freed || left) {
+		lkpi_gate_exit();
 		return;
+	}
 	/* Last KMS client gone. drm_file_free -> drm_fb_release -> atomic_remove_fb disabled the
 	 * primary plane (transcoder stays up), blanking the panel. Bring the console back by
 	 * replaying the plane registers snapshotted after probe, then resume the mirror (coarse
@@ -222,6 +247,7 @@ static void node_release(int pid)
 			knx_log("i915: scanout restore skipped — transcoder off (full modeset needed, reboot)\n");
 	}
 	i915_present_set_suspended(0);
+	lkpi_gate_exit();
 }
 
 static const struct knx_drm_ops g_node_ops = { node_ioctl, node_mmap_offset, node_release };

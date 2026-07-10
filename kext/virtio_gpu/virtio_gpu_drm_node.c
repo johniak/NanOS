@@ -92,15 +92,21 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	long r;
 	if (!g_ddev)
 		return -ENODEV;
+	/* Cross-core gate (kpi_misc.c): same one-executor rule as the i915 node — the shim's worker/
+	 * timer/rcu daemons take it around every driver-code run, so the ioctl path must too. */
+	lkpi_gate_enter();
 	lkpi_set_current_client(pid);   /* drm_ioctl logs current->comm/pid — name the real client */
 	c = client_get(pid, node);
-	if (!c)
+	if (!c) {
+		lkpi_gate_exit();
 		return -ENOMEM;
+	}
 	r = drm_ioctl(&c->shim, cmd, (unsigned long)arg);
 	/* A successful MODE_SETCRTC means a KMS client now owns the scanout — stop the console mirror.
 	 * (node_release re-enables it when the client goes away.) */
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
 		virtio_gpu_present_set_suspended(1);
+	lkpi_gate_exit();
 	return r;
 }
 
@@ -117,13 +123,16 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 	(void)pid;
 	if (!g_ddev)
 		return -ENODEV;
+	lkpi_gate_enter();              /* one-executor rule (see node_ioctl) */
 
 	drm_vma_offset_lock_lookup(g_ddev->vma_offset_manager);
 	vnode = drm_vma_offset_exact_lookup_locked(g_ddev->vma_offset_manager,
 						   off >> PAGE_SHIFT, 1);
 	drm_vma_offset_unlock_lookup(g_ddev->vma_offset_manager);
-	if (!vnode)
+	if (!vnode) {
+		lkpi_gate_exit();
 		return -EINVAL;
+	}
 	obj = container_of(vnode, struct drm_gem_object, vma_node);
 
 	/* Pin the shmem pages (drm_gem_shmem_get_pages is static in 6.12; drm_gem_shmem_pin is the
@@ -132,11 +141,15 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 	shmem = to_drm_gem_shmem_obj(obj);
 	if (!shmem->pages) {
 		int r = drm_gem_shmem_pin(shmem);
-		if (r)
+		if (r) {
+			lkpi_gate_exit();
 			return r;
+		}
 	}
-	if (!shmem->pages || !shmem->pages[0])
+	if (!shmem->pages || !shmem->pages[0]) {
+		lkpi_gate_exit();
 		return -ENOMEM;
+	}
 
 	/* Our shmem backing (linuxkpi kpi_mm) is one contiguous block: phys of page 0 covers the
 	 * whole object. Assert contiguity (fail loud, never map a corrupt range). */
@@ -146,17 +159,20 @@ static int node_mmap_offset(int pid, uint64_t off, uint64_t *phys, uint64_t *len
 		if (!shmem->pages[i] ||
 		    (unsigned long) page_to_phys(shmem->pages[i]) != p0 + i * PAGE_SIZE) {
 			knx_log("virtio_gpu: GEM shmem not physically contiguous — refusing mmap\n");
+			lkpi_gate_exit();
 			return -EIO;
 		}
 	}
 	*phys = p0;
 	*len  = obj->size;
+	lkpi_gate_exit();
 	return 0;
 }
 
 static void node_release(int pid)
 {
 	int i;
+	lkpi_gate_enter();              /* drm_file_free tears down GEM/KMS state — one-executor rule */
 	lkpi_set_current_client(pid);   /* drm_file_free logs current->comm too */
 	for (i = 0; i < NODE_MAX_CLIENTS; i++)
 		if (g_cli[i].file && g_cli[i].pid == pid) {
@@ -168,6 +184,7 @@ static void node_release(int pid)
 			 * SETCRTC; fine for the single-compositor model here.) */
 			virtio_gpu_present_set_suspended(0);
 		}
+	lkpi_gate_exit();
 }
 
 static const struct knx_drm_ops g_node_ops = { node_ioctl, node_mmap_offset, node_release };

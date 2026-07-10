@@ -171,6 +171,11 @@ int knx_add_input_dev(CharDevice* dev) {
 // The C-ABI exports below are thin wrappers over the kernel::-linkage helpers (defined after the
 // extern "C" block), so DrmDevice.cpp (which calls kernel::syscallCurrentPid) links correctly.
 int  knx_getpid(void)                            { return syscallCurrentPid(); }
+// Opaque identity of the CURRENT execution context (scheduler Task*), stable across a yield and
+// across CPU migration — unlike a CPU id. Pre-scheduler it falls back to the running CPU's idle
+// task (a stable pointer), so boot-time single-threaded callers get one consistent identity.
+// Consumer: the LinuxKPI cross-core execution gate (lkpi_gate_enter/exit) keys recursion on it.
+void* knx_cur_task(void)                         { return (void*) kernel::Scheduler::current(); }
 void knx_drm_register(const struct knx_drm_ops* ops) { drmNodesRegister(ops); }
 // Short process name (Linux `comm`) for a pid — lets the DRM shim label its log lines with the
 // real client (glkms/gles2info/nwm) instead of a hard-coded driver name. Returns 0, or -1 for an

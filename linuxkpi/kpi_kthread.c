@@ -213,7 +213,15 @@ bool cancel_work_sync(struct work_struct *w) {
 static void wq_worker_body(void *arg) {
 	struct workqueue_struct *q = (struct workqueue_struct *)arg;
 	while (!knx_thread_should_stop()) {
-		if (!wq_run_one(q))
+		/* Work bodies are i915 code — they must hold the cross-core gate (kpi_misc.c). TRY, don't
+		 * block: while the desktop owns the gate (a frame-long DRM ioctl) its own pump drains these
+		 * queues anyway, so a worker that can't get the gate just sleeps instead of spinning a core. */
+		int ran = 0;
+		if (lkpi_gate_try_enter()) {
+			ran = wq_run_one(q);
+			lkpi_gate_exit();
+		}
+		if (!ran)
 			knx_thread_msleep(4);   /* idle: SLEEP (busy-yield would starve the run queue) */
 	}
 }
@@ -289,7 +297,14 @@ static void timers_service(void) {
 static void timer_thread_body(void *arg) {
 	(void)arg;
 	while (!knx_thread_should_stop()) {
-		timers_service();
+		/* Run the FULL pump, not just timers: with latch-only MSI dispatch (kpi_irq.c) the GT/display
+		 * handlers execute only in the pump harvest, and when nobody is waiting (idle desktop, nwm in
+		 * userspace) THIS loop is what picks completions up — a ~4 ms ceiling on completion latency.
+		 * TRY the gate: while a DRM ioctl owns it, that thread's own waits pump everything anyway. */
+		if (lkpi_gate_try_enter()) {
+			lkpi_wait_pump();        /* timers + wq drain + irq harvest + tasklet drain, gated */
+			lkpi_gate_exit();
+		}
 		knx_thread_msleep(4);   /* ~4 ms timer resolution; sleep so we don't hog the CPU */
 	}
 }

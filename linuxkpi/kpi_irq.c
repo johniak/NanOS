@@ -218,19 +218,18 @@ void lkpi_irq_dispatch(int irq) {
 	d->fires++;
 	if (++g_total_fires == 1) {
 		knx_log("lkpi: irq fired>0\n");   /* smoke assertion: an MSI reached a request_irq handler */
-		printk("lkpi: FIRST irq dispatch (irq %d) — a GT/display MSI was delivered\n", irq);
+		printk("lkpi: FIRST irq dispatch (irq %d) — a GT/display MSI was delivered (latch-only)\n", irq);
 	}
-	/* An MSI delivered ON TOP of an already-deep i915 call chain runs the handler (and any inline
-	 * tasklet it schedules) on the same stack — a candidate for the overflow. Name it before it dies. */
-	if (lkpi_stack_deep()) lkpi_deep_report("lkpi_irq_dispatch", __builtin_return_address(0));
-
-	irqreturn_t r = IRQ_WAKE_THREAD;      /* h==NULL means "always wake the thread" (Linux default) */
-	lkpi_in_irq++;                        /* the tee RAM-buffers anything logged from here (deadlock-safe) */
-	if (d->handler)
-		r = d->handler(irq, d->dev);
-	if (r == IRQ_WAKE_THREAD && d->thread_fn)
-		d->thread_fn(irq, d->dev);        /* interim inline; Task 3 moves this to an irq thread */
-	lkpi_in_irq--;
+	/* LATCH-ONLY: the hard-IRQ frame runs NO driver code. Running gen8_irq_handler here executed
+	 * the whole display/GT bottom half in interrupt context on whatever core the fixed MSI vector
+	 * targets — CONCURRENTLY with the nwm thread's i915 section on another core, under the shim's
+	 * no-op locks (every CLI-based exclusion in the shim is per-core). That cross-core window is
+	 * the Dell GL-desktop freeze class (see the gate note in lkpi_knx.h). The handlers now run
+	 * exclusively via lkpi_irq_poll — the pump harvest — in thread context under the gate; the
+	 * poll reads the device's own IIR/CSB registers, so nothing is lost by not running here, the
+	 * completion is simply picked up by the next pump turn (every wait pumps; the ktimers daemon
+	 * pumps the harvest every ~4 ms for the nobody-is-waiting case). MSIs are edge-triggered and
+	 * the IIR bits stay latched in the device until the harvest reads them. */
 }
 
 /* The kernel MSI trampoline (knx_register_msi's handler) forwards here with ctx = the irq number. */

@@ -80,7 +80,13 @@ void lkpi_rcu_drain(void)
 	if (!batch)
 		return;
 	knx_rcu_synchronize();
+	/* The callbacks free i915 objects and may run driver code — cross-core-gated like every other
+	 * thread entry (kpi_misc.c). Gate only the batch run, NOT the grace period above: synchronize
+	 * blocks on other CPUs scheduling, and holding the gate across it would stall them for nothing.
+	 * Blocking enter is fine here — the batch is bounded and this thread sleeps between drains. */
+	lkpi_gate_enter();
 	rcu_run_batch(batch);
+	lkpi_gate_exit();
 }
 
 static void rcu_drainer_body(void *arg)
