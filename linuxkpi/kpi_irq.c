@@ -91,8 +91,13 @@ static unsigned long tl_lock(void) {
 #else
 	fl = 0;
 #endif
-	while (__atomic_test_and_set(&g_tl_spin, __ATOMIC_ACQUIRE))
-		__asm__ __volatile__("pause");
+	while (__atomic_test_and_set(&g_tl_spin, __ATOMIC_ACQUIRE)) {
+#ifndef NANOS_HOST_TEST
+		__asm__ __volatile__("pause");   /* `pause` is x86-only; the ARM host doctest gets a barrier */
+#else
+		__asm__ __volatile__("" ::: "memory");
+#endif
+	}
 	return fl;
 }
 static void tl_unlock(unsigned long fl) {
@@ -287,6 +292,16 @@ void lkpi_irq_poll(void) {
 	lkpi_in_irq--;
 	g_irq_polling = 0;
 }
+
+#ifdef NANOS_HOST_TEST
+/* Host doctest hook: mark a slot bound so lkpi_irq_poll harvests it. On the target `bound` is set
+ * by lkpi_irq_bind_msi (a real MSI route); the host has none (knx_register_msi stubs to -1). */
+void lkpi_irq_test_bind(int irq) {
+	struct lkpi_irq_desc *d = desc_of(irq);
+	if (d)
+		d->bound = 1;
+}
+#endif
 
 /* kpi_fence.c: register lkpi_irq_poll as a wait-pump source. Declared here (plain, like lkpi_wait_pump)
  * to avoid a header include cycle; wired on the first MSI bind so any MSI driver gets pump-harvested. */

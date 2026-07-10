@@ -152,6 +152,9 @@ public:
 	int readlink(String path, char* buf, unsigned size);
 	int readdir(String path, List<DirEntry>& out);
 	int write(String path, unsigned size, unsigned off, const void* buf);
+	// Atomic append (stat + write at EOF in ONE critical section) — two concurrent appenders to
+	// the same file must never clobber each other's extension. The kernel log sinks use this.
+	int append(String path, unsigned size, const void* buf);
 	int ioctl(String path, unsigned cmd, void* arg);
 	int mmapInfo(String path, uint64_t* physOut, unsigned* lenOut);
 	int mmapAt(String path, uint64_t off, uint64_t* physOut, unsigned* lenOut);

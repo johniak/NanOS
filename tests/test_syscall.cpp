@@ -805,3 +805,41 @@ TEST_CASE("fork (copy) inherits the working directory") {
 	CHECK(child.getcwd(cwd, sizeof cwd) > 0);
 	CHECK(strcmp(cwd, "/boot") == 0);      // child starts in the parent's directory
 }
+
+TEST_CASE("O_APPEND lands at the LIVE end of file: two fds to one file never clobber") {
+	// Regression: the per-fd write path cached the file size at open and appended at THAT — so a
+	// second fd (another logger process on the target) kept overwriting the first one's records
+	// (the Dell's vanished nwm.txt/i915-boot.txt lines). Every O_APPEND write must go to the
+	// file's live end, atomically (Vfs::append).
+	Syscalls sc(mountFixture(), sink);
+	CHECK(sc.mkdir("/ap", 0755) == 0);
+	int a = sc.open("/ap/log", O_CREAT | O_APPEND);
+	REQUIRE(a >= 3);
+	int b = sc.open("/ap/log", O_APPEND);
+	REQUIRE(b >= 3);
+	CHECK(sc.write(a, "AAAA", 4) == 4);
+	CHECK(sc.write(b, "BBBB", 4) == 4);   // must extend past a's record, not overwrite it
+	CHECK(sc.write(a, "CCCC", 4) == 4);   // and a must see b's extension too
+	CHECK(sc.close(a) == 0);
+	CHECK(sc.close(b) == 0);
+	int r = sc.open("/ap/log", 0);
+	REQUIRE(r >= 3);
+	char buf[16] = {0};
+	CHECK(sc.read(r, buf, 12) == 12);
+	CHECK(strncmp(buf, "AAAABBBBCCCC", 12) == 0);
+	CHECK(sc.close(r) == 0);
+}
+
+TEST_CASE("Vfs::append creates on first use and extends at the live end (one locked section)") {
+	// The kernel log sinks (panic sink + printk tee) both extend the same file; the old
+	// stat-then-write pair let their extensions clobber each other (lost [ring3 fault] lines).
+	Vfs* vfs = mountFixture();
+	CHECK(vfs->append(String("/apv.txt"), 4, "1111") == 4);   // absent -> created, written at 0
+	CHECK(vfs->append(String("/apv.txt"), 4, "2222") == 4);   // extended at the live end
+	FileStat st;
+	REQUIRE(vfs->stat(String("/apv.txt"), st) == 0);
+	CHECK(st.size == 8);
+	char b[8];
+	CHECK(vfs->read(String("/apv.txt"), 8, 0, b) == 8);
+	CHECK(strncmp(b, "11112222", 8) == 0);
+}

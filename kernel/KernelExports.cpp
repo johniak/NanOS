@@ -119,13 +119,10 @@ int knx_file_read(const char* path, void* buf, unsigned long max, unsigned long*
 int knx_file_append(const char* path, const void* buf, unsigned long len) {
 	if (!g_kexVfs || !path || !buf) return -2;
 	String p((char*) path);
-	FileStat st;
-	unsigned off = 0;
-	if (g_kexVfs->stat(p, st) >= 0)
-		off = st.size;                      // append at end
-	else if (g_kexVfs->create(p, 0644) < 0)
-		return -2;                          // could not create the log file
-	return g_kexVfs->write(p, (unsigned) len, off, buf);
+	// Vfs::append holds the VFS lock across stat+write: the old stat-here/write-there pair let two
+	// concurrent appenders (panic sink vs printk tee, both extending i915-boot.txt) read the same
+	// size and overwrite each other's extension — lines silently vanished.
+	return g_kexVfs->append(p, (unsigned) len, buf);
 }
 
 // Register a persistent panic sink: faultHandler hands it one preformatted line on a ring-0 CPU

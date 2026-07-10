@@ -453,6 +453,18 @@ int main(void) {
 			}
 			int fast = (now_ms() - nwm_started) < 700;
 			nwm_fastfails = fast ? nwm_fastfails + 1 : 0;
+			/* Crash resume: a SIGNALED death of an ESTABLISHED session (not a fast-fail loop) is a
+			 * compositor crash, not a logout. Flag the greeter to restart the last-authenticated
+			 * user's desktop without re-prompting (user/greeter.c consumes the flag one-shot).
+			 * Cap it so a hard crash-loop still surfaces the login prompt within a few respawns. */
+			static int gfx_resumes = 0;
+			if (WIFSIGNALED(st) && !fast && gfx_resumes < 3) {
+				int rf = open("/tmp/nanos-gfx-resume", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+				if (rf >= 0) { write(rf, "1", 1); close(rf); }
+				gfx_resumes++;
+			} else if (!WIFSIGNALED(st)) {
+				gfx_resumes = 0;              /* a clean logout re-arms the resume budget */
+			}
 			nanosleep(&bo, 0);
 			if (nwm_fastfails >= 4) {
 				note("init: graphics console disabled after repeated immediate exits\n");

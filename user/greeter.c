@@ -21,11 +21,21 @@
 #include <crypt.h>
 #include <termios.h>
 #include <sys/ioctl.h>
+#include <fcntl.h>           /* open/O_RDONLY: the crash-resume flag files */
 
 #define NWM_PATH  "/disks/main/nanos/bin/nwm.nxe"
 #define KDSETMODE 0x4B3A
 #define KD_TEXT   0x00
 #define MAX_TRIES 3          /* per greeter instance; init respawns us afterwards */
+
+/* Crash-resume handshake with init (both on the root tmpfs, root-only, gone at reboot):
+ *   GFX_USER   — the last successfully-authenticated graphics user (written here on manual auth);
+ *   GFX_RESUME — created by INIT when the graphics session died on a SIGNAL (a compositor crash,
+ *                not a logout). When present, skip the prompt and restart the desktop as GFX_USER:
+ *                the user already proved who they are this boot, and a crashing nwm must not cost
+ *                a full re-login per attempt (the Dell 3x-relogin pain). Init caps the resumes. */
+#define GFX_USER   "/tmp/nanos-gfx-user"
+#define GFX_RESUME "/tmp/nanos-gfx-resume"
 
 extern char** environ;
 
@@ -101,10 +111,58 @@ static void build_env(struct passwd* pw, char** out, int cap,
 	out[n] = 0;
 }
 
+/* Become `pw`, build its login env and exec the desktop. Only returns on exec failure. */
+static int start_session(struct passwd* pw) {
+	/* Become the user BEFORE exec: groups, then gid, then uid (after setuid we could no longer
+	 * change gid/groups). nwm then runs unprivileged, as that user. */
+	initgroups(pw->pw_name, pw->pw_gid);
+	setgid(pw->pw_gid);
+	setuid(pw->pw_uid);
+
+	const char* home = (pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : "/disks/main";
+	static char shellv[160], homev[160], userv[96], logv[96];
+	char* newenv[64];
+	build_env(pw, newenv, 64, shellv, homev, userv, logv);
+	chdir(home);
+
+	char* argv[] = { (char*) "nwm", 0 };
+	execve(NWM_PATH, argv, newenv);
+	perror("login: exec nwm");        /* exec failed: bail, init respawns the greeter */
+	return 127;
+}
+
 int main(void) {
 	/* We may have been respawned after nwm left tty7 in graphics mode — force it back to text so
 	 * the prompt is visible (no-op if it is already text). */
 	ioctl(0, KDSETMODE, (void*) KD_TEXT);
+
+	/* Crash resume: init created GFX_RESUME because the previous session died on a signal. The
+	 * user at GFX_USER already authenticated this boot — restart their desktop directly instead
+	 * of billing them a full re-login per compositor crash. One-shot: consume the flag first, so
+	 * a failure below falls back to the normal prompt on the next respawn. */
+	{
+		int rf = open(GFX_RESUME, O_RDONLY);
+		if (rf >= 0) {
+			close(rf);
+			unlink(GFX_RESUME);
+			char user[64];
+			int uf = open(GFX_USER, O_RDONLY);
+			if (uf >= 0) {
+				int n = read(uf, user, sizeof user - 1);
+				close(uf);
+				while (n > 0 && (user[n - 1] == '\n' || user[n - 1] == '\r')) n--;
+				if (n > 0) {
+					user[n] = 0;
+					struct passwd* pw = getpwnam(user);
+					if (pw) {
+						printf("\nSession crashed — resuming desktop as %s\n", user);
+						fflush(stdout);
+						return start_session(pw);
+					}
+				}
+			}
+		}
+	}
 
 	for (int tries = 0; tries < MAX_TRIES; tries++) {
 		char user[64], pass[128];
@@ -120,22 +178,13 @@ int main(void) {
 			continue;
 		}
 
-		/* Authenticated. Become the user BEFORE exec: groups, then gid, then uid (after setuid we
-		 * could no longer change gid/groups). nwm then runs unprivileged, as that user. */
-		initgroups(pw->pw_name, pw->pw_gid);
-		setgid(pw->pw_gid);
-		setuid(pw->pw_uid);
-
-		const char* home = (pw->pw_dir && pw->pw_dir[0]) ? pw->pw_dir : "/disks/main";
-		static char shellv[160], homev[160], userv[96], logv[96];
-		char* newenv[64];
-		build_env(pw, newenv, 64, shellv, homev, userv, logv);
-		chdir(home);
-
-		char* argv[] = { (char*) "nwm", 0 };
-		execve(NWM_PATH, argv, newenv);
-		perror("login: exec nwm");        /* exec failed: bail, init respawns the greeter */
-		return 127;
+		/* Remember who authenticated (while still root; /tmp is the root tmpfs) so a later
+		 * compositor crash can resume this user's session without re-prompting. */
+		{
+			int uf = open(GFX_USER, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+			if (uf >= 0) { write(uf, user, strlen(user)); close(uf); }
+		}
+		return start_session(pw);
 	}
 	return 0;
 }

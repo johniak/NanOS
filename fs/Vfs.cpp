@@ -277,6 +277,22 @@ int Vfs::write(String path, unsigned size, unsigned off, const void* buf) {
 	return fs->write(rel, size, off, buf);
 }
 
+int Vfs::append(String path, unsigned size, const void* buf) {
+	// stat-then-write under ONE hold of the lock. Callers used to do stat(); write(st.size) as two
+	// separate critical sections, so two concurrent appenders extending the SAME file (the kernel
+	// panic sink and the lkpi printk tee both append to i915-boot.txt) could read the same size and
+	// clobber each other's extension — appended lines silently vanished (the Dell's missing
+	// "[ring3 fault]" evidence). The recursive lock lets the nested stat/create/write re-enter.
+	RecursiveGuard g(g_vfsLock);
+	FileStat st;
+	unsigned off = 0;
+	if (stat(path, st) >= 0)
+		off = st.size;
+	else if (create(path, 0644) < 0)
+		return -2;
+	return write(path, size, off, buf);
+}
+
 int Vfs::ioctl(String path, unsigned cmd, void* arg) {
 	RecursiveGuard g(g_vfsLock);
 	String rel;

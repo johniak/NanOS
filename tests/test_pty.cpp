@@ -140,3 +140,26 @@ TEST_CASE("Pty TIOCPKT packet mode prefixes a status byte on master reads") {
 	CHECK(out[0] == 'o');
 	CHECK(out[1] == 'k');
 }
+
+TEST_CASE("PtyMaster/PtySlave CharDevice adapters forward to the shared Pty") {
+	// Covers the thin inline adapters (drivers/Pty.h): read/write/poll/waitQueue/mmapInfo on
+	// both device faces route to the one Pty ring pair.
+	Pty p;
+	PtyMaster m(&p);
+	PtySlave s(&p);
+	CHECK(m.write(0, "hi\n", 3) == 3);       // master -> slave (canonical commit on \n)
+	char in[8] = {0};
+	CHECK(s.read(0, in, sizeof in) == 3);
+	CHECK(strncmp(in, "hi\n", 3) == 0);
+	char ech[16] = {0};
+	CHECK(m.read(0, ech, sizeof ech) > 0);   // the echo came back on the master face
+	CHECK(s.write(0, "ok", 2) == 2);         // slave -> master
+	char out[8] = {0};
+	CHECK(m.read(0, out, sizeof out) == 2);
+	CHECK(strncmp(out, "ok", 2) == 0);
+	uint64_t ph; unsigned ln;
+	CHECK(m.mmapInfo(&ph, &ln) == -1);       // ptys are not mappable
+	CHECK(s.mmapInfo(&ph, &ln) == -1);
+	CHECK(m.waitQueue() == p.waitQueue());   // both faces park on the one wait list
+	CHECK(s.waitQueue() == p.waitQueue());
+}

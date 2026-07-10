@@ -143,3 +143,33 @@ TEST_CASE("allocAbove interoperates with free (frame returns to the pool)") {
 	CHECK(fa->allocAbove(0x10000) == a);            // handed back out
 	delete fa;
 }
+
+TEST_CASE("allocContigAbove finds an aligned run above minPa and freeContig returns it") {
+	// The GEM backing-store path (knx_alloc_frames): contiguous multi-frame runs, allocated at
+	// or above a floor so the block clears every privatized per-process VA window.
+	FrameAllocator* fa = fresh(64ull << 20);              // 64 MiB of frames
+	fa->markRangeFree(8ull << 20, 32ull << 20);           // free window [8,40) MiB
+	uint64_t before = fa->freeCount();
+	uint64_t run = fa->allocContigAbove(16ull << 20, 8);  // 8 contiguous frames >= 16 MiB
+	REQUIRE(run != 0);
+	CHECK(run >= (16ull << 20));
+	CHECK((run & 0xFFF) == 0);
+	CHECK(fa->freeCount() == before - 8);
+	// The run is genuinely exclusive: a second run must not overlap it.
+	uint64_t run2 = fa->allocContigAbove(16ull << 20, 8);
+	REQUIRE(run2 != 0);
+	bool disjoint = (run2 >= run + 8 * 4096) || (run2 + 8 * 4096 <= run);
+	CHECK(disjoint);
+	fa->freeContig(run, 8);
+	fa->freeContig(run2, 8);
+	CHECK(fa->freeCount() == before);
+	delete fa;
+}
+
+TEST_CASE("allocContigAbove reports OOM when no run fits above the floor") {
+	FrameAllocator* fa = fresh(64ull << 20);
+	fa->markRangeFree(8ull << 20, 1ull << 20);            // only [8,9) MiB free (256 frames)
+	CHECK(fa->allocContigAbove(32ull << 20, 4) == 0);     // nothing free above 32 MiB
+	CHECK(fa->allocContigAbove(8ull << 20, 512) == 0);    // window too small for 512 frames
+	delete fa;
+}

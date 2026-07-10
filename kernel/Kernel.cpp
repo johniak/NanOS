@@ -57,6 +57,10 @@ namespace kernel {
 // address — correct for sizing the frame bitmap and the identity map.
 uint64_t g_usableRamBytes = 0;
 
+// Spinlock wedge tripwire (Spinlock.h). Null until the VT manager is up (armed below in
+// kernelMain); host unit tests never arm it, so the contended-spin check stays a no-op there.
+void (*g_spinStallSink)(const void* ra) = nullptr;
+
 // Live system memory figures (kB) for /proc/meminfo. MemTotal is total usable RAM; MemFree is the
 // free physical page frames; KHeap* is the kernel byte heap.
 unsigned sysMemTotalKb() {
@@ -518,6 +522,23 @@ void Kernel::start() {
 					arch::consoleSerialOut);     // mirror the visible VT + kernel console to the serial log
 			kernel::g_vtmgr = vtmgr;
 			okEnd();
+
+			// Arm the spinlock wedge tripwire (Spinlock.h): a waiter starved for ~10^9 pause
+			// iterations (several seconds — no honest critical section) forces the panel back to
+			// a text VT and prints its site ON SCREEN. This is the evidence channel of last
+			// resort for a wedged USB/FS lock: every file-backed log is itself behind that lock,
+			// so a Dell freeze with silent logs was undiagnosable — now it photographs.
+			kernel::g_spinStallSink = [](const void* ra) {
+				static volatile int once = 0;
+				if (__atomic_exchange_n(&once, 1, __ATOMIC_ACQ_REL))
+					return;
+				if (kernel::g_vtmgr)
+					kernel::g_vtmgr->panicSwitchToText();
+				kernel::Console::write("\n*** SPINLOCK STALL >~5s ra=");
+				kernel::Console::writeHex((unsigned long) (uintptr_t) ra);
+				kernel::Console::writeLine(" — a kernel lock is wedged (holder never released)."
+						" Photograph this screen. ***");
+			};
 
 			// /dev nodes for the consoles: tty1..tty7 (per-VT), tty0 (the active VT), tty (the
 			// caller's controlling VT), console (the kernel console = VT1). login/getty opens

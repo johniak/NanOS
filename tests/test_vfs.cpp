@@ -217,3 +217,50 @@ TEST_CASE("Vfs reports EEXIST for mkdir of a mount-point root (lets mkdir -p cro
 	CHECK(vfs.mkdir("/disks/new", 0755) == -30);
 	CHECK(strcmp(sub.received, "/new") == 0);
 }
+
+// ---- FileSystem base-class defaults --------------------------------------------------------
+// A minimal filesystem that overrides ONLY the pure-virtuals: every optional operation must fall
+// back to the documented default (-EROFS for mutations, -EINVAL for device ops, stat for lstat,
+// "always ready" for poll). These defaults are the contract every read-only fs relies on.
+namespace {
+struct MinimalFS : FileSystem {
+	int mount() override { return 0; }
+	int read(String, unsigned, unsigned, void*) override { return 0; }
+	int stat(String, FileStat& out) override { out.size = 7; return 0; }
+	int readdir(String, List<DirEntry>&) override { return 0; }
+};
+}
+
+TEST_CASE("FileSystem optional-op defaults: -EROFS mutations, -EINVAL device ops, lstat=stat") {
+	MinimalFS fs;
+	FileStat st;
+	CHECK(fs.lstat(String("/x"), st) == 0);          // default lstat forwards to stat
+	CHECK(st.size == 7);
+	char t[4];
+	CHECK(fs.readlink(String("/x"), t, 4) == -22);
+	CHECK(fs.write(String("/x"), 1, 0, "a") == -30);
+	CHECK(fs.ioctl(String("/x"), 0, 0) == -22);
+	uint64_t ph; unsigned ln;
+	CHECK(fs.mmapInfo(String("/x"), &ph, &ln) == -22);
+	CHECK(fs.mmapAt(String("/x"), 0, &ph, &ln) == -22);    // off 0 forwards to mmapInfo
+	CHECK(fs.mmapAt(String("/x"), 4096, &ph, &ln) == -22); // nonzero offset: unsupported
+	CHECK(fs.pollReady(String("/x"), 5) == 5);       // ordinary files never block
+	CHECK(fs.waitQueueAt(String("/x")) == nullptr);
+	CHECK(fs.deviceOpen(String("/x")) == false);
+	fs.deviceClose(String("/x"));                    // no-op, must not crash
+	CHECK(fs.create(String("/x"), 0644) == -30);
+	CHECK(fs.mknod(String("/x"), 0) == -30);
+	CHECK(fs.unlink(String("/x")) == -30);
+	CHECK(fs.mkdir(String("/x"), 0755) == -30);
+	CHECK(fs.rmdir(String("/x")) == -30);
+	CHECK(fs.rename(String("/x"), String("/y")) == -30);
+	CHECK(fs.link(String("/x"), String("/y")) == -30);
+	CHECK(fs.symlink(String("/x"), String("/y")) == -30);
+	CHECK(fs.truncate(String("/x"), 0) == -30);
+	CHECK(fs.chmod(String("/x"), 0644) == -30);
+	CHECK(fs.chown(String("/x"), 1, 2) == -30);
+	CHECK(fs.lchown(String("/x"), 1, 2) == -30);     // default forwards to chown
+	CHECK(fs.utimes(String("/x"), 0, 0) == -30);
+	StatFs sf;
+	CHECK(fs.statfs(String("/x"), sf) == -22);
+}

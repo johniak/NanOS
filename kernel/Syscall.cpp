@@ -435,8 +435,26 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 		}
 		return consoleWrite((const char*) buf, n);
 	}
-	if (fds[fd].flags & O_APPEND)             // O_APPEND: each write lands at end-of-file
-		fds[fd].offset = fds[fd].size;
+	if (fds[fd].flags & O_APPEND) {
+		// O_APPEND must land at the LIVE end-of-file, atomically. The old code used the per-fd
+		// cached `size` — a per-process snapshot that ignores every other process's appends, so
+		// two appenders to one file (e.g. the old and new nwm tee loggers across a respawn)
+		// deterministically overwrote each other's lines. Vfs::append stats and writes under one
+		// hold of the VFS lock; refresh our cached offset/size from the result afterwards.
+		int r = vfs->append(fds[fd].path, n, buf);
+		if (r > 0) {
+			FileStat st;
+			if (vfs->stat(fds[fd].path, st) >= 0) {
+				fds[fd].size   = (off_t) st.size;
+				fds[fd].offset = (off_t) st.size;
+			} else {
+				fds[fd].offset += (off_t) r;
+				if (fds[fd].offset > fds[fd].size)
+					fds[fd].size = fds[fd].offset;
+			}
+		}
+		return r;
+	}
 	// Route to the VFS: ordinary files return -EROFS (the default), but a device node
 	// (e.g. /dev/fb0) accepts the write.
 	int r = vfs->write(fds[fd].path, n, (unsigned) fds[fd].offset, buf);

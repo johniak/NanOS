@@ -43,6 +43,16 @@ extern "C" void  knx_thread_msleep(unsigned) {}
 // One constant identity: the host doctest is single-threaded, so the cross-core gate always sees
 // the same "task" and recurses instead of ever spinning.
 extern "C" void *knx_cur_task(void) { return (void *)1; }
+
+// Spinlock wedge tripwire (kernel/Spinlock.h): defined by Kernel.cpp on the target, which the
+// host test link excludes — stub it unarmed here so contended test spins stay silent.
+namespace kernel { void (*g_spinStallSink)(const void *ra) = nullptr; }
+// Cross-core gate (linuxkpi/kpi_misc.c): some doctest binaries link kpi_rcu/kpi_fence without
+// kpi_misc. WEAK no-ops satisfy those links; when kpi_misc.c IS linked its strong (and on the
+// single-threaded host, trivially recursive) definitions win.
+extern "C" __attribute__((weak)) void lkpi_gate_enter(void) {}
+extern "C" __attribute__((weak)) void lkpi_gate_exit(void) {}
+extern "C" __attribute__((weak)) int  lkpi_gate_try_enter(void) { return 1; }
 extern "C" void  knx_rcu_synchronize(void) {}   // host doctest is single-threaded: a grace period is instant
 extern "C" void  knx_run_after_scheduler(void (*fn)(void)) { if (fn) fn(); }
 // knx_file_read stand-in for the request_firmware doctest: a single settable fake file. The test

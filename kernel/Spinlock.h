@@ -5,6 +5,14 @@
 
 namespace kernel {
 
+// Wedge tripwire sink (Kernel.cpp arms it once the VT manager is up; null on the host tests and
+// during early boot). A waiter that has spun ~10^9 pause-iterations (several SECONDS of continuous
+// starvation — no honest critical section is that long) reports its return address here ONCE. The
+// sink switches the panel to a text VT and prints on screen, so a wedged lock (e.g. the USB/FS
+// path dead-locking under a desktop session) leaves photographable evidence even when every
+// file-backed log channel is itself behind the wedged lock.
+extern void (*g_spinStallSink)(const void* ra);
+
 // A ticket spinlock: FIFO-fair, so a CPU cannot be starved. `now`/`next` are the served
 // and the next-to-hand-out ticket. Lock-free via GCC __atomic builtins (lowered to `lock
 // xadd`/`lock cmpxchg` on x86_64; on the host they are real atomics for the unit tests).
@@ -14,6 +22,7 @@ class Spinlock {
 public:
 	void lock() {
 		uint32_t t = __atomic_fetch_add(&next, 1, __ATOMIC_RELAXED);
+		unsigned long spins = 0;
 		while (__atomic_load_n(&now, __ATOMIC_ACQUIRE) != t) {
 			// A CPU spinning here has interrupts disabled (every lock is taken IRQ-safe or under the
 			// BKL). Servicing a pending TLB shootdown from inside the spin is what lets a synchronous
@@ -21,6 +30,8 @@ public:
 			// arch::smpTlbShootdown. No-op on a uniprocessor / when nothing is pending.
 			arch::smpPollShootdown();
 			arch::cpuRelax();   // PAUSE hint via the arch contract (keeps this header MI)
+			if (++spins == 1000000000UL && g_spinStallSink)
+				g_spinStallSink(__builtin_return_address(0));   // RA = the guard/caller site (inlined)
 		}
 	}
 	void unlock() {
