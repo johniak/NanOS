@@ -282,8 +282,7 @@ static const char *FS_WIN =
 	"        }\n"
 	"    }\n"
 	"\n"
-	"    float band_ink = smoothstep(0.02, 0.10, max(content.r, max(content.g, content.b)));\n"
-	"    float inkcov   = mix(band_ink, ctex.a, cin * u_inkwin);\n"
+	"    float inkcov = ctex.a * mix(1.0, u_inkwin, cin);\n"   /* band: real alpha; client: alpha only for ink windows */
 	"    vec3  lit      = mix(glass, content, inkcov);\n"
 	"    vec3  col      = mix(lit, content, cin * (1.0 - u_inkwin));\n"
 	"\n"

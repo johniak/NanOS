@@ -931,6 +931,10 @@ int main(void)
 	glkms_diag("nwm-gl: settings applied; refresh_wallpaper...\n");
 #endif
 	refresh_wallpaper();                       /* render the wallpaper per the chosen mode */
+	nw_compose_set_wallpaper_ref(&g_wall_surf);   /* live ref for Aero glow ink-polarity sampling;
+	                                                * g_wall_surf is a static struct, outlives the
+	                                                * session, and refresh_wallpaper() (incl. later
+	                                                * settings-reload calls) updates it in place. */
 #ifdef NWM_GL
 	glkms_diag("nwm-gl: wallpaper rendered\n");
 #endif

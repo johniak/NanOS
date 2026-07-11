@@ -8,6 +8,13 @@
  * the already-composited backdrop for the translucency. The wallpaper is pre-rendered once.
  */
 #include "nw_compose.h"
+#include "nwfont.h"
+#include <string.h>
+
+/* VGA 1-bit fallback glyphs, shared with nw_gfx.c/nterm/vtfont (definition lives in vtfont.c,
+ * already linked into every binary that pulls in nw_gfx.o for nw_text/nw_draw_text). Only used
+ * below when no TTF is loaded, matching nw_text's own fallback. */
+extern const unsigned char nx_font8x16[256][16];
 
 /* ---- palette (0x00RRGGBB) -------------------------------------------------------- */
 #define COL_WIN_LIGHT  0xf8fbff   /* light window material           */
@@ -92,6 +99,169 @@ void nw_render_wallpaper(const struct nw_surface *dst)
 	}
 }
 
+/* Live reference to the currently-shown wallpaper surface, for auto ink polarity sampling below.
+ * Set once by the shell (nwm.c, right after it renders/caches the wallpaper) — module-static for
+ * the same reason as s_accent/s_radius/s_glass_frame: draw_window_to has no server handle. */
+static const struct nw_surface *s_wall;
+
+void nw_compose_set_wallpaper_ref(const struct nw_surface *wall) { s_wall = wall; }
+
+/* Sample a sparse 8x2 grid of wallpaper pixels under rect (x,y,w,h); gamma-space luma
+ * Y=(77R+150G+29B)>>8, threshold 117 (~WCAG 0.179 linear) with +/-8 hysteresis so a window
+ * dragged across a light/dark wallpaper boundary doesn't flicker ink polarity every frame. */
+int nw_backdrop_wants_dark_ink(int x, int y, int w, int h, int prev)
+{
+	if (!s_wall || w < 8 || h < 2) return prev >= 0 ? prev : 1;
+	long acc = 0; int n = 0;
+	for (int j = 0; j < 2; j++) for (int i = 0; i < 8; i++) {
+		int sx = x + (w * (2 * i + 1)) / 16, sy = y + (h * (2 * j + 1)) / 4;
+		if (sx < 0 || sy < 0 || sx >= s_wall->w || sy >= s_wall->h) continue;
+		uint32_t p = s_wall->px[(size_t) sy * s_wall->stride + sx];
+		acc += (77 * ((p >> 16) & 0xff) + 150 * ((p >> 8) & 0xff) + 29 * (p & 0xff)) >> 8;
+		n++;
+	}
+	if (!n) return prev >= 0 ? prev : 1;
+	int luma = (int) (acc / n);
+	if (prev == 1 && luma < 109) return 0;      /* hysteresis band 109..125 */
+	if (prev == 0 && luma > 125) return 1;
+	if (prev < 0) return luma > 117;
+	return prev;
+}
+
+/* ---- Aero caption glow (glass frame only) ----------------------------------------- */
+/* GLOW_R: box-blur radius (px) for the first, softest pass (halved for the second pass).
+ * GLOW_MAXW: hard cap on the glow buffer width — long titles get clipped to this minus the
+ * blur padding, never overflow the static buffers below (no per-frame allocation). */
+#define GLOW_R    6
+#define GLOW_MAXW 512
+
+/* Rasterize `str`'s glyph coverage into `cov[][GLOW_MAXW]` (row-major, physical width GLOW_MAXW,
+ * physical height `h` <= NW_TITLEBAR_H), MAX-combined so overlapping coverage never wraps or
+ * double-counts. Same glyph walk/metrics as nw_text/nw_text_argb (byte-at-a-time, no UTF-8
+ * decode, nwfont_get(NWFONT_UI, cp) + advance, baseline = ty0 + ascent) but writes into a plain
+ * byte buffer instead of blending onto a surface. `x0`/`ty0` are LOCAL to the buffer (x0 = left
+ * pen start, ty0 = line-box top) — the caller (draw_caption_glow) adds the frame's screen/window
+ * offset only once, at the final composite. Falls back to the 1-bit VGA font (full 255 coverage
+ * per set pixel) when no TTF is loaded, matching nw_text's own fallback. */
+static void rasterize_run_coverage(uint8_t cov[][GLOW_MAXW], int h, int x0, int ty0, const char *str)
+{
+	int x = x0;
+	if (nwfont_loaded(NWFONT_UI)) {
+		int baseline = ty0 + nwfont_ascent(NWFONT_UI);
+		for (; *str; str++) {
+			const struct nwfont_glyph *g = nwfont_get(NWFONT_UI, (unsigned char) *str);
+			if (!g) continue;
+			if (g->cov) {
+				for (int gy = 0; gy < g->h; gy++) {
+					int py = baseline + g->top + gy;
+					if (py < 0 || py >= h) continue;
+					const unsigned char *covrow = g->cov + (long) gy * g->w;
+					for (int gx = 0; gx < g->w; gx++) {
+						int px = x + g->bx + gx;
+						if (px < 0 || px >= GLOW_MAXW) continue;
+						unsigned char c = covrow[gx];
+						if (c > cov[py][px]) cov[py][px] = c;
+					}
+				}
+			}
+			x += g->advance;
+		}
+		return;
+	}
+	for (; *str; str++) {
+		const unsigned char *glyph = nx_font8x16[(unsigned char) *str];
+		for (int row = 0; row < NW_FONT_H; row++) {
+			int py = ty0 + row;
+			if (py < 0 || py >= h) continue;
+			unsigned char bits = glyph[row];
+			for (int col = 0; col < NW_FONT_W; col++) {
+				int px = x + col;
+				if (px < 0 || px >= GLOW_MAXW) continue;
+				if ((bits & (0x80u >> col)) && cov[py][px] != 255) cov[py][px] = 255;
+			}
+		}
+		x += NW_FONT_W;
+	}
+}
+
+/* Running-sum box blur, radius r, horizontal/vertical. Clamped window at the ends (the divisor
+ * shrinks near an edge instead of treating out-of-range samples as 0), so the glow doesn't dim at
+ * the padded buffer edges. `src`/`dst` may alias (safe even when called box_blur_*(buf, buf, ...)
+ * for a second pass in place): each row/column is copied into a small local scratch first, so the
+ * running sum never reads a value this same pass already overwrote. O(w*h) total, no allocation. */
+static void box_blur_h(uint8_t src[][GLOW_MAXW], uint8_t dst[][GLOW_MAXW], int w, int h, int r)
+{
+	uint8_t row[GLOW_MAXW];
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) row[x] = src[y][x];
+		int sum = 0, cnt = 0;
+		for (int k = 0; k <= r && k < w; k++) { sum += row[k]; cnt++; }
+		for (int x = 0; x < w; x++) {
+			dst[y][x] = (uint8_t) (sum / cnt);
+			int add = x + r + 1, rem = x - r;
+			if (add < w)  { sum += row[add]; cnt++; }
+			if (rem >= 0) { sum -= row[rem]; cnt--; }
+		}
+	}
+}
+
+static void box_blur_v(uint8_t src[][GLOW_MAXW], uint8_t dst[][GLOW_MAXW], int w, int h, int r)
+{
+	uint8_t col[NW_TITLEBAR_H];
+	for (int x = 0; x < w; x++) {
+		for (int y = 0; y < h; y++) col[y] = src[y][x];
+		int sum = 0, cnt = 0;
+		for (int k = 0; k <= r && k < h; k++) { sum += col[k]; cnt++; }
+		for (int y = 0; y < h; y++) {
+			dst[y][x] = (uint8_t) (sum / cnt);
+			int add = y + r + 1, rem = y - r;
+			if (add < h)  { sum += col[add]; cnt++; }
+			if (rem >= 0) { sum -= col[rem]; cnt--; }
+		}
+	}
+}
+
+/* Aero caption glow: rasterize the title run's coverage once, box-blur it twice (r=6 then r=3,
+ * ~ Gaussian), gain it into a soft round sheet, then composite sheet-then-core with real alpha
+ * (nw_over_pixel — straight ARGB, so the GL shader's ctex.a carries the glow's own coverage; see
+ * Step 5 in nw_compose_gl.c). dark_ink=1: light sheet + dark core (legible over light glass/
+ * wallpaper); dark_ink=0: dark sheet + light core (dark glass, e.g. Terminal, or a dark wallpaper
+ * area). Unfocused windows get a lower gain (2x not 3x) and a dimmer core (x200/256).
+ *
+ * `cx` is the frame's horizontal centre and `oy` its top, both in `sc`'s OWN coordinate space —
+ * (0, 0)-relative for the window-local frame-cache render, or (w->x, w->y)-relative for the
+ * screen-space scratch render (matching how the classic ±1px halo above folds ox/oy into `ty`
+ * before drawing). The buffer itself is always rendered LOCAL (baseline row is a fixed offset
+ * within the title bar, independent of oy); `oy` is added back exactly once, at the final
+ * nw_over_pixel calls, so the glow lands in the right place in either coordinate space. */
+static void draw_caption_glow(const struct nw_surface *sc, int cx, int oy,
+                              const char *title, int dark_ink, int focused)
+{
+	static uint8_t cov[NW_TITLEBAR_H][GLOW_MAXW], tmp[NW_TITLEBAR_H][GLOW_MAXW];
+	int tw = nw_text_w(title);
+	if (tw > GLOW_MAXW - 4 * GLOW_R) tw = GLOW_MAXW - 4 * GLOW_R;
+	int W = tw + 4 * GLOW_R, H = NW_TITLEBAR_H;
+	int ty0 = (NW_TITLEBAR_H - NW_FONT_H) / 2;      /* local line-box top (== classic `ty - oy`) */
+	memset(cov, 0, sizeof(cov));
+	rasterize_run_coverage(cov, H, 2 * GLOW_R, ty0, title);
+	box_blur_h(cov, tmp, W, H, GLOW_R);    box_blur_v(tmp, tmp, W, H, GLOW_R);
+	box_blur_h(tmp, tmp, W, H, GLOW_R / 2); box_blur_v(tmp, tmp, W, H, GLOW_R / 2);
+
+	uint32_t sheet = dark_ink ? 0x00f2f6fa : 0x0010151f;
+	uint32_t core  = dark_ink ? 0x001a2330 : 0x00f0f4f8;
+	int gain = focused ? 3 : 2;
+	int x0 = cx - W / 2;
+	for (int yy = 0; yy < H; yy++) for (int xx = 0; xx < W; xx++) {
+		int a = tmp[yy][xx] * gain; if (a > 255) a = 255;
+		if (a) nw_over_pixel(sc, x0 + xx, oy + yy, ((uint32_t) a << 24) | sheet);
+	}
+	const uint8_t *lut = nw_cov143();
+	for (int yy = 0; yy < H; yy++) for (int xx = 0; xx < W; xx++) {
+		int a = lut[cov[yy][xx]]; if (!focused) a = (a * 200) >> 8;
+		if (a) nw_over_pixel(sc, x0 + xx, oy + yy, ((uint32_t) a << 24) | core);
+	}
+}
+
 /* ---- window rendering ------------------------------------------------------------ */
 static int frame_w(const struct nw_window *w) { return w->cw + 2 * NW_BORDER; }
 static int frame_h(const struct nw_window *w) { return NW_TITLEBAR_H + w->ch + NW_BORDER; }
@@ -109,7 +279,9 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	const char *title = dark ? w->title + 1 : w->title;
 
 	if (s_glass_frame) {
-		nw_fill_rect(sc, ox, oy, fw, fh, 0x000000);            /* key: glass everywhere... */
+		/* real-alpha ink canvas: transparent band, the glow + core below carry their own alpha
+		 * (Step 5 in nw_compose_gl.c reads ctex.a directly — no luminance keying anymore). */
+		nw_clear_argb(sc, ox, oy, fw, fh, 0x00000000u);
 	} else {
 		nw_fill_rect(sc, ox, oy, fw, fh, mat);                 /* material */
 		nw_vgrad_rect(sc, ox, oy, fw, NW_TITLEBAR_H,           /* title bar */
@@ -122,14 +294,11 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	uint32_t tfg = dark ? COL_TITLE_DFG : COL_TITLE_FG;
 	int ty = oy + (NW_TITLEBAR_H - NW_FONT_H) / 2;
 	if (s_glass_frame) {
-		/* centred title with a soft white halo (Aero glow) — ink over the GPU glass slab.
-		 * Halo 0xdfe9f4 and core 0x223041 both clear the shader's ink threshold. */
-		int tw = nw_text_w(title);
-		int tx = ox + (fw - tw) / 2;
-		for (int hy = -1; hy <= 1; hy++)
-			for (int hx = -1; hx <= 1; hx++)
-				if (hx || hy) nw_text(sc, tx + hx, ty + hy, title, 0xdfe9f4);
-		nw_text(sc, tx, ty, title, 0x223041);
+		/* real Aero glow: blurred coverage sheet + crisp core, polarity from w->ink_dark
+		 * (refreshed in nw_render_dirty_frames from what's under the bar) — dark windows
+		 * (Terminal-style) always get a light core regardless of the sampled backdrop. */
+		int dark_ink = (w->ink_dark != 0) && !dark;
+		draw_caption_glow(sc, ox + fw / 2, oy, title, dark_ink, focused);
 	} else {
 		nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? s_accent : 0x9fb2cc, 255);
 		nw_text(sc, ox + 28, ty, title, tfg);
@@ -336,6 +505,10 @@ void nw_render_dirty_frames(struct nw_server *s)
 		struct nw_window *w = &s->win[i];
 		if (!w->used || !w->frame || !w->frame_dirty)
 			continue;
+		/* Aero glow polarity: sample the wallpaper under the title bar before rendering it, with
+		 * hysteresis against the window's own previous decision (per-window, not per-frame — a
+		 * dragged window keeps sampling its NEW rect on every dirty re-render). */
+		w->ink_dark = (int8_t) nw_backdrop_wants_dark_ink(w->x, w->y, frame_w(w), NW_TITLEBAR_H, w->ink_dark);
 		struct nw_surface fs;
 		fs.px = w->frame; fs.w = frame_w(w); fs.h = frame_h(w); fs.stride = frame_w(w);
 		nw_surface_noclip(&fs);

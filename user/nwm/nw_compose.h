@@ -59,6 +59,18 @@ void nw_compose_set_glass_frame(int on);
 /* Render the static gradient wallpaper into `dst` once (the shell caches it). */
 void nw_render_wallpaper(const struct nw_surface *dst);
 
+/* Give the compositor a live reference to the currently-shown wallpaper surface, for auto ink
+ * polarity sampling (nw_backdrop_wants_dark_ink below). The shell calls this once, right after
+ * (re)rendering the wallpaper it caches — the pointer must stay valid for the session. */
+void nw_compose_set_wallpaper_ref(const struct nw_surface *wall);
+
+/* Sample the wallpaper under a rect (x,y,w,h) and decide whether captions there should render as
+ * DARK ink (1) or LIGHT ink (0) for legible contrast, with +/-8 hysteresis around the threshold so
+ * a dragged window doesn't flicker polarity at the boundary. Pass the window's previous decision
+ * (or -1 if none yet) as `prev`; returns the same value when the sample lands inside the hysteresis
+ * band. No wallpaper reference yet (or a degenerate rect) => `prev` if known, else 1 (dark ink). */
+int nw_backdrop_wants_dark_ink(int x, int y, int w, int h, int prev);
+
 /* Draw the arrow cursor at (x,y) onto `dst` (e.g. directly onto the framebuffer surface). */
 void nw_draw_cursor(const struct nw_surface *dst, int x, int y);
 

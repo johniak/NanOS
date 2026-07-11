@@ -907,6 +907,7 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		w->buf    = 0;
 		w->frame  = 0; w->frame_dirty = 1;   /* shell binds the frame buffer; render it once bound */
 		w->glass  = 1;                       /* every window gets a blurred backdrop by default     */
+		w->ink_dark = -1;                    /* Aero glow polarity unknown until the first refresh  */
 		w->style  = (uint32_t) m->c;         /* NW_STYLE_* (0 = legacy light/opaque)               */
 		w->type   = NW_WIN_NORMAL;           /* explicit kind (drives blur recursion + priority)    */
 		/* The first few windows get a designed spread (the demo desktop layout); beyond that,
