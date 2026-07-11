@@ -171,6 +171,7 @@ static const char *FS_WIN =
 	"}\n"
 	"vec3 backdrop(sampler2D t, vec2 spx) {\n"       /* sample a grab texture at a SCREEN-px point */
 	"    vec2 uv = (spx - u_grab.xy) / u_grab.zw;\n"
+	"    uv = clamp(uv, vec2(0.5) / u_grab.zw, vec2(1.0) - vec2(0.5) / u_grab.zw);\n" /* stay inside the valid gw x gh corner (I-1) */
 	"    return texture2D(t, vec2(uv.x, 1.0 - uv.y) * u_bd_scale).rgb;\n" /* grab rows bottom-up; g_scene_tex is RGB */
 	"}\n"
 	"void main() {\n"
@@ -794,3 +795,8 @@ void nw_gl_shutdown(void)
 }
 
 int nw_gl_active(void) { return g_ok; }
+
+/* 1 when the GL backend is live AND glass is actually being rendered (not NWM_NO_GLASS and not the
+ * FBO-incomplete fallback) — g_no_glass is decided once inside nw_gl_init before g_ok is set, so a
+ * single post-init query is sufficient (I-2: gates the keyed CPU frame mode). */
+int nw_gl_glass_active(void) { return g_ok && !g_no_glass; }

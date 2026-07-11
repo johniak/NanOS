@@ -59,4 +59,11 @@ void nw_gl_shutdown_wedged(void);
 /* 1 while the GL backend is live, 0 once it has never initialised or has fallen back to CPU. */
 int  nw_gl_active(void);
 
+/* 1 while the GL backend is live AND glass is actually being rendered by the window shader (i.e.
+ * NOT NWM_NO_GLASS and NOT the blur-FBO-incomplete auto-fallback). Decided once at nw_gl_init() time
+ * (before it returns), so a single query right after nw_gl_init() suffices — use this, not
+ * nw_gl_active(), to decide whether keyed CPU frames (nw_compose_set_glass_frame(1)) are safe to
+ * enable, since nw_gl_active() alone is 1 even when glass is off. */
+int  nw_gl_glass_active(void);
+
 #endif /* NW_COMPOSE_GL_H */

@@ -946,7 +946,10 @@ int main(void)
 		glkms_diag("nwm-gl: nw_gl_init OK (g_gl=1), entering present loop\n");
 		nw_gl_build_cursor();
 		nw_gl_set_radius(g_set.corner_radius);
-		nw_compose_set_glass_frame(1);
+		/* I-2: keyed CPU frames are only safe when the window shader will actually consume them
+		 * (u_glass=1) — NWM_NO_GLASS or the blur-FBO-incomplete fallback both leave glass off, in
+		 * which case the classic opaque CPU frame path (set_glass_frame(0), the default) is correct. */
+		nw_compose_set_glass_frame(nw_gl_glass_active());
 		printf("nwm: GL compositor active\n");
 	} else {
 		printf("nwm: GL compositor unavailable, CPU compositor active\n");
