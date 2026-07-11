@@ -296,14 +296,41 @@ static const char *FS_WIN =
 	"    gl_FragColor = vec4(col, mask);\n"
 	"}\n";
 
+/* window drop shadow: one expanded quad drawn UNDER the glass slab (before its FS_WIN quad). An
+ * analytic SDF soft box, mockup values (focused deeper/wider, unfocused shallower). */
+static const char *FS_SHADOW =
+	"#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+	"precision highp float;\n"
+	"#else\n"
+	"precision mediump float;\n"
+	"#endif\n"
+	"varying vec2 v_uv;\n"
+	"uniform highp vec4 u_rect;\n"       /* the EXPANDED shadow quad, screen px */
+	"uniform vec2  u_wsize;\n"           /* window frame w,h in px */
+	"uniform float u_wradius;\n"
+	"uniform float u_wfocus;\n"
+	"float sd_box(vec2 p, vec2 b, float r) {\n"
+	"    vec2 q = abs(p) - b + vec2(r);\n"
+	"    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;\n"
+	"}\n"
+	"void main() {\n"
+	"    vec2  p  = v_uv * u_rect.zw;\n"                    /* quad-local px */
+	"    vec2  wc = vec2(36.0, 26.0) + 0.5 * u_wsize;\n"    /* window box centre inside the padded quad */
+	"    float d  = sd_box(p - wc, 0.5 * u_wsize, u_wradius);\n"
+	"    float deep = 1.0 - smoothstep(-8.0, mix(20.0, 30.0, u_wfocus), d);\n"
+	"    float a  = deep * deep * mix(0.42, 0.60, u_wfocus);\n"
+	"    gl_FragColor = vec4(0.016, 0.039, 0.094, a);\n"    /* rgba(4,10,24) */
+	"}\n";
+
 /* ---- program handles + cached uniform locations ----------------------------------------------- */
 struct prog { GLuint id; GLint rect, screen; };
-static struct prog p_tex, p_blit, p_keyed, p_solid, p_blur, p_win;
+static struct prog p_tex, p_blit, p_keyed, p_solid, p_blur, p_win, p_shadow;
 static GLint u_tex_tex, u_blit_tex, u_key_tex, u_key_key, u_solid_color;
 static GLint u_blur_tex, u_blur_dir, u_blur_uv0, u_blur_uvsize;
 static GLint u_win_content, u_win_backdrop, u_win_bd_scale, u_win_glass,
              u_win_size, u_win_radius, u_win_grab, u_win_sharp;
 static GLint u_win_client, u_win_caps, u_win_focus, u_win_dark, u_win_inkwin, u_win_debug;
+static GLint u_sh_wsize, u_sh_wradius, u_sh_wfocus;
 static float g_debug;   /* NWM_GLASS_DEBUG=1..4: 1 rim, 2 |offset|, 3 sharp grab, 4 blurred grab */
 
 static struct glkms g_kms;
@@ -420,7 +447,7 @@ int nw_gl_init(int screen_w, int screen_h)
 
 	if (link_prog(&p_tex, FS_TEX) || link_prog(&p_blit, FS_BLIT) || link_prog(&p_keyed, FS_KEYED) ||
 	    link_prog(&p_solid, FS_SOLID) || link_prog_vs(&p_blur, VS_FULL, FS_BLUR) ||
-	    link_prog(&p_win, FS_WIN)) {
+	    link_prog(&p_win, FS_WIN) || link_prog(&p_shadow, FS_SHADOW)) {
 		nw_gl_shutdown(); return -1; }
 	u_tex_tex     = glGetUniformLocation(p_tex.id, "u_tex");
 	u_blit_tex    = glGetUniformLocation(p_blit.id, "u_tex");
@@ -446,6 +473,9 @@ int nw_gl_init(int screen_w, int screen_h)
 	u_win_inkwin   = glGetUniformLocation(p_win.id, "u_inkwin");
 	u_win_debug    = glGetUniformLocation(p_win.id, "u_debug");
 	{ const char *dbg = getenv("NWM_GLASS_DEBUG"); g_debug = dbg ? (float) atoi(dbg) : 0.0f; }
+	u_sh_wsize     = glGetUniformLocation(p_shadow.id, "u_wsize");
+	u_sh_wradius   = glGetUniformLocation(p_shadow.id, "u_wradius");
+	u_sh_wfocus    = glGetUniformLocation(p_shadow.id, "u_wfocus");
 
 	static const float uquad[] = { 0.f, 0.f,  1.f, 0.f,  0.f, 1.f,  1.f, 1.f };  /* triangle strip */
 	glGenBuffers(1, &g_vbo);
@@ -687,6 +717,15 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			int glass = (w->glass && !g_no_glass);
 			if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
 				blur_backdrop(w->x, w->y, fw, fh);   /* leaves us back on g_scene_fbo, full viewport, blend on */
+
+			if (glass) {                       /* soft SDF shadow under the slab, drawn before it */
+				glUseProgram(p_shadow.id);
+				glUniform2f(u_sh_wsize, (float) fw, (float) fh);
+				glUniform1f(u_sh_wradius, (float) g_radius);
+				glUniform1f(u_sh_wfocus, idx == s->focus ? 1.0f : 0.0f);
+				quad(&p_shadow, (float) w->x - 36.0f, (float) w->y - 26.0f,
+				     (float) fw + 72.0f, (float) fh + 72.0f);
+			}
 
 			glUseProgram(p_win.id);
 			glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, g_blurB);  /* backdrop (unit 1) */
