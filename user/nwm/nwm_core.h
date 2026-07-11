@@ -19,7 +19,7 @@
 enum {
 	NW_MAX_WINDOWS = 32,
 	NW_MAX_CLIENTS = 16,
-	NW_BORDER      = 2,
+	NW_BORDER      = 6,     /* glass frame band: side/bottom border width */
 	NW_TITLEBAR_H  = 28,    /* taller bar: icon + title on the left, — □ × controls on the right */
 	NW_CLOSE       = 22,    /* the × control (rightmost), the click target */
 	NW_TITLE_MAX   = 64,
