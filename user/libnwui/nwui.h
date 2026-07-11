@@ -33,6 +33,11 @@ typedef void (*nwui_cb)(nwui_node *self, void *user);
 /* Open a window and bind a toolkit to it (does the nw_connect + nw_create_window for you, so
  * the app never touches libnw directly). NULL on failure. */
 nwui *nwui_open(const char *title, int w, int h);
+/* Like nwui_open, but with an explicit style word (NW_STYLE_* from user/libnw/nwproto.h) —
+ * e.g. NW_STYLE_GLASS_CLIENT opts the window into light-glass interiors: a transparent ARGB
+ * ink canvas with translucent widget scrims over the GL slab, instead of the legacy opaque
+ * paper background. nwui_open(title,w,h) is exactly nwui_open_style(title,w,h,0). */
+nwui *nwui_open_style(const char *title, int w, int h, uint32_t style);
 /* Install the root of the widget tree (built with the component functions below). */
 void  nwui_set_root(nwui *u, nwui_node *root);
 /* Give keyboard focus to a widget (e.g. focus the editor at startup). */

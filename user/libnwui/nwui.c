@@ -5,6 +5,7 @@
  */
 #include "nwui_core.h"
 #include "libnw.h"
+#include "nwproto.h"   /* NW_STYLE_* */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -87,12 +88,12 @@ void nwui_reload_settings(nwui *u)
 	nw_reload_settings(io->d);
 }
 
-nwui *nwui_open(const char *title, int w, int h)
+nwui *nwui_open_style(const char *title, int w, int h, uint32_t style)
 {
 	nw_display *d = nw_connect();
 	if (!d)
 		return 0;
-	nw_win *win = nw_create_window(d, w, h, title);
+	nw_win *win = nw_create_window_style(d, w, h, title, style);
 	if (!win)
 		return 0;
 	nwui *u = (nwui *) malloc(sizeof *u);
@@ -105,7 +106,13 @@ nwui *nwui_open(const char *title, int w, int h)
 	u->io = io;
 	u->win_w = nw_win_width(win);
 	u->win_h = nw_win_height(win);
+	u->glass = !!(style & NW_STYLE_GLASS_CLIENT);
 	return u;
+}
+
+nwui *nwui_open(const char *title, int w, int h)
+{
+	return nwui_open_style(title, w, h, 0);
 }
 
 static void paint(nwui *u)

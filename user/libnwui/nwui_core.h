@@ -101,6 +101,7 @@ struct nwui {
 	nwui_node *focus;             /* focused textfield, or NULL */
 	nwui_node *armed;             /* node a left-press landed on (for click-on-release) */
 	int        win_w, win_h;
+	int        glass;             /* light-glass interior mode (NW_STYLE_GLASS_CLIENT at open) */
 	int        now_ms;            /* current time (ms) injected by the I/O shell before dispatch */
 	int        prev_buttons;
 	int        layout_dirty;      /* tree/sizes changed -> full relayout + repaint */
