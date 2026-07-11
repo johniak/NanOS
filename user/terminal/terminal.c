@@ -15,6 +15,7 @@
 #include <string.h>
 #include <sys/termios.h>
 #include "libnw.h"
+#include "nwproto.h"    /* NW_STYLE_* (libnw.h doesn't re-export it) */
 
 int setsid(void);
 int getpid(void);
@@ -30,6 +31,17 @@ struct nwt_winsize { unsigned short row, col, xpixel, ypixel; };
 #define CH NW_FONT_H
 
 static vt        T;
+
+/* GL glass-client: the top byte is ink alpha. Text and coloured cells are solid ink; the DEFAULT
+ * background (palette 0 — confirmed as the VT's default/reset bg: vt_init sets t->bg = 0, and SGR
+ * 0/49 both reset t->bg to 0 in vt.c) is a thin dark veil so the glass slab shows through. The CPU
+ * fallback ignores the top byte, so this changes nothing there. */
+static uint32_t pal_fg(int idx) { return vt_pal(idx) | 0xff000000u; }
+static uint32_t pal_bg(int idx)
+{
+	uint32_t c = vt_pal(idx);
+	return idx == 0 ? (c | 0x50000000u) : (c | 0xff000000u);
+}
 
 /* Push the current grid geometry to the pty (TIOCSWINSZ), so a program reading TIOCGWINSZ on
  * pts0 sees the real terminal size instead of the kernel's 80x24 default — otherwise vim renders
@@ -49,7 +61,7 @@ static void draw_row(const struct nw_surface *s, int r)
 {
 	for (int c = 0; c < T.cols; c++) {
 		vt_cell *cell = &T.grid[r][c];
-		nw_draw_char(s, c * CW, r * CH, cell->ch, vt_pal(cell->fg), vt_pal(cell->bg));
+		nw_draw_char(s, c * CW, r * CH, cell->ch, pal_fg(cell->fg), pal_bg(cell->bg));
 	}
 }
 
@@ -69,8 +81,11 @@ static void render(void)
 	/* block cursor: invert the cell under it */
 	if (T.cx < T.cols && T.cy < T.rows) {
 		vt_cell *cell = &T.grid[T.cy][T.cx];
-		nw_fill_rect(&s, T.cx * CW, T.cy * CH, CW, CH, vt_pal(cell->fg));
-		nw_draw_char(&s, T.cx * CW, T.cy * CH, cell->ch, vt_pal(cell->bg), vt_pal(cell->fg));
+		/* the cursor block inverts fg/bg, so the wrapper follows the ROLE (background-fill vs
+		 * ink), not the lexical cell->fg/cell->bg name: cell->fg here plays the "fills the whole
+		 * cell" role (pal_bg), cell->bg plays the "glyph ink" role (pal_fg). */
+		nw_fill_rect(&s, T.cx * CW, T.cy * CH, CW, CH, pal_bg(cell->fg));
+		nw_draw_char(&s, T.cx * CW, T.cy * CH, cell->ch, pal_fg(cell->bg), pal_bg(cell->fg));
 	}
 	g_pcx = T.cx; g_pcy = T.cy;
 	if (y0 >= 0) nw_commit(g_win, 0, y0 * CH, s.w, (y1 - y0 + 1) * CH);
@@ -108,7 +123,7 @@ static void resize_to(int win_w, int win_h)
 	vt_resize(&T, cols, rows);
 	if (g_master >= 0) set_pty_winsize(g_master);   /* keep the pty's size in step with the window */
 	struct nw_surface s; nw_win_surface(g_win, &s);
-	nw_fill_rect(&s, 0, 0, s.w, s.h, vt_pal(0));        /* repaint background, then all rows */
+	nw_fill_rect(&s, 0, 0, s.w, s.h, pal_bg(0));        /* repaint background, then all rows */
 	render();
 	nw_commit(g_win, 0, 0, s.w, s.h);
 }
@@ -188,7 +203,8 @@ int main(void)
 {
 	nw_display *d = nw_connect();
 	if (!d) return 1;
-	g_win = nw_create_window(d, 560, 360, "\x01" "Terminal");   /* 0x01 -> dark window material */
+	g_win = nw_create_window_style(d, 560, 360, "\x01" "Terminal",   /* \x01 keeps CPU-path dark */
+	                               NW_STYLE_GLASS_CLIENT | NW_STYLE_DARK);
 	if (!g_win) return 1;
 	nw_set_menu(d, "Terminal\x1f" "Close\x1e" "Edit\x1f" "Paste");  /* global menu */
 	vt_init(&T, nw_win_width(g_win) / CW, nw_win_height(g_win) / CH);
@@ -197,7 +213,7 @@ int main(void)
 	if (g_master < 0) return 1;
 
 	{ struct nw_surface s; nw_win_surface(g_win, &s);
-	  nw_fill_rect(&s, 0, 0, s.w, s.h, vt_pal(0)); render(); nw_commit(g_win, 0, 0, s.w, s.h); }
+	  nw_fill_rect(&s, 0, 0, s.w, s.h, pal_bg(0)); render(); nw_commit(g_win, 0, 0, s.w, s.h); }
 
 	int efd = nw_event_fd(d);
 	for (;;) {
