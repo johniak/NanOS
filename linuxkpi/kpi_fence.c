@@ -116,7 +116,15 @@ struct dma_fence *dma_fence_get(struct dma_fence *f)
 	return f;
 }
 
-struct dma_fence *dma_fence_get_rcu(struct dma_fence *f) { return dma_fence_get(f); }
+/* Linux semantics: succeed ONLY if the fence is still alive (kref_get_unless_zero).
+ * The old unconditional-get variant could "resurrect" a fence whose final put was already
+ * in flight — the caller then used memory the release path went on to free. */
+struct dma_fence *dma_fence_get_rcu(struct dma_fence *f)
+{
+	if (f && kref_get_unless_zero(&f->refcount))
+		return f;
+	return NULL;
+}
 
 void dma_fence_put(struct dma_fence *f)
 {
@@ -124,22 +132,54 @@ void dma_fence_put(struct dma_fence *f)
 		kref_put(&f->refcount, dma_fence_release);
 }
 
-int dma_fence_signal_locked(struct dma_fence *f)
+/* Deep-chain deferral: a fence callback can submit dependent requests that signal MORE
+ * fences — an unbounded inline chain on our synchronous model (the Dell hit the 112 KiB
+ * redline of the 128 KiB task stack inside a retire chain). The fence is marked SIGNALED
+ * inline either way (waiters and add_callback see the truth immediately); only the CALLBACK
+ * run is deferred, to the ring below, and the OUTERMOST dma_fence_signal_locked drains it
+ * iteratively — bounded stack, same task, same ordering (FIFO). Single-executor gate +
+ * latch-only IRQs make the plain globals safe. */
+#define SIG_RING 512
+static struct dma_fence *g_sig_ring[SIG_RING];
+static unsigned g_sig_head, g_sig_tail;
+static int g_sig_depth;
+
+static void sig_run_callbacks(struct dma_fence *f)
 {
 	struct dma_fence_cb *cb, *tmp;
+	list_for_each_entry_safe(cb, tmp, &f->cb_list, node) {
+		list_del_init(&cb->node);
+		cb->func(f, cb);
+	}
+}
+
+int dma_fence_signal_locked(struct dma_fence *f)
+{
 	if (!f)
 		return -EINVAL;
 	if (test_and_set_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &f->flags))
 		return -EINVAL;	/* already signaled */
 	{ static int once; if (!once) { once = 1; printk("lkpi: FIRST fence signal — a GPU request completed\n"); } }
-	/* A fence callback can submit dependent requests that signal MORE fences — an unbounded inline chain
-	 * on our synchronous model. If we are already deep, name the site (the callbacks still run: a fence
-	 * signal cannot be deferred without wedging waiters — but the rip pins the recursion for a real fix). */
-	if (lkpi_stack_deep()) lkpi_deep_report("dma_fence_signal", __builtin_return_address(0));
-	list_for_each_entry_safe(cb, tmp, &f->cb_list, node) {
-		list_del_init(&cb->node);
-		cb->func(f, cb);
+	if (g_sig_depth > 0 && lkpi_stack_deep() && g_sig_tail - g_sig_head < SIG_RING) {
+		/* Nested AND deep: park the callback run for the outermost drain. The ref keeps
+		 * the fence alive until its callbacks actually ran. (Ring full → run inline.) */
+		lkpi_deep_report("dma_fence_signal", __builtin_return_address(0));
+		dma_fence_get(f);
+		g_sig_ring[g_sig_tail++ % SIG_RING] = f;
+		return 0;
 	}
+	g_sig_depth++;
+	sig_run_callbacks(f);
+	if (g_sig_depth == 1) {
+		/* Outermost: drain everything the chain above parked. Callbacks run here may
+		 * park more — the loop picks those up too; re-deferral keeps the stack flat. */
+		while (g_sig_head != g_sig_tail) {
+			struct dma_fence *d = g_sig_ring[g_sig_head++ % SIG_RING];
+			sig_run_callbacks(d);
+			dma_fence_put(d);
+		}
+	}
+	g_sig_depth--;
 	return 0;
 }
 
@@ -168,6 +208,26 @@ bool dma_fence_is_signaled(struct dma_fence *f)
 		return true;
 	}
 	return false;
+}
+
+/* Unhook a still-pending callback. Returns 1 if it was pending (and is now removed), 0 if it
+ * already ran (a signal did list_del_init on it) or was never added (drm_syncobj guards on
+ * cb->func, and a run/never-added node is self-linked or zero — never touch a zeroed node). */
+int dma_fence_remove_callback(struct dma_fence *f, struct dma_fence_cb *cb)
+{
+	unsigned long flags;
+	int ret = 0;
+	if (!f || !cb || !cb->node.next)
+		return 0;
+	if (f->lock)
+		spin_lock_irqsave(f->lock, flags);
+	if (!list_empty(&cb->node)) {
+		list_del_init(&cb->node);
+		ret = 1;
+	}
+	if (f->lock)
+		spin_unlock_irqrestore(f->lock, flags);
+	return ret;
 }
 
 int dma_fence_add_callback(struct dma_fence *f, struct dma_fence_cb *cb,

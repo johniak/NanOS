@@ -53,7 +53,28 @@ static inline bool dma_fence_is_signaled_locked(struct dma_fence*f){return dma_f
 #define _LKPI_DMA_FENCE_EXTRA
 static inline bool dma_fence_is_later(struct dma_fence *a, struct dma_fence *b){ return a&&b&&(a->seqno>b->seqno); }
 static inline bool dma_fence_match_context(struct dma_fence *f, u64 ctx){ return f && f->context==ctx; }
-static inline struct dma_fence *dma_fence_get_rcu_safe(struct dma_fence **pf){ return pf?*pf:0; }
+/* MUST take a real reference (Linux semantics). The old `return *pf` variant handed
+ * drm_syncobj's WAIT path unreferenced fences: the pump under schedule_timeout runs request
+ * retire, whose final dma_fence_put freed entries[] fences MID-WAIT — the Dell desktop froze
+ * on a #GP in dma_fence_is_signaled (freed fence, garbage ->ops) after ~1 min of GL use. */
+static inline struct dma_fence *dma_fence_get_rcu_safe(struct dma_fence **pf){
+	for (;;) {
+		struct dma_fence *f = pf ? *pf : 0;
+		if (!f)
+			return 0;
+		if (!dma_fence_get_rcu(f)) {
+			/* refcount already zero: a final put is in flight. If the slot still holds
+			 * this dying fence, report "none" rather than spin (the shim has no RCU
+			 * grace period that would guarantee the slot gets rewritten). */
+			if (f == *pf)
+				return 0;
+			continue;
+		}
+		if (f == *pf)
+			return f;
+		dma_fence_put(f);   /* the slot moved under us — retry against the new fence */
+	}
+}
 #endif
 
 #ifndef _LKPI_DMA_FENCE_EXTRA2
@@ -65,7 +86,14 @@ static inline void dma_fence_set_deadline(struct dma_fence *f, ktime_t d){ (void
 #define _LKPI_DMA_FENCE_STUB
 struct dma_fence *dma_fence_get_stub(void);
 struct dma_fence *dma_fence_allocate_private_stub(ktime_t timestamp);
-static inline int dma_fence_remove_callback(struct dma_fence *f, struct dma_fence_cb *cb){ (void)f;(void)cb; return 0; }
+/* REAL removal (kpi_fence.c). The old no-op left the caller's cb node chained on the fence:
+ * drm_syncobj's wait registers callbacks that live in the ioctl's STACK frame and removes
+ * them on the way out — with a no-op remove, the next signal of that fence called a function
+ * pointer read from a dead stack frame (wild jump; the Dell GL-desktop freeze family). */
+#ifdef __cplusplus
+extern "C"
+#endif
+int dma_fence_remove_callback(struct dma_fence *f, struct dma_fence_cb *cb);
 #endif
 #ifndef _LKPI_FENCE_TS
 #define _LKPI_FENCE_TS

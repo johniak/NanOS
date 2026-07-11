@@ -675,27 +675,22 @@ int ioctl(int fd, unsigned long request, ...) {
 	 * trailing op differs per freeze), but it costs TWO synchronous ext->USB writes per DRM ioctl
 	 * from the compositor's hot loop — tens per frame, a growing file, real milliseconds each on
 	 * the Dell's per-sector USB path. That write storm dominated frame times and is itself a
-	 * suspect in the wedge it was hunting. Keep the hang-naming power at a fraction of the writes:
+	 * suspect in the wedge it was hunting. Steady-state "which ioctl is in flight / hung" is now
+	 * answered KERNEL-SIDE by the i915 pulse thread (2 s flight recorder: enters/exits + last
+	 * nr@pid, persisted to pulse.txt) — so the hot loop pays NOTHING here:
 	 *   - the first FULL_TRACE DRM ioctls log ENTER+ret unconditionally (covers session startup);
-	 *   - afterwards, ONLY the ioctls that can genuinely block log ENTER+ret: EXECBUFFER2 (0x69),
-	 *     GEM_WAIT (0x6c), SYNCOBJ waits (0xc3/0xca/0xcf), the modeset trio ADDFB/SETCRTC/RMFB
-	 *     (0xae/0xa2/0xaf) — a trailing ENTER still names the wedge site;
-	 *   - any OTHER ioctl logs only when it FAILS (r<0), with its nr, so nothing vanishes silently. */
+	 *   - afterwards a DRM ioctl logs only when it FAILS unexpectedly (r<0, excluding the
+	 *     poll-idiom SYNCOBJ waits whose ETIME misses are routine and high-volume). */
 	static int diag_full_left = 300;
 	int diag = 0, ret;
 	char b[64];
-	if (type == 'd') {
-		if (diag_full_left > 0) { diag = 1; diag_full_left--; }
-		else if (nr == 0x69 || nr == 0x6c || nr == 0xc3 || nr == 0xca || nr == 0xcf ||
-		         nr == 0xae || nr == 0xa2 || nr == 0xaf)
-			diag = 1;
-	}
+	if (type == 'd' && diag_full_left > 0) { diag = 1; diag_full_left--; }
 	if (diag)
 		drm_ioctl_diag(b, snprintf(b, sizeof b, "drm ioctl ENTER nr=0x%x\n", nr));
 	ret = reterr(sys3(SYS_ioctl, fd, (int) request, (int) arg));
 	if (diag)
 		drm_ioctl_diag(b, snprintf(b, sizeof b, "drm ioctl ret   nr=0x%x r=%d\n", nr, ret));
-	else if (type == 'd' && ret < 0)
+	else if (type == 'd' && ret < 0 && !(nr == 0xc3 || nr == 0xca || nr == 0xcf))
 		drm_ioctl_diag(b, snprintf(b, sizeof b, "drm ioctl FAIL  nr=0x%x r=%d\n", nr, ret));
 	return ret;
 }
