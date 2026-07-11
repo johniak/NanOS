@@ -24,7 +24,8 @@ fi
 
 pkill -9 -f "qemu-system-x86_64.*$IMG" 2>/dev/null; sleep 1
 "$QEMU_GL" -cpu qemu64 -accel tcg,thread=multi -smp 1 -m 512 \
-    -drive file="$IMG",format=raw -device ${GL_DEV:-virtio-gpu-gl-pci} -display ${GL_DISPLAY:-cocoa,gl=es} \
+    -drive file="$IMG",format=raw -device ${GL_DEV:-virtio-gpu-gl-pci} -vga none \
+    -display ${GL_DISPLAY:-cocoa,gl=es} \
     -serial file:"$SER" -monitor unix:"$MON",server,nowait -no-reboot >/dev/null 2>&1 &
 QPID=$!
 echo "gl-desktop-show: QEMU pid=$QPID  serial=$SER"
