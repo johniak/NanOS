@@ -50,6 +50,10 @@ nw_display *nw_connect(void);
 /* Create a window; blocks for the server's CONFIGURE. Returns NULL on failure. */
 nw_win *nw_create_window(nw_display *d, int w, int h, const char *title);
 
+/* Like nw_create_window, but with an explicit style word (NW_STYLE_* from nwproto.h): per-app
+ * dark tint and/or glass-client ink opt-in. style 0 == nw_create_window (legacy light/opaque). */
+nw_win *nw_create_window_style(nw_display *d, int w, int h, const char *title, uint32_t style);
+
 /* The client-side pixel buffer to draw into (w*h, stride = w) and its geometry. */
 void      nw_win_surface(nw_win *win, struct nw_surface *out);
 /* Reallocate the client draw buffer after the compositor resizes the window (an NW_EV_CONFIGURE

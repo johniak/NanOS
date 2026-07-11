@@ -65,12 +65,12 @@ nw_display *nw_connect(void)
 	return d;
 }
 
-nw_win *nw_create_window(nw_display *d, int w, int h, const char *title)
+nw_win *nw_create_window_style(nw_display *d, int w, int h, const char *title, uint32_t style)
 {
 	if (w <= 0 || h <= 0)
 		return 0;
 	int tl = title ? (int) strlen(title) : 0;
-	if (send_hdr(d->reqfd, NW_REQ_CREATE_WINDOW, 0, w, h, 0, 0, (uint32_t) tl) < 0)
+	if (send_hdr(d->reqfd, NW_REQ_CREATE_WINDOW, 0, w, h, (int32_t) style, 0, (uint32_t) tl) < 0)
 		return 0;
 	if (tl && write_all(d->reqfd, title, tl) < 0)
 		return 0;
@@ -89,6 +89,11 @@ nw_win *nw_create_window(nw_display *d, int w, int h, const char *title)
 		if (ev.type == NW_EV_CONFIGURE) { win->id = ev.window; break; }
 	}
 	return win;
+}
+
+nw_win *nw_create_window(nw_display *d, int w, int h, const char *title)
+{
+	return nw_create_window_style(d, w, h, title, 0);
 }
 
 void nw_win_surface(nw_win *win, struct nw_surface *out)

@@ -23,7 +23,7 @@
 enum {
 	/* client -> server */
 	NW_REQ_HELLO          = 1,   /* a=version                                              */
-	NW_REQ_CREATE_WINDOW  = 2,   /* a=w b=h; payload=title (UTF-8, no NUL needed)           */
+	NW_REQ_CREATE_WINDOW  = 2,   /* a=w b=h c=style (NW_STYLE_*); payload=title             */
 	NW_REQ_COMMIT         = 3,   /* window; a=x b=y c=w d=h; payload = c*d*4 BGRX pixels     */
 	NW_REQ_DESTROY_WINDOW = 4,   /* window                                                  */
 	NW_REQ_SET_CLIPBOARD  = 5,   /* payload=text (reply to NW_EVT_COPY)                     */
@@ -55,6 +55,13 @@ enum { NW_DND_SHIFT = 1, NW_DND_CTRL = 2 };
 
 /* Pointer button bitmask (matches evdev BTN ordering we care about). */
 enum { NW_BTN_LEFT = 1, NW_BTN_RIGHT = 2, NW_BTN_MIDDLE = 4 };
+
+/* Window style bits, sent in NW_REQ_CREATE_WINDOW.c. Style 0 = legacy: light glass slab with an
+ * opaque client area. */
+enum {
+	NW_STYLE_GLASS_CLIENT = 1,   /* client pixels are 0xAARRGGBB: top byte = ink alpha over glass */
+	NW_STYLE_DARK         = 2    /* dark slab tint (formal form of the "\x01" title prefix)       */
+};
 
 /* Largest COMMIT payload a client may send in one message. A full-window repaint of a big
  * window (e.g. 560x360x4 = 806 KB) exceeds the compositor's per-client reassembly buffer, so

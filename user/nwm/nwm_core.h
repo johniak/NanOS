@@ -85,6 +85,7 @@ struct nw_window {
 	                        * texture only when its cached gen differs — a move re-renders nothing,
 	                        * so a drag frame uploads ZERO window bytes.                        */
 	uint8_t   glass;       /* 1 => this window gets a blurred backdrop (default for all)      */
+	uint32_t  style;       /* NW_STYLE_* bits from CREATE_WINDOW (tint, glass-client ink)     */
 	uint8_t   type;        /* enum nw_win_type; default NW_WIN_NORMAL                         */
 	uint32_t *bd_blur;     /* per-window LO-RES blurred backdrop cache (caller-allocated)     */
 	int       bd_lw, bd_lh;/* lo-res cache dimensions                                        */
