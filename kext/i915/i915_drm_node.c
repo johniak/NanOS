@@ -166,20 +166,25 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
 		i915_present_set_suspended(1);
 	/* Slow-ioctl probe (stutter evidence, Dell: gate-held spikes of 100–500 ms every few
-	 * seconds — SetCrtc 507 ms, eglSwapBuffers 521 ms in gldiag). Name the ioctl and, still
-	 * under the gate, read the GPU's ACTUAL vs REQUESTED RPS frequency: actual pinned at RPn
-	 * (~350 MHz) fingers dead RPS (GPU renders at min clock), actual==requested-high fingers
-	 * the render/display path instead. Throttled to 1 line/s. */
+	 * seconds — SetCrtc 507 ms, eglSwapBuffers 521 ms in gldiag). Name the ioctl and log the
+	 * RPS SOFTWARE state: req pinned at min fingers dead RPS (the worker never raises the
+	 * clock and the GPU renders at RPn), req high fingers the render/display path instead.
+	 * SOFT state only (rps->cur_freq via intel_rps_get_requested_frequency; intel_gpu_freq is
+	 * pure arithmetic on Gen9) — the first cut read the ACTUAL frequency via
+	 * intel_rps_read_actual_frequency, whose forcewake'd RPSTAT1 MMIO read from this context
+	 * hard-hung the Dell on its first firing (2026-07-11 #4: total evidence blackout mid-
+	 * GEM_SET_DOMAIN — uncore spin_lock_irqsave + forcewake-ack wait). NO MMIO HERE. */
 	{
 		unsigned long long dur_us = knx_uptime_us() - t0_us;
 		static unsigned long long slow_last_us;
 		if (dur_us > 150000ull && t0_us - slow_last_us > 1000000ull) {
 			struct intel_rps *rps = &to_gt(to_i915(g_ddev))->rps;
 			slow_last_us = t0_us;
-			printk("i915: SLOW ioctl 0x%x pid=%d took %llu ms (rps act=%u req=%u MHz)\n",
+			printk("i915: SLOW ioctl 0x%x pid=%d took %llu ms (rps req=%u min=%u max=%u MHz)\n",
 			       cmd & 0xff, pid, dur_us / 1000ull,
-			       intel_rps_read_actual_frequency(rps),
-			       intel_rps_get_requested_frequency(rps));
+			       intel_rps_get_requested_frequency(rps),
+			       intel_gpu_freq(rps, rps->min_freq),
+			       intel_gpu_freq(rps, rps->max_freq));
 		}
 	}
 	lkpi_gate_exit();

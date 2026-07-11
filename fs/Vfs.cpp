@@ -294,6 +294,25 @@ int Vfs::append(String path, unsigned size, const void* buf) {
 }
 
 int Vfs::ioctl(String path, unsigned cmd, void* arg) {
+	// A DRM ioctl runs the ENTIRE i915 driver stack synchronously — hundreds of ms per slow
+	// frame, forever when a submission stalls. Holding the global VFS lock across it serialized
+	// every file op in the system behind the GPU: each USB log append (pulse, printk tee)
+	// stalled the next frame's ioctl, and a wedged ioctl starved the pulse thread — the flight
+	// recorder died with the very freeze it existed to record (Dell 2026-07-11 #3/#4). Resolve
+	// under the lock, then call the driver OUTSIDE it: /dev/dri never remounts, and the DRM node
+	// has its own one-executor gate. Every other device keeps the old whole-op hold (tty/pty
+	// line-discipline state is serialized by this lock).
+	if (path.startsWith(String((char*) "/dev/dri/"))) {
+		String rel;
+		FileSystem* fs;
+		{
+			RecursiveGuard g(g_vfsLock);
+			fs = resolve(path, rel);
+		}
+		if (fs == 0)
+			return -1;
+		return fs->ioctl(rel, cmd, arg);
+	}
 	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
@@ -345,6 +364,20 @@ int Vfs::mmapInfo(String path, uint64_t* physOut, unsigned* lenOut) {
 }
 
 int Vfs::mmapAt(String path, uint64_t off, uint64_t* physOut, unsigned* lenOut) {
+	// Same DRM bypass as Vfs::ioctl above: a GEM offset lookup enters the DRM node's
+	// one-executor gate (blocked for the whole frame while the compositor's ioctl holds it) —
+	// it must not keep the global VFS lock while it waits there.
+	if (path.startsWith(String((char*) "/dev/dri/"))) {
+		String rel;
+		FileSystem* fs;
+		{
+			RecursiveGuard g(g_vfsLock);
+			fs = resolve(path, rel);
+		}
+		if (fs == 0)
+			return -1;
+		return fs->mmapAt(rel, off, physOut, lenOut);
+	}
 	RecursiveGuard g(g_vfsLock);
 	String rel;
 	FileSystem* fs = resolve(path, rel);
