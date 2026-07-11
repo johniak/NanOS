@@ -560,6 +560,9 @@ static void present_gl(void)
 		 * path here is what froze the desktop after the fallback (Dell boot #49, QEMU repro). */
 		nw_gl_shutdown_wedged();
 		g_gl = 0;
+		nw_compose_set_glass_frame(0);
+		for (int i = 0; i < NW_MAX_WINDOWS; i++)     /* keyed frames are unusable on the CPU path */
+			if (S.win[i].used) S.win[i].frame_dirty = 1;
 		g_force_full = 1;                        /* next present() (CPU) repaints the whole screen */
 		S.dirty = 1;                             /* make the CPU takeover present immediately */
 		g_gl_fell_back = 1;                      /* one-shot: the first CPU frame prints a marker */
@@ -943,6 +946,7 @@ int main(void)
 		glkms_diag("nwm-gl: nw_gl_init OK (g_gl=1), entering present loop\n");
 		nw_gl_build_cursor();
 		nw_gl_set_radius(g_set.corner_radius);
+		nw_compose_set_glass_frame(1);
 		printf("nwm: GL compositor active\n");
 	} else {
 		printf("nwm: GL compositor unavailable, CPU compositor active\n");

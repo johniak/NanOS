@@ -29,6 +29,7 @@
 #include "nw_compose_gl.h"
 #include "glkms_init.h"
 #include "nwm_core.h"        /* struct nw_server/nw_window + NW_BORDER/NW_TITLEBAR_H/NW_CURSOR_* */
+#include "nwproto.h"         /* NW_STYLE_GLASS_CLIENT / NW_STYLE_DARK */
 #include "nw_compose.h"      /* nw_compose_chrome, nw_draw_cursor */
 #include "nw_gfx.h"          /* struct nw_surface */
 #include <stdio.h>
@@ -40,11 +41,6 @@
 /* ---- window geometry (mirror nw_compose.c's frame_w/frame_h) ---------------------------------- */
 static int frame_w(const struct nw_window *w) { return w->cw + 2 * NW_BORDER; }
 static int frame_h(const struct nw_window *w) { return NW_TITLEBAR_H + w->ch + NW_BORDER; }
-
-/* glass body alpha (out of 255, matching nw_compose.c WIN_ALPHA/DARK_ALPHA). */
-#define GL_WIN_ALPHA   206
-#define GL_DARK_ALPHA  214
-#define GL_BORDER_RGB  0.623f, 0.698f, 0.800f   /* COL_BORDER 0x9fb2cc */
 
 /* px margin so refraction (Task 5's lens ring) can sample content just outside the window frame. */
 #define NW_GLASS_PAD 24
@@ -128,43 +124,143 @@ static const char *FS_BLUR =
 	"  gl_FragColor = c;\n"
 	"}\n";
 
-/* window: content over a rounded-corner mask + hairline border. Glass windows show a REAL GPU
- * two-pass Gaussian blur of the scene beneath them: blur_backdrop() renders the blurred backdrop into
- * the lower-left fw×fh corner of the screen-sized g_blurB (sampled here via u_backdrop + u_bd_scale),
- * and the body is content mixed over that blur at u_alpha. u_glass=0 → plain opaque content (the
- * NWM_NO_GLASS fallback / non-glass windows). Backdrop is stored bottom-up (rendered into an FBO) so
- * the sample flips y: (v_uv.x, 1-v_uv.y)*u_bd_scale. mask is the coverage alpha (1 inside, AA at the
- * corners) blended over the already-composited scene. */
+/* window: the liquid-glass slab material (Task 5). A rounded-box SDF gives distance `d` to the
+ * window edge; `rim` is 1 at the very edge and 0 on the flat body. The flat body shows the BLURRED
+ * backdrop (frost); the rim mixes toward a chromatically-fringed SHARP sample displaced OUTWARD
+ * along the SDF gradient (refraction), so the rim shows a compressed lensed sliver of whatever lies
+ * just outside the window. Caption spheres repeat the same lens trick at small scale, tinted. Ink
+ * (CPU-rendered band glow / app content) composites over the finished glass. u_glass=0 → plain
+ * opaque content (NWM_NO_GLASS fallback / non-glass windows).
+ *
+ * Both u_backdrop (g_blurB) and u_sharp (g_grab) are screen-sized textures whose only valid data is
+ * the lower-left g_gw×g_gh corner holding the current window's padded grab rect (see blur_backdrop());
+ * they are populated by rendering/copying from g_scene_tex, which is real composited RGB (not a
+ * packed 0xAARRGGBB surface), so backdrop() samples .rgb — NOT the .bgr swizzle used for u_content
+ * (which IS a raw surface upload). backdrop() maps a screen-px point through u_grab to a 0..1
+ * fraction of the padded rect (top-down), flips y once (the grab textures are bottom-up, matching
+ * g_scene_tex's FBO storage), then rescales by u_bd_scale into the screen-sized texture's corner —
+ * the one adaptation vs. a literal transcription, needed because these aren't gw×gh-sized textures. */
 static const char *FS_WIN =
+	"#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+	"precision highp float;\n"
+	"#else\n"
 	"precision mediump float;\n"
+	"#endif\n"
 	"varying vec2 v_uv;\n"
-	"uniform highp vec4 u_rect;\n"      /* window frame rect in screen px; highp to match VS_QUAD */
-	"uniform sampler2D u_content;\n"
-	"uniform sampler2D u_backdrop;\n"   /* g_blurB: blurred scene under the window (bottom-up, corner) */
-	"uniform vec4 u_grab;\n"            /* padded grab rect in screen px: (g_gx,g_gy,g_gw,g_gh) */
-	"uniform vec2 u_bd_scale;\n"        /* (g_gw/screen_w, g_gh/screen_h): the grab rect's corner of g_blurB */
-	"uniform float u_glass;\n"          /* 1 = frosted glass, 0 = opaque */
-	"uniform float u_alpha;\n"          /* body alpha for glass (content over the blurred backdrop) */
-	"uniform vec2 u_size_px;\n"
-	"uniform float u_radius_px;\n"
-	"uniform vec3 u_border;\n"
-	"void main(){\n"
-	"  vec2 p = v_uv * u_size_px;\n"
-	"  vec2 k = min(p, u_size_px - p);\n"
-	"  float r = u_radius_px;\n"
-	"  vec2 cq = max(vec2(r) - k, vec2(0.0));\n"
-	"  float d = length(cq);\n"
-	"  float mask = 1.0 - smoothstep(r - 1.0, r + 1.0, d);\n"
-	"  vec3 content = texture2D(u_content, v_uv).bgr;\n"
-	"  vec2 spx = u_rect.xy + v_uv * u_rect.zw;\n"            /* fragment in screen px */
-	"  vec2 guv = (spx - u_grab.xy) / u_grab.zw;\n"           /* 0..1 within the padded grab rect */
-	"  vec2 bd_uv = vec2(guv.x, 1.0 - guv.y) * u_bd_scale;\n" /* into g_blurB's screen-sized corner */
-	"  vec3 bd = texture2D(u_backdrop, bd_uv).rgb;\n"          /* scene tex is already RGB */
-	"  vec3 glass = mix(bd, content, u_alpha);\n"              /* content over the blurred backdrop */
-	"  vec3 col = mix(content, glass, u_glass);\n"
-	"  float edge = smoothstep(r - 2.5, r - 1.0, d) * mask * 0.6;\n"  /* hairline border near the corner */
-	"  col = mix(col, u_border, edge);\n"
-	"  gl_FragColor = vec4(col, mask);\n"
+	"uniform highp vec4 u_rect;\n"       /* window rect, screen px (program-scope, shared with the VS) */
+	"uniform sampler2D u_content;\n"     /* unit 0: CPU frame render; band=key black, client=app pixels */
+	"uniform sampler2D u_backdrop;\n"    /* unit 1: BLURRED padded backdrop grab (g_blurB corner) */
+	"uniform sampler2D u_sharp;\n"       /* unit 2: SHARP padded backdrop grab (g_grab corner) */
+	"uniform vec4  u_grab;\n"            /* padded grab rect, screen px: (g_gx,g_gy,g_gw,g_gh) */
+	"uniform vec2  u_bd_scale;\n"        /* (g_gw/screen_w, g_gh/screen_h): the grab rect's texture corner */
+	"uniform float u_glass;\n"           /* 1 = liquid-glass window, 0 = plain opaque window */
+	"uniform vec2  u_size_px;\n"         /* frame w,h in px */
+	"uniform float u_radius_px;\n"       /* corner radius */
+	"uniform vec4  u_client;\n"          /* client rect, WINDOW-LOCAL px: x,y,w,h */
+	"uniform vec4  u_caps;\n"            /* caption spheres: close centre x,y; radius; slot width (px) */
+	"uniform float u_focus;\n"           /* 1 focused, 0 not */
+	"uniform float u_dark;\n"            /* 1 = dark slab variant */
+	"uniform float u_inkwin;\n"          /* 1 = client pixels carry ink alpha; 0 = legacy opaque client */
+	"uniform float u_debug;\n"           /* 0 off; 1 rim; 2 |offset|; 3 sharp grab; 4 blurred grab */
+	"const float BEVEL   = 14.0;\n"      /* px over which the glass edge curves */
+	"const float REFRACT = 12.0;\n"      /* max lens displacement at the rim, px (focused) */
+	"const vec2  LIGHT   = vec2(-0.555, -0.832);\n"  /* toward the light, screen coords (top-left) */
+	"float sd_box(vec2 p, vec2 b, float r) {\n"      /* signed distance, rounded box centred at 0 */
+	"    vec2 q = abs(p) - b + vec2(r);\n"
+	"    return length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;\n"
+	"}\n"
+	"vec3 backdrop(sampler2D t, vec2 spx) {\n"       /* sample a grab texture at a SCREEN-px point */
+	"    vec2 uv = (spx - u_grab.xy) / u_grab.zw;\n"
+	"    return texture2D(t, vec2(uv.x, 1.0 - uv.y) * u_bd_scale).rgb;\n" /* grab rows bottom-up; g_scene_tex is RGB */
+	"}\n"
+	"void main() {\n"
+	"    vec2  p    = v_uv * u_size_px;\n"                       /* window-local px, top-down */
+	"    vec2  pc   = p - 0.5 * u_size_px;\n"
+	"    vec2  hb   = 0.5 * u_size_px;\n"
+	"    float d    = sd_box(pc, hb, u_radius_px);\n"            /* < 0 inside the rounded window */
+	"    float mask = clamp(0.5 - d, 0.0, 1.0);\n"               /* 1px AA edge */
+	"    if (mask <= 0.0) discard;\n"
+	"\n"
+	"    vec4 ctex    = texture2D(u_content, v_uv);\n"
+	"    vec3 content = ctex.bgr;\n"
+	"    if (u_glass < 0.5) { gl_FragColor = vec4(content, mask); return; }\n"
+	"\n"
+	"    vec2  cd  = max(u_client.xy - p, p - (u_client.xy + u_client.zw));\n"
+	"    float cin = 1.0 - clamp(max(cd.x, cd.y) + 0.5, 0.0, 1.0);\n"
+	"\n"
+	"    float rim = 1.0 - clamp(-d / BEVEL, 0.0, 1.0);\n"       /* 1 at the edge, 0 on the body */
+	"\n"
+	"    float e = 1.0;\n"                                        /* SDF gradient: points OUTWARD */
+	"    vec2 g = vec2(sd_box(pc + vec2(e, 0.0), hb, u_radius_px) - sd_box(pc - vec2(e, 0.0), hb, u_radius_px),\n"
+	"                  sd_box(pc + vec2(0.0, e), hb, u_radius_px) - sd_box(pc - vec2(0.0, e), hb, u_radius_px));\n"
+	"    g = normalize(g + vec2(1e-4));\n"
+	"\n"
+	"    float refr   = REFRACT * mix(0.45, 1.0, u_focus);\n"     /* unfocused: gentler lens */
+	"    vec2  off_px = g * (rim * rim) * refr;\n"                /* outward, quadratic toward the rim */
+	"\n"
+	"    vec3 ring;\n"                                            /* chromatic aberration on the lens */
+	"    ring.r = backdrop(u_sharp, u_rect.xy + p + off_px * 0.92).r;\n"
+	"    ring.g = backdrop(u_sharp, u_rect.xy + p + off_px       ).g;\n"
+	"    ring.b = backdrop(u_sharp, u_rect.xy + p + off_px * 1.08).b;\n"
+	"    vec3 body  = backdrop(u_backdrop, u_rect.xy + p);\n"     /* frosted flat body */
+	"    vec3 glass = mix(body, ring, smoothstep(0.15, 0.8, rim));\n"
+	"\n"
+	"    float luma = dot(glass, vec3(0.299, 0.587, 0.114));\n"   /* vibrancy + frost lift */
+	"    glass = mix(vec3(luma), glass, 1.22);\n"
+	"    glass = glass * 0.90 + vec3(0.085);\n"
+	"\n"
+	"    vec3  tcol = mix(vec3(0.76, 0.78, 0.81), vec3(0.46, 0.60, 0.80), u_focus);\n"
+	"    float tamt = mix(0.34, 0.22, u_focus);\n"                /* unfocused: paler, denser tint */
+	"    tcol  = mix(tcol, vec3(0.10, 0.11, 0.13), u_dark);\n"
+	"    tamt  = mix(tamt, 0.48, u_dark);\n"                      /* dark glass is denser */
+	"    glass = mix(glass, tcol, tamt);\n"
+	"\n"
+	"    float facing = max(dot(g, LIGHT), 0.0);\n"               /* specular glint on the lit bevel */
+	"    glass += vec3(pow(facing, 3.0) * rim * rim * (0.35 + 0.25 * u_focus));\n"
+	"\n"
+	"    float outer = 1.0 - clamp(-d - 0.5, 0.0, 1.0);\n"        /* 1px dark outer hairline */
+	"    float inner = clamp(-d - 1.0, 0.0, 1.0) * (1.0 - clamp(-d - 2.2, 0.0, 1.0));\n" /* 1px white inner */
+	"    glass = mix(glass, vec3(0.13, 0.16, 0.20), outer * 0.55);\n"
+	"    glass += vec3(inner * 0.22);\n"
+	"\n"
+	"    for (int i = 0; i < 3; i++) {\n"     /* caption spheres: yellow / green / red-in-corner glass balls */
+	"        vec2  c = vec2(u_caps.x - float(2 - i) * u_caps.w, u_caps.y);\n"
+	"        vec2  q = p - c;\n"
+	"        float r = length(q);\n"
+	"        float R = u_caps.z;\n"
+	"        if (r < R + 1.0) {\n"
+	"            vec3 ccol = (i == 0) ? vec3(1.00, 0.74, 0.18)\n"
+	"                      : ((i == 1) ? vec3(0.16, 0.78, 0.25)\n"
+	"                                  : vec3(1.00, 0.37, 0.34));\n"
+	"            ccol = mix(vec3(0.72, 0.76, 0.81), ccol, u_focus);\n"        /* unfocused: grey glass */
+	"            vec2  n  = q / R;\n"
+	"            float rr = clamp(r / R, 0.0, 1.0);\n"
+	"            vec3 ball = backdrop(u_sharp, u_rect.xy + p + n * rr * rr * 5.0);\n" /* mini-lens */
+	"            ball = mix(ball, ccol, 0.42 + 0.38 * smoothstep(0.45, 1.0, rr));\n"  /* rim-dense colour */
+	"            ball *= 0.78 + 0.42 * (1.0 - rr);\n"              /* bright core, darker rim */
+	"            vec2 sq = q - R * vec2(-0.30, -0.42);\n"
+	"            vec2 cq = q - R * vec2( 0.00,  0.55);\n"
+	"            ball += vec3(exp(-dot(sq, sq) / (R * R * 0.10)) * 0.90);\n"  /* specular dot, up-left */
+	"            ball += vec3(exp(-dot(cq, cq) / (R * R * 0.16)) * 0.35);\n" /* caustic, bottom */
+	"            ball += vec3(smoothstep(R - 1.6, R - 0.4, r)\n"
+	"                         * (1.0 - smoothstep(R - 0.4, R + 0.6, r)) * 0.35);\n" /* rim ring */
+	"            float cov = 1.0 - smoothstep(R - 0.6, R + 0.6, r);\n"        /* AA edge */
+	"            glass = mix(glass, ball, cov);\n"
+	"        }\n"
+	"    }\n"
+	"\n"
+	"    float band_ink = smoothstep(0.02, 0.10, max(content.r, max(content.g, content.b)));\n"
+	"    float inkcov   = mix(band_ink, ctex.a, cin * u_inkwin);\n"
+	"    vec3  lit      = mix(glass, content, inkcov);\n"
+	"    vec3  col      = mix(lit, content, cin * (1.0 - u_inkwin));\n"
+	"\n"
+	"    if (u_debug > 0.5) {\n"
+	"        if      (u_debug < 1.5) col = vec3(rim, 0.0, 0.0);\n"
+	"        else if (u_debug < 2.5) col = vec3(length(off_px) / max(refr, 0.001));\n"
+	"        else if (u_debug < 3.5) col = backdrop(u_sharp,    u_rect.xy + p);\n"
+	"        else                    col = backdrop(u_backdrop, u_rect.xy + p);\n"
+	"    }\n"
+	"    gl_FragColor = vec4(col, mask);\n"
 	"}\n";
 
 /* ---- program handles + cached uniform locations ----------------------------------------------- */
@@ -172,8 +268,10 @@ struct prog { GLuint id; GLint rect, screen; };
 static struct prog p_tex, p_blit, p_keyed, p_solid, p_blur, p_win;
 static GLint u_tex_tex, u_blit_tex, u_key_tex, u_key_key, u_solid_color;
 static GLint u_blur_tex, u_blur_dir, u_blur_uv0, u_blur_uvsize;
-static GLint u_win_content, u_win_backdrop, u_win_bd_scale, u_win_glass, u_win_alpha,
-             u_win_size, u_win_radius, u_win_border, u_win_grab, u_win_sharp;
+static GLint u_win_content, u_win_backdrop, u_win_bd_scale, u_win_glass,
+             u_win_size, u_win_radius, u_win_grab, u_win_sharp;
+static GLint u_win_client, u_win_caps, u_win_focus, u_win_dark, u_win_inkwin, u_win_debug;
+static float g_debug;   /* NWM_GLASS_DEBUG=1..4: 1 rim, 2 |offset|, 3 sharp grab, 4 blurred grab */
 
 static struct glkms g_kms;
 static int  g_ok = 0;
@@ -304,12 +402,17 @@ int nw_gl_init(int screen_w, int screen_h)
 	u_win_backdrop = glGetUniformLocation(p_win.id, "u_backdrop");
 	u_win_bd_scale = glGetUniformLocation(p_win.id, "u_bd_scale");
 	u_win_glass    = glGetUniformLocation(p_win.id, "u_glass");
-	u_win_alpha    = glGetUniformLocation(p_win.id, "u_alpha");
 	u_win_size     = glGetUniformLocation(p_win.id, "u_size_px");
 	u_win_radius   = glGetUniformLocation(p_win.id, "u_radius_px");
-	u_win_border   = glGetUniformLocation(p_win.id, "u_border");
 	u_win_grab     = glGetUniformLocation(p_win.id, "u_grab");
 	u_win_sharp    = glGetUniformLocation(p_win.id, "u_sharp");
+	u_win_client   = glGetUniformLocation(p_win.id, "u_client");
+	u_win_caps     = glGetUniformLocation(p_win.id, "u_caps");
+	u_win_focus    = glGetUniformLocation(p_win.id, "u_focus");
+	u_win_dark     = glGetUniformLocation(p_win.id, "u_dark");
+	u_win_inkwin   = glGetUniformLocation(p_win.id, "u_inkwin");
+	u_win_debug    = glGetUniformLocation(p_win.id, "u_debug");
+	{ const char *dbg = getenv("NWM_GLASS_DEBUG"); g_debug = dbg ? (float) atoi(dbg) : 0.0f; }
 
 	static const float uquad[] = { 0.f, 0.f,  1.f, 0.f,  0.f, 1.f,  1.f, 1.f };  /* triangle strip */
 	glGenBuffers(1, &g_vbo);
@@ -506,8 +609,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			const struct nw_window *w = &s->win[idx];
 			if (!w->used || w->minimized || !w->frame) continue;
 			int fw = frame_w(w), fh = frame_h(w);
-			int dark = (w->title[0] == '\x01');
-			float alpha = (dark ? GL_DARK_ALPHA : GL_WIN_ALPHA) / 255.0f;
+			int dark = (w->title[0] == '\x01') || (w->style & NW_STYLE_DARK);
 
 			/* Upload this window's cached frame render into its content texture (glTexImage2D +
 			 * glFinish — the fence makes the sample-after-upload coherent; see the g_win_tex comment
@@ -560,11 +662,17 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			glUniform1i(u_win_content, 0);
 			glUniform2f(u_win_bd_scale, (float) g_gw / g_sw, (float) g_gh / g_sh);
 			glUniform1f(u_win_glass, glass ? 1.0f : 0.0f);
-			glUniform1f(u_win_alpha, alpha);
 			glUniform2f(u_win_size, (float) fw, (float) fh);
 			glUniform1f(u_win_radius, (float) g_radius);
-			glUniform3f(u_win_border, GL_BORDER_RGB);
 			glUniform4f(u_win_grab, (float) g_gx, (float) g_gy, (float) g_gw, (float) g_gh);
+			glUniform4f(u_win_client, (float) NW_BORDER, (float) NW_TITLEBAR_H,
+			            (float) w->cw, (float) w->ch);
+			glUniform4f(u_win_caps, (float) fw - NW_BORDER - 2.0f - NW_CLOSE * 0.5f,
+			            NW_TITLEBAR_H * 0.5f, 8.0f, (float) NW_CLOSE);
+			glUniform1f(u_win_focus, idx == s->focus ? 1.0f : 0.0f);
+			glUniform1f(u_win_dark, dark ? 1.0f : 0.0f);
+			glUniform1f(u_win_inkwin, (w->style & NW_STYLE_GLASS_CLIENT) ? 1.0f : 0.0f);
+			glUniform1f(u_win_debug, g_debug);
 			glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, w->glass ? g_grab : g_win_tex[idx]);
 			glUniform1i(u_win_sharp, 2);
 			glActiveTexture(GL_TEXTURE0);
