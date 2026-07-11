@@ -296,7 +296,9 @@ static void timers_service(void) {
 
 static void timer_thread_body(void *arg) {
 	void lkpi_log_flush(void);
+	void lkpi_tee_flusher_alive(void);
 	(void)arg;
+	lkpi_tee_flusher_alive();   /* from here on, thread-context printk stages; THIS loop persists */
 	while (!knx_thread_should_stop()) {
 		/* Run the FULL pump, not just timers: with latch-only MSI dispatch (kpi_irq.c) the GT/display
 		 * handlers execute only in the pump harvest, and when nobody is waiting (idle desktop, nwm in

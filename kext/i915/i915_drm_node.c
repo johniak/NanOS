@@ -124,11 +124,12 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	 * it must never run concurrently with the kworker/ktimers/krcu daemons or another client.
 	 * Recursive per task, so every wait/pump inside the ioctl re-enters legally. */
 	lkpi_gate_enter();
-	/* Thread context (per DRM ioctl, ~every frame): (1) drain log lines buffered from IRQ/atomic
-	 * context — they cannot append to the USB-backed log there without re-entering g_xhciLock and
-	 * deadlocking (see kpi_print.c tee ring); (2) run any execlists tasklet the GT harvest
-	 * deferred (P6/Task 3), so submission makes progress even if this frame doesn't wait. */
-	lkpi_log_flush();
+	/* Thread context (per DRM ioctl, ~every frame): run any execlists tasklet the GT harvest
+	 * deferred (P6/Task 3), so submission makes progress even if this frame doesn't wait.
+	 * NO lkpi_log_flush here any more: it put the tee backlog's per-sector USB write INSIDE the
+	 * frame's gate hold (each SLOW/drm line stalled the NEXT frame, which printed another SLOW
+	 * line — a self-sustaining stutter loop). The ktimers thread flushes the ring every ~4 ms
+	 * outside the gate (kpi_kthread.c), off the frame path. */
 	lkpi_tasklet_drain();
 	if (!g_ddev) {
 		lkpi_gate_exit();
@@ -146,6 +147,23 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 		lkpi_gate_exit();
 		g_nioctl_exits++;
 		return rr == 0 ? 0 : -EIO;
+	}
+	/* One-shot RPS floor pin (first ioctl = gated thread context, GT fully initialized).
+	 * Dell evidence (SLOW probe): RPS oscillates — req drops to min (300 MHz), the next heavy
+	 * glass-blur frame then takes 250–660 ms, RPS ramps to ~1100, ~3 s smooth, drops again =
+	 * the periodic desktop stutter. Pin the floor at max like sysfs gt_min_freq_mhz would
+	 * (same driver path: intel_rps_set_min_frequency → intel_rps_set, already exercised in
+	 * steady state by the RPS worker). Desktop bring-up trades watts for latency — same call
+	 * as the CPU HWP/EPP knob. The pulse's rps= field verifies the pin held. */
+	{
+		static int rps_pinned;
+		if (!rps_pinned) {
+			struct intel_rps *rps = &to_gt(to_i915(g_ddev))->rps;
+			u32 maxf = intel_rps_get_max_frequency(rps);
+			int rr = intel_rps_set_min_frequency(rps, maxf);
+			rps_pinned = 1;
+			printk("i915: RPS floor pinned to max %u MHz (ret=%d)\n", maxf, rr);
+		}
 	}
 	/* Re-base the stack-overflow tripwire onto THIS ioctl's per-task 128 KiB heap stack (the probe
 	 * baseline was the loader's 1 MiB stack, far below — so lkpi_stack_deep was inert at runtime). Now
@@ -354,6 +372,19 @@ static void i915_stall_rescue(void)
 	intel_gt_handle_error(gt, ALL_ENGINES, 0,
 			      "nanos stall rescue (submission stalled >12 s)");
 	printk("i915: STALL RESCUE done — engines reset, stuck fences errored out\n");
+}
+
+/* Pulse telemetry: the current RPS REQUESTED frequency in MHz, from SOFTWARE state only
+ * (rps->cur_freq + intel_gpu_freq's pure Gen9 arithmetic — no MMIO, no locks; a torn read is
+ * harmless). Safe from the UNGATED pulse thread. Correlates the 2 s flight record with the
+ * stutter/pin story: pinned floor ⇒ this must sit at max for the whole session. */
+unsigned i915_rps_req_mhz(void)
+{
+	struct intel_rps *rps;
+	if (!g_ddev)
+		return 0;
+	rps = &to_gt(to_i915(g_ddev))->rps;
+	return intel_gpu_freq(rps, rps->cur_freq);
 }
 
 int i915_drm_node_init(struct pci_dev *pdev)

@@ -294,6 +294,15 @@ static void tee_ring_put(const char *s, unsigned n) {
 	}
 }
 
+/* Set once by the ktimers thread when its ~4 ms flush loop is live: from then on, thread-context
+ * printk STAGES lines here instead of appending to USB inline. The inline append put a per-sector
+ * USB write (tens to hundreds of ms) INSIDE whatever gated section printed — a SLOW-ioctl line
+ * made the NEXT frame's ioctl slow, which printed another SLOW line: a self-sustaining stutter
+ * loop on the Dell. Until the flusher runs (boot narration, pre-scheduler probe) the sync path
+ * stays: it is the only writer then and there is no frame path to disturb. */
+static volatile int g_tee_flusher_alive;
+void lkpi_tee_flusher_alive(void) { g_tee_flusher_alive = 1; }
+
 /* Unflushed bytes waiting in the IRQ-context ring (+dropped flag) — the i915 pulse thread reports
  * this so a post-mortem log shows whether evidence was still stuck in RAM at the freeze. */
 unsigned lkpi_tee_backlog(int *dropped) {
@@ -343,13 +352,17 @@ int printk(const char *fmt, ...) {
 #ifndef NANOS_HOST_TEST
 	/* knx_file_append is a kernel export; the host doctest binary doesn't link it, and it never
 	 * sets a tee anyway, so compile the persistent tee out of the host build. */
-	if (g_log_tee_path && !g_log_tee_busy) {
+	if (g_log_tee_path) {
 		unsigned long n = 0;
 		while (out[n]) n++;
 		/* Unsafe to touch the USB-backed log from interrupt/atomic context (g_xhciLock re-entry
 		 * deadlock, see the tee ring above): lkpi_in_irq marks an inline i915 handler run, and IF=0
-		 * marks any interrupts-disabled window. Stage such lines; otherwise flush the backlog first,
-		 * then append this line — all from safe thread context. */
+		 * marks any interrupts-disabled window. Such lines are staged; and once the ktimers
+		 * flusher is live (g_tee_flusher_alive), thread-context lines are staged too — the USB
+		 * write happens on the ktimers thread within ~4 ms, never inside a gated frame section.
+		 * Burst escape: if the ring is over 3/4 full (a rescue's engine dump prints tens of KB
+		 * back-to-back), the safe-context printer drains it inline rather than dropping evidence
+		 * — that only happens in catastrophic moments where frame pacing no longer matters. */
 		int unsafe = lkpi_in_irq;
 		if (!unsafe) {
 			unsigned long rf;
@@ -357,15 +370,22 @@ int printk(const char *fmt, ...) {
 			if (!(rf & 0x200))          /* RFLAGS.IF clear => interrupts disabled */
 				unsafe = 1;
 		}
-		if (unsafe) {
+		if (unsafe || g_tee_flusher_alive) {
 			unsigned long fl = tee_lock();
 			tee_ring_put(out, (unsigned)n);
 			tee_unlock(fl);
-		} else {
+			if (!unsafe && lkpi_tee_backlog(0) > TEE_RING_SZ - TEE_RING_SZ / 4)
+				lkpi_log_flush();
+		} else if (!g_log_tee_busy) {
 			lkpi_log_flush();           /* drain any IRQ-context backlog before this line */
 			g_log_tee_busy = 1;
 			knx_file_append(g_log_tee_path, out, n);
 			g_log_tee_busy = 0;
+		} else {
+			/* Boot path with a flush in flight: stage rather than drop the line. */
+			unsigned long fl = tee_lock();
+			tee_ring_put(out, (unsigned)n);
+			tee_unlock(fl);
 		}
 	}
 #endif

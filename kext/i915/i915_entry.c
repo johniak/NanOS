@@ -207,6 +207,7 @@ unsigned lkpi_tee_backlog(int *dropped);                                        
 void lkpi_stall_rescue_arm(void);                                               /* kpi_fence.c */
 int  lkpi_sig_ring_stat(int *depth);                                            /* kpi_fence.c */
 int  lkpi_tasklet_stat(int *draining);                                          /* kpi_irq.c */
+unsigned i915_rps_req_mhz(void);                                                /* i915_drm_node.c */
 #include <linux/printk.h>                                                       /* snprintf */
 
 static void i915_pulse_body(void *arg)
@@ -222,12 +223,13 @@ static void i915_pulse_body(void *arg)
 		lkpi_gate_debug(&owner, &depth, &held_us);
 		now_us = knx_uptime_us();
 		n = snprintf(line, sizeof(line),
-		             "pulse t=%llu ioctl=%lu/%lu last=0x%x@%d gate=%p d=%d held=%llu sig=%d/%d tl=%d/%d tee=%u%s\n",
+		             "pulse t=%llu ioctl=%lu/%lu last=0x%x@%d gate=%p d=%d held=%llu sig=%d/%d tl=%d/%d rps=%u tee=%u%s\n",
 		             now_us / 1000ull,
 		             g_nioctl_enters, g_nioctl_exits, g_nioctl_last_nr, g_nioctl_last_pid,
 		             owner, depth, held_us / 1000ull,
 		             lkpi_sig_ring_stat(&sig_depth), sig_depth,
 		             lkpi_tasklet_stat(&tl_drain), tl_drain,
+		             i915_rps_req_mhz(),
 		             lkpi_tee_backlog(&dropped), dropped ? "!" : "");
 		if (n > 0)
 			knx_file_append(I915_PULSE_PATH, line, (unsigned long)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
