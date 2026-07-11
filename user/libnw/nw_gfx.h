@@ -103,4 +103,24 @@ void nw_stroke_round(const struct nw_surface *s, int x, int y, int w, int h, int
  * (3 passes ≈ Gaussian). Used for backdrop "glass" and soft shadows. */
 void nw_blur_rect(const struct nw_surface *s, int x, int y, int w, int h, int radius, int passes);
 
+/* ---- straight-alpha ARGB ink primitives (WRITE the alpha byte) --------------------------------
+ * Every primitive above masks alpha out (0x00RRGGBB dest, straight RGB fill/blend). Glass
+ * interiors and the alpha-ink titlebar need the inverse: dest pixels that carry real coverage in
+ * their own alpha byte, straight (non-premultiplied) — the GL shader contract is client buffer =
+ * straight ARGB, ctex.a = ink coverage, ctex.rgb = ink colour at full strength. `argb` here is
+ * always 0xAARRGGBB (alpha in the top byte), unlike the masked 0x00RRGGBB used above. */
+#include "nw_over_core.h"   /* nw_over_pixel: static inline, shared with the host blend test */
+
+/* Raw store (like nw_fill_rect, but the full 32-bit value including alpha — no blending). */
+void nw_clear_argb(const struct nw_surface *s, int x, int y, int w, int h, uint32_t argb);
+/* Filled straight-alpha src-over rect: nw_over_pixel over every covered pixel. */
+void nw_over_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32_t argb);
+/* Rounded-rect straight-alpha src-over fill, AA corners (same corner geometry as nw_fill_round). */
+void nw_over_round(const struct nw_surface *s, int x, int y, int w, int h, int r, uint32_t argb);
+/* Straight-alpha text: glyph coverage (cov143-remapped) scaled by argb's own alpha, written via
+ * nw_over_pixel. Same font/baseline/advance as nw_text; VGA 1-bit fallback if no TTF loaded. */
+void nw_text_argb(const struct nw_surface *s, int x, int y, const char *str, uint32_t argb);
+/* Pixel width — identical to nw_text_w (measurement doesn't depend on alpha). */
+int  nw_text_argb_w(const char *str);
+
 #endif /* NW_GFX_H */

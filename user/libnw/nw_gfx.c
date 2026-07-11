@@ -484,3 +484,115 @@ void nw_blur_rect(const struct nw_surface *s, int x, int y, int w, int h, int ra
 		}
 	}
 }
+
+/* ---- straight-alpha ARGB ink primitives (see nw_gfx.h) ---------------------------------------
+ * nw_over_pixel itself is the static inline in nw_over_core.h (pulled in via nw_gfx.h); nothing
+ * to wrap here — every TU that includes nw_gfx.h gets its own copy, same as nw_blend8. */
+
+void nw_clear_argb(const struct nw_surface *s, int x, int y, int w, int h, uint32_t argb)
+{
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
+	int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+	if (x0 < bx0) x0 = bx0;
+	if (y0 < by0) y0 = by0;
+	if (x1 > bx1) x1 = bx1;
+	if (y1 > by1) y1 = by1;
+	for (int yy = y0; yy < y1; yy++) {
+		uint32_t *row = s->px + (long) yy * s->stride;
+		for (int xx = x0; xx < x1; xx++)
+			row[xx] = argb;
+	}
+}
+
+void nw_over_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32_t argb)
+{
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
+	int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+	if (x0 < bx0) x0 = bx0;
+	if (y0 < by0) y0 = by0;
+	if (x1 > bx1) x1 = bx1;
+	if (y1 > by1) y1 = by1;
+	for (int yy = y0; yy < y1; yy++)
+		for (int xx = x0; xx < x1; xx++)
+			nw_over_pixel(s, xx, yy, argb);
+}
+
+void nw_over_round(const struct nw_surface *s, int x, int y, int w, int h, int r, uint32_t argb)
+{
+	if (r * 2 > w) r = w / 2;
+	if (r * 2 > h) r = h / 2;
+	if (r < 1) { nw_over_rect(s, x, y, w, h, argb); return; }
+	unsigned sa = argb >> 24;
+	uint32_t rgb = argb & 0x00ffffffu;
+	/* straight middle band + top/bottom strips between the corners: full ink alpha, no AA */
+	nw_over_rect(s, x, y + r, w, h - 2 * r, argb);
+	nw_over_rect(s, x + r, y, w - 2 * r, r, argb);
+	nw_over_rect(s, x + r, y + h - r, w - 2 * r, r, argb);
+	/* four AA corners: same geometry as nw_fill_round, coverage scales the ink alpha */
+	int cx[4] = { x + r, x + w - r, x + r, x + w - r };
+	int cy[4] = { y + r, y + r, y + h - r, y + h - r };
+	for (int k = 0; k < 4; k++) {
+		int ox = (k & 1) ? cx[k] : cx[k] - r;     /* corner box top-left */
+		int oy = (k & 2) ? cy[k] : cy[k] - r;
+		for (int yy = 0; yy < r; yy++)
+			for (int xx = 0; xx < r; xx++) {
+				float dx = (ox + xx) + 0.5f - cx[k];
+				float dy = (oy + yy) + 0.5f - cy[k];
+				int cov = edge_cov(__builtin_sqrtf(dx * dx + dy * dy), r);
+				if (cov) {
+					unsigned a = (unsigned) (cov * (int) sa) / 255;
+					nw_over_pixel(s, ox + xx, oy + yy, (a << 24) | rgb);
+				}
+			}
+	}
+}
+
+void nw_text_argb(const struct nw_surface *s, int x, int y, const char *str, uint32_t argb)
+{
+	ui_font_autoinit();
+	unsigned sa = argb >> 24;
+	uint32_t rgb = argb & 0x00ffffffu;
+	if (nwfont_loaded(NWFONT_UI)) {
+		/* proportional anti-aliased UI font: same baseline/advance math as nw_text, but write
+		 * straight alpha (cov143-remapped coverage scaled by the ink's own alpha) instead of
+		 * blending into an alpha-less dest. */
+		const uint8_t *lut = nw_cov143();
+		int baseline = y + nwfont_ascent(NWFONT_UI);
+		for (; *str; str++) {
+			const struct nwfont_glyph *g = nwfont_get(NWFONT_UI, (unsigned char) *str);
+			if (!g) continue;
+			if (g->cov) {
+				for (int gy = 0; gy < g->h; gy++) {
+					const unsigned char *covrow = g->cov + (long) gy * g->w;
+					int py = baseline + g->top + gy;
+					for (int gx = 0; gx < g->w; gx++) {
+						unsigned char c = covrow[gx];
+						if (c) {
+							unsigned a = lut[c];
+							a = (a * sa) / 255;
+							nw_over_pixel(s, x + g->bx + gx, py, (a << 24) | rgb);
+						}
+					}
+				}
+			}
+			x += g->advance;
+		}
+		return;
+	}
+	/* fallback: 1-bit VGA font (no TTF loaded) — full glyph coverage, scaled by argb's alpha */
+	for (; *str; str++) {
+		const unsigned char *glyph = nx_font8x16[(unsigned char) *str];
+		for (int row = 0; row < NW_FONT_H; row++)
+			for (int col = 0; col < NW_FONT_W; col++)
+				if (glyph[row] & (0x80u >> col))
+					nw_over_pixel(s, x + col, y + row, argb);
+		x += NW_FONT_W;
+	}
+}
+
+int nw_text_argb_w(const char *str)
+{
+	return nw_text_w(str);
+}
