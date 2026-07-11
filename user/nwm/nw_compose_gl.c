@@ -163,7 +163,9 @@ static const char *FS_WIN =
 	"uniform float u_inkwin;\n"          /* 1 = client pixels carry ink alpha; 0 = legacy opaque client */
 	"uniform float u_debug;\n"           /* 0 off; 1 rim; 2 |offset|; 3 sharp grab; 4 blurred grab */
 	"const float BEVEL   = 14.0;\n"      /* px over which the glass edge curves */
-	"const float REFRACT = 12.0;\n"      /* max lens displacement at the rim, px (focused) */
+	"const float IOR     = 1.50;\n"      /* glass index of refraction (small-angle Snell) */
+	"const float CA_PX   = 2.5;\n"       /* chromatic aberration offset at slope 1, px */
+	"const float CAUSTIC = 0.25;\n"      /* rim light-concentration gain */
 	"const vec2  LIGHT   = vec2(-0.555, -0.832);\n"  /* toward the light, screen coords (top-left) */
 	"float sd_box(vec2 p, vec2 b, float r) {\n"      /* signed distance, rounded box centred at 0 */
 	"    vec2 q = abs(p) - b + vec2(r);\n"
@@ -189,22 +191,29 @@ static const char *FS_WIN =
 	"    vec2  cd  = max(u_client.xy - p, p - (u_client.xy + u_client.zw));\n"
 	"    float cin = 1.0 - clamp(max(cd.x, cd.y) + 0.5, 0.0, 1.0);\n"
 	"\n"
-	"    float rim = 1.0 - clamp(-d / BEVEL, 0.0, 1.0);\n"       /* 1 at the edge, 0 on the body */
-	"\n"
 	"    float e = 1.0;\n"                                        /* SDF gradient: points OUTWARD */
 	"    vec2 g = vec2(sd_box(pc + vec2(e, 0.0), hb, u_radius_px) - sd_box(pc - vec2(e, 0.0), hb, u_radius_px),\n"
 	"                  sd_box(pc + vec2(0.0, e), hb, u_radius_px) - sd_box(pc - vec2(0.0, e), hb, u_radius_px));\n"
 	"    g = normalize(g + vec2(1e-4));\n"
 	"\n"
-	"    float refr   = REFRACT * mix(0.45, 1.0, u_focus);\n"     /* unfocused: gentler lens */
-	"    vec2  off_px = g * (rim * rim) * refr;\n"                /* outward, quadratic toward the rim */
+	"    float x = clamp(1.0 + d / BEVEL, 0.0, 1.0);\n"           /* 0 deep inside -> 1 at the rim */
+	"    float s = x / sqrt(max(1.0 - x * x, 0.0625));\n"         /* circular-arc slope, clamped (max 4.0) */
 	"\n"
-	"    vec3 ring;\n"                                            /* chromatic aberration on the lens */
-	"    ring.r = backdrop(u_sharp, u_rect.xy + p + off_px * 0.92).r;\n"
-	"    ring.g = backdrop(u_sharp, u_rect.xy + p + off_px       ).g;\n"
-	"    ring.b = backdrop(u_sharp, u_rect.xy + p + off_px * 1.08).b;\n"
-	"    vec3 body  = backdrop(u_backdrop, u_rect.xy + p);\n"     /* frosted flat body */
-	"    vec3 glass = mix(body, ring, smoothstep(0.15, 0.8, rim));\n"
+	"    float thick = clamp(min(u_size_px.x, u_size_px.y) * 0.045, 14.0, 26.0)\n"
+	"                  * mix(0.55, 1.0, u_focus);\n"              /* thicker glass on bigger windows; unfocused: gentler */
+	"    float bend  = s * (1.0 - 1.0 / IOR) * thick;\n"          /* px, max ~ 1.33 * thick */
+	"    vec2  spx   = u_rect.xy + p - g * bend;\n"                /* screen-px sample point */
+	"\n"
+	"    vec2 ca = g * (s * CA_PX);\n"                            /* chromatic aberration, px */
+	"    vec3 ring;\n"
+	"    ring.r = backdrop(u_sharp, spx - ca).r;\n"                /* lower IOR for red */
+	"    ring.g = backdrop(u_sharp, spx).g;\n"
+	"    ring.b = backdrop(u_sharp, spx + ca).b;\n"                /* higher IOR for blue */
+	"\n"
+	"    vec3 body  = backdrop(u_backdrop, u_rect.xy + p - g * bend * 0.35);\n"
+	"    float lens = smoothstep(0.0, 0.7, x);\n"
+	"    vec3 glass = mix(body, ring, lens);\n"
+	"    glass *= 1.0 + CAUSTIC * s * 0.25;\n"                    /* rim concentrates light: brighten */
 	"\n"
 	"    float luma = dot(glass, vec3(0.299, 0.587, 0.114));\n"   /* vibrancy + frost lift */
 	"    glass = mix(vec3(luma), glass, 1.22);\n"
@@ -216,8 +225,11 @@ static const char *FS_WIN =
 	"    tamt  = mix(tamt, 0.48, u_dark);\n"                      /* dark glass is denser */
 	"    glass = mix(glass, tcol, tamt);\n"
 	"\n"
-	"    float facing = max(dot(g, LIGHT), 0.0);\n"               /* specular glint on the lit bevel */
-	"    glass += vec3(pow(facing, 3.0) * rim * rim * (0.35 + 0.25 * u_focus));\n"
+	"    vec3  N      = normalize(vec3(g * s, 1.0));\n"           /* pseudo-3D surface normal */
+	"    vec3  L      = normalize(vec3(LIGHT, 0.55));\n"          /* key light, up-left, out of screen */
+	"    float spec   = pow(max(dot(N, L), 0.0), 24.0);\n"
+	"    float fres   = pow(x, 2.5) * 0.4;\n"                     /* fresnel-ish rim (Sorrell) */
+	"    glass += vec3((spec * (0.45 + 0.30 * u_focus) + fres * 0.5) * x);\n"
 	"\n"
 	"    float outer = 1.0 - clamp(-d - 0.5, 0.0, 1.0);\n"        /* 1px dark outer hairline */
 	"    float inner = clamp(-d - 1.0, 0.0, 1.0) * (1.0 - clamp(-d - 2.2, 0.0, 1.0));\n" /* 1px white inner */
@@ -256,8 +268,8 @@ static const char *FS_WIN =
 	"    vec3  col      = mix(lit, content, cin * (1.0 - u_inkwin));\n"
 	"\n"
 	"    if (u_debug > 0.5) {\n"
-	"        if      (u_debug < 1.5) col = vec3(rim, 0.0, 0.0);\n"
-	"        else if (u_debug < 2.5) col = vec3(length(off_px) / max(refr, 0.001));\n"
+	"        if      (u_debug < 1.5) col = vec3(x, 0.0, 0.0);\n"
+	"        else if (u_debug < 2.5) col = vec3(bend / (1.33 * 26.0));\n"
 	"        else if (u_debug < 3.5) col = backdrop(u_sharp,    u_rect.xy + p);\n"
 	"        else                    col = backdrop(u_backdrop, u_rect.xy + p);\n"
 	"    }\n"
