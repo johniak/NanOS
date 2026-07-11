@@ -125,10 +125,12 @@ static const char *FS_BLUR =
 	"}\n";
 
 /* window: the liquid-glass slab material (Task 5). A rounded-box SDF gives distance `d` to the
- * window edge; `rim` is 1 at the very edge and 0 on the flat body. The flat body shows the BLURRED
- * backdrop (frost); the rim mixes toward a chromatically-fringed SHARP sample displaced OUTWARD
- * along the SDF gradient (refraction), so the rim shows a compressed lensed sliver of whatever lies
- * just outside the window. Caption spheres repeat the same lens trick at small scale, tinted. Ink
+ * window edge; `x` is 0 deep inside and 1 at the very edge, and `s` is the circular-arc slope of
+ * the bevel profile at that point (clamped, max 4.0). The flat body shows the BLURRED backdrop
+ * (frost); the rim mixes toward a chromatically-fringed SHARP sample, displaced along the SDF
+ * gradient by a small-angle-Snell `bend` (macOS-style edge lens, Task 1), so the rim shows a
+ * refracted, magnified sliver of the backdrop with a faint CA fringe and a caustic brightening.
+ * Caption spheres repeat the same lens trick at small scale, tinted. Ink
  * (CPU-rendered band glow / app content) composites over the finished glass. u_glass=0 → plain
  * opaque content (NWM_NO_GLASS fallback / non-glass windows).
  *
