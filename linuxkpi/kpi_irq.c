@@ -149,9 +149,20 @@ void lkpi_tasklet_drain(void) {
 	}
 	g_tl_draining = 0;
 }
+
+/* Pulse telemetry (i915_entry.c): pending-list non-empty + draining flag. A pending list that
+ * stays non-empty across pulse lines while the owner pumps (drain runs every pump turn) would
+ * convict a stuck drain guard / RUN bit; torn reads harmless. */
+int lkpi_tasklet_stat(int *draining)
+{
+	if (draining)
+		*draining = g_tl_draining;
+	return g_tl_head != 0;
+}
 #else
 void lkpi_tasklet_enqueue(struct tasklet_struct *t) { __lkpi_tasklet_exec(t); }
 void lkpi_tasklet_drain(void) { }
+int lkpi_tasklet_stat(int *draining) { if (draining) *draining = 0; return 0; }
 #endif
 
 static struct lkpi_irq_desc *desc_of(int irq) {

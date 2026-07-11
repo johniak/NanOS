@@ -60,6 +60,22 @@ void lkpi_set_irq_poll(void (*fn)(void)) { lkpi_irq_poll_hook = fn; }
  * lkpi_wait_pump itself (see the note in lkpi_knx.h). */
 void lkpi_tasklet_drain(void);
 
+/* Stall rescue (i915 kext hook). i915's heartbeat is SILENT by design when its own pulse request
+ * cannot reach the backend (`!i915_sw_fence_signaled(&rq->submit)` — comment-only branch,
+ * intel_engine_heartbeat.c:173): a submission-graph stall is tolerated forever — no escalation, no
+ * reset, no log line. Under the one-executor gate that "tolerated" state is fatal: the stalled
+ * waiter holds the gate, every other DRM client/thread/daemon starves behind it, and the desktop
+ * dies (Dell 2026-07-11: EXECBUFFER2 in flight 27+ s, HWSP frozen, heartbeat mute). The pulse
+ * thread (ungated — it must not touch driver state) only ARMS the flag; the stalled owner's own
+ * pump — gated thread context, exactly where the heartbeat worker would have run — executes the
+ * rescue: dump engine state, intel_gt_handle_error() so the stuck fences error out, the wait
+ * returns, and the gate frees. Re-entrancy-guarded: the rescue's internal waits pump too. */
+static void (*lkpi_stall_rescue_hook)(void);
+static volatile int g_stall_rescue_armed;
+static int g_stall_rescue_running;
+void lkpi_set_stall_rescue(void (*fn)(void)) { lkpi_stall_rescue_hook = fn; }
+void lkpi_stall_rescue_arm(void)             { g_stall_rescue_armed = 1; }
+
 void lkpi_wait_pump(void) {
 	/* Cross-core gate (kpi_misc.c): the pump executes driver bottom halves (irq harvest, work
 	 * bodies, timer handlers) in THIS thread's context — under no-op shim locks that must never
@@ -70,6 +86,12 @@ void lkpi_wait_pump(void) {
 	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
 	if (lkpi_irq_poll_hook)   lkpi_irq_poll_hook();
 	lkpi_tasklet_drain();     /* run any execlists tasklet the poll deferred (thread context) */
+	if (g_stall_rescue_armed && lkpi_stall_rescue_hook && !g_stall_rescue_running) {
+		g_stall_rescue_armed = 0;
+		g_stall_rescue_running = 1;
+		lkpi_stall_rescue_hook();
+		g_stall_rescue_running = 0;
+	}
 	lkpi_gate_exit();
 }
 
@@ -143,6 +165,16 @@ void dma_fence_put(struct dma_fence *f)
 static struct dma_fence *g_sig_ring[SIG_RING];
 static unsigned g_sig_head, g_sig_tail;
 static int g_sig_depth;
+
+/* Pulse telemetry (i915_entry.c): parked-callback count + current signal depth. A parked count
+ * that sits >0 across pulse lines while the desktop is wedged would convict the deferral ring
+ * itself (callbacks parked but never drained); torn reads are harmless (monotonic-ish counters). */
+int lkpi_sig_ring_stat(int *depth)
+{
+	if (depth)
+		*depth = g_sig_depth;
+	return (int)(g_sig_tail - g_sig_head);
+}
 
 static void sig_run_callbacks(struct dma_fence *f)
 {

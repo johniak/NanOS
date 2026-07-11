@@ -20,6 +20,9 @@
  */
 #include "i915_drv.h"
 #include "gem/i915_gem_object.h"
+#include "gt/intel_gt.h"        /* for_each_engine — stall rescue walks every engine */
+#include "gt/intel_reset.h"     /* intel_gt_handle_error — stall rescue reset */
+#include <drm/drm_print.h>      /* drm_info_printer — intel_engine_dump sink */
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
@@ -266,6 +269,57 @@ static void node_release(int pid)
 
 static const struct knx_drm_ops g_node_ops = { node_ioctl, node_mmap_offset, node_release };
 
+/* ---- stall rescue ---------------------------------------------------------------------------
+ * i915 tolerates a submission-graph stall FOREVER by design: when the heartbeat's own pulse
+ * request never reaches the backend (`!i915_sw_fence_signaled(&rq->submit)`), heartbeat() takes a
+ * comment-only branch (intel_engine_heartbeat.c:173) — no priority escalation, no reset, no log.
+ * On mainline that only wedges the stalled client; under the one-executor gate it wedges the whole
+ * desktop (the stalled EXECBUFFER2 holds the gate, everything else starves — Dell 2026-07-11,
+ * 27+ s, HWSP frozen, heartbeat mute). This is the escalation i915 doesn't have: the pulse thread
+ * arms it after 12 s of one ioctl holding the gate, the stalled owner's own pump runs it (gated
+ * thread context, where the heartbeat worker would have run). intel_engine_dump() prints the full
+ * per-engine state FIRST (requests in queue, ELSP, HWSP seqno, breadcrumbs — the root-cause
+ * evidence), then intel_gt_handle_error() resets the engines: stuck requests error out with -EIO,
+ * the eternal wait returns, the ioctl unwinds, the gate frees, the desktop resumes. */
+void lkpi_set_stall_rescue(void (*fn)(void));           /* kpi_fence.c */
+int  lkpi_sig_ring_stat(int *depth);                    /* kpi_fence.c — deferred-signal ring */
+int  lkpi_tasklet_stat(int *draining);                  /* kpi_irq.c — deferred-tasklet list */
+void lkpi_gate_debug(void **owner, int *depth, unsigned long long *held_us);   /* kpi_misc.c */
+
+static void i915_stall_rescue(void)
+{
+	struct drm_i915_private *i915;
+	struct intel_gt *gt;
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+	struct drm_printer p;
+	int sig_depth = 0, tl_draining = 0;
+	void *gate_owner; int gate_depth; unsigned long long held_us;
+
+	if (!g_ddev)
+		return;
+	/* Arm-to-run race: if the stalled wait completed between the pulse's arming and this pump
+	 * turn, the gate hold that triggered it is gone — do not reset a healthy GT. */
+	lkpi_gate_debug(&gate_owner, &gate_depth, &held_us);
+	if (held_us < 10000000ull) {
+		printk("i915: stall rescue skipped — the stall resolved on its own (gate held %llu ms)\n",
+		       held_us / 1000ull);
+		return;
+	}
+	i915 = to_i915(g_ddev);
+	gt = to_gt(i915);
+	printk("i915: STALL RESCUE — one ioctl held the gate >12 s (silent submission stall); dumping engines, then GT reset\n");
+	printk("i915: rescue: sig-ring parked=%d depth=%d, tasklets pending=%d draining=%d\n",
+	       lkpi_sig_ring_stat(&sig_depth), sig_depth,
+	       lkpi_tasklet_stat(&tl_draining), tl_draining);
+	p = drm_info_printer(g_ddev->dev);
+	for_each_engine(engine, gt, id)
+		intel_engine_dump(engine, &p, "rescue: %s\n", engine->name);
+	intel_gt_handle_error(gt, ALL_ENGINES, 0,
+			      "nanos stall rescue (submission stalled >12 s)");
+	printk("i915: STALL RESCUE done — engines reset, stuck fences errored out\n");
+}
+
 int i915_drm_node_init(struct pci_dev *pdev)
 {
 	/* i915_driver_create: pci_set_drvdata(pdev, &i915->drm) — drvdata IS the drm_device. */
@@ -273,6 +327,7 @@ int i915_drm_node_init(struct pci_dev *pdev)
 	if (!ddev || !ddev->primary)
 		return -1;
 	g_ddev = ddev;
+	lkpi_set_stall_rescue(i915_stall_rescue);
 	knx_drm_register(&g_node_ops);
 	return 0;
 }

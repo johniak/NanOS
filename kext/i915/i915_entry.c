@@ -204,26 +204,47 @@ extern volatile unsigned int  g_nioctl_last_nr;
 extern volatile int           g_nioctl_last_pid;
 void lkpi_gate_debug(void **owner, int *depth, unsigned long long *held_us);   /* kpi_misc.c */
 unsigned lkpi_tee_backlog(int *dropped);                                        /* kpi_print.c */
+void lkpi_stall_rescue_arm(void);                                               /* kpi_fence.c */
+int  lkpi_sig_ring_stat(int *depth);                                            /* kpi_fence.c */
+int  lkpi_tasklet_stat(int *draining);                                          /* kpi_irq.c */
 #include <linux/printk.h>                                                       /* snprintf */
 
 static void i915_pulse_body(void *arg)
 {
+	unsigned long long rescue_last_us = 0;
 	(void)arg;
 	knx_file_append(I915_PULSE_PATH, "pulse ===== boot =====\n", 23);
 	for (;;) {
-		char line[160];
-		void *owner; int depth, dropped, n;
-		unsigned long long held_us;
+		char line[192];
+		void *owner; int depth, dropped, n, sig_depth = 0, tl_drain = 0;
+		unsigned long long held_us, now_us;
 		knx_thread_msleep(2000);
 		lkpi_gate_debug(&owner, &depth, &held_us);
+		now_us = knx_uptime_us();
 		n = snprintf(line, sizeof(line),
-		             "pulse t=%llu ioctl=%lu/%lu last=0x%x@%d gate=%p d=%d held=%llu tee=%u%s\n",
-		             knx_uptime_us() / 1000ull,
+		             "pulse t=%llu ioctl=%lu/%lu last=0x%x@%d gate=%p d=%d held=%llu sig=%d/%d tl=%d/%d tee=%u%s\n",
+		             now_us / 1000ull,
 		             g_nioctl_enters, g_nioctl_exits, g_nioctl_last_nr, g_nioctl_last_pid,
 		             owner, depth, held_us / 1000ull,
+		             lkpi_sig_ring_stat(&sig_depth), sig_depth,
+		             lkpi_tasklet_stat(&tl_drain), tl_drain,
 		             lkpi_tee_backlog(&dropped), dropped ? "!" : "");
 		if (n > 0)
 			knx_file_append(I915_PULSE_PATH, line, (unsigned long)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
+		/* Stall rescue: ONE ioctl has held the gate continuously >12 s — a submission-graph
+		 * stall i915's heartbeat silently tolerates forever (see i915_stall_rescue,
+		 * i915_drm_node.c) while the whole desktop starves behind the gate. Arm the flag; the
+		 * OWNER's own wait pump executes the rescue in gated thread context (this thread is
+		 * ungated and must not touch driver state). 12 s clears the longest legitimate gated
+		 * section (a full modeset with an eDP panel power cycle, ~7 s worst case); the 30 s
+		 * cooldown keeps a reset that doesn't stick from storming. */
+		if (g_nioctl_enters != g_nioctl_exits && held_us > 12000000ull &&
+		    now_us - rescue_last_us > 30000000ull) {
+			rescue_last_us = now_us;
+			lkpi_stall_rescue_arm();
+			knx_log("i915: pulse ARMED stall rescue (one ioctl held the gate >12 s)\n");
+			knx_file_append(I915_PULSE_PATH, "pulse: ARMED stall rescue\n", 26);
+		}
 	}
 }
 
