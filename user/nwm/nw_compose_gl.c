@@ -46,6 +46,9 @@ static int frame_h(const struct nw_window *w) { return NW_TITLEBAR_H + w->ch + N
 #define GL_DARK_ALPHA  214
 #define GL_BORDER_RGB  0.623f, 0.698f, 0.800f   /* COL_BORDER 0x9fb2cc */
 
+/* px margin so refraction (Task 5's lens ring) can sample content just outside the window frame. */
+#define NW_GLASS_PAD 24
+
 /* ---- shaders ---------------------------------------------------------------------------------- */
 static const char *VS_QUAD =
 	"attribute vec2 a_pos;\n"                 /* unit quad 0..1 */
@@ -135,9 +138,11 @@ static const char *FS_BLUR =
 static const char *FS_WIN =
 	"precision mediump float;\n"
 	"varying vec2 v_uv;\n"
+	"uniform highp vec4 u_rect;\n"      /* window frame rect in screen px; highp to match VS_QUAD */
 	"uniform sampler2D u_content;\n"
 	"uniform sampler2D u_backdrop;\n"   /* g_blurB: blurred scene under the window (bottom-up, corner) */
-	"uniform vec2 u_bd_scale;\n"        /* (fw/screen_w, fh/screen_h): the window's corner of g_blurB */
+	"uniform vec4 u_grab;\n"            /* padded grab rect in screen px: (g_gx,g_gy,g_gw,g_gh) */
+	"uniform vec2 u_bd_scale;\n"        /* (g_gw/screen_w, g_gh/screen_h): the grab rect's corner of g_blurB */
 	"uniform float u_glass;\n"          /* 1 = frosted glass, 0 = opaque */
 	"uniform float u_alpha;\n"          /* body alpha for glass (content over the blurred backdrop) */
 	"uniform vec2 u_size_px;\n"
@@ -151,7 +156,9 @@ static const char *FS_WIN =
 	"  float d = length(cq);\n"
 	"  float mask = 1.0 - smoothstep(r - 1.0, r + 1.0, d);\n"
 	"  vec3 content = texture2D(u_content, v_uv).bgr;\n"
-	"  vec2 bd_uv = vec2(v_uv.x, 1.0 - v_uv.y) * u_bd_scale;\n"
+	"  vec2 spx = u_rect.xy + v_uv * u_rect.zw;\n"            /* fragment in screen px */
+	"  vec2 guv = (spx - u_grab.xy) / u_grab.zw;\n"           /* 0..1 within the padded grab rect */
+	"  vec2 bd_uv = vec2(guv.x, 1.0 - guv.y) * u_bd_scale;\n" /* into g_blurB's screen-sized corner */
 	"  vec3 bd = texture2D(u_backdrop, bd_uv).rgb;\n"          /* scene tex is already RGB */
 	"  vec3 glass = mix(bd, content, u_alpha);\n"              /* content over the blurred backdrop */
 	"  vec3 col = mix(content, glass, u_glass);\n"
@@ -166,7 +173,7 @@ static struct prog p_tex, p_blit, p_keyed, p_solid, p_blur, p_win;
 static GLint u_tex_tex, u_blit_tex, u_key_tex, u_key_key, u_solid_color;
 static GLint u_blur_tex, u_blur_dir, u_blur_uv0, u_blur_uvsize;
 static GLint u_win_content, u_win_backdrop, u_win_bd_scale, u_win_glass, u_win_alpha,
-             u_win_size, u_win_radius, u_win_border;
+             u_win_size, u_win_radius, u_win_border, u_win_grab, u_win_sharp;
 
 static struct glkms g_kms;
 static int  g_ok = 0;
@@ -183,6 +190,17 @@ static GLuint g_scene_tex = 0, g_scene_fbo = 0;/* offscreen scene: compose here,
  * Both are screen-sized; each window blurs into the lower-left fw×fh corner via a sub-viewport. */
 static GLuint g_blurA = 0, g_blurB = 0;        /* screen-sized ping-pong textures */
 static GLuint g_fboA = 0, g_fboB = 0;          /* g_fboA<-g_blurA, g_fboB<-g_blurB, attached at init */
+
+/* g_grab: the SHARP (unblurred) copy of the padded backdrop, refreshed per glass window via
+ * glCopyTexSubImage2D into its lower-left corner — same screen-sized/corner-addressed convention as
+ * g_blurA/g_blurB (no glTexImage2D/glFramebufferTexture2D on it, so it's fork-rule-safe: it is never
+ * an FBO attachment, only a plain sampled texture). Kept for Task 5's refraction ring; harmless
+ * plumbing until then. g_gx/g_gy/g_gw/g_gh (screen px, top-down origin) is the current grab rect —
+ * both g_grab and g_blurB hold valid data only in their [0,g_gw)x[0,g_gh) corner. */
+static GLuint g_grab = 0;
+/* g_gw/g_gh default to 1 (not 0): FS_WIN divides by u_grab.zw, and when glass is fully disabled
+ * (NWM_NO_GLASS or a failed blur-FBO init) blur_backdrop() never runs, so these must never be zero. */
+static int g_gx = 0, g_gy = 0, g_gw = 1, g_gh = 1;
 
 /* per-window content textures + their allocated size (recreated on resize). SINGLE-buffered: upload
  * (glTexImage2D + glFinish) then sample the same texture that frame. A double-buffered variant
@@ -290,6 +308,8 @@ int nw_gl_init(int screen_w, int screen_h)
 	u_win_size     = glGetUniformLocation(p_win.id, "u_size_px");
 	u_win_radius   = glGetUniformLocation(p_win.id, "u_radius_px");
 	u_win_border   = glGetUniformLocation(p_win.id, "u_border");
+	u_win_grab     = glGetUniformLocation(p_win.id, "u_grab");
+	u_win_sharp    = glGetUniformLocation(p_win.id, "u_sharp");
 
 	static const float uquad[] = { 0.f, 0.f,  1.f, 0.f,  0.f, 1.f,  1.f, 1.f };  /* triangle strip */
 	glGenBuffers(1, &g_vbo);
@@ -313,6 +333,7 @@ int nw_gl_init(int screen_w, int screen_h)
 	 * disables glass, or either FBO is incomplete, run opaque (never a hang, never a hard init fail). */
 	g_no_glass = getenv("NWM_NO_GLASS") ? 1 : 0;
 	if (!g_no_glass) {
+		g_grab  = make_tex(screen_w, screen_h, 0);   /* sharp grab (never FBO-attached) */
 		g_blurA = make_tex(screen_w, screen_h, 0);
 		g_blurB = make_tex(screen_w, screen_h, 0);
 		glGenFramebuffers(1, &g_fboA);
@@ -349,28 +370,49 @@ static int ensure_win_tex(int idx, int w, int h)
 static int g_blur_trace = -1;
 #define BLUR_MARK(tag) do { if (g_blur_trace) { printf("nw_gl blur: " tag "\n"); fflush(stdout); } } while (0)
 
-/* GPU two-pass separable Gaussian of the scene region under the window into g_blurB's lower-left
- * fw×fh corner. FORK RULE: no glGenTextures / glFramebufferTexture2D / glTexImage2D here — g_fboA and
- * g_fboB are pre-attached at init; we only switch framebuffer binding + viewport. Pass 1 (H) reads
- * the window's sub-region of g_scene_tex into g_fboA's corner; pass 2 (V) reads that corner of
- * g_blurA into g_fboB. FS_WIN then samples g_blurB at (v_uv.x, 1-v_uv.y)*u_bd_scale. */
+/* GPU two-pass separable Gaussian of the PADDED region (window frame + NW_GLASS_PAD margin, clamped
+ * to the screen) under the window into g_blurB's lower-left corner. The pad lets the glass shader
+ * (and Task 5's refraction ring) sample content just outside the window frame — without it, a
+ * cropped grab would CLAMP_TO_EDGE right at the frame boundary rather than reading real neighbouring
+ * scene pixels. FORK RULE: no glGenTextures / glFramebufferTexture2D / glTexImage2D here — g_fboA and
+ * g_fboB are pre-attached at init; we only switch framebuffer binding + viewport, and g_grab is only
+ * ever glCopyTexSubImage2D'd into (never (re)attached), so it's fork-rule-safe too. Pass 1 (H) reads
+ * the padded sub-region of g_scene_tex into g_fboA's corner; pass 2 (V) reads that corner of g_blurA
+ * into g_fboB. FS_WIN maps the fragment's screen position through u_grab + u_bd_scale to sample
+ * g_blurB's corner (see FS_WIN's guv/bd_uv); g_grab holds the matching SHARP copy for later use. */
 static void blur_backdrop(int wx, int wy, int fw, int fh)
 {
 	if (g_blur_trace < 0) g_blur_trace = getenv("NWM_GL_TRACE") ? 1 : 0;
 	const float STEP = 2.5f;                  /* per-tap spread (window px) → a soft, glass-like blur */
-	const float uw = (float) fw / g_sw, uh = (float) fh / g_sh;   /* the corner's uv extent */
+
+	/* pad the window frame + clamp to the screen -> the grab rect bookkeeping (screen px, top-down) */
+	int gx0 = wx - NW_GLASS_PAD, gy0 = wy - NW_GLASS_PAD;
+	int gx1 = wx + fw + NW_GLASS_PAD, gy1 = wy + fh + NW_GLASS_PAD;
+	if (gx0 < 0) gx0 = 0;  if (gy0 < 0) gy0 = 0;
+	if (gx1 > g_sw) gx1 = g_sw;  if (gy1 > g_sh) gy1 = g_sh;
+	g_gx = gx0; g_gy = gy0; g_gw = gx1 - gx0; g_gh = gy1 - gy0;
+
+	const float uw = (float) g_gw / g_sw, uh = (float) g_gh / g_sh;   /* the corner's uv extent */
 	BLUR_MARK("enter");
 	glDisable(GL_BLEND);                                            BLUR_MARK("blend-off");
+
+	/* sharp copy (Task 5's ring): grab the padded region straight from the currently-bound scene FBO
+	 * into g_grab's lower-left corner — same corner convention as g_blurA/g_blurB. Plain texture copy,
+	 * no FBO attachment change, so it doesn't touch the fork rule. */
+	glBindTexture(GL_TEXTURE_2D, g_grab);
+	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_gx, g_sh - g_gy - g_gh, g_gw, g_gh);
+	                                                                 BLUR_MARK("grab-sharp");
+
 	glUseProgram(p_blur.id);                                        BLUR_MARK("use-prog");
 	glActiveTexture(GL_TEXTURE0);
 	glUniform1i(u_blur_tex, 0);
 	glUniform2f(u_blur_uvsize, uw, uh);
-	glViewport(0, 0, fw, fh);                 /* every pass draws into the lower-left corner */
+	glViewport(0, 0, g_gw, g_gh);              /* every pass draws into the lower-left corner */
 
-	/* pass 1 (H): window sub-region of g_scene_tex (y-flipped: scene tex is bottom-up in the FBO) */
+	/* pass 1 (H): padded sub-region of g_scene_tex (y-flipped: scene tex is bottom-up in the FBO) */
 	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);                      BLUR_MARK("bind-fboA");
 	glBindTexture(GL_TEXTURE_2D, g_scene_tex);                      BLUR_MARK("bind-scene-tex");
-	glUniform2f(u_blur_uv0, (float) wx / g_sw, 1.0f - (float) (wy + fh) / g_sh);
+	glUniform2f(u_blur_uv0, (float) g_gx / g_sw, 1.0f - (float) (g_gy + g_gh) / g_sh);
 	glUniform2f(u_blur_dir, STEP / g_sw, 0.0f);
 	draw_full_quad();                                              BLUR_MARK("draw-H1");
 
@@ -516,12 +558,16 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			glUniform1i(u_win_backdrop, 1);
 			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
 			glUniform1i(u_win_content, 0);
-			glUniform2f(u_win_bd_scale, (float) fw / g_sw, (float) fh / g_sh);
+			glUniform2f(u_win_bd_scale, (float) g_gw / g_sw, (float) g_gh / g_sh);
 			glUniform1f(u_win_glass, glass ? 1.0f : 0.0f);
 			glUniform1f(u_win_alpha, alpha);
 			glUniform2f(u_win_size, (float) fw, (float) fh);
 			glUniform1f(u_win_radius, (float) g_radius);
 			glUniform3f(u_win_border, GL_BORDER_RGB);
+			glUniform4f(u_win_grab, (float) g_gx, (float) g_gy, (float) g_gw, (float) g_gh);
+			glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, w->glass ? g_grab : g_win_tex[idx]);
+			glUniform1i(u_win_sharp, 2);
+			glActiveTexture(GL_TEXTURE0);
 			quad(&p_win, (float) w->x, (float) w->y, (float) fw, (float) fh);
 		}
 
@@ -623,6 +669,7 @@ void nw_gl_shutdown(void)
 		g_win_tw[i] = g_win_th[i] = 0; g_win_gen[i] = 0;
 	}
 	g_chrome_ready = 0; g_wall_dirty = 1;
+	if (g_grab)   { glDeleteTextures(1, &g_grab);   g_grab = 0; }
 	if (g_blurA)  { glDeleteTextures(1, &g_blurA);  g_blurA = 0; }
 	if (g_blurB)  { glDeleteTextures(1, &g_blurB);  g_blurB = 0; }
 	if (g_fboA)   { glDeleteFramebuffers(1, &g_fboA); g_fboA = 0; }
