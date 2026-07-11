@@ -217,15 +217,30 @@ static const char *FS_WIN =
 	"    vec3 glass = mix(body, ring, lens);\n"
 	"    glass *= 1.0 + CAUSTIC * s * 0.25;\n"                    /* rim concentrates light: brighten */
 	"\n"
-	"    float luma = dot(glass, vec3(0.299, 0.587, 0.114));\n"   /* vibrancy + frost lift */
-	"    glass = mix(vec3(luma), glass, 1.22);\n"
-	"    glass = glass * 0.90 + vec3(0.085);\n"
+	"    float luma = dot(glass, vec3(0.299, 0.587, 0.114));\n"
+	"    float sat  = mix(mix(1.0, 1.65, u_focus), 1.35, u_dark);\n"
+	"    glass = max(mix(vec3(luma), glass, sat), vec3(0.0));\n"
 	"\n"
-	"    vec3  tcol = mix(vec3(0.76, 0.78, 0.81), vec3(0.46, 0.60, 0.80), u_focus);\n"
-	"    float tamt = mix(0.34, 0.22, u_focus);\n"                /* unfocused: paler, denser tint */
-	"    tcol  = mix(tcol, vec3(0.10, 0.11, 0.13), u_dark);\n"
-	"    tamt  = mix(tamt, 0.48, u_dark);\n"                      /* dark glass is denser */
+	"    float t = clamp(v_uv.x * 0.35 + v_uv.y * 0.94, 0.0, 1.0);\n" /* diagonal coord */
+	"    vec3  lc = mix(vec3(0.831, 0.902, 0.973), vec3(0.765, 0.843, 0.933), smoothstep(0.0, 0.45, t));\n"
+	"    lc       = mix(lc, vec3(0.804, 0.871, 0.949), smoothstep(0.45, 1.0, t));\n"
+	"    float la = mix(0.30, 0.16, smoothstep(0.0, 0.45, t));\n"
+	"    la       = mix(la, 0.24, smoothstep(0.45, 1.0, t));\n"
+	"    vec3  uc = mix(vec3(0.804, 0.831, 0.878), vec3(0.784, 0.816, 0.863), smoothstep(0.0, 0.45, t));\n"
+	"    uc       = mix(uc, vec3(0.792, 0.824, 0.871), smoothstep(0.45, 1.0, t));\n"
+	"    float ua = mix(0.20, 0.10, smoothstep(0.0, 0.45, t));\n"
+	"    ua       = mix(ua, 0.15, smoothstep(0.45, 1.0, t));\n"
+	"    vec3  dc = mix(vec3(0.039, 0.063, 0.102), vec3(0.031, 0.051, 0.086), t);\n"
+	"    float da = mix(0.55, 0.42, t);\n"
+	"    vec3  tcol = mix(mix(uc, lc, u_focus), dc, u_dark);\n"
+	"    float tamt = mix(mix(ua, la, u_focus), da, u_dark);\n"
 	"    glass = mix(glass, tcol, tamt);\n"
+	"\n"
+	"    float ts = clamp(v_uv.y * 0.98 + v_uv.x * 0.21, 0.0, 1.0);\n"
+	"    float sa = mix(mix(0.34, 0.10, smoothstep(0.0, 0.22, ts)), 0.0, smoothstep(0.22, 0.42, ts));\n"
+	"    sa *= mix(0.5, 1.0, u_focus);\n"                          /* mockup: unfocused sheen at 50% */
+	"    sa *= mix(1.0, 0.41, u_dark);\n"                          /* dark: .14/.04 = ~0.41x */
+	"    glass = mix(glass, vec3(1.0), sa);\n"
 	"\n"
 	"    vec3  N      = normalize(vec3(g * s, 1.0));\n"           /* pseudo-3D surface normal */
 	"    vec3  L      = normalize(vec3(LIGHT, 0.55));\n"          /* key light, up-left, out of screen */
@@ -235,8 +250,11 @@ static const char *FS_WIN =
 	"\n"
 	"    float outer = 1.0 - clamp(-d - 0.5, 0.0, 1.0);\n"        /* 1px dark outer hairline */
 	"    float inner = clamp(-d - 1.0, 0.0, 1.0) * (1.0 - clamp(-d - 2.2, 0.0, 1.0));\n" /* 1px white inner */
-	"    glass = mix(glass, vec3(0.13, 0.16, 0.20), outer * 0.55);\n"
-	"    glass += vec3(inner * 0.22);\n"
+	"    float ostr  = mix(0.45, 0.55, u_focus);\n"               /* mockup: unfocused outer .45 */
+	"    glass = mix(glass, vec3(0.031, 0.063, 0.118), outer * ostr);\n"
+	"    float istr  = 0.62 + 0.23 * (1.0 - smoothstep(0.0, 0.06, v_uv.y));\n" /* top edge ~.85 */
+	"    istr *= mix(1.0, 0.45, u_dark);\n"                       /* dark ring is fainter (.28) */
+	"    glass = mix(glass, vec3(1.0), inner * istr);\n"
 	"\n"
 	"    for (int i = 0; i < 3; i++) {\n"     /* caption spheres: yellow / green / red-in-corner glass balls */
 	"        vec2  c = vec2(u_caps.x - float(2 - i) * u_caps.w, u_caps.y);\n"
