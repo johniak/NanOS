@@ -102,6 +102,34 @@ static void mono_font_autoinit(void)
     nwfont_set(NWFONT_MONO, NW_MONO_FONT_PATH, NW_MONO_FONT_PX);
 }
 
+/* Coverage -> alpha remap for glyph AA: blending sRGB with raw coverage renders dark
+ * text thin and light text fat; remapping by a^(1/1.43) is the standard perceptual
+ * compromise (Photoshop/Skia). Glyph coverage only — icon alpha is real alpha.       */
+static uint8_t s_cov143[256];
+static int     s_cov143_init;
+const uint8_t *nw_cov143(void)
+{
+	if (!s_cov143_init) {
+		for (int i = 0; i < 256; i++) {
+			/* pow(i/255, 1/1.43) = a^0.699 without libm pow (freestanding):
+			 * sqrt chain a^0.5 * a^0.125 * a^0.0625 = a^0.6875 — exponent error
+			 * < 0.012, well under a coverage step. __builtin_sqrt is a compiler
+			 * intrinsic (already used as __builtin_sqrtf below), not a linked libm
+			 * call, so it works in this freestanding userland. */
+			double a = i / 255.0;
+			double s1 = __builtin_sqrt(a);    /* a^0.5    */
+			double s2 = __builtin_sqrt(s1);   /* a^0.25   */
+			double s3 = __builtin_sqrt(s2);   /* a^0.125  */
+			double s4 = __builtin_sqrt(s3);   /* a^0.0625 */
+			double r  = s1 * s3 * s4;         /* a^0.6875 ~= a^(1/1.43) */
+			s_cov143[i] = (uint8_t)(r * 255.0 + 0.5);
+		}
+		s_cov143[0] = 0; s_cov143[255] = 255;
+		s_cov143_init = 1;
+	}
+	return s_cov143;
+}
+
 /* Draw one char with a TRANSPARENT background in the monospace font (AA), in a fixed NW_FONT_W
  * cell at (x,y); the caller advances by NW_FONT_W. Text inputs use this so their grid math
  * (caret/selection by NW_FONT_W) stays exact while glyphs render smoothly. VGA 1-bit fallback. */
@@ -111,12 +139,13 @@ void nw_draw_char_t(const struct nw_surface *s, int x, int y, unsigned char ch, 
     if (nwfont_loaded(NWFONT_MONO)) {
         const struct nwfont_glyph *g = nwfont_get(NWFONT_MONO, ch);
         if (g && g->cov) {
+            const uint8_t *lut = nw_cov143();
             int baseline = y + nwfont_ascent(NWFONT_MONO);
             for (int gy = 0; gy < g->h; gy++) {
                 const unsigned char *covrow = g->cov + (long) gy * g->w;
                 int py = baseline + g->top + gy;
                 for (int gx = 0; gx < g->w; gx++)
-                    if (covrow[gx]) nw_blend_pixel(s, x + g->bx + gx, py, fg, covrow[gx]);
+                    if (covrow[gx]) nw_blend_pixel(s, x + g->bx + gx, py, fg, lut[covrow[gx]]);
             }
         }
         return;
@@ -229,6 +258,7 @@ int nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t 
 	if (nwfont_loaded(NWFONT_UI)) {
 		/* proportional anti-aliased UI font: blend each glyph's coverage at its advance.
 		 * y is the line-box top; the baseline sits at y + ascent. */
+		const uint8_t *lut = nw_cov143();
 		int baseline = y + nwfont_ascent(NWFONT_UI);
 		for (; *str; str++) {
 			const struct nwfont_glyph *g = nwfont_get(NWFONT_UI, (unsigned char) *str);
@@ -239,7 +269,7 @@ int nw_text(const struct nw_surface *s, int x, int y, const char *str, uint32_t 
 					int py = baseline + g->top + gy;
 					for (int gx = 0; gx < g->w; gx++) {
 						unsigned char a = covrow[gx];
-						if (a) nw_blend_pixel(s, x + g->bx + gx, py, fg, a);
+						if (a) nw_blend_pixel(s, x + g->bx + gx, py, fg, lut[a]);
 					}
 				}
 			}

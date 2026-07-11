@@ -82,6 +82,12 @@ uint32_t nw_lerp(uint32_t a, uint32_t b, int t, int n);
 void nw_blend_pixel(const struct nw_surface *s, int x, int y, uint32_t rgb, int a);
 void nw_blend_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32_t rgb, int a);
 
+/* Glyph coverage -> alpha remap (gamma 1.43, the Photoshop/Skia compromise): raw stb_truetype
+ * AA coverage blended directly in sRGB renders dark text thin. Returns a lazily-initialized
+ * 256-entry LUT; index by coverage (0..255) before calling nw_blend_pixel for GLYPH AA only —
+ * never for geometric AA (nw_fill_round/nw_stroke_round) or real alpha (icon PNGs). */
+const uint8_t *nw_cov143(void);
+
 /* Vertical linear gradient fill (opaque) from `top` colour to `bot` colour down the rect. */
 void nw_vgrad_rect(const struct nw_surface *s, int x, int y, int w, int h,
                    uint32_t top, uint32_t bot);
