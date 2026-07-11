@@ -22,6 +22,7 @@
 #include "gem/i915_gem_object.h"
 #include "gt/intel_gt.h"        /* for_each_engine — stall rescue walks every engine */
 #include "gt/intel_reset.h"     /* intel_gt_handle_error — stall rescue reset */
+#include "gt/intel_rps.h"       /* intel_rps_read_actual_frequency — slow-ioctl probe */
 #include <drm/drm_print.h>      /* drm_info_printer — intel_engine_dump sink */
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
@@ -112,7 +113,9 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 {
 	struct node_client *c;
 	long r;
+	unsigned long long t0_us;
 	void lkpi_tasklet_drain(void);
+	t0_us = knx_uptime_us();
 	g_nioctl_enters++;
 	g_nioctl_last_nr = cmd & 0xff;   /* low byte = the DRM ioctl nr (matches the gldiag trace) */
 	g_nioctl_last_pid = pid;
@@ -162,6 +165,23 @@ static long node_ioctl(int pid, int node, unsigned int cmd, void *arg)
 	 * (node_release resumes it when the client goes away). */
 	if (r == 0 && cmd == DRM_IOCTL_MODE_SETCRTC)
 		i915_present_set_suspended(1);
+	/* Slow-ioctl probe (stutter evidence, Dell: gate-held spikes of 100–500 ms every few
+	 * seconds — SetCrtc 507 ms, eglSwapBuffers 521 ms in gldiag). Name the ioctl and, still
+	 * under the gate, read the GPU's ACTUAL vs REQUESTED RPS frequency: actual pinned at RPn
+	 * (~350 MHz) fingers dead RPS (GPU renders at min clock), actual==requested-high fingers
+	 * the render/display path instead. Throttled to 1 line/s. */
+	{
+		unsigned long long dur_us = knx_uptime_us() - t0_us;
+		static unsigned long long slow_last_us;
+		if (dur_us > 150000ull && t0_us - slow_last_us > 1000000ull) {
+			struct intel_rps *rps = &to_gt(to_i915(g_ddev))->rps;
+			slow_last_us = t0_us;
+			printk("i915: SLOW ioctl 0x%x pid=%d took %llu ms (rps act=%u req=%u MHz)\n",
+			       cmd & 0xff, pid, dur_us / 1000ull,
+			       intel_rps_read_actual_frequency(rps),
+			       intel_rps_get_requested_frequency(rps));
+		}
+	}
 	lkpi_gate_exit();
 	g_nioctl_exits++;
 	return r;
@@ -275,9 +295,11 @@ static const struct knx_drm_ops g_node_ops = { node_ioctl, node_mmap_offset, nod
  * comment-only branch (intel_engine_heartbeat.c:173) — no priority escalation, no reset, no log.
  * On mainline that only wedges the stalled client; under the one-executor gate it wedges the whole
  * desktop (the stalled EXECBUFFER2 holds the gate, everything else starves — Dell 2026-07-11,
- * 27+ s, HWSP frozen, heartbeat mute). This is the escalation i915 doesn't have: the pulse thread
- * arms it after 12 s of one ioctl holding the gate, the stalled owner's own pump runs it (gated
- * thread context, where the heartbeat worker would have run). intel_engine_dump() prints the full
+ * 27+ s, HWSP frozen, heartbeat mute). This is the escalation i915 doesn't have: the stalled
+ * owner's own pump detects the >12 s gate hold itself AND runs the rescue (gated thread context,
+ * where the heartbeat worker would have run; the pulse thread's arm remains a redundant backup —
+ * the next Dell freeze starved the pulse thread outright while the pump provably kept turning,
+ * so a pulse-only detector never fired). intel_engine_dump() prints the full
  * per-engine state FIRST (requests in queue, ELSP, HWSP seqno, breadcrumbs — the root-cause
  * evidence), then intel_gt_handle_error() resets the engines: stuck requests error out with -EIO,
  * the eternal wait returns, the ioctl unwinds, the gate frees, the desktop resumes. */
@@ -305,6 +327,15 @@ static void i915_stall_rescue(void)
 		printk("i915: stall rescue skipped — the stall resolved on its own (gate held %llu ms)\n",
 		       held_us / 1000ull);
 		return;
+	}
+	/* Cooldown: the pump self-check re-fires every ~1 s for as long as the hold persists — a
+	 * reset that does not unstick the stall must not storm back-to-back resets. */
+	{
+		static unsigned long long rescue_last_us;
+		unsigned long long now = knx_uptime_us();
+		if (rescue_last_us && now - rescue_last_us < 30000000ull)
+			return;
+		rescue_last_us = now;
 	}
 	i915 = to_i915(g_ddev);
 	gt = to_gt(i915);

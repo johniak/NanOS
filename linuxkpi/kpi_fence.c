@@ -65,16 +65,20 @@ void lkpi_tasklet_drain(void);
  * intel_engine_heartbeat.c:173): a submission-graph stall is tolerated forever — no escalation, no
  * reset, no log line. Under the one-executor gate that "tolerated" state is fatal: the stalled
  * waiter holds the gate, every other DRM client/thread/daemon starves behind it, and the desktop
- * dies (Dell 2026-07-11: EXECBUFFER2 in flight 27+ s, HWSP frozen, heartbeat mute). The pulse
- * thread (ungated — it must not touch driver state) only ARMS the flag; the stalled owner's own
- * pump — gated thread context, exactly where the heartbeat worker would have run — executes the
- * rescue: dump engine state, intel_gt_handle_error() so the stuck fences error out, the wait
- * returns, and the gate frees. Re-entrancy-guarded: the rescue's internal waits pump too. */
+ * dies (Dell 2026-07-11: EXECBUFFER2 in flight 27+ s, HWSP frozen, heartbeat mute). The stalled
+ * owner's own pump both DETECTS and EXECUTES the rescue — gated thread context, exactly where the
+ * heartbeat worker would have run: dump engine state, intel_gt_handle_error() so the stuck fences
+ * error out, the wait returns, and the gate frees. Detection must live HERE, not in the pulse
+ * thread: on the very next Dell boot the freeze starved the pulse thread with it (its arming line
+ * never ran) while this pump demonstrably kept turning the whole time (the SLEEP-SPIN probe it
+ * feeds kept counting). The pulse's lkpi_stall_rescue_arm() stays as a redundant second trigger.
+ * Re-entrancy-guarded: the rescue's internal waits pump too. */
 static void (*lkpi_stall_rescue_hook)(void);
 static volatile int g_stall_rescue_armed;
 static int g_stall_rescue_running;
 void lkpi_set_stall_rescue(void (*fn)(void)) { lkpi_stall_rescue_hook = fn; }
 void lkpi_stall_rescue_arm(void)             { g_stall_rescue_armed = 1; }
+void lkpi_gate_debug(void **owner, int *depth, unsigned long long *held_us);   /* kpi_misc.c */
 
 void lkpi_wait_pump(void) {
 	/* Cross-core gate (kpi_misc.c): the pump executes driver bottom halves (irq harvest, work
@@ -86,11 +90,29 @@ void lkpi_wait_pump(void) {
 	if (lkpi_wq_pump_hook)    lkpi_wq_pump_hook();
 	if (lkpi_irq_poll_hook)   lkpi_irq_poll_hook();
 	lkpi_tasklet_drain();     /* run any execlists tasklet the poll deferred (thread context) */
-	if (g_stall_rescue_armed && lkpi_stall_rescue_hook && !g_stall_rescue_running) {
-		g_stall_rescue_armed = 0;
-		g_stall_rescue_running = 1;
-		lkpi_stall_rescue_hook();
-		g_stall_rescue_running = 0;
+	if (lkpi_stall_rescue_hook && !g_stall_rescue_running) {
+		int fire = g_stall_rescue_armed;
+		/* Self-detection (primary trigger): this pump turns throughout a stall, so measure the
+		 * gate hold HERE. held_us spans the OUTERMOST acquisition (kpi_misc.c), so a pump that
+		 * is itself the outermost gate user (a stray ungated wait) reads ~0 and never fires;
+		 * only a wait nested under a long-held ioctl gate crosses 12 s. Checked at most once a
+		 * second — the hook's own guards (fresh hold re-check + 30 s cooldown) do the rest. */
+		if (!fire) {
+			static unsigned long long next_check_us;
+			unsigned long long now = knx_uptime_us();
+			if (now >= next_check_us) {
+				void *o; int d; unsigned long long held;
+				next_check_us = now + 1000000ull;
+				lkpi_gate_debug(&o, &d, &held);
+				fire = held > 12000000ull;
+			}
+		}
+		if (fire) {
+			g_stall_rescue_armed = 0;
+			g_stall_rescue_running = 1;
+			lkpi_stall_rescue_hook();
+			g_stall_rescue_running = 0;
+		}
 	}
 	lkpi_gate_exit();
 }
