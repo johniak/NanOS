@@ -2,7 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**STATUS / v2 note:** this version supersedes the earlier draft of this file (Win7 frame around an
+**STATUS: IMPLEMENTED** (2026-07-11, branch `feat/liquid-glass`) — all 7 tasks landed: widened frame
+band, padded backdrop grab + sharp sampler, the window style word through the wire protocol, the CPU
+keyed glass-frame mode, the liquid-glass slab shader + caption spheres, the Terminal dark
+glass-client showcase, and this docs pass. See "Known tradeoffs" below for what was deliberately
+left out of scope (band-ink alpha, light-glass CLIENT apps in libnwui, half-res blur).
+
+**v2 note:** this version supersedes the earlier draft of this file (Win7 frame around an
 opaque client). Jan approved a revised design via an interactive HTML mockup on 2026-07-03. The
 approved model: **the ENTIRE window is ONE slab of macOS-Liquid-Glass** (blur + saturation + tint +
 edge refraction), and everything — title, controls, and the app's own content — is *ink drawn on
@@ -71,19 +77,19 @@ A 2 px border cannot read as glass. Widen to 6 px; the titlebar (28 px) already 
 - Produces: `NW_BORDER == 6`, consumed by both compositors' `frame_w/frame_h`, hit tests, and
   resize logic (all already parameterized on the constant — grep confirms no hardcoded `2`).
 
-- [ ] **Step 1: Edit the constant**
+- [x] **Step 1: Edit the constant**
 
 ```c
 	NW_BORDER      = 6,     /* glass frame band: side/bottom border width */
 ```
 
-- [ ] **Step 2: CPU-path regression check**
+- [x] **Step 2: CPU-path regression check**
 
 Run: `make image64 && bash scripts/smoke-virtio-gpu.sh`
 Expected: PASS. Then eyeball once via `make run64`: windows draggable/resizable, border visibly
 thicker, nothing clipped.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add user/nwm/nwm_core.h
@@ -107,7 +113,7 @@ look IDENTICAL to before (parity refactor).
   screen px, top-down origin); uniform `u_grab` (vec4 = that rect); sampler unit 2 = sharp grab
   (`u_sharp`); `#define NW_GLASS_PAD 24`.
 
-- [ ] **Step 1: Pad the grab in `blur_backdrop` (and fix the latent resize bug)**
+- [x] **Step 1: Pad the grab in `blur_backdrop` (and fix the latent resize bug)**
 
 The current code has a latent bug: `ensure_tex(&g_grab, &g_blur_w, &g_blur_h, fw, fh)` updates
 `g_blur_w/h` BEFORE the `g_blurA/B` size check reads them, so that check always passes and A/B are
@@ -204,7 +210,7 @@ is symmetric, so the two flips are self-consistent: the blurred texture keeps th
 orientation and the shader's single `1.0 - v` flip in `backdrop()` remains correct for BOTH
 samplers. Do not add extra flips.
 
-- [ ] **Step 2: Route FS_WIN's backdrop sampling through `u_grab`**
+- [x] **Step 2: Route FS_WIN's backdrop sampling through `u_grab`**
 
 In `FS_WIN` (still the old shader for now), replace
 
@@ -228,7 +234,7 @@ declaring it in the FS is legal and reads the same value):
 "uniform vec4 u_grab;\n"
 ```
 
-- [ ] **Step 3: Wire the new uniform + sharp sampler in C**
+- [x] **Step 3: Wire the new uniform + sharp sampler in C**
 
 Add cached locations (next to the other `u_win_*`):
 
@@ -255,14 +261,14 @@ In the window draw block of `nw_gl_frame`, after the existing per-window uniform
 		glActiveTexture(GL_TEXTURE0);
 ```
 
-- [ ] **Step 4: Parity check**
+- [x] **Step 4: Parity check**
 
 Run: `make nwm-gl && make image64-gl && bash scripts/smoke-virtio-gpu-gl.sh`
 Expected: PASS, and a `scripts/gl-desktop-show.sh` screencapture that looks the same as before
 this task (same blur under windows — the pad only enlarges the blurred region, the mapping change
 compensates exactly).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add user/nwm/nw_compose_gl.c
@@ -291,7 +297,7 @@ No wire-format change, old clients keep working (style 0 = legacy light opaque).
   client buffer is `0xAARRGGBB` — top byte = ink coverage (0 = pure glass, 255 = opaque ink).
   Transport already preserves it end-to-end (verified in Step 3).
 
-- [ ] **Step 1: Protocol — style bits + comment**
+- [x] **Step 1: Protocol — style bits + comment**
 
 In `user/libnw/nwproto.h`, update the CREATE_WINDOW comment and add the enum (below the
 `NW_BTN_*` enum):
@@ -309,7 +315,7 @@ enum {
 };
 ```
 
-- [ ] **Step 2: libnw client API**
+- [x] **Step 2: libnw client API**
 
 `user/libnw/libnw.h`, next to `nw_create_window`:
 
@@ -340,7 +346,7 @@ nw_win *nw_create_window(nw_display *d, int w, int h, const char *title)
 (Check `send_hdr`'s parameter order in the file — the existing call passes `w, h, 0, 0`; the style
 replaces the first `0`, i.e. the `c` argument.)
 
-- [ ] **Step 3: Server side — store it, and verify the alpha transport**
+- [x] **Step 3: Server side — store it, and verify the alpha transport**
 
 `user/nwm/nwm_core.h`, in `struct nw_window` (next to `glass`):
 
@@ -365,12 +371,12 @@ Then VERIFY (read, don't guess) that the top byte survives the pixel path end-to
 3. The GL upload of `w->frame` (nw_compose_gl.c) is `GL_RGBA/GL_UNSIGNED_BYTE` — byte 3 lands in
    `.a` in the shader. Nothing to change, just confirm the format.
 
-- [ ] **Step 4: Regression test**
+- [x] **Step 4: Regression test**
 
 Run: `make image64 && bash scripts/smoke-virtio-gpu.sh`
 Expected: PASS — every existing client sends style 0 via the wrapper; behaviour identical.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add user/libnw/nwproto.h user/libnw/libnw.h user/libnw/libnw.c user/nwm/nwm_core.h user/nwm/nwm_core.c
@@ -400,7 +406,7 @@ flag is off.
   above ~0.10 = ink over glass. Ink colours must clear that threshold (both title colours below
   do).
 
-- [ ] **Step 1: The flag + setter in `nw_compose.c`**
+- [x] **Step 1: The flag + setter in `nw_compose.c`**
 
 ```c
 /* GL liquid-glass windows: when set (GL compositor live), the frame band (titlebar + borders) is
@@ -417,7 +423,7 @@ Declaration in `nw_compose.h` (next to `nw_compose_set_theme`):
 void nw_compose_set_glass_frame(int on);   /* GL glass windows: key-black band + ink (nw_compose_gl) */
 ```
 
-- [ ] **Step 2: Branch `draw_window_to`**
+- [x] **Step 2: Branch `draw_window_to`**
 
 Replace the material + titlebar fills (`nw_compose.c:104-108`) with:
 
@@ -466,12 +472,12 @@ Wrap the control-glyph block (`— □ ×`, from `uint32_t cfg = ...` through th
 
 The client blit and the no-buffer `nw_fill_rect(..., mat)` fallback at the end stay as-is.
 
-- [ ] **Step 3: Off-flag regression test**
+- [x] **Step 3: Off-flag regression test**
 
 Run: `make image64 && bash scripts/smoke-virtio-gpu.sh`
 Expected: PASS — flag defaults to 0, CPU rendering byte-identical.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add user/nwm/nw_compose.c user/nwm/nw_compose.h
@@ -510,7 +516,7 @@ bottom.
   radius, slot width), `u_focus`, `u_dark`, `u_inkwin`, `u_debug` (floats); env
   `NWM_GLASS_DEBUG=1..4`.
 
-- [ ] **Step 1: Replace `FS_WIN` with the liquid-glass shader**
+- [x] **Step 1: Replace `FS_WIN` with the liquid-glass shader**
 
 Full source. Transcribe EXACTLY (as a C string array like the current shaders; comments may be
 dropped in the C literal):
@@ -659,7 +665,7 @@ Sign conventions, so you can reason instead of guess:
   ink, client: `mix(glass, content, ctex.a)`. The spheres sit under the ink but the CPU draws no
   glyphs there (Task 4), so band ink never covers them.
 
-- [ ] **Step 2: Uniform wiring in C**
+- [x] **Step 2: Uniform wiring in C**
 
 New cached locations (drop `u_win_alpha` and `u_win_border` if now unused by the new shader — they
 are; delete their lookups and sets):
@@ -704,7 +710,7 @@ The sphere centres land exactly in the existing `close_box`/`max_box`/`min_box` 
 green maximizes, the yellow minimizes — with zero hit-test changes. Sphere radius 8 px inside the
 22 px slot matches the approved 16 px mockup balls.
 
-- [ ] **Step 3: Enable keyed frames from nwm.c (and disable on fallback)**
+- [x] **Step 3: Enable keyed frames from nwm.c (and disable on fallback)**
 
 At the GL-init success site (`user/nwm/nwm.c:793`, inside the `if (... nw_gl_init(...) == 0)`
 block):
@@ -726,7 +732,7 @@ branch that logs "GL backend disabled, CPU fallback"). Add inside it, right afte
 (the server is the global `S` in nwm.c). Without this, a mid-session GL fallback would paint
 key-black frames on the CPU path.
 
-- [ ] **Step 4: Build + shader-compile check**
+- [x] **Step 4: Build + shader-compile check**
 
 Run: `make nwm-gl && make image64-gl`
 Expected: builds clean. Boot `bash scripts/gl-desktop-show.sh`, log in, check serial for
@@ -734,7 +740,7 @@ Expected: builds clean. Boot `bash scripts/gl-desktop-show.sh`, log in, check se
 gotchas: all `float` literals need decimals, no constant arrays, chained ternaries need parens on
 some compilers — add them if the log complains).
 
-- [ ] **Step 5: Visual verification via debug modes (screencapture each)**
+- [x] **Step 5: Visual verification via debug modes (screencapture each)**
 
 Run nwm with the env knob from a VT shell (`NWM_GLASS_DEBUG=1 nwm`), screencapture per mode:
 1. `=1`: windows show a red band exactly `BEVEL` px wide hugging the rounded edge, black
@@ -750,7 +756,7 @@ Run nwm with the env knob from a VT shell (`NWM_GLASS_DEBUG=1 nwm`), screencaptu
    caustic at the bottom, colour denser at their rims); unfocused windows paler with GREY balls;
    legacy clients opaque and legible.
 
-- [ ] **Step 6: Gate + commit**
+- [x] **Step 6: Gate + commit**
 
 Run: `bash scripts/smoke-virtio-gpu-gl.sh` and the Part-0 interaction scenario (open two apps,
 drag one across the other for ~2 s, screencapture DURING the drag) — frame telemetry must stay
@@ -778,7 +784,7 @@ there.
 **Interfaces:**
 - Consumes: `nw_create_window_style` + `NW_STYLE_*` (Task 3), the alpha-ink shader path (Task 5).
 
-- [ ] **Step 1: Opt in at window creation**
+- [x] **Step 1: Opt in at window creation**
 
 Replace `user/terminal/terminal.c:191`:
 
@@ -790,7 +796,7 @@ Replace `user/terminal/terminal.c:191`:
 (`NW_STYLE_*` comes from nwproto.h via libnw.h; if libnw.h doesn't re-export it, add
 `#include "../libnw/nwproto.h"`.)
 
-- [ ] **Step 2: Ink alpha in the palette**
+- [x] **Step 2: Ink alpha in the palette**
 
 Add next to the existing `vt_pal` uses:
 
@@ -813,7 +819,7 @@ cursor cell swaps fg/bg — swap the wrappers accordingly). CAVEAT: verify which
 VT uses for "default background" (assumed 0 here); if default is a different sentinel, key
 `pal_bg` off that value instead.
 
-- [ ] **Step 3: Verify against the mockup**
+- [x] **Step 3: Verify against the mockup**
 
 Run: `make nwm-gl && make image64-gl && bash scripts/gl-desktop-show.sh`, log in, open the
 Terminal, screencapture. Checklist: dark dense slab over the wallpaper (windows behind blur
@@ -821,7 +827,7 @@ through); prompt/output text solid and legible; the veil dark enough that white 
 bright wallpaper; cursor cell visible; glass balls grey when the terminal loses focus. Also
 `make run64` (CPU path): terminal looks exactly as today.
 
-- [ ] **Step 4: Gate + commit**
+- [x] **Step 4: Gate + commit**
 
 Run: `bash scripts/smoke-virtio-gpu-gl.sh`
 Expected: PASS.
@@ -842,9 +848,9 @@ git commit -m "terminal: dark glass-client window (alpha ink over the slab)"
   `NWM_NO_GL`/fallback semantics)
 - Modify: this plan (check the boxes, update the STATUS line)
 
-- [ ] **Step 1: Write the docs** (mirror the header comment of `nw_compose_gl.c`; PL file matches
+- [x] **Step 1: Write the docs** (mirror the header comment of `nw_compose_gl.c`; PL file matches
   EN content).
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/en/graphics.md docs/pl/graphics.md docs/superpowers/plans/2026-07-03-aero-liquid-glass-frames.md

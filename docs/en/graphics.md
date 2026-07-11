@@ -191,7 +191,65 @@ GL-capable compositor is a **separate** Mesa-linked binary: `make nwm-gl` (Docke
 in `nanos-sdk-work/mesa-port`, the source tree mounted read-only) → `nwm-gl.nxe`, installed by
 `make image64-gl` (a byte copy of `image64.img` with `/nanos/bin/nwm.nxe` swapped for
 `nwm-gl.nxe`). At runtime it falls back to the CPU compositor on `NWM_NO_GL=1`, a missing DRM node
-(plain QEMU), or any GL/KMS error — logging `nwm: GL compositor active` or `... unavailable ...`.
+(plain QEMU), or any GL/KMS error — logging `nwm: GL compositor active` or `... unavailable ...`. A
+GL frame can also fail *mid-session* (e.g. an unsignalled fence after a bad present); `nwm` treats
+that the same as startup failure — it tears the GL context down (wedged, not graceful: a context
+that just failed a frame can hold fences that a graceful `eglTerminate` would wait on forever),
+clears `g_gl` and the keyed-frame flag, marks every window's frame dirty, and forces one full CPU
+repaint. From that point the desktop is the classic opaque CPU compositor for the rest of the
+session — keyed glass frames are meaningless without the GL slab shader to consume them.
+
+### 9.1 Liquid-glass window material
+
+Every glass window (and the desktop chrome frame around it) is painted by one fragment shader,
+`FS_WIN` in `nw_compose_gl.c`, as a single translucent slab rather than a flat blurred rectangle:
+
+- A **rounded-box SDF** (`sd_box`) gives the signed distance to the window's edge. A ~14 px band
+  (`BEVEL`) just inside that edge is the "lens ring": there the shader displaces its backdrop sample
+  *outward* along the SDF gradient (up to 12 px at full focus, gentler when unfocused) and samples
+  the R/G/B channels at very slightly different displacements, producing a chromatic-fringe refraction
+  highlight — the "liquid" look of the rim. Outside the ring the body just shows the flat, GPU-blurred
+  backdrop (frost). The bevel also carries a top-left specular glint (the `LIGHT` vector) and a 1 px
+  dark outer / 1 px white inner hairline pair, so the slab reads as a lit, curved sheet of glass rather
+  than a paint effect.
+- A **tint** is mixed over the lensed/frosted body: pale Aero-blue when focused, a paler denser grey
+  when unfocused, or (for `NW_STYLE_DARK` windows) a near-black tint at higher density — this is what
+  gives the Terminal its dark-glass look.
+- **Caption spheres** — yellow / green / red glass balls with their own mini-lens, specular dot, and
+  caustic — are rendered by the same shader directly over the classic close/maximize/minimize hit
+  slots (red in the outer corner, matching the pre-glass layout), so hit-testing in `nwm`'s window
+  logic is untouched: the geometry the mouse tests against never changed, only what gets drawn there.
+  Unfocused windows render grey balls instead of the tri-colour set.
+
+**Two ink contracts** decide what counts as opaque "ink" over the glass slab, both evaluated in the
+same shader:
+
+1. **Frame band ink** (title bar + borders, all windows): the CPU 2D renderer keys the whole band to
+   pure black (`nw_compose_set_glass_frame(1)` in `nw_compose.c`) and draws only the centred glowing
+   title text into it. The shader treats any texel whose brightest channel is ≥ ~0.10
+   (`smoothstep(0.02, 0.10, max(r,g,b))`) as ink and composites it straight over the finished glass;
+   everything else lets the glass show through. This is a luminance key, not an alpha channel — see
+   "Known tradeoffs" in the liquid-glass plan for why near-black title text isn't representable.
+2. **Client ink** for `NW_STYLE_GLASS_CLIENT` windows: the client's own pixels are `0xAARRGGBB` — the
+   top byte is a real alpha the app controls per-pixel — and the shader does `mix(glass, content,
+   alpha)` inside the client rect. Legacy windows (style 0, the default from `nw_create_window`) keep
+   the old behaviour: the client rect is an opaque punch straight to `content`, glass never shows
+   through it. The style word travels once, at creation, as the `c` field of `NW_REQ_CREATE_WINDOW`;
+   `nw_create_window_style(d, w, h, title, style)` in `libnw` exposes it (`NW_STYLE_GLASS_CLIENT = 1`,
+   `NW_STYLE_DARK = 2`, bitwise-OR'able; `nw_create_window` is just style 0). The Terminal
+   (`user/terminal/terminal.c`) is the showcase: it opens with `NW_STYLE_GLASS_CLIENT | NW_STYLE_DARK`,
+   paints normal cells fully opaque (solid ink) and the default background colour (cell index 0) with
+   only a thin `0x50` alpha veil, so the dark glass slab shows through behind unwritten terminal space.
+
+`NW_BORDER` is 6 px (up from 2 px pre-glass) — enough for the bevel's lens ring to read as a distinct
+band around the classic frame width.
+
+**Debug/escape knobs**, in addition to `NWM_NO_GL`/`NWM_NO_GLASS` above:
+
+- `NWM_GLASS_DEBUG=1..4` replaces the slab's final colour with a diagnostic: `1` = the raw `rim`
+  factor (red channel), `2` = the refraction displacement magnitude normalized to `REFRACT`, `3` = the
+  sharp backdrop grab unlensed, `4` = the blurred backdrop grab. Useful for isolating whether a visual
+  glitch is in the SDF/rim math, the displacement, or the grab/blur textures themselves.
 
 Gate: `scripts/smoke-virtio-gpu-gl.sh` (`make smoke-virtio-gpu-gl`) boots `image64-gl` on the virgl
 fork QEMU, logs in on F7, and asserts `virgl 3D negotiated` + `glkms: mode WxH` + `nwm: GL compositor

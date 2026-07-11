@@ -189,7 +189,67 @@ per-wywołanie w `blur_backdrop`; niekompletny FBO blura auto-spada do szkła ni
 Wszystkie haki są pod `#ifdef NWM_GL`, więc in-tree `nwm.nxe` to czysty program CPU (bez zmian).
 Wariant GL to **osobny** binarny, linkowany z Mesą: `make nwm-gl` (Docker, `build-nwm-gl.sh` w
 `nanos-sdk-work/mesa-port`) → `nwm-gl.nxe`, instalowany przez `make image64-gl`. Runtime-fallback do
-CPU przy `NWM_NO_GL=1`, braku węzła DRM (czyste QEMU) lub dowolnym błędzie GL/KMS.
+CPU przy `NWM_NO_GL=1`, braku węzła DRM (czyste QEMU) lub dowolnym błędzie GL/KMS. Klatka GL może
+też polec *w trakcie sesji* (np. niepodpisany fence po złym prezencie); `nwm` traktuje to tak samo
+jak awarię przy starcie — zwija kontekst GL (wedged, nie gracefully: kontekst, który właśnie oblał
+klatkę, może trzymać fence'y, na których gracefully'owy `eglTerminate` czekałby w nieskończoność),
+czyści `g_gl` i flagę keyed-frame, oznacza wszystkie okna jako brudne i wymusza jedno pełne
+przemalowanie CPU. Od tego momentu pulpit do końca sesji jest klasycznym nieprzezroczystym
+kompozytorem CPU — kluczowane ramki szkła są bez sensu bez shadera slabu GL, który by je konsumował.
+
+### 9.1 Materiał szklanych okien (liquid glass)
+
+Każde szklane okno (i chrome pulpitu wokół niego) rysuje jeden fragment shader, `FS_WIN` w
+`nw_compose_gl.c`, jako pojedynczą przezroczystą "taflę" (slab), a nie płaski rozmyty prostokąt:
+
+- **SDF zaokrąglonego prostokąta** (`sd_box`) daje odległość ze znakiem do krawędzi okna. Pas ~14 px
+  (`BEVEL`) tuż przy tej krawędzi to "pierścień soczewki": tam shader przesuwa próbkę tła *na
+  zewnątrz* wzdłuż gradientu SDF (do 12 px przy pełnym fokusie, łagodniej gdy okno nie jest aktywne) i
+  próbkuje kanały R/G/B przy odrobinę różnych przesunięciach, dając chromatyczne obrzeże refrakcji —
+  to właśnie "płynny" wygląd krawędzi. Poza pierścieniem ciało okna pokazuje po prostu płaskie,
+  rozmyte na GPU tło (mróz/frost). Fazowanie niesie też górno-lewy błysk specularny (wektor `LIGHT`)
+  oraz parę 1-pikselowych linii włosowych: ciemną zewnętrzną i białą wewnętrzną — dzięki temu tafla
+  wygląda jak oświetlona, zakrzywiona szyba, a nie efekt malarski.
+- Na zsoczewkowane/zmrożone ciało nakładany jest **tint**: bladoniebieski Aero przy fokusie, bledszy
+  i gęstszy szary bez fokusu, a dla okien `NW_STYLE_DARK` — prawie czarny tint o większej gęstości; to
+  właśnie daje Terminalowi jego ciemny, szklany wygląd.
+- **Kule podpisów** (caption spheres) — żółta / zielona / czerwona szklana kulka, każda z własną
+  mini-soczewką, punktem specularnym i kaustyką — są rysowane przez ten sam shader dokładnie nad
+  klasycznymi slotami trafień close/maximize/minimize (czerwona w zewnętrznym rogu, jak przed
+  wprowadzeniem szkła), więc hit-testing w logice okien `nwm` jest nietknięty: geometria, w którą
+  celuje mysz, się nie zmieniła — zmieniło się tylko to, co się tam rysuje. Nieaktywne okna dostają
+  szare kulki zamiast trójkolorowego zestawu.
+
+**Dwa kontrakty atramentu (ink)** decydują, co liczy się jako nieprzezroczysty "atrament" nad taflą
+szkła, oba liczone w tym samym shaderze:
+
+1. **Atrament pasa ramki** (belka tytułu + obramowania, wszystkie okna): renderer CPU 2D kluczuje cały
+   pas na czystą czerń (`nw_compose_set_glass_frame(1)` w `nw_compose.c`) i rysuje w nim tylko
+   wyśrodkowany, jarzący się tytuł. Shader traktuje każdy teksel, którego najjaśniejszy kanał jest ≥
+   ~0,10 (`smoothstep(0.02, 0.10, max(r,g,b))`), jako atrament i kompozytuje go wprost nad gotowym
+   szkłem; reszta pozwala szkłu prześwitywać. To klucz luminancji, nie kanał alfa — patrz "Znane
+   kompromisy" w planie liquid-glass, dlaczego prawie czarny tekst tytułu nie jest reprezentowalny.
+2. **Atrament klienta** dla okien `NW_STYLE_GLASS_CLIENT`: piksele klienta to `0xAARRGGBB` — górny bajt
+   to prawdziwa alfa, kontrolowana przez aplikację per piksel — a shader robi `mix(glass, content,
+   alpha)` wewnątrz prostokąta klienta. Okna klasyczne (styl 0, domyślny z `nw_create_window`)
+   zachowują stare zachowanie: prostokąt klienta to nieprzezroczysty "wybite" okno wprost do
+   `content`, szkło nigdy przez nie nie prześwituje. Słowo stylu podróżuje raz, przy tworzeniu, jako
+   pole `c` w `NW_REQ_CREATE_WINDOW`; `nw_create_window_style(d, w, h, title, style)` w `libnw`
+   je eksponuje (`NW_STYLE_GLASS_CLIENT = 1`, `NW_STYLE_DARK = 2`, łączalne bitowym OR;
+   `nw_create_window` to po prostu styl 0). Terminal (`user/terminal/terminal.c`) jest tego
+   pokazem: otwiera się z `NW_STYLE_GLASS_CLIENT | NW_STYLE_DARK`, maluje zwykłe komórki w pełni
+   nieprzezroczyście (pełny atrament), a domyślny kolor tła (indeks komórki 0) tylko cienką woalką
+   alfa `0x50`, więc ciemna tafla szkła prześwituje za nienapisaną przestrzenią terminala.
+
+`NW_BORDER` wynosi 6 px (wcześniej 2 px, przed szkłem) — wystarczająco, by pierścień soczewki fazowania
+czytał się jako odrębny pas wokół klasycznej szerokości ramki.
+
+**Pokrętła debug/ucieczki**, poza `NWM_NO_GL`/`NWM_NO_GLASS` opisanymi wyżej:
+
+- `NWM_GLASS_DEBUG=1..4` podmienia finalny kolor tafli na diagnostykę: `1` = surowy współczynnik
+  `rim` (kanał czerwony), `2` = wielkość przesunięcia refrakcji znormalizowana do `REFRACT`, `3` =
+  ostry chwyt tła bez soczewkowania, `4` = rozmyty chwyt tła. Przydatne do izolowania, czy glitch
+  wizualny leży w matematyce SDF/rim, w przesunięciu, czy w samych teksturach chwytu/rozmycia.
 
 Gate: `scripts/smoke-virtio-gpu-gl.sh` (`make smoke-virtio-gpu-gl`) — bramka developerska (wymaga
 fork-QEMU virgl **i** GUI cocoa; scanout `gl=es`/ANGLE→Metal nie ma ścieżki headless), SKIPuje bez
