@@ -53,6 +53,9 @@ void nw_render_dirty_frames(struct nw_server *s);
  * cast a drop shadow. The shell calls this from settings.yaml at boot and on every reload. */
 void nw_compose_set_theme(uint32_t accent, int radius, int shadow);
 
+/* GL glass windows: key-black band + ink (nw_compose_gl) */
+void nw_compose_set_glass_frame(int on);
+
 /* Render the static gradient wallpaper into `dst` once (the shell caches it). */
 void nw_render_wallpaper(const struct nw_surface *dst);
 

@@ -46,6 +46,13 @@ void nw_compose_set_theme(uint32_t accent, int radius, int shadow)
 	s_shadow = shadow ? 1 : 0;
 }
 
+/* GL liquid-glass windows: when set (GL compositor live), the frame band (titlebar + borders) is
+ * rendered as pure key black with only the ink (centred glowing title) on top; the GL shader puts
+ * the glass slab under that ink and draws the caption spheres itself. OFF = classic opaque CPU
+ * frame (fallback path unchanged). */
+static int s_glass_frame = 0;
+void nw_compose_set_glass_frame(int on) { s_glass_frame = on ? 1 : 0; }
+
 /* Classic 11x16 arrow cursor: 'X' outline, '.' fill, ' ' transparent. */
 static const char *const CURSOR[16] = {
 	"X          ", "XX         ", "X.X        ", "X..X       ",
@@ -101,30 +108,47 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	uint32_t mat = dark ? COL_WIN_DARK : COL_WIN_LIGHT;
 	const char *title = dark ? w->title + 1 : w->title;
 
-	nw_fill_rect(sc, ox, oy, fw, fh, mat);                          /* material */
-	nw_vgrad_rect(sc, ox, oy, fw, NW_TITLEBAR_H,                    /* title bar */
-	              dark ? COL_TB_DTOP : COL_TB_TOP, dark ? COL_TB_DBOT : COL_TB_BOT);
-	if (!focused)                                                    /* dim the bar when unfocused */
-		nw_blend_rect(sc, ox, oy, fw, NW_TITLEBAR_H, mat, 80);
+	if (s_glass_frame) {
+		nw_fill_rect(sc, ox, oy, fw, fh, 0x000000);            /* key: glass everywhere... */
+	} else {
+		nw_fill_rect(sc, ox, oy, fw, fh, mat);                 /* material */
+		nw_vgrad_rect(sc, ox, oy, fw, NW_TITLEBAR_H,           /* title bar */
+		              dark ? COL_TB_DTOP : COL_TB_TOP, dark ? COL_TB_DBOT : COL_TB_BOT);
+		if (!focused)                                          /* dim the bar when unfocused */
+			nw_blend_rect(sc, ox, oy, fw, NW_TITLEBAR_H, mat, 80);
+	}
 
 	/* title text (with a little app dot to the left) */
 	uint32_t tfg = dark ? COL_TITLE_DFG : COL_TITLE_FG;
 	int ty = oy + (NW_TITLEBAR_H - NW_FONT_H) / 2;
-	nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? s_accent : 0x9fb2cc, 255);
-	nw_text(sc, ox + 28, ty, title, tfg);                 /* bg 0 = ignored (opaque text bg) */
+	if (s_glass_frame) {
+		/* centred title with a soft white halo (Aero glow) — ink over the GPU glass slab.
+		 * Halo 0xdfe9f4 and core 0x223041 both clear the shader's ink threshold. */
+		int tw = nw_text_w(title);
+		int tx = ox + (fw - tw) / 2;
+		for (int hy = -1; hy <= 1; hy++)
+			for (int hx = -1; hx <= 1; hx++)
+				if (hx || hy) nw_text(sc, tx + hx, ty + hy, title, 0xdfe9f4);
+		nw_text(sc, tx, ty, title, 0x223041);
+	} else {
+		nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? s_accent : 0x9fb2cc, 255);
+		nw_text(sc, ox + 28, ty, title, tfg);
+	}
 
-	/* window controls on the right: —  □  × */
-	uint32_t cfg = dark ? COL_CTRL_D : COL_CTRL;
-	int cw = NW_CLOSE, ch2 = NW_TITLEBAR_H;
-	int x3 = ox + fw - cw;                         /* × */
-	int x2 = x3 - cw;                              /* □ */
-	int x1 = x2 - cw;                              /* — */
-	int gy = oy + ch2 / 2;
-	nw_blend_rect(sc, x1 + cw / 2 - 4, gy, 8, 2, cfg, 255);                       /* minimize */
-	nw_stroke_round(sc, x2 + cw / 2 - 5, gy - 5, 10, 10, 2, cfg, 255);            /* maximize */
-	for (int i = -4; i <= 4; i++) {                                               /* close × */
-		nw_blend_pixel(sc, x3 + cw / 2 + i, gy - 4 + (i + 4), cfg, 255);
-		nw_blend_pixel(sc, x3 + cw / 2 + i, gy + 4 - (i + 4), cfg, 255);
+	if (!s_glass_frame) {
+		/* window controls on the right: —  □  × */
+		uint32_t cfg = dark ? COL_CTRL_D : COL_CTRL;
+		int cw = NW_CLOSE, ch2 = NW_TITLEBAR_H;
+		int x3 = ox + fw - cw;                         /* × */
+		int x2 = x3 - cw;                              /* □ */
+		int x1 = x2 - cw;                              /* — */
+		int gy = oy + ch2 / 2;
+		nw_blend_rect(sc, x1 + cw / 2 - 4, gy, 8, 2, cfg, 255);                       /* minimize */
+		nw_stroke_round(sc, x2 + cw / 2 - 5, gy - 5, 10, 10, 2, cfg, 255);            /* maximize */
+		for (int i = -4; i <= 4; i++) {                                               /* close × */
+			nw_blend_pixel(sc, x3 + cw / 2 + i, gy - 4 + (i + 4), cfg, 255);
+			nw_blend_pixel(sc, x3 + cw / 2 + i, gy + 4 - (i + 4), cfg, 255);
+		}
 	}
 
 	/* content */
