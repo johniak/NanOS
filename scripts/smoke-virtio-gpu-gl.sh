@@ -48,7 +48,7 @@ echo "smoke-virtio-gpu-gl: QEMU pid=$QPID serial=$SER"
 # wait for the VT7 greeter to be spawned (its tty7 line), not just the tty1 getty banner —
 # a ctrl-alt-f7 sent before the greeter accepts input gets swallowed and the typed
 # credentials land on tty1's login prompt instead (the classic flaky-gate failure).
-for i in $(seq 1 180); do grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
+for i in $(seq 1 180); do grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null && break; sleep 2; done
 grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null || { echo "FAIL: never reached login"; tail -25 "$SER"; exit 1; }
 sleep 3   # give the greeter a beat to start reading the keyboard
 

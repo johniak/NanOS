@@ -43,6 +43,21 @@ static uint32_t pal_bg(int idx)
 	return idx == 0 ? (c | 0x50000000u) : (c | 0xff000000u);
 }
 
+/* The default-bg veil is not an edge-to-edge rect any more: it is a rounded, feather-edged panel
+ * (same design language as the libnwui glass panels) and the character grid sits TERM_M px inside
+ * it. TERM_M(14) >= TERM_FEATHER(8) keeps the whole grid in the panel's full-alpha interior, so a
+ * dirty row's raw per-cell stores of pal_bg(0) are pixel-identical to the veil they overwrite —
+ * rows never touch the fade band and need no compositing against it. */
+#define TERM_M       14   /* grid inset from the client edges (px) */
+#define TERM_R       14   /* veil corner radius */
+#define TERM_FEATHER 8    /* veil edge fade width */
+
+static void paint_veil(const struct nw_surface *s)
+{
+	nw_clear_argb(s, 0, 0, s->w, s->h, 0x00000000u);
+	nw_over_round_soft(s, 0, 0, s->w, s->h, TERM_R, pal_bg(0), TERM_FEATHER);
+}
+
 /* Push the current grid geometry to the pty (TIOCSWINSZ), so a program reading TIOCGWINSZ on
  * pts0 sees the real terminal size instead of the kernel's 80x24 default — otherwise vim renders
  * at 80 columns inside our narrower grid and the text wraps/overflows the window. */
@@ -61,7 +76,8 @@ static void draw_row(const struct nw_surface *s, int r)
 {
 	for (int c = 0; c < T.cols; c++) {
 		vt_cell *cell = &T.grid[r][c];
-		nw_draw_char(s, c * CW, r * CH, cell->ch, pal_fg(cell->fg), pal_bg(cell->bg));
+		nw_draw_char(s, TERM_M + c * CW, TERM_M + r * CH, cell->ch,
+		             pal_fg(cell->fg), pal_bg(cell->bg));
 	}
 }
 
@@ -84,11 +100,12 @@ static void render(void)
 		/* the cursor block inverts fg/bg, so the wrapper follows the ROLE (background-fill vs
 		 * ink), not the lexical cell->fg/cell->bg name: cell->fg here plays the "fills the whole
 		 * cell" role (pal_bg), cell->bg plays the "glyph ink" role (pal_fg). */
-		nw_fill_rect(&s, T.cx * CW, T.cy * CH, CW, CH, pal_bg(cell->fg));
-		nw_draw_char(&s, T.cx * CW, T.cy * CH, cell->ch, pal_fg(cell->bg), pal_bg(cell->fg));
+		nw_fill_rect(&s, TERM_M + T.cx * CW, TERM_M + T.cy * CH, CW, CH, pal_bg(cell->fg));
+		nw_draw_char(&s, TERM_M + T.cx * CW, TERM_M + T.cy * CH, cell->ch,
+		             pal_fg(cell->bg), pal_bg(cell->fg));
 	}
 	g_pcx = T.cx; g_pcy = T.cy;
-	if (y0 >= 0) nw_commit(g_win, 0, y0 * CH, s.w, (y1 - y0 + 1) * CH);
+	if (y0 >= 0) nw_commit(g_win, 0, TERM_M + y0 * CH, s.w, (y1 - y0 + 1) * CH);
 }
 
 /* ---- nanowm KEY event -> bytes to the pty ---- */
@@ -118,12 +135,12 @@ static void key(const struct nw_event *ev)
 
 static void resize_to(int win_w, int win_h)
 {
-	int cols = win_w / CW, rows = win_h / CH;
+	int cols = (win_w - 2 * TERM_M) / CW, rows = (win_h - 2 * TERM_M) / CH;
 	if (cols < 1) cols = 1; if (rows < 1) rows = 1;
 	vt_resize(&T, cols, rows);
 	if (g_master >= 0) set_pty_winsize(g_master);   /* keep the pty's size in step with the window */
 	struct nw_surface s; nw_win_surface(g_win, &s);
-	nw_fill_rect(&s, 0, 0, s.w, s.h, pal_bg(0));        /* repaint background, then all rows */
+	paint_veil(&s);                                     /* repaint background, then all rows */
 	render();
 	nw_commit(g_win, 0, 0, s.w, s.h);
 }
@@ -207,13 +224,14 @@ int main(void)
 	                               NW_STYLE_GLASS_CLIENT | NW_STYLE_DARK);
 	if (!g_win) return 1;
 	nw_set_menu(d, "Terminal\x1f" "Close\x1e" "Edit\x1f" "Paste");  /* global menu */
-	vt_init(&T, nw_win_width(g_win) / CW, nw_win_height(g_win) / CH);
+	vt_init(&T, (nw_win_width(g_win) - 2 * TERM_M) / CW,
+	            (nw_win_height(g_win) - 2 * TERM_M) / CH);
 
 	g_master = spawn_shell();
 	if (g_master < 0) return 1;
 
 	{ struct nw_surface s; nw_win_surface(g_win, &s);
-	  nw_fill_rect(&s, 0, 0, s.w, s.h, pal_bg(0)); render(); nw_commit(g_win, 0, 0, s.w, s.h); }
+	  paint_veil(&s); render(); nw_commit(g_win, 0, 0, s.w, s.h); }
 
 	int efd = nw_event_fd(d);
 	for (;;) {

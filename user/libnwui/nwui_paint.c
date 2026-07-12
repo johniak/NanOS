@@ -276,7 +276,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 		if (glass) {
 			/* single well fill: see the NWUI_TEXTFIELD comment above. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
-			glass_ring(s, n->x, n->y, n->w, n->h, 8, ring, GCOL_FIELD);
+			glass_ring(s, n->x, n->y, n->w, n->h, 12, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
 		}
@@ -319,7 +319,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 		if (glass) {
 			/* single well fill: see the NWUI_TEXTFIELD comment above. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
-			glass_ring(s, n->x, n->y, n->w, n->h, 8, ring, GCOL_FIELD);
+			glass_ring(s, n->x, n->y, n->w, n->h, 12, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
 		}
@@ -431,7 +431,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 			 * below); the title header stays a crisp band on top of it. */
 			int pf = (n->w < n->h ? n->w : n->h) / 8;
 			if (pf > 14) pf = 14;
-			nw_over_round_soft(s, n->x, n->y, n->w, n->h, 8, GCOL_SCRIM, pf);        /* glass body */
+			nw_over_round_soft(s, n->x, n->y, n->w, n->h, 14, GCOL_SCRIM, pf);       /* glass body */
 			nw_over_round(s, n->x, n->y, n->w, NWUI_PANEL_TITLE_H, 8,
 			             (uint32_t) (0x66u << 24) | (COL_PANEL_HDR & 0x00ffffffu));  /* header */
 			nw_text_argb(s, n->x + 8, n->y + (NWUI_PANEL_TITLE_H - NW_FONT_H) / 2, n->text, 0xffffffffu);
@@ -479,7 +479,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 				uint32_t bg = n->bg;
 				int f = (n->w < n->h ? n->w : n->h) / 8;
 				if (f > 14) f = 14;
-				nw_over_round_soft(s, n->x, n->y, n->w, n->h, 8,
+				nw_over_round_soft(s, n->x, n->y, n->w, n->h, 14,
 				                   (bg >> 24) ? bg : argb_op(bg, 0x40), f);
 			} else {
 				nw_fill_round(s, n->x, n->y, n->w, n->h, 8, n->bg, 255);
