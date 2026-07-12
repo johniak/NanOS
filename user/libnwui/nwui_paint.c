@@ -175,7 +175,9 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	case NWUI_TEXTFIELD: {
 		if (glass) {
-			nw_over_round(s, n->x, n->y, n->w, n->h, 6, GCOL_FIELD);
+			/* glass_ring alone paints the well: ring band (full rect) then the single GCOL_FIELD
+			 * fill (inset 1px) — do NOT also fill here first, or the interior gets GCOL_FIELD
+			 * twice (a ring coat sandwiched under a second fill, darker than the spec alpha). */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 6, ring, GCOL_FIELD);
 		} else {
@@ -209,7 +211,8 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	case NWUI_TEXTAREA: {
 		if (glass) {
-			nw_over_round(s, n->x, n->y, n->w, n->h, 6, GCOL_FIELD);
+			/* single well fill: see the NWUI_TEXTFIELD comment above — glass_ring's own inset
+			 * fill IS the well's fill, don't paint GCOL_FIELD again before calling it. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 6, ring, GCOL_FIELD);
 		} else {
@@ -267,7 +270,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	case NWUI_LIST: {
 		if (glass) {
-			nw_over_round(s, n->x, n->y, n->w, n->h, 8, GCOL_FIELD);
+			/* single well fill: see the NWUI_TEXTFIELD comment above. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 8, ring, GCOL_FIELD);
 		} else {
@@ -310,7 +313,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	case NWUI_ICONVIEW: {
 		if (glass) {
-			nw_over_round(s, n->x, n->y, n->w, n->h, 8, GCOL_FIELD);
+			/* single well fill: see the NWUI_TEXTFIELD comment above. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 8, ring, GCOL_FIELD);
 		} else {
@@ -333,9 +336,13 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 			int seld = n->selmask ? n->selmask[i] : (i == n->sel);
 			int sx = cx + 6, sy = cy + 4, sw = NWUI_ICON_CELL_W - 12, sh = NWUI_ICON_CELL_H - 8;
 			if (glass) {
-				if (seld)               /* soft translucent rounded highlight (modern) */
+				/* The lead cell (i == n->sel) gets its GCOL_SEL fill from glass_ring's own
+				 * single inset fill below, so only paint the plain direct fill here for a
+				 * SELECTED-BUT-NOT-LEAD cell (multi-select) — else the lead cell would receive
+				 * GCOL_SEL twice (this direct fill, then glass_ring's fill again). */
+				if (seld && i != n->sel)   /* soft translucent rounded highlight (modern) */
 					nw_over_round(s, sx, sy, sw, sh, 12, GCOL_SEL);
-				if (i == n->sel)        /* the LEAD cell: a thin ring so it stands out */
+				if (i == n->sel)        /* the LEAD cell: ring + its own single fill */
 					glass_ring(s, sx, sy, sw, sh, 12, GCOL_SEL_RING, seld ? GCOL_SEL : GCOL_CANVAS);
 				if (i == n->drop_hover) /* drop target: filled + outlined, kept in the accent colour */
 					glass_ring(s, sx - 1, sy - 1, sw + 2, sh + 2, 12,
@@ -429,7 +436,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	case NWUI_CHECKBOX: {
 		int bs = 14, by = n->y + (n->h - bs) / 2;
 		if (glass) {
-			nw_over_round(s, n->x, by, bs, bs, 3, GCOL_FIELD);
+			/* single well fill: see the NWUI_TEXTFIELD comment above. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
 			glass_ring(s, n->x, by, bs, bs, 3, ring, GCOL_FIELD);
 			if (n->vbool && *n->vbool) {
@@ -473,16 +480,47 @@ static void clear_dirty(nwui_node *n)
 }
 
 struct dmg { int have, x0, y0, x1, y1; };
-static void repaint_dirty(nwui_node *n, const struct nw_surface *s, struct dmg *d, int glass)
+
+/* Ancestor stack depth for the glass-mode dirty-repaint recompose below: nodes have no parent
+ * back-pointer (nwui_node has only child[]/nchild), so repaint_dirty threads the root-to-here
+ * ancestor chain DOWN through the recursion instead of walking up from a dirty leaf. NWUI trees
+ * in this toolkit are shallow (a handful of box/row/column/panel levels); 32 is a generous cap. */
+#define NWUI_PAINT_MAX_DEPTH 32
+
+static void repaint_dirty(nwui_node *n, const struct nw_surface *s, struct dmg *d, int glass,
+                          nwui_node *const *anc, int nanc)
 {
 	if (n->hidden) return;                 /* hidden subtree: skip */
 	if (n->dirty) {
-		/* Glass mode: translucent fills src-over-composite, so repainting this node's OLD pixels
-		 * again would accumulate alpha (a hovered button/blinking caret/typed field would darken
-		 * a little more on every repaint). Reset the footprint to the transparent canvas first —
-		 * every widget paints its own full footprint, so nothing under it is lost. */
-		if (glass) nw_clear_argb(s, n->x, n->y, n->w, n->h, GCOL_CANVAS);
-		paint_self(n, s, glass);
+		if (glass) {
+			/* Glass mode: translucent fills src-over-composite, so repainting this node's OLD
+			 * pixels again would accumulate alpha (a hovered button/blinking caret/typed field
+			 * would darken a little more on every repaint). Reset the footprint to the
+			 * transparent canvas first, matching what a full repaint's window-wide clear does.
+			 *
+			 * But dirty flags land on LEAF nodes only (buttons, textfields, ... — see
+			 * nwui_core.c); a leaf nested inside an ancestor that paints its own background
+			 * (e.g. an NWUI_PANEL scrim) needs that ancestor's contribution recomposited under
+			 * it too, or the clear above wipes the ancestor's scrim from this one patch and it
+			 * ends up permanently more transparent than the rest of the panel. Recompose every
+			 * ancestor (root-downward) that owns a background, each clipped to THIS node's rect
+			 * via the surface scissor so only the dirty footprint is touched — mirrors exactly
+			 * what the full-repaint tree walk would have painted there (paint_self only paints
+			 * a container's own background, never recurses into children, so this can't
+			 * duplicate sibling content). */
+			nw_clear_argb(s, n->x, n->y, n->w, n->h, GCOL_CANVAS);
+			struct nw_surface *ms = (struct nw_surface *) s;
+			nw_surface_clip(ms, n->x, n->y, n->w, n->h);
+			for (int i = 0; i < nanc; i++)
+				paint_self(anc[i], s, glass);
+			nw_surface_noclip(ms);
+			/* paint_all rather than paint_self: dirty is leaf-only today, but if a node with
+			 * children ever gets marked dirty directly, its own subtree still needs painting —
+			 * paint_all does exactly that (paint_self then recurse), a no-op walk for leaves. */
+			paint_all(n, s, glass);
+		} else {
+			paint_self(n, s, glass);
+		}
 		if (!d->have) { d->x0 = n->x; d->y0 = n->y; d->x1 = n->x + n->w; d->y1 = n->y + n->h; d->have = 1; }
 		else {
 			if (n->x < d->x0) d->x0 = n->x;
@@ -492,8 +530,14 @@ static void repaint_dirty(nwui_node *n, const struct nw_surface *s, struct dmg *
 		}
 		n->dirty = 0;
 	}
-	for (int i = 0; i < n->nchild; i++)
-		repaint_dirty(n->child[i], s, d, glass);
+	if (n->nchild > 0) {
+		nwui_node *anc2[NWUI_PAINT_MAX_DEPTH];
+		int nanc2 = nanc;
+		for (int i = 0; i < nanc && i < NWUI_PAINT_MAX_DEPTH; i++) anc2[i] = anc[i];
+		if (nanc < NWUI_PAINT_MAX_DEPTH) anc2[nanc2++] = n;
+		for (int i = 0; i < n->nchild; i++)
+			repaint_dirty(n->child[i], s, d, glass, anc2, nanc2);
+	}
 }
 
 /* the context-menu overlay, drawn last (on top of everything). Always part of a full repaint
@@ -560,7 +604,7 @@ int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int
 		return 1;
 	}
 	struct dmg d = { 0, 0, 0, 0, 0 };
-	repaint_dirty(u->root, s, &d, u->glass);
+	repaint_dirty(u->root, s, &d, u->glass, 0, 0);
 	if (!d.have)
 		return 0;
 	*x = d.x0; *y = d.y0; *w = d.x1 - d.x0; *h = d.y1 - d.y0;
