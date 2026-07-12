@@ -46,21 +46,41 @@
 #define COL_ICON_SHADOW 0x00102038 /* soft drop shadow under grid icons */
 #define NWUI_ICON_KEY 0x00ff00ff   /* icon transparency color-key (magenta); generator must match */
 
-/* ---- light-glass interiors (ARGB, straight alpha): ink #17222f on the slab ---- */
-#define GCOL_CANVAS   0x00000000u   /* fully transparent: the GL slab shows through */
-#define GCOL_INK      0xff17222fu   /* primary ink */
-#define GCOL_INK_SOFT 0x9e17222fu   /* secondary: same ink at 62% */
-#define GCOL_SCRIM    0x40ffffffu   /* text-pane scrim: white 25% */
-#define GCOL_FIELD    0x30ffffffu   /* input/list wells: white ~19% — mockup inks content on the raw
-                                     * slab; wells are only a whisper of definition, not white panels */
-#define GCOL_SEL      0x59ffffffu   /* selection pill: white .35 (mockup .side .sel) — glass_ring lays
-                                     * exactly one fill coat, so the mockup value applies verbatim */
-#define GCOL_SEL_RING 0x80ffffffu   /* selection inset hairline: white .50 (mockup) — a real 1px band
-                                     * via nw_over_ring, brighter than the pill it wraps */
-#define GCOL_BTN_TOP  0x24ffffffu   /* button pill: white .14 -> .05 */
-#define GCOL_BTN_BOT  0x0dffffffu
-#define GCOL_BTN_RING 0x2effffffu   /* inset ring white .18 */
-#define GCOL_SEP      0x2e17222fu   /* separators: ink 18% */
+/* ---- glass interiors (ARGB, straight alpha): two palettes, picked per window variant ----
+ * Light slab (default glass): dark ink #17222f, whisper-white wells/pills.
+ * Dark slab (NW_STYLE_DARK):  light ink #f2f6fb, the same well/pill family in white at lower
+ * alphas (a dark slab needs less white to read as a surface). nwui_render() points `gp` at the
+ * window's palette before any painting; painting is single-threaded per process. */
+#define GCOL_CANVAS   0x00000000u   /* fully transparent: the GL slab shows through (both modes) */
+struct gpal {
+	uint32_t ink;        /* primary ink */
+	uint32_t ink_soft;   /* secondary ink (muted labels) */
+	uint32_t scrim;      /* text-pane scrim */
+	uint32_t field;      /* input/list wells */
+	uint32_t sel;        /* selection pill fill */
+	uint32_t sel_ring;   /* selection inset hairline (brighter than the pill) */
+	uint32_t btn_top, btn_bot, btn_ring;   /* button pill gradient + inset ring */
+	uint32_t sep;        /* separators / idle field rings */
+};
+static const struct gpal PAL_LIGHT = {
+	0xff17222fu, 0x9e17222fu, 0x40ffffffu, 0x30ffffffu, 0x59ffffffu, 0x80ffffffu,
+	0x24ffffffu, 0x0dffffffu, 0x2effffffu, 0x2e17222fu,
+};
+static const struct gpal PAL_DARK = {
+	0xfff2f6fbu, 0xa8dbe4f0u, 0x2effffffu, 0x26ffffffu, 0x3cffffffu, 0x6effffffu,
+	0x1effffffu, 0x0affffffu, 0x28ffffffu, 0x30ffffffu,
+};
+static const struct gpal *gp = &PAL_LIGHT;
+#define GCOL_INK      (gp->ink)
+#define GCOL_INK_SOFT (gp->ink_soft)
+#define GCOL_SCRIM    (gp->scrim)
+#define GCOL_FIELD    (gp->field)
+#define GCOL_SEL      (gp->sel)
+#define GCOL_SEL_RING (gp->sel_ring)
+#define GCOL_BTN_TOP  (gp->btn_top)
+#define GCOL_BTN_BOT  (gp->btn_bot)
+#define GCOL_BTN_RING (gp->btn_ring)
+#define GCOL_SEP      (gp->sep)
 
 /* Turn a legacy masked-RGB colour (0x00RRGGBB) + a 0..255 blend alpha into straight ARGB, for
  * spots the design table doesn't re-colour but that still need to carry real alpha in glass mode
@@ -114,7 +134,11 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 		}
 		break;
 	case NWUI_BUTTON: {
-		if (n->flat && n->img) {               /* toolbar icon button */
+		if (n->flat && n->img) {               /* toolbar / icon-rail button */
+			if (n->active) {                   /* current place in an icon rail: the selection pill */
+				if (glass) glass_ring(s, n->x, n->y, n->w, n->h, 9, GCOL_SEL_RING, GCOL_SEL);
+				else       nw_fill_round(s, n->x, n->y, n->w, n->h, 9, COL_ACCENT, 40);
+			}
 			if (n->pressed) {
 				if (glass) nw_over_round(s, n->x, n->y + 1, n->w, n->h - 2, 7, argb_op(COL_ACCENT, 28));
 				else       nw_fill_round(s, n->x, n->y + 1, n->w, n->h - 2, 7, COL_ACCENT, 28);
@@ -183,7 +207,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 			/* glass_ring paints the well: one GCOL_FIELD coat + the focus/sep ring as a real
 			 * 1px band (nw_over_ring), so the ring colour never tints the interior. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
-			glass_ring(s, n->x, n->y, n->w, n->h, 6, ring, GCOL_FIELD);
+			glass_ring(s, n->x, n->y, n->w, n->h, 9, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 6, COL_TF_BG, 255);
 			nw_stroke_round(s, n->x, n->y, n->w, n->h, 6, n->focused ? COL_TF_FOC : COL_TF_BRD,
@@ -192,6 +216,12 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 				nw_stroke_round(s, n->x + 1, n->y + 1, n->w - 2, n->h - 2, 5, COL_TF_FOC, 120);
 		}
 		int tx = n->x + NWUI_TF_PAD, ty = n->y + (n->h - NW_FONT_H) / 2;
+		/* placeholder: an empty, unfocused field shows its caption text (n->text — unused for
+		 * anything else on a textfield) in the muted ink, like a search field's "Search". */
+		if (n->tlen == 0 && !n->focused && n->text[0]) {
+			if (glass) nw_text_argb(s, tx + 2, ty, n->text, GCOL_INK_SOFT);
+			else       nw_text(s, tx + 2, ty, n->text, COL_MUTED);
+		}
 		int lo = n->anchor < n->caret ? n->anchor : n->caret;
 		int hi = n->anchor > n->caret ? n->anchor : n->caret;
 		for (int i = 0; i < n->tlen; i++) {
@@ -218,7 +248,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 			/* single well fill: see the NWUI_TEXTFIELD comment above — glass_ring's own inset
 			 * fill IS the well's fill, don't paint GCOL_FIELD again before calling it. */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
-			glass_ring(s, n->x, n->y, n->w, n->h, 6, ring, GCOL_FIELD);
+			glass_ring(s, n->x, n->y, n->w, n->h, 9, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 6, COL_TF_BG, 255);
 		}
@@ -317,9 +347,11 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	case NWUI_ICONVIEW: {
 		if (glass) {
-			/* single well fill: see the NWUI_TEXTFIELD comment above. */
+			/* single well fill: see the NWUI_TEXTFIELD comment above. Dark windows draw NO well
+			 * — the grid sits seamlessly on the slab (the Files-redesign screenshot language). */
 			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
-			glass_ring(s, n->x, n->y, n->w, n->h, 12, ring, GCOL_FIELD);
+			if (!n->owner->dark)
+				glass_ring(s, n->x, n->y, n->w, n->h, 12, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
 		}
@@ -577,9 +609,11 @@ static void draw_menu(const nwui *u, const struct nw_surface *s)
 	int mh = count * NWUI_MENU_ITEM_H;
 	if (u->glass) {
 		/* floating surface: kept NEARLY opaque on purpose (text-dense floats need a strong scrim
-		 * to read over arbitrary desktop content), not the light interior translucency above. */
+		 * to read over arbitrary desktop content), not the light interior translucency above.
+		 * Dark windows float a dark sheet so the palette's light ink stays readable. */
 		glass_ring(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9,
-		          argb_op(0x00b8c6d8, 220), 0xf0f7fafdu);
+		          u->dark ? argb_op(0x00081019, 220) : argb_op(0x00b8c6d8, 220),
+		          u->dark ? 0xf01b2534u : 0xf0f7fafdu);
 	} else {
 		nw_fill_round(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9, 0x00f4f8fd, 255);
 		nw_stroke_round(s, u->menu_x - 4, u->menu_y - 4, NWUI_MENU_W + 8, mh + 8, 9, 0x00b8c6d8, 220);
@@ -604,6 +638,7 @@ int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int
 {
 	if (!u->root)
 		return 0;
+	gp = u->dark ? &PAL_DARK : &PAL_LIGHT;   /* the window's glass palette, for every paint below */
 	if (u->layout_dirty || u->modal) {   /* a modal always forces a full repaint so it stays on top */
 		nwui_layout(u);
 		if (u->glass) nw_clear_argb(s, 0, 0, u->win_w, u->win_h, GCOL_CANVAS);
@@ -614,7 +649,8 @@ int nwui_render(nwui *u, const struct nw_surface *s, int *x, int *y, int *w, int
 			if (u->glass) {
 				nw_over_rect(s, 0, 0, u->win_w, u->win_h, 0x5a000000u);
 				glass_ring(s, u->modal->x - 8, u->modal->y - 8, u->modal->w + 16, u->modal->h + 16, 10,
-				          argb_op(0x00b8c6d8, 220), 0xf0f7fafdu);
+				          u->dark ? argb_op(0x00081019, 220) : argb_op(0x00b8c6d8, 220),
+				          u->dark ? 0xf01b2534u : 0xf0f7fafdu);
 			} else {
 				nw_blend_rect(s, 0, 0, u->win_w, u->win_h, 0x00000000, 90);
 				nw_fill_round(s, u->modal->x - 8, u->modal->y - 8,

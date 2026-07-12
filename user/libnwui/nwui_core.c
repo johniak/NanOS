@@ -92,6 +92,17 @@ void nwui_textfield_set_submit(nwui_node *n, nwui_cb cb)
 	if (n && n->kind == NWUI_TEXTFIELD) n->on_submit = cb;
 }
 
+/* Placeholder: shown in the muted ink while the field is empty and unfocused (search fields).
+ * Stored in n->text, which a textfield never uses for anything else. */
+void nwui_textfield_placeholder(nwui_node *n, const char *s)
+{
+	if (!n || n->kind != NWUI_TEXTFIELD) return;
+	int i = 0;
+	for (; s && s[i] && i < NWUI_TEXT_CAP - 1; i++) n->text[i] = s[i];
+	n->text[i] = 0;
+	n->dirty = 1;
+}
+
 /* Select the whole textfield (so the next keystroke replaces it — e.g. after Ctrl+L). */
 void nwui_textfield_select_all(nwui_node *n)
 {

@@ -3,63 +3,69 @@
   .row{display:flex}
   .ic{width:64px;height:64px}
 </style></head><body>
+<!-- One family (the Files redesign): every type is a blue squircle with a white glyph — the
+     screenshot's language. Slice order must match tools/gen-icons.py. -->
 <div class="row">
 <svg class="ic" id="folder" viewBox="0 0 64 64"><defs>
- <linearGradient id="fold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6ec8ff"/><stop offset="1" stop-color="#1480fa"/></linearGradient>
- <linearGradient id="foldback" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a4dcff"/><stop offset="1" stop-color="#78beff"/></linearGradient>
- <linearGradient id="disk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c4ccd6"/><stop offset="1" stop-color="#788292"/></linearGradient>
- <linearGradient id="homeg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffa560"/><stop offset="1" stop-color="#ff6034"/></linearGradient>
- <linearGradient id="appg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8c96ff"/><stop offset="1" stop-color="#5444ff"/></linearGradient>
- <linearGradient id="imgg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46deA4"/><stop offset="1" stop-color="#0ca070"/></linearGradient>
- <linearGradient id="compg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c4ccd6"/><stop offset="1" stop-color="#8a93a3"/></linearGradient>
- <linearGradient id="paperg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e4eaf4"/></linearGradient>
- <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".28"/><stop offset=".5" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+ <linearGradient id="blueg" x1="0" y1="0" x2=".25" y2="1"><stop offset="0" stop-color="#7fb9f9"/><stop offset="1" stop-color="#3672ea"/></linearGradient>
+ <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".30"/><stop offset=".45" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
  </defs>
- <path d="M6 18 h17 l5 5 h26 a5 5 0 0 1 5 5 v2 H6 z" fill="url(#foldback)"/>
- <rect x="5" y="23" width="54" height="34" rx="9" fill="url(#fold)"/>
- <rect x="5" y="23" width="54" height="34" rx="9" fill="url(#sheen)"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <path d="M17 24 h11 l4 4 h15 a3 3 0 0 1 3 3 v13 a3 3 0 0 1 -3 3 H20 a3 3 0 0 1 -3 -3 z" fill="#fff"/></svg>
 
 <svg class="ic" id="drive" viewBox="0 0 64 64">
- <rect x="6" y="12" width="52" height="40" rx="14" fill="url(#disk)"/>
- <rect x="6" y="12" width="52" height="40" rx="14" fill="url(#sheen)"/>
- <rect x="16" y="40" width="32" height="6" rx="3" fill="#5a6273"/>
- <circle cx="45" cy="22" r="3" fill="#3ad07f"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <rect x="16" y="22" width="32" height="20" rx="6" fill="#fff"/>
+ <rect x="21" y="45" width="22" height="6" rx="3" fill="#e4ebf5" opacity=".85"/>
+ <circle cx="44" cy="19" r="4.5" fill="#3ad07f" stroke="#ffffff" stroke-opacity=".85" stroke-width="1.5"/></svg>
 
 <svg class="ic" id="home" viewBox="0 0 64 64">
- <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#homeg)"/>
- <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#sheen)"/>
- <path d="M32 15 L51 32 H45 V47 H19 V32 H13 Z" fill="#fff"/>
- <rect x="27" y="37" width="10" height="10" rx="1" fill="#ff7a48"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <path d="M32 16 L51 33 H45 V47 H19 V33 H13 Z" fill="#fff"/>
+ <rect x="28" y="36" width="8" height="11" rx="1.5" fill="#4a83ee"/></svg>
 
 <svg class="ic" id="program" viewBox="0 0 64 64">
- <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#appg)"/>
- <rect x="6" y="6" width="52" height="52" rx="15" fill="url(#sheen)"/>
- <path d="M26 21 L45 32 L26 43 Z" fill="#fff"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <path d="M26 20 L46 32 L26 44 Z" fill="#fff"/></svg>
 
 <svg class="ic" id="text" viewBox="0 0 64 64">
- <rect x="15" y="7" width="34" height="50" rx="6" fill="url(#paperg)" stroke="#cfd6e0" stroke-width="1"/>
- <rect x="15" y="7" width="34" height="8" rx="6" fill="#0a84ff"/>
- <rect x="21" y="24" width="22" height="3" rx="1.5" fill="#c2c8d2"/>
- <rect x="21" y="32" width="22" height="3" rx="1.5" fill="#c2c8d2"/>
- <rect x="21" y="40" width="14" height="3" rx="1.5" fill="#c2c8d2"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <rect x="21" y="15" width="22" height="34" rx="3" fill="#fff"/>
+ <rect x="25" y="23" width="14" height="2.6" rx="1.3" fill="#5f92ee"/>
+ <rect x="25" y="30" width="14" height="2.6" rx="1.3" fill="#5f92ee"/>
+ <rect x="25" y="37" width="9" height="2.6" rx="1.3" fill="#5f92ee"/></svg>
 
 <svg class="ic" id="image" viewBox="0 0 64 64">
- <rect x="7" y="13" width="50" height="38" rx="12" fill="url(#imgg)"/>
- <rect x="7" y="13" width="50" height="38" rx="12" fill="url(#sheen)"/>
- <circle cx="22" cy="25" r="5" fill="#fff" opacity=".95"/>
- <path d="M13 50 L27 35 L37 45 L45 34 L55 50 Z" fill="#ffffff" opacity=".9"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <rect x="16" y="19" width="32" height="26" rx="4" fill="#fff"/>
+ <circle cx="25" cy="27" r="3" fill="#5f92ee"/>
+ <path d="M19 42 L29 32 L36 39 L41 34 L45 42 Z" fill="#5f92ee"/></svg>
 
 <svg class="ic" id="file" viewBox="0 0 64 64">
- <path d="M16 7 h22 l11 11 v39 a0 0 0 0 1 0 0 H16 z" fill="url(#paperg)" stroke="#cfd6e0" stroke-width="1"/>
- <path d="M38 7 v11 h11 z" fill="#d2d9e3"/>
- <rect x="22" y="30" width="20" height="3" rx="1.5" fill="#c2c8d2"/>
- <rect x="22" y="38" width="20" height="3" rx="1.5" fill="#c2c8d2"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <path d="M22 15 h13 l8 8 v26 H22 z" fill="#fff"/>
+ <path d="M35 15 v8 h8 z" fill="#c9dbf7"/></svg>
 
 <svg class="ic" id="computer" viewBox="0 0 64 64">
- <rect x="6" y="10" width="52" height="38" rx="10" fill="url(#compg)"/>
- <rect x="12" y="16" width="40" height="22" rx="3" fill="#1480fa"/>
- <rect x="12" y="16" width="40" height="22" rx="3" fill="url(#sheen)"/>
- <rect x="26" y="48" width="12" height="6" fill="#8a93a3"/>
- <rect x="20" y="54" width="24" height="3" rx="1.5" fill="#788292"/></svg>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#blueg)"/>
+ <rect x="5" y="5" width="54" height="54" rx="15" fill="url(#sheen)"/>
+ <rect x="5.5" y="5.5" width="53" height="53" rx="14.5" fill="none" stroke="#ffffff" stroke-opacity=".28" stroke-width="1"/>
+ <rect x="15" y="18" width="34" height="22" rx="3.5" fill="#fff"/>
+ <rect x="26" y="43" width="12" height="4" fill="#e4ebf5"/>
+ <rect x="22" y="47" width="20" height="3" rx="1.5" fill="#e4ebf5"/></svg>
 </div>
 </body></html>

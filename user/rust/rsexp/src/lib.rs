@@ -18,7 +18,6 @@ extern "C" {
 }
 
 const MUTED: u32 = 0x008a8a8e;
-const SIDE_BG: u32 = 0x00f4f5f8;
 
 /* entry kinds -> icon + behavior */
 const K_DIR: u8 = 0;
@@ -1256,7 +1255,8 @@ fn load_icon(path: &str, fallback: Icon) -> Icon {
 
 #[no_mangle]
 pub extern "C" fn main() -> i32 {
-    let ui = match Ui::open_glass("Files", 620, 420) {
+    // Dark glass: white ink on the dark slab (the Files-redesign screenshot language).
+    let ui = match Ui::open_glass_dark("Files", 640, 480) {
         Some(u) => u,
         None => return 1,
     };
@@ -1277,6 +1277,9 @@ pub extern "C" fn main() -> i32 {
     let ic_fwd = load_icon("/disks/main/nanos/share/icons/ui-fwd.png", nothing);
     let ic_up = load_icon("/disks/main/nanos/share/icons/ui-up.png", nothing);
     let ic_home = load_icon("/disks/main/nanos/share/icons/ui-home.png", nothing);
+    let ic_computer = load_icon("/disks/main/nanos/share/icons/ui-computer.png", nothing);
+    let ic_disk = load_icon("/disks/main/nanos/share/icons/ui-drive.png", nothing);
+    let ic_shield = load_icon("/disks/main/nanos/share/icons/ui-shield.png", nothing);
 
     let app = alloc::boxed::Box::new(App {
         ui: ui.0,
@@ -1361,14 +1364,13 @@ pub extern "C" fn main() -> i32 {
     ui.menu_item(mgo, "Home", cb_homebtn, app_ptr);
     ui.menu_item(mgo, "Up", cb_up, app_ptr);
 
-    // ---- sidebar: Favorites + Locations, place rows with a "current location" pill ----
-    let sidebar = ui.vbox();
-    sidebar.add(ui.label("FAVORITES").colors(MUTED, 0));
-    let home_row = ui.link_raw("Home", cb_place, app_ptr);
-    sidebar.add(home_row);
-    sidebar.add(ui.label("LOCATIONS").colors(MUTED, 0));
-    let comp_row = ui.link_raw("My Computer", cb_place, app_ptr);
-    sidebar.add(comp_row);
+    // ---- sidebar: an icon-only rail (Home / My Computer / one per disk); the current place
+    // renders as a glass selection pill (paint's flat+img active path) ----
+    let rail = ui.vbox();
+    let home_row = ui.iconbtn(ic_home, cb_place, app_ptr).size(44, 38);
+    rail.add(home_row);
+    let comp_row = ui.iconbtn(ic_computer, cb_place, app_ptr).size(44, 38);
+    rail.add(comp_row);
 
     // register the fixed places (Home favorite + My Computer), then one row per mounted disk
     unsafe {
@@ -1386,8 +1388,8 @@ pub extern "C" fn main() -> i32 {
             let mut is_dir = 0i32;
             while nwui_dir_next(d, name.as_mut_ptr(), 256, &mut is_dir) == 1 {
                 let n = cstr_len(&name);
-                let row = ui.link_raw(core::str::from_utf8_unchecked(&name[..n]), cb_place, app_ptr);
-                sidebar.add(row);
+                let row = ui.iconbtn(ic_disk, cb_place, app_ptr).size(44, 38);
+                rail.add(row);
                 let mut p = Vec::new();
                 p.extend_from_slice(b"/disks/");
                 p.extend_from_slice(&name[..n]);
@@ -1399,11 +1401,12 @@ pub extern "C" fn main() -> i32 {
             nwui_dir_close(d);
         }
     }
-    let sidebar = sidebar.gap(4).pad(12).colors(0, SIDE_BG).size(200, 0);
+    let rail = rail.gap(8).pad(10).size(64, 0);
 
     // search field over the app's query buffer (stable address: App is leaked)
     let qbuf = unsafe { (*(app_ptr as *mut App)).query.as_mut_ptr() };
     let search = ui.textfield(qbuf, 64, cb_search, app_ptr);
+    search.textfield_placeholder("Search");
     unsafe { (&mut *(app_ptr as *mut App)).search = search.0; }   // so navigation can clear it
 
     // editable address bar over the app's addr buffer: type a path + Enter to navigate there
@@ -1412,23 +1415,32 @@ pub extern "C" fn main() -> i32 {
     crumb.textfield_set_submit(cb_addr_go);
     unsafe { (&mut *(app_ptr as *mut App)).crumb = crumb.0; }
 
+    // row 1: nav buttons + the big search field; row 2: the full-width location pill.
+    // Both sit on the raw window glass (no strip colours) — one continuous header zone.
     let toolbar = ui.hbox()
         .add(ui.iconbtn(ic_back, cb_back, app_ptr))
         .add(ui.iconbtn(ic_fwd, cb_forward, app_ptr))
         .add(ui.iconbtn(ic_up, cb_up, app_ptr))
         .add(ui.iconbtn(ic_home, cb_homebtn, app_ptr))
-        .add(crumb.flex(1))
-        .add(search.size(160, 0))
-        .gap(6)
-        .pad(6)
-        .colors(0x001d2733, 0x00eef2f8);   /* a defined toolbar strip */
+        .add(search.size(0, 30).flex(1))
+        .gap(8)
+        .pad(10);
+    let addr_row = ui.hbox().add(crumb.size(0, 30).flex(1)).pad(10);
 
-    // status bar: a thin strip along the bottom (item count / selection size / free space)
-    let status = ui.label("").colors(0x004a4a4f, 0x00eef2f8).pad(5);
+    // status bar: item count / selection / free space on the left, a "Ready" badge on the right.
+    // colors(0,..) clears nwui_alloc's dark default fg so the label takes the palette ink (white
+    // on this dark-glass window).
+    let status = ui.label("").colors(0, 0).pad(2);
     unsafe { (&mut *(app_ptr as *mut App)).status = status.0; }
+    let status_row = ui.hbox()
+        .add(status.flex(1))
+        .add(ui.image(ic_shield))
+        .add(ui.label("Ready").colors(MUTED, 0))
+        .gap(6)
+        .pad(8);
 
-    let body = ui.hbox().add(sidebar).add(view.flex(1));
-    let root = ui.vbox().add(toolbar).add(body.flex(1)).add(status);
+    let body = ui.hbox().add(rail).add(view.flex(1));
+    let root = ui.vbox().add(toolbar).add(addr_row).add(body.flex(1)).add(status_row);
 
     unsafe { (&mut *(app_ptr as *mut App)).go(b"", true); }   // initial view + history entry
 

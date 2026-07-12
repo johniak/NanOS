@@ -61,6 +61,7 @@ extern "C" {
     fn nwui_focus(u: *mut NwUi, n: *mut NwNode);
     fn nwui_run(u: *mut NwUi);
     fn nwui_label(u: *mut NwUi, text: *const u8) -> *mut NwNode;
+    fn nwui_image(u: *mut NwUi, px: *const u32, w: i32, h: i32) -> *mut NwNode;
     fn nwui_button(u: *mut NwUi, text: *const u8, cb: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_link(u: *mut NwUi, text: *const u8, cb: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_link_set_active(n: *mut NwNode, active: i32);
@@ -104,6 +105,7 @@ extern "C" {
     fn nwui_textfield(u: *mut NwUi, buf: *mut u8, cap: i32, on_change: RawCb, user: *mut c_void) -> *mut NwNode;
     fn nwui_textfield_set(n: *mut NwNode, s: *const u8);
     fn nwui_textfield_set_submit(n: *mut NwNode, cb: RawCb);
+    fn nwui_textfield_placeholder(n: *mut NwNode, s: *const u8);
     fn nwui_textfield_select_all(n: *mut NwNode);
     fn nwui_message(u: *mut NwUi, title: *const u8, text: *const u8);
     fn nwui_prompt(u: *mut NwUi, title: *const u8, buf: *mut u8, cap: i32, on_ok: RawCb, user: *mut c_void);
@@ -176,6 +178,12 @@ impl Node {
     pub fn textfield_set(self, s: *const u8) { unsafe { nwui_textfield_set(self.0, s) } }
     /// Fire `cb` when Enter is pressed in this textfield (submit, vs per-keystroke on_change).
     pub fn textfield_set_submit(self, cb: RawCb) { unsafe { nwui_textfield_set_submit(self.0, cb) } }
+    /// Placeholder text shown muted while the field is empty and unfocused (e.g. "Search").
+    pub fn textfield_placeholder(self, s: &str) -> Node {
+        let c = cstr(s);
+        unsafe { nwui_textfield_placeholder(self.0, c.as_ptr()) }
+        self
+    }
     /// Select the whole field (next keystroke replaces it).
     pub fn textfield_select_all(self) { unsafe { nwui_textfield_select_all(self.0) } }
     /// Make this iconview a drag source (on_drag) + drop target (on_drop), raw-callback ABI.
@@ -216,7 +224,18 @@ impl Ui {
         let p = unsafe { nwui_open_style(t.as_ptr(), w, h, 1) };
         if p.is_null() { None } else { Some(Ui(p)) }
     }
+    /// Glass with the dark slab variant (NW_STYLE_GLASS_CLIENT | NW_STYLE_DARK = 3): the toolkit
+    /// paints light ink and the compositor tints the slab dark — white-text-on-glass interiors.
+    pub fn open_glass_dark(title: &str, w: i32, h: i32) -> Option<Ui> {
+        let t = cstr(title);
+        let p = unsafe { nwui_open_style(t.as_ptr(), w, h, 3) };
+        if p.is_null() { None } else { Some(Ui(p)) }
+    }
     pub fn label(&self, s: &str) -> Node { let c = cstr(s); unsafe { Node(nwui_label(self.0, c.as_ptr())) } }
+    /// A static image node. `icon` = (pixels, w, h) from load_png (buffer must outlive the Ui).
+    pub fn image(&self, icon: (*const u32, i32, i32)) -> Node {
+        unsafe { Node(nwui_image(self.0, icon.0, icon.1, icon.2)) }
+    }
     pub fn panel(&self, title: &str) -> Node { let c = cstr(title); unsafe { Node(nwui_panel(self.0, c.as_ptr())) } }
     pub fn vbox(&self) -> Node { unsafe { Node(nwui_vbox(self.0)) } }
     pub fn hbox(&self) -> Node { unsafe { Node(nwui_hbox(self.0)) } }

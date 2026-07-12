@@ -107,6 +107,7 @@ nwui *nwui_open_style(const char *title, int w, int h, uint32_t style)
 	u->win_w = nw_win_width(win);
 	u->win_h = nw_win_height(win);
 	u->glass = !!(style & NW_STYLE_GLASS_CLIENT);
+	u->dark  = !!(style & NW_STYLE_DARK);
 	return u;
 }
 

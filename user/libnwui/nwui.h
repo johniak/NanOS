@@ -59,6 +59,8 @@ nwui_node *nwui_textfield(nwui *u, char *buf, int cap, nwui_cb on_change, void *
 void       nwui_textfield_set(nwui_node *n, const char *s);
 /* Fire `cb` when Enter is pressed in the textfield (distinct from per-keystroke on_change). */
 void       nwui_textfield_set_submit(nwui_node *n, nwui_cb cb);
+/* Placeholder text, shown muted while the field is empty and unfocused (e.g. "Search"). */
+void       nwui_textfield_placeholder(nwui_node *n, const char *s);
 /* Select the whole field so the next keystroke replaces it (e.g. focusing an address bar). */
 void       nwui_textfield_select_all(nwui_node *n);
 /* Render the field's value as dots (password entry). */
