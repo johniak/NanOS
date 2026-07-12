@@ -251,6 +251,13 @@ static int g_log_tee_busy;   /* re-entrancy guard: the VFS append itself may pri
 
 void lkpi_set_log_tee(const char *path) { g_log_tee_path = path; }
 
+/* Set once by the ktimers thread when its ~4 ms flush loop is live: from then on, thread-context
+ * printk STAGES lines in the tee ring instead of appending to USB inline (see the tee-ring block
+ * below). Lives OUTSIDE the NANOS_HOST_TEST guard: kpi_kthread.c's timer thread calls it in the
+ * host-test build too, where the ring itself is compiled out and the flag is simply never read. */
+static volatile int g_tee_flusher_alive;
+void lkpi_tee_flusher_alive(void) { g_tee_flusher_alive = 1; }
+
 #ifndef NANOS_HOST_TEST
 /* ---- interrupt-context tee ring ---------------------------------------------------------
  * A printk emitted while in interrupt/atomic context CANNOT append straight to the USB-backed log:
@@ -294,14 +301,11 @@ static void tee_ring_put(const char *s, unsigned n) {
 	}
 }
 
-/* Set once by the ktimers thread when its ~4 ms flush loop is live: from then on, thread-context
- * printk STAGES lines here instead of appending to USB inline. The inline append put a per-sector
- * USB write (tens to hundreds of ms) INSIDE whatever gated section printed — a SLOW-ioctl line
- * made the NEXT frame's ioctl slow, which printed another SLOW line: a self-sustaining stutter
- * loop on the Dell. Until the flusher runs (boot narration, pre-scheduler probe) the sync path
- * stays: it is the only writer then and there is no frame path to disturb. */
-static volatile int g_tee_flusher_alive;
-void lkpi_tee_flusher_alive(void) { g_tee_flusher_alive = 1; }
+/* The inline USB append put a per-sector USB write (tens to hundreds of ms) INSIDE whatever gated
+ * section printed — a SLOW-ioctl line made the NEXT frame's ioctl slow, which printed another SLOW
+ * line: a self-sustaining stutter loop on the Dell. Until the flusher runs (boot narration,
+ * pre-scheduler probe) the sync path stays: it is the only writer then and there is no frame path
+ * to disturb. (g_tee_flusher_alive + its setter live above the NANOS_HOST_TEST guard.) */
 
 /* Unflushed bytes waiting in the IRQ-context ring (+dropped flag) — the i915 pulse thread reports
  * this so a post-mortem log shows whether evidence was still stuck in RAM at the freeze. */
