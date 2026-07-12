@@ -55,7 +55,8 @@ upstream clone (no local changes).
 
 ### Principle
 
-**Every upstream thing we modify = its own fork under `github.com/johniak`**, branch `nanos`,
+**Home of everything: the `github.com/NanOS-labs` organization** (created 2026-07-12).
+**Every upstream thing we modify = its own fork under `NanOS-labs`**, branch `nanos`,
 our changes as reviewable commits on top of a pinned upstream base, and **the port recipe
 lives inside that fork** (`nxport.toml`, `hooks/`, build scripts, compat headers, Dockerfiles)
 — the pattern `vim-nanos` already uses. Where recipe copies have drifted, **the
@@ -82,7 +83,12 @@ Migration procedure per repo (mechanical, scripted where possible):
 3. Add the recipe files as a commit: `nxport.toml` + `hooks/` at the repo root (the
    vim-nanos convention); auxiliary build scripts/Dockerfiles under `nanos/` if they would
    clutter the root.
-4. Push to `github.com/johniak/<name>`, default branch `nanos`, upstream base tagged.
+4. Push to `github.com/NanOS-labs/<name>`, default branch `nanos`, upstream base tagged.
+
+Additionally, the repos that already exist under `github.com/johniak` — `NanOS`, `nanos-sdk`,
+`vim-nanos`, `ncurses-nanos`, `bash-nanos`, `netsurf-nanos` — are **transferred into
+`NanOS-labs`** (GitHub transfer preserves stars/issues and auto-redirects old URLs; local
+remotes and any hardcoded URLs in docs/scripts get updated afterwards).
 
 ### Rescues into the main NanOS repo
 
