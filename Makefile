@@ -2178,6 +2178,9 @@ $(BINFOLDER)%.o: user/about/%.c
 $(BINFOLDER)%.o: user/viewer/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
+$(BINFOLDER)%.o: user/nwbench/%.c
+	@mkdir -p $(BINFOLDER)
+	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 $(BINFOLDER)%.o: user/properties/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
@@ -2392,6 +2395,10 @@ $(BINFOLDER)settings.nxe: $(DYN_GLUE) $(BINFOLDER)settings.o $(BINFOLDER)nw_sett
 $(BINFOLDER)about.nxe: $(DYN_GLUE) $(BINFOLDER)about.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)about.elf $(DYN_GLUE) $(BINFOLDER)about.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX_TOOL) $(BINFOLDER)about.elf $@ --need libnwui.ndl
+# nwbench: the GUI rendering benchmark (FPS meter over an animated widget scene) — toolkit-only chain.
+$(BINFOLDER)nwbench.nxe: $(DYN_GLUE) $(BINFOLDER)nwbench.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
+	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)nwbench.elf $(DYN_GLUE) $(BINFOLDER)nwbench.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
+	$(MKNX_TOOL) $(BINFOLDER)nwbench.elf $@ --need libnwui.ndl
 # viewer: the image viewer — toolkit-only chain (reuses the libnwui PNG decoder + image widget).
 $(BINFOLDER)viewer.nxe: $(DYN_GLUE) $(BINFOLDER)viewer.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)viewer.elf $(DYN_GLUE) $(BINFOLDER)viewer.o $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
@@ -2583,7 +2590,7 @@ X64_GUI_PROGS=nwm greeter
 # nanowm desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
 # (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
-X64_GUI_APPS=rsexp settings about notepad viewer properties form terminal
+X64_GUI_APPS=rsexp settings about notepad viewer properties form terminal nwbench
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
 X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
 _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))

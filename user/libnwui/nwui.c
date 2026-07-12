@@ -126,6 +126,27 @@ static void paint(nwui *u)
 		nw_commit(io->win, x, y, w, h);
 }
 
+/* Route one event through the core + perform the I/O side effects the core flagged.
+ * Shared by nwui_run and nwui_pump. Returns 0 on CLOSE. */
+static int handle_event(nwui *u, struct nwui_io *io, const struct nw_event *ev)
+{
+	if (ev->type == NW_EV_MENU) {          /* a global-menu item was chosen */
+		nwui_menu_dispatch(u, ev->menu, ev->item);
+		return 1;
+	}
+	/* A resize must realloc the client draw buffer to the new size BEFORE we relayout
+	 * and repaint at it — otherwise paint() keeps drawing into the old (smaller) buffer
+	 * and everything past the old bounds vanishes when the window is enlarged. */
+	if (ev->type == NW_EV_CONFIGURE)
+		nw_win_resize(io->win, ev->x, ev->y);
+	u->now_ms = now_ms();                  /* stamp time so the core can detect double-clicks */
+	if (!nwui_dispatch(u, ev)) return 0;   /* CLOSE */
+	if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }
+	if (u->clip_get) { nw_get_clipboard(io->d); u->clip_get = 0; }
+	if (u->drag_req) { nw_drag_begin(io->d, u->drag_buf, u->drag_len); u->drag_req = 0; }
+	return 1;
+}
+
 void nwui_run(nwui *u)
 {
 	struct nwui_io *io = (struct nwui_io *) u->io;
@@ -149,25 +170,31 @@ void nwui_run(nwui *u)
 		 * compositor's own coalesce-then-render-once loop. */
 		int alive = 1;
 		do {
-			if (ev.type == NW_EV_MENU) {       /* a global-menu item was chosen */
-				nwui_menu_dispatch(u, ev.menu, ev.item);
-			} else {
-				/* A resize must realloc the client draw buffer to the new size BEFORE we relayout
-				 * and repaint at it — otherwise paint() keeps drawing into the old (smaller) buffer
-				 * and everything past the old bounds vanishes when the window is enlarged. */
-				if (ev.type == NW_EV_CONFIGURE)
-					nw_win_resize(io->win, ev.x, ev.y);
-				u->now_ms = now_ms();          /* stamp time so the core can detect double-clicks */
-				if (!nwui_dispatch(u, &ev)) { alive = 0; break; }   /* CLOSE */
-				if (u->clip_set) { nw_set_clipboard(io->d, u->clip_buf, u->clip_len); u->clip_set = 0; }
-				if (u->clip_get) { nw_get_clipboard(io->d); u->clip_get = 0; }
-				if (u->drag_req) { nw_drag_begin(io->d, u->drag_buf, u->drag_len); u->drag_req = 0; }
-			}
+			if (!handle_event(u, io, &ev)) { alive = 0; break; }
 		} while (nw_next_event(io->d, &ev, 0) > 0);   /* drain the rest, non-blocking */
 		if (!alive)
 			break;
 		paint(u);
 	}
+}
+
+int nwui_pump(nwui *u)
+{
+	struct nwui_io *io = (struct nwui_io *) u->io;
+	struct nw_event ev;
+	int r;
+	while ((r = nw_next_event(io->d, &ev, 0)) > 0)
+		if (!handle_event(u, io, &ev))
+			return 0;                          /* CLOSE */
+	if (r < 0)
+		return 0;                              /* compositor gone */
+	paint(u);
+	return 1;
+}
+
+void nwui_invalidate(nwui *u)
+{
+	u->layout_dirty = 1;
 }
 
 /* ---- file open/save dialog (I/O: lists a directory via getdents) ---- */

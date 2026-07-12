@@ -45,6 +45,13 @@ void  nwui_focus(nwui *u, nwui_node *n);
 /* Run the event loop: pump input, dispatch to widgets, repaint damaged nodes — until the
  * window is closed. */
 void  nwui_run(nwui *u);
+/* One NON-BLOCKING iteration of the event loop for apps that animate (benchmarks, games,
+ * progress screens): drain every queued event, then repaint damaged nodes. Returns 0 when the
+ * window was closed (or the compositor is gone) — stop calling it. Drive frames by mutating
+ * state (nwui_set_text, nwui_size, ... or nwui_invalidate) between calls. */
+int   nwui_pump(nwui *u);
+/* Force the next paint to do a full relayout + repaint (what any tree/size mutation does). */
+void  nwui_invalidate(nwui *u);
 
 /* ---- components (allocated from the toolkit's node arena; do not free) ---- */
 nwui_node *nwui_label(nwui *u, const char *text);
