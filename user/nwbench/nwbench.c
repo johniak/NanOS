@@ -7,10 +7,19 @@
  *
  * Driven by nwui_pump() (the toolkit's non-blocking loop iteration) as fast as it will go:
  * FPS here = client paint + commit throughput of the libnw/libnwui engine, no pacing.
+ *
+ * AUTO MODE (for `make bench64-gl`): if $HOME/.nwbench-auto exists (seeded into the image by
+ * the host, content = seconds to run, default 120), the flag is consumed (unlinked), the
+ * benchmark runs unattended for that long, writes a parse-friendly report to
+ * $HOME/nwbench-result.txt (fsync'd BEFORE the "nwbench: done" stdout marker, so the host can
+ * quit QEMU on the marker and still read the file), and exits.
  */
 #include "nwui.h"
 #include "nwproto.h"   /* NW_STYLE_* */
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -18,6 +27,7 @@
 #define COLS     4     /* buttons per row */
 #define SWEEP    120   /* horizontal travel, px */
 #define PERIODMS 1600  /* one full left-right-left sweep */
+#define MAX_SECS 600   /* per-second series cap (auto mode) */
 
 static int g_pause;
 
@@ -27,6 +37,10 @@ static nwui_node *g_spacer[ROWS];    /* animated leading spacer of each row */
 static char g_fps_text[48]   = "-- FPS";
 static char g_stats_text[96] = "warming up...";
 static char g_field[64]      = "type here while it runs";
+
+/* auto mode state */
+static int  g_auto_secs;             /* 0 = interactive (no flag file) */
+static char g_home[128];
 
 static long now_us(void)
 {
@@ -48,8 +62,54 @@ static int sweep_at(long ms, int phase_ms)
 
 static void nop_cb(nwui_node *n, void *user) { (void) n; (void) user; }
 
+static void auto_init(void)
+{
+	const char *h = getenv("HOME");
+	snprintf(g_home, sizeof g_home, "%s", (h && h[0]) ? h : "/disks/main/users/jan");
+	char p[160];
+	snprintf(p, sizeof p, "%s/.nwbench-auto", g_home);
+	int fd = open(p, O_RDONLY);
+	if (fd < 0)
+		return;                              /* no flag: interactive */
+	char buf[16];
+	int n = (int) read(fd, buf, sizeof buf - 1);
+	close(fd);
+	unlink(p);                               /* consume: later launches are interactive again */
+	g_auto_secs = 0;
+	if (n > 0) { buf[n] = 0; g_auto_secs = atoi(buf); }
+	if (g_auto_secs <= 0 || g_auto_secs > MAX_SECS) g_auto_secs = 120;
+}
+
+static void write_result(long total_us, long frames, long gmin, long gmax,
+                         const int *sec_fps, int nsec)
+{
+	static char out[8192];
+	int len = 0;
+	long avg   = frames ? total_us / frames : 0;
+	long fps10 = total_us ? frames * 10000000L / total_us : 0;
+	len += snprintf(out + len, sizeof out - len,
+	                "nwbench-result v1\nduration_us %ld\nframes %ld\nfps_x10 %ld\n"
+	                "frame_avg_us %ld\nframe_min_us %ld\nframe_max_us %ld\nper_second_fps",
+	                total_us, frames, fps10, avg, gmin, gmax);
+	for (int i = 0; i < nsec && len < (int) sizeof out - 8; i++)
+		len += snprintf(out + len, sizeof out - len, " %d", sec_fps[i]);
+	len += snprintf(out + len, sizeof out - len, "\n");
+
+	char p[160];
+	snprintf(p, sizeof p, "%s/nwbench-result.txt", g_home);
+	int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (fd >= 0) {
+		write(fd, out, (unsigned) len);
+		fsync(fd);                           /* on disk BEFORE the stdout marker below */
+		close(fd);
+	}
+	printf("nwbench: done - %ld frames in %ld us (%ld.%ld fps), result -> %s\n",
+	       frames, total_us, fps10 / 10, fps10 % 10, fd >= 0 ? p : "(write FAILED)");
+}
+
 int main(void)
 {
+	auto_init();
 	nwui *u = nwui_open_style("GUI Bench", 560, 430, NW_STYLE_GLASS_CLIENT);
 	if (!u)
 		return 1;
@@ -87,13 +147,18 @@ int main(void)
 		(nwui_node *) 0);
 	nwui_set_root(u, nwui_pad(nwui_gap(root, 10), 14));
 
-	/* benchmark loop: animate -> full repaint -> commit, unpaced; 1 s reporting windows */
-	long win_start = now_us(), frame_start = win_start;
+	/* benchmark loop: animate -> full repaint -> commit, unpaced; 1 s reporting windows.
+	 * Auto mode also accumulates run totals + the per-second series for the report. */
+	static int sec_fps[MAX_SECS];
+	int  nsec = 0;
+	long bench_start = now_us();
+	long win_start = bench_start, frame_start = bench_start;
 	long sum_us = 0, min_us = 0, max_us = 0;
+	long tot_frames = 0, tot_min = 0, tot_max = 0;
 	int frames = 0;
 	for (;;) {
-		if (g_pause) {
-			if (!nwui_pump(u))                     /* keep events (incl. un-pause) flowing */
+		if (g_pause && !g_auto_secs) {         /* pause is an interactive-only affordance */
+			if (!nwui_pump(u))                 /* keep events (incl. un-pause) flowing */
 				break;
 			usleep(30000);
 			win_start = frame_start = now_us();    /* don't count the pause in the window */
@@ -111,6 +176,9 @@ int main(void)
 		sum_us += dt; frames++;
 		if (!min_us || dt < min_us) min_us = dt;
 		if (dt > max_us) max_us = dt;
+		tot_frames++;
+		if (!tot_min || dt < tot_min) tot_min = dt;
+		if (dt > tot_max) tot_max = dt;
 
 		if (end - win_start >= 1000000) {          /* close the 1 s window */
 			long avg = frames ? sum_us / frames : 0;
@@ -123,7 +191,12 @@ int main(void)
 			nwui_set_text(g_stats, g_stats_text);
 			printf("nwbench: %d fps, frame avg %ld us min %ld max %ld\n",
 			       frames, avg, min_us, max_us);
+			if (nsec < MAX_SECS) sec_fps[nsec++] = frames;
 			win_start = end; sum_us = min_us = max_us = 0; frames = 0;
+		}
+		if (g_auto_secs && end - bench_start >= (long) g_auto_secs * 1000000) {
+			write_result(end - bench_start, tot_frames, tot_min, tot_max, sec_fps, nsec);
+			break;
 		}
 	}
 	return 0;

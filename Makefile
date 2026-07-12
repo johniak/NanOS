@@ -1076,6 +1076,14 @@ smoke-kpi-wq: image64
 smoke-virtio-gpu-gl: image64-gl
 	bash scripts/smoke-virtio-gpu-gl.sh
 
+# `bench64-gl` is the automated GUI-rendering benchmark: boots the GL desktop, launches nwbench
+# (Cmd+R) in auto mode (NWBENCH_SECS, default 120 s of full-repaint animation), pulls the report
+# the app wrote to /users/jan/nwbench-result.txt out of the image and prints it; runs archive to
+# scratch/bench/ (latest.txt = most recent). Same developer-gate caveats as smoke-virtio-gpu-gl;
+# numbers are A/B-comparable between runs on the same host only (single-core TCG).
+bench64-gl: image64-gl
+	bash scripts/bench64-gl.sh
+
 # `smoke-sqlite` is the SQLite-port gate: it boots TWICE on the same image and proves the real
 # sqlite3 CLI creates a database on the read-write ext /disks/main AND that it survives a reboot
 # (3 rows persist; a second insert makes 6). Requires `make ARCH=x86_64 sqlite` + image64 first.
