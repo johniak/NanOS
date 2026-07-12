@@ -6,6 +6,7 @@
 #include "nwui_core.h"
 #include "libnw.h"
 #include "nwproto.h"   /* NW_STYLE_* */
+#include <stdio.h>     /* printf: the nwui_profile per-second breakdown line */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -116,14 +117,55 @@ nwui *nwui_open(const char *title, int w, int h)
 	return nwui_open_style(title, w, h, 0);
 }
 
+/* paint-phase profiling (nwui_profile): per-second render vs commit breakdown on stdout, so a
+ * benchmark/serial log shows whether frames go into the CLIENT rasterizer (render) or into the
+ * commit pipe + compositor round-trip (commit). One toolkit instance per process: static is fine. */
+static int  g_prof;
+static long g_prof_render, g_prof_commit, g_prof_frames, g_prof_t0;
+
+static long now_us_prof(void)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		return 0;
+	return (long) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+void nwui_profile(nwui *u, int on)
+{
+	(void) u;
+	g_prof = on;
+	g_prof_render = g_prof_commit = g_prof_frames = 0;
+	g_prof_t0 = now_us_prof();
+}
+
 static void paint(nwui *u)
 {
 	struct nwui_io *io = (struct nwui_io *) u->io;
 	struct nw_surface s;
 	nw_win_surface(io->win, &s);
 	int x, y, w, h;
-	if (nwui_render(u, &s, &x, &y, &w, &h))
+	if (!g_prof) {
+		if (nwui_render(u, &s, &x, &y, &w, &h))
+			nw_commit(io->win, x, y, w, h);
+		return;
+	}
+	long t0 = now_us_prof();
+	int drew = nwui_render(u, &s, &x, &y, &w, &h);
+	long t1 = now_us_prof();
+	if (drew)
 		nw_commit(io->win, x, y, w, h);
+	long t2 = now_us_prof();
+	g_prof_render += t1 - t0;
+	g_prof_commit += t2 - t1;
+	if (drew) g_prof_frames++;
+	if (t2 - g_prof_t0 >= 1000000) {
+		long f = g_prof_frames ? g_prof_frames : 1;
+		printf("nwui-prof: render %ld us/frame, commit %ld us/frame (%ld frames)\n",
+		       g_prof_render / f, g_prof_commit / f, g_prof_frames);
+		g_prof_render = g_prof_commit = g_prof_frames = 0;
+		g_prof_t0 = t2;
+	}
 }
 
 /* Route one event through the core + perform the I/O side effects the core flagged.

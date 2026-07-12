@@ -21,6 +21,7 @@ PART="$IMG?offset=69206016"
 QEMU_VIRGL_HOME=${QEMU_VIRGL_HOME:-$HOME/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp}
 QEMU_GL=${QEMU_GL:-$QEMU_VIRGL_HOME/bin/qemu-system-x86_64}
 SECS=${NWBENCH_SECS:-120}
+SMP=${NWBENCH_SMP:-1}    # cores; keep 1 for A/B comparability unless you're testing SMP itself
 SER=/tmp/nanos-bench.log
 MON=/tmp/nanos-bench.mon
 rm -f "$SER" "$MON"
@@ -37,13 +38,13 @@ printf 'rm /users/jan/.nwbench-auto\nrm /users/jan/nwbench-result.txt\nwrite /tm
   | "$DEBUGFS" -w "$PART" >/dev/null 2>&1
 
 pkill -9 -f "qemu-system-x86_64.*$IMG" 2>/dev/null; sleep 1
-"$QEMU_GL" -cpu qemu64 -accel tcg,thread=multi -smp 1 -m 512 \
+"$QEMU_GL" -cpu qemu64 -accel tcg,thread=multi -smp "$SMP" -m 512 \
     -drive file="$IMG",format=raw -device virtio-gpu-gl-pci -vga none \
     -display cocoa,gl=es,zoom-to-fit=on \
     -serial file:"$SER" -monitor unix:"$MON",server,nowait -no-reboot >/dev/null 2>&1 &
 QPID=$!
 trap 'kill -9 "$QPID" 2>/dev/null; rm -f "$MON"' EXIT
-echo "bench64-gl: QEMU pid=$QPID serial=$SER, benchmark ${SECS}s"
+echo "bench64-gl: QEMU pid=$QPID serial=$SER, benchmark ${SECS}s, smp=$SMP"
 
 for i in $(seq 1 180); do grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null && break; sleep 2; done
 grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null || { echo "FAIL: never reached login"; tail -25 "$SER"; exit 1; }

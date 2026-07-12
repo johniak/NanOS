@@ -28,6 +28,7 @@
 #define SWEEP    120   /* horizontal travel, px */
 #define PERIODMS 1600  /* one full left-right-left sweep */
 #define MAX_SECS 600   /* per-second series cap (auto mode) */
+#define HBUCKETS 1024  /* frame-time histogram: 1 ms buckets, last = >=1023 ms overflow */
 
 static int g_pause;
 
@@ -80,6 +81,33 @@ static void auto_init(void)
 	if (g_auto_secs <= 0 || g_auto_secs > MAX_SECS) g_auto_secs = 120;
 }
 
+/* frame-time histogram (1 ms buckets) — the stutter metrics: percentiles + the 1%-low tail */
+static long g_hist[HBUCKETS];
+
+/* smallest frame-time t (ms) with count(<=t) >= q/1000 of all frames */
+static long hist_percentile_ms(long frames, int q_x10)
+{
+	long need = (frames * q_x10 + 999) / 1000, cum = 0;
+	for (int b = 0; b < HBUCKETS; b++) {
+		cum += g_hist[b];
+		if (cum >= need) return b;
+	}
+	return HBUCKETS - 1;
+}
+
+/* mean of the WORST 1% of frames (>=1 frame), in us — "1% low" fps = 1e6/this */
+static long hist_low1pct_us(long frames)
+{
+	long take = frames / 100; if (take < 1) take = 1;
+	long left = take, sum = 0;
+	for (int b = HBUCKETS - 1; b >= 0 && left > 0; b--) {
+		long n = g_hist[b] < left ? g_hist[b] : left;
+		sum += n * ((long) b * 1000 + 500);   /* bucket midpoint, us */
+		left -= n;
+	}
+	return sum / take;
+}
+
 static void write_result(long total_us, long frames, long gmin, long gmax,
                          const int *sec_fps, int nsec)
 {
@@ -87,10 +115,20 @@ static void write_result(long total_us, long frames, long gmin, long gmax,
 	int len = 0;
 	long avg   = frames ? total_us / frames : 0;
 	long fps10 = total_us ? frames * 10000000L / total_us : 0;
+	long p50 = hist_percentile_ms(frames, 500), p90 = hist_percentile_ms(frames, 900);
+	long p99 = hist_percentile_ms(frames, 990);
+	long low1 = frames ? hist_low1pct_us(frames) : 0;
+	long low1fps10 = low1 ? 10000000L / low1 : 0;
+	int  worst_sec = nsec ? sec_fps[0] : 0;
+	for (int i = 1; i < nsec; i++)
+		if (sec_fps[i] < worst_sec) worst_sec = sec_fps[i];
 	len += snprintf(out + len, sizeof out - len,
 	                "nwbench-result v1\nduration_us %ld\nframes %ld\nfps_x10 %ld\n"
-	                "frame_avg_us %ld\nframe_min_us %ld\nframe_max_us %ld\nper_second_fps",
-	                total_us, frames, fps10, avg, gmin, gmax);
+	                "frame_avg_us %ld\nframe_min_us %ld\nframe_max_us %ld\n"
+	                "frame_p50_ms %ld\nframe_p90_ms %ld\nframe_p99_ms %ld\n"
+	                "low1pct_fps_x10 %ld\nworst_second_fps %d\nper_second_fps",
+	                total_us, frames, fps10, avg, gmin, gmax,
+	                p50, p90, p99, low1fps10, worst_sec);
 	for (int i = 0; i < nsec && len < (int) sizeof out - 8; i++)
 		len += snprintf(out + len, sizeof out - len, " %d", sec_fps[i]);
 	len += snprintf(out + len, sizeof out - len, "\n");
@@ -103,8 +141,9 @@ static void write_result(long total_us, long frames, long gmin, long gmax,
 		fsync(fd);                           /* on disk BEFORE the stdout marker below */
 		close(fd);
 	}
-	printf("nwbench: done - %ld frames in %ld us (%ld.%ld fps), result -> %s\n",
-	       frames, total_us, fps10 / 10, fps10 % 10, fd >= 0 ? p : "(write FAILED)");
+	printf("nwbench: done - %ld frames in %ld us (%ld.%ld fps, p99 %ld ms, 1%%low %ld.%ld fps), result -> %s\n",
+	       frames, total_us, fps10 / 10, fps10 % 10, p99, low1fps10 / 10, low1fps10 % 10,
+	       fd >= 0 ? p : "(write FAILED)");
 }
 
 int main(void)
@@ -113,6 +152,8 @@ int main(void)
 	nwui *u = nwui_open_style("GUI Bench", 560, 430, NW_STYLE_GLASS_CLIENT);
 	if (!u)
 		return 1;
+	if (g_auto_secs)
+		nwui_profile(u, 1);   /* headless runs also log the render/commit split per second */
 
 	/* header: FPS readout + stats */
 	g_fps   = nwui_label(u, g_fps_text);
@@ -179,6 +220,10 @@ int main(void)
 		tot_frames++;
 		if (!tot_min || dt < tot_min) tot_min = dt;
 		if (dt > tot_max) tot_max = dt;
+		{
+			long b = dt / 1000;
+			g_hist[b < HBUCKETS ? b : HBUCKETS - 1]++;
+		}
 
 		if (end - win_start >= 1000000) {          /* close the 1 s window */
 			long avg = frames ? sum_us / frames : 0;

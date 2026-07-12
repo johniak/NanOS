@@ -52,6 +52,10 @@ void  nwui_run(nwui *u);
 int   nwui_pump(nwui *u);
 /* Force the next paint to do a full relayout + repaint (what any tree/size mutation does). */
 void  nwui_invalidate(nwui *u);
+/* Paint-phase profiling: while on, print a per-second "nwui-prof: render X us/frame, commit
+ * Y us/frame" line to stdout — shows whether frames go into the client rasterizer or into the
+ * commit pipe + compositor round-trip. */
+void  nwui_profile(nwui *u, int on);
 
 /* ---- components (allocated from the toolkit's node arena; do not free) ---- */
 nwui_node *nwui_label(nwui *u, const char *text);
