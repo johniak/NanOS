@@ -114,6 +114,29 @@ audit). Checkout paths are relative to `$SDK_WORK` (`~/Projects/nanos-sdk-work`)
   above, re-sign quirk documented. Not our code.
 - **`~/Projects/git`** — clean upstream clone used for reference only.
 
+## Clean-room gate verdict (2026-07-12)
+
+`SDK_WORK=/tmp/fresh-sdk-work bootstrap.sh` + the full make sequence, sourcing ONLY the
+NanOS-labs org (toolchain rsync-seeded from the live workspace — its from-source build is
+covered by the nanos-sdk flow):
+
+- **PASS (the critical path)**: docker-image, zlib, openssl, bzip2, sqlite, bash, libjpeg,
+  libdrm, **mesa**, gles2info, glkms, **nwm-gl**, externals, **image64, image64-gl**, and the
+  fresh image boots: smoke-x86_64 + smoke-virtio-gpu + smoke-vt green.
+- **FAIL — pre-existing port-rebuild rot, NOT migration regressions** (A/B-verified: sudo,
+  toybox, ncurses fail byte-identically against the live pre-migration workspace; sudo's
+  tree is byte-identical to upstream): ncurses, toybox, sudo, grep, ping, wget, inetd,
+  httpd, udhcpc, dropbear, vim, htop, git, libpng, netsurf. Two failure families:
+  (a) autotools conftest "cannot compile and link" (ncurses, libpng, several inetutils),
+  (b) drifted port glue vs current libc-glue/scripts (sudo's configure now takes the
+  no-sudoedit branch whose upstream stub doesn't compile; toybox sed adaptations; grep's
+  git-clone mtimes retrigger automake). The staged `.nxe` artifacts in the images still
+  work; what rotted is the REBUILD path. Un-rotting these is the follow-up (the `make world`
+  plan) — each fix lands in the port's own fork now that they are tracked.
+- **test64**: host-test link fixed (commit 909f1ff); 3,245,146 assertions pass; the ≥90%
+  line-coverage gate fails at 88.0% — pre-existing debt from the recent glass/rsexp UI work
+  (`user/nwm/nw_compose.c` at 54.9% is the main gap).
+
 ## Provenance notes
 
 - Migration + audit tooling: `nanos-sdk/scripts/migrate-fork.sh` (pristine-base or

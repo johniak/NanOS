@@ -95,7 +95,7 @@ Brak sterownika NVMe = bloker daily-drivera; ujęty w meta-planie długu (D1), p
 | Plan | Co | Stan |
 |---|---|---|
 | [Reorg repo: manifest+bootstrap](2026-07-02-plan-1-repo-reorg-manifest-bootstrap.md) | ratunek przepisów portów z sdk-work, `nanos-fetch` | 🔁 **SUPERSEDED** przez migrację NanOS-labs (niżej) — recipe-home = per-upstream forki, nie `nanos-sdk/ports/` |
-| [Migracja ekosystemu → NanOS-labs](2026-07-12-ecosystem-forks-migration.md) | org NanOS-labs, ~27 repo (forki z przepisami w środku), `ports.manifest`+`bootstrap.sh`+`migrate-fork.sh`, `docs/ECOSYSTEM.md`, brama clean-room | 🟨 w toku (12/14; brama clean-room + push qemu-nanos) |
+| [Migracja ekosystemu → NanOS-labs](2026-07-12-ecosystem-forks-migration.md) | org NanOS-labs, ~27 repo (forki z przepisami w środku), `ports.manifest`+`bootstrap.sh`+`migrate-fork.sh`, `docs/ECOSYSTEM.md`, brama clean-room | 🟨 13/14: brama clean-room PRZESZŁA na ścieżce krytycznej (image64+GL+boot), odsłoniła istniejącą zgniliznę odbudowy 15 portów (lista w ECOSYSTEM.md); zostaje push qemu-nanos (push-protection, decyzja usera) |
 | [`make world` + BUILDING.md](2026-07-02-plan-2-make-world-building-docs.md) | świeży Linux buduje wszystko; serwer/CI | ⬜ |
 | [Host: macOS od zera + Ubuntu](2026-07-04-host-reproducibility-macos-ubuntu.md) | setup hosta, stack GL na obu OS, KVM, bramy clean-machine | ⬜ |
 | [ext path-scan UB / kernel -O2](2026-07-04-ext-path-ub-kernel-o2.md) | fix OOB w lookupach ext → kernel wraca na -O2 | ⬜ **(K2)** |
