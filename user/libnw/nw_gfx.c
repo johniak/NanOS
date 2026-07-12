@@ -543,9 +543,41 @@ void nw_over_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32
 	if (y0 < by0) y0 = by0;
 	if (x1 > bx1) x1 = bx1;
 	if (y1 > by1) y1 = by1;
-	for (int yy = y0; yy < y1; yy++)
-		for (int xx = x0; xx < x1; xx++)
-			nw_over_pixel(s, xx, yy, argb);
+	if (x0 >= x1 || y0 >= y1) return;
+	unsigned sa = argb >> 24;
+	if (!sa) return;
+	if (sa == 255) {                                    /* opaque ink: plain stores */
+		for (int yy = y0; yy < y1; yy++) {
+			uint32_t *row = s->px + (long) yy * s->stride;
+			for (int xx = x0; xx < x1; xx++) row[xx] = argb;
+		}
+		return;
+	}
+	/* Translucent ink over a UI surface lands almost entirely on uniform pixels (the canvas
+	 * clear, an ancestor's scrim), so memoize the last dst→out pair; a miss recomputes with
+	 * nw_over_pixel's exact arithmetic, keeping results bit-identical to the per-pixel path.
+	 * Clipping is hoisted out of the loop (nw_over_pixel re-checked it per pixel). */
+	unsigned isa = 255 - sa;
+	unsigned sr = (argb >> 16) & 0xff, sg = (argb >> 8) & 0xff, sb = argb & 0xff;
+	uint64_t lastdst = ~(uint64_t) 0;                   /* impossible 32-bit dst: first cmp misses */
+	uint32_t lastout = 0;
+	for (int yy = y0; yy < y1; yy++) {
+		uint32_t *row = s->px + (long) yy * s->stride;
+		for (int xx = x0; xx < x1; xx++) {
+			uint32_t dst = row[xx];
+			if (dst == lastdst) { row[xx] = lastout; continue; }
+			unsigned da = dst >> 24;
+			unsigned ra = sa + ((da * isa + 127) / 255);   /* sa>0 so ra>0 */
+			unsigned wd = da * isa / 255;
+			unsigned dr = (dst >> 16) & 0xff, dg = (dst >> 8) & 0xff, db = dst & 0xff;
+			unsigned r = (sr * sa + dr * wd) / ra;
+			unsigned g = (sg * sa + dg * wd) / ra;
+			unsigned b = (sb * sa + db * wd) / ra;
+			lastdst = dst;
+			lastout = ((uint32_t) ra << 24) | (r << 16) | (g << 8) | b;
+			row[xx] = lastout;
+		}
+	}
 }
 
 void nw_over_round(const struct nw_surface *s, int x, int y, int w, int h, int r, uint32_t argb)
@@ -578,27 +610,15 @@ void nw_over_round(const struct nw_surface *s, int x, int y, int w, int h, int r
 	}
 }
 
-void nw_over_round_soft(const struct nw_surface *s, int x, int y, int w, int h, int r,
-                        uint32_t argb, int feather)
+/* the per-pixel SDF ramp of nw_over_round_soft, over one loop rectangle [lx0,lx1)x[ly0,ly1)
+ * (already clipped by the caller). Kept verbatim so the banded decomposition below stays
+ * bit-identical to running this loop over the whole rect. */
+static void over_soft_band(const struct nw_surface *s, int lx0, int ly0, int lx1, int ly1,
+                           float cx, float cy, float hw, float hh, float fr, float ff,
+                           unsigned sa, uint32_t rgb, uint32_t argb)
 {
-	if (w <= 0 || h <= 0) return;
-	if (r * 2 > w) r = w / 2;
-	if (r * 2 > h) r = h / 2;
-	if (feather < 1) { nw_over_round(s, x, y, w, h, r, argb); return; }
-	unsigned sa = argb >> 24;
-	uint32_t rgb = argb & 0x00ffffffu;
-	/* rounded-box SDF against the whole rect: sd < 0 inside; coverage ramps 0..1 across the
-	 * `feather` px just inside the edge (smoothstepped so the fade has no visible start/stop
-	 * line). Pixels deeper than the ramp take the full-ink fast path (no sqrt, no per-pixel
-	 * alpha math beyond nw_over_pixel) — the ramp only ever touches a thin border band. */
-	int bx0, by0, bx1, by1;
-	nw_bounds(s, &bx0, &by0, &bx1, &by1);
-	int x0 = x < bx0 ? bx0 : x, y0 = y < by0 ? by0 : y;
-	int x1 = x + w > bx1 ? bx1 : x + w, y1 = y + h > by1 ? by1 : y + h;
-	float hw = w * 0.5f, hh = h * 0.5f;
-	float cx = x + hw, cy = y + hh, fr = (float) r, ff = (float) feather;
-	for (int yy = y0; yy < y1; yy++)
-		for (int xx = x0; xx < x1; xx++) {
+	for (int yy = ly0; yy < ly1; yy++)
+		for (int xx = lx0; xx < lx1; xx++) {
 			float qx = xx + 0.5f - cx, qy = yy + 0.5f - cy;
 			if (qx < 0) qx = -qx;
 			if (qy < 0) qy = -qy;
@@ -615,6 +635,47 @@ void nw_over_round_soft(const struct nw_surface *s, int x, int y, int w, int h, 
 			unsigned a = (unsigned) ((float) sa * t + 0.5f);
 			if (a) nw_over_pixel(s, xx, yy, (a << 24) | rgb);
 		}
+}
+
+void nw_over_round_soft(const struct nw_surface *s, int x, int y, int w, int h, int r,
+                        uint32_t argb, int feather)
+{
+	if (w <= 0 || h <= 0) return;
+	if (r * 2 > w) r = w / 2;
+	if (r * 2 > h) r = h / 2;
+	if (feather < 1) { nw_over_round(s, x, y, w, h, r, argb); return; }
+	unsigned sa = argb >> 24;
+	uint32_t rgb = argb & 0x00ffffffu;
+	/* rounded-box SDF: sd < 0 inside; coverage ramps 0..1 across the `feather` px just inside
+	 * the edge (smoothstepped so the fade has no visible start/stop line). The float ramp only
+	 * runs over the four edge strips that can actually contain it (width r+feather); everything
+	 * deeper is full ink and goes through nw_over_rect's fast span blend — a panel-sized fill
+	 * costs like a plain glass rect, not like a per-pixel sqrt over the whole body. */
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
+	int x0 = x < bx0 ? bx0 : x, y0 = y < by0 ? by0 : y;
+	int x1 = x + w > bx1 ? bx1 : x + w, y1 = y + h > by1 ? by1 : y + h;
+	if (x0 >= x1 || y0 >= y1) return;
+	float hw = w * 0.5f, hh = h * 0.5f;
+	float cx = x + hw, cy = y + hh, fr = (float) r, ff = (float) feather;
+	int band = r + feather;                       /* strip width that can hold ramp pixels:
+	                                               * straight edges need `feather`, corner boxes
+	                                               * extend r further — r+feather covers both */
+	if (2 * band >= w || 2 * band >= h) {         /* small rect: ramp everywhere, one loop */
+		over_soft_band(s, x0, y0, x1, y1, cx, cy, hw, hh, fr, ff, sa, rgb, argb);
+		return;
+	}
+	int ix0 = x + band, iy0 = y + band, ix1 = x + w - band, iy1 = y + h - band;
+	/* four edge strips (clipped): top, bottom, then left/right between them */
+	over_soft_band(s, x0, y0, x1, iy0 < y1 ? iy0 : y1, cx, cy, hw, hh, fr, ff, sa, rgb, argb);
+	over_soft_band(s, x0, iy1 > y0 ? iy1 : y0, x1, y1, cx, cy, hw, hh, fr, ff, sa, rgb, argb);
+	{
+		int my0 = iy0 > y0 ? iy0 : y0, my1 = iy1 < y1 ? iy1 : y1;
+		over_soft_band(s, x0, my0, ix0 < x1 ? ix0 : x1, my1, cx, cy, hw, hh, fr, ff, sa, rgb, argb);
+		over_soft_band(s, ix1 > x0 ? ix1 : x0, my0, x1, my1, cx, cy, hw, hh, fr, ff, sa, rgb, argb);
+	}
+	/* full-ink interior: fast span blend (nw_over_rect re-clips against the scissor itself) */
+	nw_over_rect(s, ix0, iy0, ix1 - ix0, iy1 - iy0, argb);
 }
 
 void nw_text_argb(const struct nw_surface *s, int x, int y, const char *str, uint32_t argb)
