@@ -118,6 +118,11 @@ void nw_clear_argb(const struct nw_surface *s, int x, int y, int w, int h, uint3
 void nw_over_rect(const struct nw_surface *s, int x, int y, int w, int h, uint32_t argb);
 /* Rounded-rect straight-alpha src-over fill, AA corners (same corner geometry as nw_fill_round). */
 void nw_over_round(const struct nw_surface *s, int x, int y, int w, int h, int r, uint32_t argb);
+/* Like nw_over_round, but the fill's alpha fades to 0 across the `feather` px just inside the
+ * edge (smoothstep over the rounded-box SDF) — panels that melt into the glass instead of ending
+ * on a hard line. feather<1 falls back to the crisp nw_over_round. */
+void nw_over_round_soft(const struct nw_surface *s, int x, int y, int w, int h, int r,
+                        uint32_t argb, int feather);
 /* Straight-alpha text: glyph coverage (cov143-remapped) scaled by argb's own alpha, written via
  * nw_over_pixel. Same font/baseline/advance as nw_text; VGA 1-bit fallback if no TTF loaded. */
 void nw_text_argb(const struct nw_surface *s, int x, int y, const char *str, uint32_t argb);

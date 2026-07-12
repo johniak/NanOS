@@ -578,6 +578,45 @@ void nw_over_round(const struct nw_surface *s, int x, int y, int w, int h, int r
 	}
 }
 
+void nw_over_round_soft(const struct nw_surface *s, int x, int y, int w, int h, int r,
+                        uint32_t argb, int feather)
+{
+	if (w <= 0 || h <= 0) return;
+	if (r * 2 > w) r = w / 2;
+	if (r * 2 > h) r = h / 2;
+	if (feather < 1) { nw_over_round(s, x, y, w, h, r, argb); return; }
+	unsigned sa = argb >> 24;
+	uint32_t rgb = argb & 0x00ffffffu;
+	/* rounded-box SDF against the whole rect: sd < 0 inside; coverage ramps 0..1 across the
+	 * `feather` px just inside the edge (smoothstepped so the fade has no visible start/stop
+	 * line). Pixels deeper than the ramp take the full-ink fast path (no sqrt, no per-pixel
+	 * alpha math beyond nw_over_pixel) — the ramp only ever touches a thin border band. */
+	int bx0, by0, bx1, by1;
+	nw_bounds(s, &bx0, &by0, &bx1, &by1);
+	int x0 = x < bx0 ? bx0 : x, y0 = y < by0 ? by0 : y;
+	int x1 = x + w > bx1 ? bx1 : x + w, y1 = y + h > by1 ? by1 : y + h;
+	float hw = w * 0.5f, hh = h * 0.5f;
+	float cx = x + hw, cy = y + hh, fr = (float) r, ff = (float) feather;
+	for (int yy = y0; yy < y1; yy++)
+		for (int xx = x0; xx < x1; xx++) {
+			float qx = xx + 0.5f - cx, qy = yy + 0.5f - cy;
+			if (qx < 0) qx = -qx;
+			if (qy < 0) qy = -qy;
+			qx -= hw - fr;  qy -= hh - fr;
+			float sd;
+			if (qx > 0.0f && qy > 0.0f)
+				sd = __builtin_sqrtf(qx * qx + qy * qy) - fr;   /* corner arc */
+			else
+				sd = (qx > qy ? qx : qy) - fr;                  /* straight edge */
+			float t = -sd / ff;
+			if (t <= 0.0f) continue;
+			if (t >= 1.0f) { nw_over_pixel(s, xx, yy, argb); continue; }
+			t = t * t * (3.0f - 2.0f * t);
+			unsigned a = (unsigned) ((float) sa * t + 0.5f);
+			if (a) nw_over_pixel(s, xx, yy, (a << 24) | rgb);
+		}
+}
+
 void nw_text_argb(const struct nw_surface *s, int x, int y, const char *str, uint32_t argb)
 {
 	ui_font_autoinit();

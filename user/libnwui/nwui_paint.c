@@ -427,7 +427,11 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	case NWUI_PANEL:
 		if (glass) {
-			nw_over_round(s, n->x, n->y, n->w, n->h, 8, GCOL_SCRIM);                 /* glass body */
+			/* body melts into the surrounding glass (same feather rule as has_bg containers
+			 * below); the title header stays a crisp band on top of it. */
+			int pf = (n->w < n->h ? n->w : n->h) / 8;
+			if (pf > 14) pf = 14;
+			nw_over_round_soft(s, n->x, n->y, n->w, n->h, 8, GCOL_SCRIM, pf);        /* glass body */
 			nw_over_round(s, n->x, n->y, n->w, NWUI_PANEL_TITLE_H, 8,
 			             (uint32_t) (0x66u << 24) | (COL_PANEL_HDR & 0x00ffffffu));  /* header */
 			nw_text_argb(s, n->x + 8, n->y + (NWUI_PANEL_TITLE_H - NW_FONT_H) / 2, n->text, 0xffffffffu);
@@ -468,9 +472,15 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 				 * bar) and creating a visible seam against the translucent siblings around it.
 				 * Composite it as a translucent scrim instead (0x59, a moderate general-purpose
 				 * panel alpha in the same family as GCOL_SCRIM/GCOL_SEL_RING). An app that set
-				 * its OWN top byte is making an explicit alpha choice — honour it verbatim. */
+				 * its OWN top byte is making an explicit alpha choice — honour it verbatim.
+				 * Feathered fill: a passive panel is a region of the slab, not a control, so
+				 * instead of ending on a hard line its scrim melts into the surrounding glass
+				 * over ~1/8 of its smaller side (capped — big sidebars shouldn't fade forever). */
 				uint32_t bg = n->bg;
-				nw_over_round(s, n->x, n->y, n->w, n->h, 8, (bg >> 24) ? bg : argb_op(bg, 0x40));
+				int f = (n->w < n->h ? n->w : n->h) / 8;
+				if (f > 14) f = 14;
+				nw_over_round_soft(s, n->x, n->y, n->w, n->h, 8,
+				                   (bg >> 24) ? bg : argb_op(bg, 0x40), f);
 			} else {
 				nw_fill_round(s, n->x, n->y, n->w, n->h, 8, n->bg, 255);
 			}
