@@ -110,17 +110,17 @@ static const char *FS_BLUR =
 	"uniform vec2 u_dir;\n"
 	"uniform vec2 u_uv0;\n"
 	"uniform vec2 u_uvsize;\n"
+	/* 5-tap "linear-sampling" gaussian (== the classic 9-tap discrete kernel): the two side
+	 * taps sit at NON-integer offsets so GL_LINEAR averages a texel pair per fetch. At wide
+	 * STEPs the old integer taps hit the same 1-in-STEP texel phase for every output pixel
+	 * and printed a STEP-period comb/grid into the frost; the fractional offsets dissolve it. */
 	"void main(){\n"
 	"  vec2 b = u_uv0 + v_uv * u_uvsize;\n"
-	"  vec4 c = texture2D(u_tex, b) * 0.227027;\n"
-	"  c += texture2D(u_tex, b + u_dir * 1.0) * 0.1945946;\n"
-	"  c += texture2D(u_tex, b - u_dir * 1.0) * 0.1945946;\n"
-	"  c += texture2D(u_tex, b + u_dir * 2.0) * 0.1216216;\n"
-	"  c += texture2D(u_tex, b - u_dir * 2.0) * 0.1216216;\n"
-	"  c += texture2D(u_tex, b + u_dir * 3.0) * 0.054054;\n"
-	"  c += texture2D(u_tex, b - u_dir * 3.0) * 0.054054;\n"
-	"  c += texture2D(u_tex, b + u_dir * 4.0) * 0.016216;\n"
-	"  c += texture2D(u_tex, b - u_dir * 4.0) * 0.016216;\n"
+	"  vec4 c = texture2D(u_tex, b) * 0.2270270;\n"
+	"  c += texture2D(u_tex, b + u_dir * 1.3846154) * 0.3162162;\n"
+	"  c += texture2D(u_tex, b - u_dir * 1.3846154) * 0.3162162;\n"
+	"  c += texture2D(u_tex, b + u_dir * 3.2307692) * 0.0702703;\n"
+	"  c += texture2D(u_tex, b - u_dir * 3.2307692) * 0.0702703;\n"
 	"  gl_FragColor = c;\n"
 	"}\n";
 
@@ -572,7 +572,12 @@ static int g_blur_trace = -1;
 static void blur_backdrop(int wx, int wy, int fw, int fh)
 {
 	if (g_blur_trace < 0) g_blur_trace = getenv("NWM_GL_TRACE") ? 1 : 0;
-	const float STEP = 2.5f;                  /* per-tap spread (window px) → a soft, glass-like blur */
+	/* Two H+V gaussian iterations with INCREASING spread: iteration 1 is dense (1.6 px taps —
+	 * kills the high frequencies that a sparse kernel would alias into a visible comb/grid),
+	 * iteration 2 is wide (7 px — spreads the already-smooth signal). Net sigma ~13 px ≈ the
+	 * mockup's backdrop-filter blur(24px). A single wide pass side-lobes fine content (icon
+	 * edges) straight through and prints a STEP-period raster into the frost. */
+	const float STEP1 = 1.6f, STEP2 = 7.0f;
 
 	/* pad the window frame + clamp to the screen -> the grab rect bookkeeping (screen px, top-down) */
 	int gx0 = wx - NW_GLASS_PAD, gy0 = wy - NW_GLASS_PAD;
@@ -602,15 +607,26 @@ static void blur_backdrop(int wx, int wy, int fw, int fh)
 	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);                      BLUR_MARK("bind-fboA");
 	glBindTexture(GL_TEXTURE_2D, g_scene_tex);                      BLUR_MARK("bind-scene-tex");
 	glUniform2f(u_blur_uv0, (float) g_gx / g_sw, 1.0f - (float) (g_gy + g_gh) / g_sh);
-	glUniform2f(u_blur_dir, STEP / g_sw, 0.0f);
+	glUniform2f(u_blur_dir, STEP1 / g_sw, 0.0f);
 	draw_full_quad();                                              BLUR_MARK("draw-H1");
 
 	/* pass 2 (V): the corner of g_blurA → g_fboB */
 	glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);                      BLUR_MARK("bind-fboB");
 	glBindTexture(GL_TEXTURE_2D, g_blurA);                          BLUR_MARK("bind-blurA");
 	glUniform2f(u_blur_uv0, 0.0f, 0.0f);
-	glUniform2f(u_blur_dir, 0.0f, STEP / g_sh);
+	glUniform2f(u_blur_dir, 0.0f, STEP1 / g_sh);
 	draw_full_quad();                                              BLUR_MARK("draw-V1");
+
+	/* iteration 2 (H then V again over the corner), wide spread — see the STEP1/STEP2 note.
+	 * Same ping-pong FBOs/textures, attach-once rule untouched (draws only). */
+	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);                      BLUR_MARK("bind-fboA2");
+	glBindTexture(GL_TEXTURE_2D, g_blurB);                          BLUR_MARK("bind-blurB");
+	glUniform2f(u_blur_dir, STEP2 / g_sw, 0.0f);
+	draw_full_quad();                                              BLUR_MARK("draw-H2");
+	glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);                      BLUR_MARK("bind-fboB2");
+	glBindTexture(GL_TEXTURE_2D, g_blurA);                          BLUR_MARK("bind-blurA2");
+	glUniform2f(u_blur_dir, 0.0f, STEP2 / g_sh);
+	draw_full_quad();                                              BLUR_MARK("draw-V2");
 
 	glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* back to the offscreen scene target */
 	glViewport(0, 0, g_sw, g_sh);
