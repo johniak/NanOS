@@ -163,7 +163,7 @@ static const char *FS_WIN =
 	"uniform float u_focus;\n"           /* 1 focused, 0 not */
 	"uniform float u_dark;\n"            /* 1 = dark slab variant */
 	"uniform float u_inkwin;\n"          /* 1 = client pixels carry ink alpha; 0 = legacy opaque client */
-	"uniform float u_debug;\n"           /* 0 off; 1 rim; 2 |offset|; 3 sharp grab; 4 blurred grab */
+	"uniform float u_debug;\n"           /* 0 off; 1 lens profile x; 2 normalized bend; 3 sharp grab; 4 blurred grab */
 	"const float BEVEL   = 14.0;\n"      /* px over which the glass edge curves */
 	"const float IOR     = 1.50;\n"      /* glass index of refraction (small-angle Snell) */
 	"const float CA_PX   = 2.5;\n"       /* chromatic aberration offset at slope 1, px */
@@ -352,7 +352,7 @@ static GLint u_win_content, u_win_backdrop, u_win_bd_scale, u_win_glass,
 static GLint u_win_client, u_win_caps, u_win_focus, u_win_dark, u_win_inkwin, u_win_debug;
 static GLint u_sh_wsize, u_sh_wradius, u_sh_wfocus;
 static GLint u_bar_backdrop, u_bar_topline;
-static float g_debug;   /* NWM_GLASS_DEBUG=1..4: 1 rim, 2 |offset|, 3 sharp grab, 4 blurred grab */
+static float g_debug;   /* NWM_GLASS_DEBUG=1..4: 1 lens profile x, 2 normalized bend, 3 sharp grab, 4 blurred grab */
 
 static struct glkms g_kms;
 static int  g_ok = 0;

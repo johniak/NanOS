@@ -298,13 +298,14 @@ renderowaną na CPU, ale teraz prawdziwą-alfą (`draw_caption_glow` w `nw_compo
    do `78%` alfy bez fokusu) — oba przez `nw_over_pixel` (prawdziwa alfa), więc miękkie obrzeże poświaty
    przetrwa aż do odczytu `ctex.a` w shaderze GL (§9.1 wyżej). Tytuły dłuższe niż `GLOW_MAXW - 4*GLOW_R`
    (~470 px) są przycinane do statycznego bufora poświaty.
-4. **Polaryzacja** — jasna poświata + ciemny rdzeń nad jasnym tłem, albo ciemna poświata + jasny rdzeń
-   nad ciemnym — pochodzi z `nw_backdrop_wants_dark_ink(x, y, w, h, prev)`: rzadka próbka 8×2 tapety
-   pod paskiem tytułu, luminancja w przestrzeni gamma, próg ~117 z pasmem histerezy `109..125`, żeby
-   okno przeciągane przez granicę jasnej/ciemnej tapety nie migotało. Okna `NW_STYLE_DARK` (Terminal)
-   zawsze wymuszają jasny rdzeń, niezależnie od próbkowanego tła. Decyzja per-okno jest cache'owana w
-   `w->ink_dark` (int8, `-1` = nieustawione) i odświeżana raz na brudne przerenderowanie w
-   `nw_render_dirty_frames`, nie co klatkę.
+4. **Polaryzacja** — jasna poświata + ciemny rdzeń dla jasnego okna, albo ciemna poświata + jasny rdzeń
+   dla ciemnego — to wariant samego okna, nie coś próbkowanego z tła: `draw_window_to` ustawia wprost
+   `dark_ink = !dark` (`dark` to ta sama flaga `NW_STYLE_DARK`, która już wybiera kolory materiału/paska
+   tytułu okna). Był tu kiedyś próbnik luminancji tapety (rzadka próbka 8×2 z pasmem histerezy);
+   usunięto go jako martwy kod — jasna tafla szkła podnosi to, co jest pod nią,
+   o mniej więcej 55% w stronę bieli, zanim wyląduje na niej atrament, więc ciemny atrament + biała
+   poświata czyta się nad *każdą* tapetą, na jakiej może stać jasne okno (semantyka Win7 Aero i to, co
+   pokazuje makieta). Okna `NW_STYLE_DARK` (Terminal) bezwarunkowo dostają jasny rdzeń.
 
 #### 9.1.3 Jasno-szklane wnętrza (libnwui)
 
@@ -315,30 +316,33 @@ klasycznego nieprzezroczystego tła papieru — `nwui_open(title, w, h)` to po p
 
 - Okno czyści się do w pełni przezroczystego płótna ARGB (`nw_clear_argb`, nie `nw_fill_rect`), a każdy
   widget maluje przez rodzinę prymitywów prawdziwej-alfy dodaną w tym celu (`user/libnw/nw_gfx.{c,h}`):
-  `nw_clear_argb`, `nw_over_pixel/rect/round` (src-over, które też akumuluje alfę celu) oraz
-  `nw_text_argb` (glify przez ten sam remap gamma `cov143` co klasyczny tekst, skalowane przez alfę
-  koloru atramentu). Dowolne wywołanie maskowane-RGB (`nw_fill_*`, `nw_blend_*`, `nw_draw_char_t`)
+  `nw_clear_argb`, `nw_over_pixel/rect/round` (src-over, które też akumuluje alfę celu), `nw_over_ring`
+  (ta sama geometria AA zaokrąglonego prostokąta co `nw_over_round`, ale zachowująca tylko pas
+  zewnętrzny-minus-wewnętrzny o szerokości 1px — prawdziwy obrys prawdziwej-alfy) oraz `nw_text_argb`
+  (glify przez ten sam remap gamma `cov143` co klasyczny tekst, skalowane przez alfę koloru atramentu).
+  Dowolne wywołanie maskowane-RGB (`nw_fill_*`, `nw_blend_*`, `nw_draw_char_t`)
   zawsze zapisuje alfę 0, co pod shaderem GL czyniłoby ten piksel niewidzialnym — więc w trybie
   szklanym każde malowanie w obrębie widgetu idzie ścieżką ARGB, nie tylko te, które dostają nowy kolor.
 - Paleta (`nwui_paint.c`, prawdziwe ARGB) mapuje język atramentu/scrimów makiety na toolkit: `GCOL_INK`
   (`#17222f`) / `GCOL_INK_SOFT` (to samo przy 62%) dla tekstu, `GCOL_SCRIM` (biel 25%) dla ciał paneli,
-  `GCOL_FIELD` (biel 50%) dla studni pól/list/textarea, `GCOL_SEL`/`GCOL_SEL_RING` (biel 22%/35%) dla
-  pigułki zaznaczenia + jej wcięcia, `GCOL_BTN_TOP/BOT/RING` dla pigułek przycisków. Dwie z nich zostały
-  dostrojone w przebiegu zgodności Zadania 10, nie zostawione na dosłownych liczbach z CSS makiety:
-  `GCOL_FIELD` podniesiono z nominalnych 35% makiety, bo studnia oparta na silniejszym
-  nasyceniu/tincie tafli v3 nadal czytała się wyraźnie niebiesko przy 35%; a alfa pierścienia fokusu
-  używana przez każdą studnię (`argb_op(COL_TF_FOC, ...)`, było 200/255) została *obniżona* do 90/255 —
-  `glass_ring` (niżej) kompozytuje pierścień na CAŁYM obszarze zanim wejdzie wypełnienie wcięte, więc
-  prawie nieprzezroczysty niebieski pierścień akcentu pod przezroczystym białym wypełnieniem składa się
-  w wynik dużo bardziej niebieski i nieprzezroczysty, niż sugerowałaby którakolwiek alfa z osobna; to
-  samo składanie jest powodem, dla którego `GCOL_SEL`/`GCOL_SEL_RING` zostały obniżone z dosłownych
-  35%/50% makiety (ich wnętrze składa się bliżej zamierzonych ~35% dopiero gdy sam pierścień jest niższy).
+  `GCOL_FIELD` (biel `0x30`, ~19%) dla studni pól/list/textarea, `GCOL_SEL` (biel `0x59`, 35%) /
+  `GCOL_SEL_RING` (biel `0x80`, 50%) dla pigułki zaznaczenia + jej wcięcia, oraz `GCOL_BTN_TOP/BOT/RING`
+  dla pigułek przycisków. To dosłowne wartości alfa CSS z makiety, bez zmian: `GCOL_FIELD` jest celowo
+  *niska* (obniżona, nie podniesiona, względem wcześniejszej wersji roboczej), żeby zawartość studni
+  malowała się wprost na surowej tafli szkła, zgodnie z wyglądem makiety — "ledwie ślad definicji, nie
+  biały panel"; mocniejsze wypełnienie czytałoby się jako nieprzezroczysta karta unosząca się nad
+  szkłem, nie jak studnia wycięta w nim. `GCOL_SEL`/`GCOL_SEL_RING` też stosują się dosłownie, bo
+  `glass_ring` (niżej) nie składa już pierścienia pod wypełnieniem wnętrza — każdy z nich to dokładnie
+  jeden przebieg malowania, więc alfa z makiety jest dokładnie tym, co ląduje na ekranie.
 - `glass_ring(s, x, y, w, h, r, ring, fill)` udaje przezroczysty 1px obrys (nie ma prawdziwej-alfy
-  odpowiednika `nw_stroke_round`): wypełnia CAŁY prostokąt kolorem `ring`, potem wypełnia wnętrze
-  (wcięte o 1px) kolorem `fill`, zostawiając widoczny 1px pas `ring` na krawędzi. Ponieważ oba
-  wypełnienia to prawdziwe kompozycje alfa (nie nadpisania nieprzezroczyste), dowolne dwa kolory podane
-  tutaj składają się na zachodzeniu — patrz uwaga o palecie wyżej, zanim dostroisz któryś z argumentów
-  z osobna.
+  odpowiednika `nw_stroke_round`) jako **jedną warstwę wypełnienia, nie dwie zachodzące na siebie**:
+  wypełnia CAŁY obszar kolorem `fill` (`nw_over_round`), potem maluje krawędź jako prawdziwy 1px
+  wygładzony pas przez prymityw prawdziwej-alfy `nw_over_ring` (`user/libnw/nw_gfx.{c,h}`) — obrys
+  src-over, który próbkuje zewnętrzny i wewnętrzny łuk pokrycia zaokrąglonego prostokąta i zachowuje
+  tylko ich różnicę. Ponieważ pierścień jest własnym, izolowanym pasem, a nie drugim pełnym wypełnieniem
+  nałożonym na pierwsze, może być *jaśniejszy* od wnętrza, które otacza (wcięta linia włosowa z makiety),
+  bez żadnego składania pierścień-na-wypełnieniu do skorygowania — alfy `ring` i `fill` można dostrajać
+  niezależnie.
 - Kontenery ogólne (row/column/box) z tłem ustawionym przez aplikację (`n->has_bg`, np.
   `.colors(fg, bg)`) miały lukę w mapowaniu: tryb szklany wymuszał alfę 255 na `n->bg`, więc każdy panel
   autorstwa aplikacji (pasek boczny Plików, pasek stanu) renderował się w pełni nieprzezroczyście,
@@ -387,7 +391,7 @@ forka, celowo poza headless `verify64`.
 | Ścieżka | Co |
 |---|---|
 | `user/nwm/nw_compose_gl.{c,h}` | natywnie GPU kompozytor GL ES nwm (okna + blur szkła na GPU + nakładka chrome CPU); `FS_WIN`/`FS_SHADOW`/`FS_BAR` |
-| `user/nwm/nw_compose.c` | chrome CPU (panel/pasek zadań), poświata tytułu Aero + próbnik polaryzacji atramentu |
+| `user/nwm/nw_compose.c` | chrome CPU (panel/pasek zadań), poświata tytułu Aero (polaryzacja = wariant jasny/ciemny samego okna) |
 | `user/libnw/nw_gfx.{c,h}`, `user/libnw/nw_over_core.h` | LUT gamma `nw_cov143` + rodzina prymitywów ARGB prawdziwej alfy |
 | `user/libnwui/nwui.{c,h}`, `user/libnwui/nwui_paint.c` | `nwui_open_style` + malowarki/paleta widgetów w trybie szklanym |
 | `user/glkms/glkms_init.{c,h}` | wspólna sekwencja GBM+EGL+KMS (też oracle glkms) |

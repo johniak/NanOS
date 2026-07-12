@@ -293,13 +293,14 @@ now real-alpha (`draw_caption_glow` in `nw_compose.c`):
    unfocused) — both via `nw_over_pixel` (straight alpha), so the glow's soft fringe survives all the
    way into the GL shader's `ctex.a` read (§9.1 above). Titles longer than `GLOW_MAXW - 4*GLOW_R`
    (~470 px) are clipped to fit the static glow buffer.
-4. **Polarity** — light sheet + dark core over a light backdrop, or dark sheet + light core over a dark
-   one — comes from `nw_backdrop_wants_dark_ink(x, y, w, h, prev)`: an 8×2 sparse sample of the
-   wallpaper under the title bar, gamma-space luma, threshold ~117 with a `109..125` hysteresis band so
-   a window dragged across a light/dark wallpaper boundary doesn't flicker. `NW_STYLE_DARK` windows
-   (Terminal) always force a light core regardless of the sampled backdrop. The per-window decision is
-   cached in `w->ink_dark` (int8, `-1` = unset) and refreshed once per dirty re-render in
-   `nw_render_dirty_frames`, not per frame.
+4. **Polarity** — light sheet + dark core for a light window, or dark sheet + light core for a dark one
+   — is the window's own variant, not something sampled from the backdrop: `draw_window_to` sets
+   `dark_ink = !dark` directly (`dark` is the same `NW_STYLE_DARK` flag that already picks the window's
+   material/title-bar colours). There used to be a wallpaper-luma sampler here (an 8×2 sparse sample
+   with a hysteresis band); it was removed as dead weight — the light glass
+   slab lifts whatever sits behind it by roughly 55% toward white before ink lands on it, so dark ink +
+   a white glow reads over *every* wallpaper a light window can sit on (Win7 Aero semantics, and what
+   the mockup shows). `NW_STYLE_DARK` windows (Terminal) carry the light core unconditionally instead.
 
 #### 9.1.3 Light-glass interiors (libnwui)
 
@@ -309,29 +310,32 @@ of the classic opaque paper background — `nwui_open(title, w, h)` is just `nwu
 
 - The window clears to a fully transparent ARGB canvas (`nw_clear_argb`, not `nw_fill_rect`), and every
   widget paints through the straight-alpha primitive family added for this (`user/libnw/nw_gfx.{c,h}`):
-  `nw_clear_argb`, `nw_over_pixel/rect/round` (src-over that also accumulates destination alpha), and
-  `nw_text_argb` (glyphs through the same `cov143` gamma remap as classic text, scaled by the ink
-  colour's own alpha). Any masked-RGB call (`nw_fill_*`, `nw_blend_*`, `nw_draw_char_t`) always stores
+  `nw_clear_argb`, `nw_over_pixel/rect/round` (src-over that also accumulates destination alpha),
+  `nw_over_ring` (the same rounded-rect AA geometry as `nw_over_round`, but keeping only the outer-minus-
+  inner 1px band — a real straight-alpha stroke), and `nw_text_argb` (glyphs through the same `cov143`
+  gamma remap as classic text, scaled by the ink colour's own alpha). Any masked-RGB call (`nw_fill_*`,
+  `nw_blend_*`, `nw_draw_char_t`) always stores
   alpha 0, which would make that pixel invisible under the GL shader — so in glass mode every paint call
   in a widget's footprint goes through the ARGB path, not just the ones that need a new colour.
 - The palette (`nwui_paint.c`, straight ARGB) maps the mockup's ink/scrim language onto the toolkit:
   `GCOL_INK` (`#17222f`) / `GCOL_INK_SOFT` (same at 62%) for text, `GCOL_SCRIM` (white 25%) for panel
-  bodies, `GCOL_FIELD` (white 50%) for input/list/textarea wells, `GCOL_SEL`/`GCOL_SEL_RING` (white
-  22%/35%) for the selection pill + its inset hairline, `GCOL_BTN_TOP/BOT/RING` for button pills. Two
-  of these were tuned in the Task 10 conformance pass, not left at the literal mockup CSS numbers:
-  `GCOL_FIELD` was raised from the mockup's nominal 35% because a well backed by the v3 slab's stronger
-  saturation/tint still read distinctly blue at 35%; and the focus-ring alpha used by every well
-  (`argb_op(COL_TF_FOC, ...)`, was 200/255) was *lowered* to 90/255 — `glass_ring` (below) composites the
-  ring across the WHOLE footprint before the inset fill goes on top, so a near-opaque accent-blue ring
-  under a translucent white fill compounds into a much bluer, more opaque result than either alpha
-  alone suggests; the same compounding is why `GCOL_SEL`/`GCOL_SEL_RING` were lowered from the mockup's
-  literal 35%/50% (their interior compounds to something closer to the intended ~35% only once the ring
-  itself is lower).
+  bodies, `GCOL_FIELD` (white `0x30`, ~19%) for input/list/textarea wells, `GCOL_SEL` (white `0x59`,
+  35%) / `GCOL_SEL_RING` (white `0x80`, 50%) for the selection pill + its inset hairline, and
+  `GCOL_BTN_TOP/BOT/RING` for button pills. These are the mockup's literal CSS alpha values, unmodified:
+  `GCOL_FIELD` is deliberately *low* (lowered, not raised, from an earlier draft) so a well's content
+  inks straight onto the raw glass slab, matching the mockup's "whisper of definition, not a white
+  panel" look — a heavier fill would read as an opaque card floating over the glass instead of a well
+  cut into it. `GCOL_SEL`/`GCOL_SEL_RING` apply verbatim too, because `glass_ring` (below) no longer
+  compounds a ring fill under an interior fill — each is exactly one paint pass, so the mockup's alpha
+  is exactly what lands on screen.
 - `glass_ring(s, x, y, w, h, r, ring, fill)` fakes a translucent 1px stroke (there is no straight-alpha
-  `nw_stroke_round`): it over-fills the whole rect in `ring`, then over-fills the interior (inset 1px)
-  in `fill`, leaving a 1px `ring` band visible at the edge. Because both fills are true alpha composites
-  (not opaque overwrites), any two colours passed here compound in the overlap — see the palette note
-  above before tuning either argument in isolation.
+  `nw_stroke_round`) as **one fill coat, not two overlapping ones**: it over-fills the whole footprint in
+  `fill` (`nw_over_round`), then paints the rim as a real 1px anti-aliased band via the straight-alpha
+  primitive `nw_over_ring` (`user/libnw/nw_gfx.{c,h}`) — a src-over ring stroke that samples the outer
+  and inner rounded-rect coverage arcs and keeps only their difference. Because the ring is its own
+  isolated band rather than a second full-rect fill sitting on top of the first, it can be *brighter*
+  than the interior it wraps (the mockup's inset hairline) with no ring-over-fill compounding to correct
+  for — `ring` and `fill` alphas can be tuned independently.
 - Generic containers (row/column/box) with an app-set background (`n->has_bg`, e.g. `.colors(fg, bg)`)
   had a mapping gap: glass mode forced alpha 255 on `n->bg`, so any app-authored panel (Files' sidebar,
   a status bar) rendered fully opaque, breaking the glass slab's continuity. The fixed contract
@@ -378,7 +382,7 @@ intentionally not in headless `verify64`.
 | Path | What |
 |---|---|
 | `user/nwm/nw_compose_gl.{c,h}` | nwm GPU-native GL ES compositor (windows + GPU glass blur + CPU chrome overlay); `FS_WIN`/`FS_SHADOW`/`FS_BAR` |
-| `user/nwm/nw_compose.c` | CPU chrome (panel/taskbar), the Aero caption glow + ink-polarity sampler |
+| `user/nwm/nw_compose.c` | CPU chrome (panel/taskbar), the Aero caption glow (polarity = the window's own light/dark variant) |
 | `user/libnw/nw_gfx.{c,h}`, `user/libnw/nw_over_core.h` | `nw_cov143` gamma LUT + the straight-alpha ARGB primitive family |
 | `user/libnwui/nwui.{c,h}`, `user/libnwui/nwui_paint.c` | `nwui_open_style` + the glass-mode widget painters/palette |
 | `user/glkms/glkms_init.{c,h}` | shared GBM+EGL+KMS present sequence (also the glkms oracle) |

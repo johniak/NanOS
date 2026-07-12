@@ -107,41 +107,6 @@ void nw_render_wallpaper(const struct nw_surface *dst)
 	}
 }
 
-/* Live reference to the currently-shown wallpaper surface, for auto ink polarity sampling below.
- * Set once by the shell (nwm.c, right after it renders/caches the wallpaper) — module-static for
- * the same reason as s_accent/s_radius/s_glass_frame: draw_window_to has no server handle. */
-static const struct nw_surface *s_wall;
-
-void nw_compose_set_wallpaper_ref(const struct nw_surface *wall) { s_wall = wall; }
-
-/* Sample a sparse 8x2 grid of wallpaper pixels under rect (x,y,w,h); gamma-space luma
- * Y=(77R+150G+29B)>>8, threshold 117 (~WCAG 0.179 linear) with +/-8 hysteresis so a window
- * dragged across a light/dark wallpaper boundary doesn't flicker ink polarity every frame. */
-int nw_backdrop_wants_dark_ink(int x, int y, int w, int h, int prev)
-{
-	if (!s_wall || w < 8 || h < 2) return prev >= 0 ? prev : 1;
-	long acc = 0; int n = 0;
-	for (int j = 0; j < 2; j++) for (int i = 0; i < 8; i++) {
-		int sx = x + (w * (2 * i + 1)) / 16, sy = y + (h * (2 * j + 1)) / 4;
-		if (sx < 0 || sy < 0 || sx >= s_wall->w || sy >= s_wall->h) continue;
-		uint32_t p = s_wall->px[(size_t) sy * s_wall->stride + sx];
-		acc += (77 * ((p >> 16) & 0xff) + 150 * ((p >> 8) & 0xff) + 29 * (p & 0xff)) >> 8;
-		n++;
-	}
-	if (!n) return prev >= 0 ? prev : 1;
-	/* The title sits on the light glass SLAB, not on the raw wallpaper: the slab's frost,
-	 * tint and sheen lift the backdrop by roughly a 45% coat of near-white before ink
-	 * lands on it (mockup: light windows carry dark ink + white glow even over a navy
-	 * wallpaper). Composite that lift into the sampled luma, then threshold — only a
-	 * genuinely near-black wallpaper flips a light window to light ink. */
-	int luma = (int) (acc / n);
-	luma = (luma * 115 + 235 * 141) >> 8;       /* luma*0.45 + 235*0.55 (sheen is strongest up top) */
-	if (prev == 1 && luma < 109) return 0;      /* hysteresis band 109..125 */
-	if (prev == 0 && luma > 125) return 1;
-	if (prev < 0) return luma > 117;
-	return prev;
-}
-
 /* ---- Aero caption glow (glass frame only) ----------------------------------------- */
 /* GLOW_R: box-blur radius (px) for the first, softest pass (halved for the second pass).
  * GLOW_MAXW: hard cap on the glow buffer width — long titles get clipped to this minus the
@@ -308,10 +273,12 @@ static void draw_window_to(const struct nw_surface *sc, const struct nw_window *
 	uint32_t tfg = dark ? COL_TITLE_DFG : COL_TITLE_FG;
 	int ty = oy + (NW_TITLEBAR_H - NW_FONT_H) / 2;
 	if (s_glass_frame) {
-		/* real Aero glow: blurred coverage sheet + crisp core, polarity from w->ink_dark
-		 * (refreshed in nw_render_dirty_frames from what's under the bar) — dark windows
-		 * (Terminal-style) always get a light core regardless of the sampled backdrop. */
-		int dark_ink = (w->ink_dark != 0) && !dark;
+		/* real Aero glow: blurred coverage sheet + crisp core. Polarity is the window's own
+		 * variant, not sampled from the backdrop: the light glass slab lifts whatever sits
+		 * behind it by roughly 55% toward white before ink lands on it, so dark ink + a white
+		 * glow is always legible over a light window (Aero semantics, matches the mockup) —
+		 * dark windows (Terminal-style) carry the light core instead. */
+		int dark_ink = !dark;
 		draw_caption_glow(sc, ox + fw / 2, oy, title, dark_ink, focused);
 	} else {
 		nw_fill_round(sc, ox + 10, ty + 2, 12, 12, 3, focused ? s_accent : 0x9fb2cc, 255);
@@ -544,10 +511,6 @@ void nw_render_dirty_frames(struct nw_server *s)
 		struct nw_window *w = &s->win[i];
 		if (!w->used || !w->frame || !w->frame_dirty)
 			continue;
-		/* Aero glow polarity: sample the wallpaper under the title bar before rendering it, with
-		 * hysteresis against the window's own previous decision (per-window, not per-frame — a
-		 * dragged window keeps sampling its NEW rect on every dirty re-render). */
-		w->ink_dark = (int8_t) nw_backdrop_wants_dark_ink(w->x, w->y, frame_w(w), NW_TITLEBAR_H, w->ink_dark);
 		struct nw_surface fs;
 		fs.px = w->frame; fs.w = frame_w(w); fs.h = frame_h(w); fs.stride = frame_w(w);
 		nw_surface_noclip(&fs);
