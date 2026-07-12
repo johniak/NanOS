@@ -572,12 +572,15 @@ static int g_blur_trace = -1;
 static void blur_backdrop(int wx, int wy, int fw, int fh)
 {
 	if (g_blur_trace < 0) g_blur_trace = getenv("NWM_GL_TRACE") ? 1 : 0;
-	/* Two H+V gaussian iterations with INCREASING spread: iteration 1 is dense (1.6 px taps —
-	 * kills the high frequencies that a sparse kernel would alias into a visible comb/grid),
-	 * iteration 2 is wide (7 px — spreads the already-smooth signal). Net sigma ~13 px ≈ the
-	 * mockup's backdrop-filter blur(24px). A single wide pass side-lobes fine content (icon
-	 * edges) straight through and prints a STEP-period raster into the frost. */
-	const float STEP1 = 1.6f, STEP2 = 7.0f;
+	/* H+V gaussian iterations with GEOMETRICALLY increasing spread. The step ratio is the whole
+	 * game: an iteration's tap spacing (1.3846*step) must stay within ~1.2x the sigma accumulated
+	 * by the iterations before it, or a thin bright line survives each sparse tap as a separate
+	 * COPY instead of spreading — the frost then shows the line 2-3 times ("double vision", ghosts
+	 * every ~1.38*step px). The old 1.6 -> 7.0 pair jumped 3.7x sigma and did exactly that.
+	 * This progression blurs a 1 px hairline to a smooth mound (ripple 11% worst-case, 4% for a
+	 * 2 px glyph stem) at net sigma ~14 px ~= the mockup's backdrop-filter blur(24px). */
+	static const float BLUR_STEPS[] = { 1.6f, 2.6f, 4.2f, 6.8f };
+	const int BLUR_ITERS = (int) (sizeof BLUR_STEPS / sizeof BLUR_STEPS[0]);
 
 	/* pad the window frame + clamp to the screen -> the grab rect bookkeeping (screen px, top-down) */
 	int gx0 = wx - NW_GLASS_PAD, gy0 = wy - NW_GLASS_PAD;
@@ -603,30 +606,28 @@ static void blur_backdrop(int wx, int wy, int fw, int fh)
 	glUniform2f(u_blur_uvsize, uw, uh);
 	glViewport(0, 0, g_gw, g_gh);              /* every pass draws into the lower-left corner */
 
-	/* pass 1 (H): padded sub-region of g_scene_tex (y-flipped: scene tex is bottom-up in the FBO) */
-	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);                      BLUR_MARK("bind-fboA");
-	glBindTexture(GL_TEXTURE_2D, g_scene_tex);                      BLUR_MARK("bind-scene-tex");
-	glUniform2f(u_blur_uv0, (float) g_gx / g_sw, 1.0f - (float) (g_gy + g_gh) / g_sh);
-	glUniform2f(u_blur_dir, STEP1 / g_sw, 0.0f);
-	draw_full_quad();                                              BLUR_MARK("draw-H1");
+	/* Each iteration: H into g_fboA, then V into g_fboB. Iteration 0's H pass reads the padded
+	 * sub-region of g_scene_tex (y-flipped: scene tex is bottom-up in the FBO); every later pass
+	 * reads the previous result out of the lower-left corner. Same ping-pong FBOs/textures for
+	 * all iterations, attach-once rule untouched (draws only). */
+	for (int it = 0; it < BLUR_ITERS; it++) {
+		glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);              BLUR_MARK("bind-fboA");
+		if (it == 0) {
+			glBindTexture(GL_TEXTURE_2D, g_scene_tex);      BLUR_MARK("bind-scene-tex");
+			glUniform2f(u_blur_uv0, (float) g_gx / g_sw,
+			            1.0f - (float) (g_gy + g_gh) / g_sh);
+		} else {
+			glBindTexture(GL_TEXTURE_2D, g_blurB);          BLUR_MARK("bind-blurB");
+		}
+		glUniform2f(u_blur_dir, BLUR_STEPS[it] / g_sw, 0.0f);
+		draw_full_quad();                                       BLUR_MARK("draw-H");
+		if (it == 0) glUniform2f(u_blur_uv0, 0.0f, 0.0f);
 
-	/* pass 2 (V): the corner of g_blurA → g_fboB */
-	glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);                      BLUR_MARK("bind-fboB");
-	glBindTexture(GL_TEXTURE_2D, g_blurA);                          BLUR_MARK("bind-blurA");
-	glUniform2f(u_blur_uv0, 0.0f, 0.0f);
-	glUniform2f(u_blur_dir, 0.0f, STEP1 / g_sh);
-	draw_full_quad();                                              BLUR_MARK("draw-V1");
-
-	/* iteration 2 (H then V again over the corner), wide spread — see the STEP1/STEP2 note.
-	 * Same ping-pong FBOs/textures, attach-once rule untouched (draws only). */
-	glBindFramebuffer(GL_FRAMEBUFFER, g_fboA);                      BLUR_MARK("bind-fboA2");
-	glBindTexture(GL_TEXTURE_2D, g_blurB);                          BLUR_MARK("bind-blurB");
-	glUniform2f(u_blur_dir, STEP2 / g_sw, 0.0f);
-	draw_full_quad();                                              BLUR_MARK("draw-H2");
-	glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);                      BLUR_MARK("bind-fboB2");
-	glBindTexture(GL_TEXTURE_2D, g_blurA);                          BLUR_MARK("bind-blurA2");
-	glUniform2f(u_blur_dir, 0.0f, STEP2 / g_sh);
-	draw_full_quad();                                              BLUR_MARK("draw-V2");
+		glBindFramebuffer(GL_FRAMEBUFFER, g_fboB);              BLUR_MARK("bind-fboB");
+		glBindTexture(GL_TEXTURE_2D, g_blurA);                  BLUR_MARK("bind-blurA");
+		glUniform2f(u_blur_dir, 0.0f, BLUR_STEPS[it] / g_sh);
+		draw_full_quad();                                       BLUR_MARK("draw-V");
+	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, g_scene_fbo);   /* back to the offscreen scene target */
 	glViewport(0, 0, g_sw, g_sh);
