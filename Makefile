@@ -2280,6 +2280,12 @@ user/init64.o: user/init64.c
 $(BINFOLDER)crt0.o: user/crt064.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf64 $< -o $@
+	# Weaken the user-nx.ld-provided symbols (TLS image + ctors/init_array bounds): autoconf
+	# conftests link crt0.o WITHOUT the NanOS linker script, and strong undefined refs made
+	# every autotools port fail "cannot compute EXEEXT" the moment crt0 gained TLS/ctor
+	# bootstrap. Weak-undefined resolves to 0 in a bare link (conftest never runs _start);
+	# real .nxe links keep the script's definitions (a defined symbol beats weak-undef).
+	$(CROSS)objcopy $(foreach s,__nx_tls_image __nx_tls_filesz __nx_tls_memsz __nx_tls_align_sym __nx_init_array_start __nx_init_array_end __nx_ctors_start __nx_ctors_end,--weaken-symbol=$(s)) $@
 
 # The signal trampoline is arch-specific: bin/sigtramp.o (in LIBC_GLUE_OBJS) is the 64-bit
 # __nx_sigtramp from user/sigtramp64.S, overriding the generic user/%.S pattern (which would
