@@ -51,9 +51,15 @@
 #define GCOL_INK      0xff17222fu   /* primary ink */
 #define GCOL_INK_SOFT 0x9e17222fu   /* secondary: same ink at 62% */
 #define GCOL_SCRIM    0x40ffffffu   /* text-pane scrim: white 25% */
-#define GCOL_FIELD    0x59ffffffu   /* input/list wells: white 35% */
-#define GCOL_SEL      0x59ffffffu   /* selection pill: white 35% (mockup .side .sel) */
-#define GCOL_SEL_RING 0x80ffffffu   /* selection inset hairline: white 50% */
+#define GCOL_FIELD    0x80ffffffu   /* input/list wells: white 50% (was .35 mockup value — read too
+                                     * blue/saturated over the v3 slab's stronger tint; raised so the
+                                     * well reads pale "paper on glass" instead of slab-tinted) */
+#define GCOL_SEL      0x38ffffffu   /* selection pill core: white ~22% (was .35 — glass_ring composites
+                                     * this ON TOP of GCOL_SEL_RING's full-footprint pass, so the two
+                                     * alphas compound; lowered so the compound interior reads close to
+                                     * the mockup's ~35% instead of ~68%) */
+#define GCOL_SEL_RING 0x59ffffffu   /* selection inset hairline: white 35% (was .50 — same compounding;
+                                     * lowered so the 1px edge doesn't overshoot into a hard ring) */
 #define GCOL_BTN_TOP  0x24ffffffu   /* button pill: white .14 -> .05 */
 #define GCOL_BTN_BOT  0x0dffffffu
 #define GCOL_BTN_RING 0x2effffffu   /* inset ring white .18 */
@@ -177,8 +183,14 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 		if (glass) {
 			/* glass_ring alone paints the well: ring band (full rect) then the single GCOL_FIELD
 			 * fill (inset 1px) — do NOT also fill here first, or the interior gets GCOL_FIELD
-			 * twice (a ring coat sandwiched under a second fill, darker than the spec alpha). */
-			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
+			 * twice (a ring coat sandwiched under a second fill, darker than the spec alpha).
+			 * Focus-ring alpha was 200 (~78%): that's a near-opaque coat of the blue ACCENT
+			 * colour painted under the whole footprint before GCOL_FIELD's white goes on top,
+			 * so a focused well (e.g. Notepad's textarea) read distinctly blue/saturated instead
+			 * of pale — same compounding as the selection pill (Task 10 gap #4). Lowered to 90
+			 * (~35%, matching the hairline family) so the 1px edge still reads as a focus ring
+			 * without tinting the whole interior. */
+			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 6, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 6, COL_TF_BG, 255);
@@ -213,7 +225,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 		if (glass) {
 			/* single well fill: see the NWUI_TEXTFIELD comment above — glass_ring's own inset
 			 * fill IS the well's fill, don't paint GCOL_FIELD again before calling it. */
-			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
+			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 6, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 6, COL_TF_BG, 255);
@@ -271,7 +283,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	case NWUI_LIST: {
 		if (glass) {
 			/* single well fill: see the NWUI_TEXTFIELD comment above. */
-			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
+			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 8, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
@@ -314,7 +326,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	case NWUI_ICONVIEW: {
 		if (glass) {
 			/* single well fill: see the NWUI_TEXTFIELD comment above. */
-			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
+			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
 			glass_ring(s, n->x, n->y, n->w, n->h, 8, ring, GCOL_FIELD);
 		} else {
 			nw_fill_round(s, n->x, n->y, n->w, n->h, 8, COL_TF_BG, 255);
@@ -437,7 +449,7 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 		int bs = 14, by = n->y + (n->h - bs) / 2;
 		if (glass) {
 			/* single well fill: see the NWUI_TEXTFIELD comment above. */
-			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 200) : GCOL_SEP;
+			uint32_t ring = n->focused ? argb_op(COL_TF_FOC, 90) : GCOL_SEP;
 			glass_ring(s, n->x, by, bs, bs, 3, ring, GCOL_FIELD);
 			if (n->vbool && *n->vbool) {
 				nw_over_rect(s, n->x + 3, by + 6, 3, 3, argb_op(COL_SEL, 255));
@@ -457,8 +469,19 @@ static void paint_self(nwui_node *n, const struct nw_surface *s, int glass)
 	}
 	default:   /* row/column/box: paint own background if set (else transparent) */
 		if (n->has_bg) {
-			if (glass) nw_over_round(s, n->x, n->y, n->w, n->h, 8, argb_op(n->bg, 255));
-			else       nw_fill_round(s, n->x, n->y, n->w, n->h, 8, n->bg, 255);
+			if (glass) {
+				/* A legacy 0RGB colour (top byte 0 — an app's plain .colors() call, authored
+				 * pre-glass) forcing alpha 255 here made every such container an opaque panel,
+				 * breaking the glass slab's continuity (e.g. Files' sidebar, Notepad's status
+				 * bar) and creating a visible seam against the translucent siblings around it.
+				 * Composite it as a translucent scrim instead (0x59, a moderate general-purpose
+				 * panel alpha in the same family as GCOL_SCRIM/GCOL_SEL_RING). An app that set
+				 * its OWN top byte is making an explicit alpha choice — honour it verbatim. */
+				uint32_t bg = n->bg;
+				nw_over_round(s, n->x, n->y, n->w, n->h, 8, (bg >> 24) ? bg : argb_op(bg, 0x59));
+			} else {
+				nw_fill_round(s, n->x, n->y, n->w, n->h, 8, n->bg, 255);
+			}
 		}
 		break;
 	}

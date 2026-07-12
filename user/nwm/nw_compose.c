@@ -257,7 +257,7 @@ static void draw_caption_glow(const struct nw_surface *sc, int cx, int oy,
 
 	uint32_t sheet = dark_ink ? 0x00f2f6fa : 0x0010151f;
 	uint32_t core  = dark_ink ? 0x001a2330 : 0x00f0f4f8;
-	int gain = focused ? 3 : 2;
+	int gain = focused ? 4 : 2;   /* was 3: too subtle over light backdrops (Task 8 gap) */
 	int x0 = cx - W / 2;
 	for (int yy = 0; yy < H; yy++) for (int xx = 0; xx < W; xx++) {
 		int a = tmp[yy][xx] * gain; if (a > 255) a = 255;
