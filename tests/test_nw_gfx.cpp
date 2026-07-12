@@ -236,3 +236,76 @@ TEST_CASE("nw_text fast path only touches set glyph pixels and matches clipped p
 	for (int y = 0; y < 16; y++) for (int x = 0; x < 8; x++)
 		CHECK(a.at(x, y) == b.at(x, y));                 // identical; background (0x222222) preserved where glyph is unset
 }
+
+// --- straight-alpha src-over primitives (the GL-glass ink paths) -----------------------------
+
+TEST_CASE("nw_over_rect: opaque replaces, translucent mixes, alpha 0 is a no-op") {
+	Buf b(20, 20);
+	for (auto& v : b.px) v = 0x00404040;
+	nw_over_rect(&b.s, 2, 2, 6, 6, 0xff00ff00u);         // opaque green
+	CHECK((b.at(4, 4) & 0x00ffffffu) == 0x0000ff00u);
+	for (int yy = 10; yy < 14; yy++) for (int xx = 10; xx < 14; xx++)
+		b.px[(size_t) yy * 20 + xx] = 0xff404040u;       // OPAQUE grey: dst alpha weights the mix
+	nw_over_rect(&b.s, 10, 10, 4, 4, 0x80ffffffu);       // ~half white over it
+	uint32_t m = b.at(11, 11) & 0xffu;
+	CHECK(m > 0x40u); CHECK(m < 0xffu);
+	uint32_t before = b.at(0, 0);
+	nw_over_rect(&b.s, 0, 0, 3, 3, 0x00ff0000u);         // alpha 0: nothing
+	CHECK(b.at(0, 0) == before);
+}
+
+TEST_CASE("nw_over_round: corners stay untouched outside the radius, centre fully inked") {
+	Buf b(40, 30);
+	for (auto& v : b.px) v = 0x00101010;
+	nw_over_round(&b.s, 4, 4, 24, 18, 8, 0xffff0000u);
+	CHECK((b.at(16, 12) & 0x00ffffffu) == 0x00ff0000u);  // body
+	CHECK(b.at(4, 4) == 0x00101010u);                    // square corner outside the arc
+	CHECK(b.at(4 + 23, 4) == 0x00101010u);
+	CHECK(b.at(4, 4 + 17) == 0x00101010u);
+}
+
+TEST_CASE("nw_over_ring: 1px rim only - interior and exterior untouched") {
+	Buf b(40, 40);
+	for (auto& v : b.px) v = 0x00202020;
+	nw_over_ring(&b.s, 5, 5, 26, 26, 6, 0xffffffffu);
+	CHECK(b.at(18, 18) == 0x00202020u);                  // interior clean
+	CHECK(b.at(2, 2) == 0x00202020u);                    // exterior clean
+	CHECK((b.at(18, 5) & 0xffu) == 0xffu);               // top edge rim inked
+	CHECK((b.at(5, 18) & 0xffu) == 0xffu);               // left edge rim inked
+	int corner_inked = 0;                                // the AA arc wrote something near a corner
+	for (int y = 5; y < 12 && !corner_inked; y++)
+		for (int x = 5; x < 12 && !corner_inked; x++)
+			if (b.at(x, y) != 0x00202020u) corner_inked = 1;
+	CHECK(corner_inked == 1);
+}
+
+TEST_CASE("nw_over_round_soft: feathered edge fades inward; feather<1 equals crisp") {
+	Buf soft(48, 36), crisp(48, 36), plain(48, 36);
+	nw_over_round_soft(&soft.s, 4, 4, 40, 28, 8, 0xc0ffffffu, 6);
+	nw_over_round_soft(&crisp.s, 4, 4, 40, 28, 8, 0xc0ffffffu, 0);   // fallback path
+	nw_over_round(&plain.s, 4, 4, 40, 28, 8, 0xc0ffffffu);
+	CHECK(crisp.px == plain.px);                          // feather<1 -> exact nw_over_round
+	// feathered: over a transparent dst the fade lives in the ALPHA channel — the band pixel
+	// carries less coverage than the centre
+	CHECK((soft.at(24, 18) >> 24) > (soft.at(24, 5) >> 24));
+	// and the very centre matches the crisp fill (feather only affects the border band)
+	CHECK(soft.at(24, 18) == crisp.at(24, 18));
+}
+
+TEST_CASE("nw_text_argb: alpha-scaled ink over background; width matches nw_text_argb_w") {
+	{ Buf warm(64, 20); nw_text_argb(&warm.s, 2, 2, "Hi", 0xffffffffu); }  // settle lazy font state
+	Buf full(64, 20), half(64, 20);
+	for (auto& v : full.px) v = 0xff000000; for (auto& v : half.px) v = 0xff000000;   // OPAQUE black
+	nw_text_argb(&full.s, 2, 2, "Hi", 0xffffffffu);
+	nw_text_argb(&half.s, 2, 2, "Hi", 0x40ffffffu);
+	long fsum = 0, hsum = 0;
+	for (size_t i = 0; i < full.px.size(); i++) { fsum += full.px[i] & 0xff; hsum += half.px[i] & 0xff; }
+	CHECK(fsum > 0);                                      // glyphs actually rendered
+	CHECK(hsum > 0);
+	CHECK(hsum * 2 < fsum);                               // quarter-alpha ink is much fainter
+	CHECK(nw_text_argb_w("Hi") > 0);
+	CHECK(nw_text_argb_w("Hi Hi") > nw_text_argb_w("Hi"));
+	std::vector<uint32_t> before = full.px;
+	nw_text_argb(&full.s, 40, 2, "X", 0x00ffffffu);       // alpha 0: no ink anywhere
+	CHECK(full.px == before);
+}

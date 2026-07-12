@@ -138,6 +138,126 @@ TEST_CASE("backdrop: glass window blurs a sharp edge in the scene below it") {
 	nw_compose_set_theme(0x12a8f4u, 11, 1);          // restore default theme for any later test
 }
 
+TEST_CASE("wallpaper: diagonal gradient with four colour blobs, deterministic") {
+	const int W = 120, H = 90;
+	std::vector<uint32_t> px((size_t) W * H, 0xdeadbeef);
+	nw_surface d; d.px = px.data(); d.w = W; d.h = H; d.stride = W; nw_surface_noclip(&d);
+	nw_render_wallpaper(&d);
+	auto at = [&](int x, int y) { return px[(size_t) y * W + x]; };
+	CHECK(at(0, 0) != 0xdeadbeefu);                 // every pixel written
+	CHECK(at(W - 1, H - 1) != 0xdeadbeefu);
+	// top row starts at the cool end of the gradient, bottom at the warm end
+	CHECK(((at(W - 1, 0) >> 16) & 0xff) < ((at(W - 1, H - 1) >> 16) & 0xff));
+	// the blue blob's centre pulls the red channel well below the plain warm-gradient corner
+	// (bottom-right lies outside every blob at this surface size)
+	int bx = W * 14 / 100, by = H * 23 / 100;
+	CHECK(((at(bx, by) >> 16) & 0xff) < ((at(W - 1, H - 1) >> 16) & 0xff));
+	// same seed -> same pixels (pure function of the surface size)
+	std::vector<uint32_t> px2((size_t) W * H, 0);
+	nw_surface d2; d2.px = px2.data(); d2.w = W; d2.h = H; d2.stride = W; nw_surface_noclip(&d2);
+	nw_render_wallpaper(&d2);
+	CHECK(px == px2);
+}
+
+TEST_CASE("glass frame: band renders key-black with the glowing centred title ink") {
+	const int W = 260, H = 180;
+	nw_server s; nw_server_init(&s, W, H);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	nw_msg cm{}; cm.type = NW_REQ_CREATE_WINDOW; cm.a = 140; cm.b = 60; cm.length = 5;
+	nw_client_msg(&s, 0, &cm, (const unsigned char*) "Title");
+	int wi = s.focus; s.win[wi].x = 40; s.win[wi].y = 50;
+	std::vector<uint32_t> wbuf((size_t) 140 * 60, 0x00334455);
+	s.win[wi].buf = wbuf.data();
+
+	std::vector<uint32_t> pa((size_t) W * H, 0), pb((size_t) W * H, 0);
+	nw_surface backA; backA.px = pa.data(); backA.w = W; backA.h = H; backA.stride = W; nw_surface_noclip(&backA);
+	nw_surface backB; backB.px = pb.data(); backB.w = W; backB.h = H; backB.stride = W; nw_surface_noclip(&backB);
+
+	nw_compose_set_glass_frame(0); nw_compose(&s, &backA);   // classic frame
+	nw_compose_set_glass_frame(1);
+	s.win[wi].frame_dirty = 1;                               // theme change invalidates caches
+	nw_compose(&s, &backB);                                  // GL glass frame band
+	nw_compose_set_glass_frame(0);                           // restore for later tests
+
+	auto at = [&](std::vector<uint32_t> &p, int x, int y) { return p[(size_t) y * W + x]; };
+	// a frame-band corner pixel: pure key black on the glass path, opaque chrome on classic
+	int fx = 40 + 2, fy = 50 + 2;
+	CHECK(at(pb, fx, fy) == 0x000000u);
+	CHECK(at(pa, fx, fy) != at(pb, fx, fy));
+	// the centred title ink glows: some non-black pixel exists in the middle of the titlebar
+	int found = 0, cy = 50 + NW_TITLEBAR_H / 2;
+	for (int x = 40; x < 40 + 140 && !found; x++) if (at(pb, x, cy) != 0x000000u) found = 1;
+	CHECK(found == 1);
+}
+
+TEST_CASE("run launcher chrome: prompt panel + typed text + caret render above the desktop") {
+	const int W = 320, H = 200;
+	nw_server s; nw_server_init(&s, W, H);
+	s.run_open = 1;
+	const char *txt = "doom";
+	s.run_len = 4; std::memcpy(s.run_text, txt, 4);
+	std::vector<uint32_t> px((size_t) W * H, 0);
+	nw_surface back; back.px = px.data(); back.w = W; back.h = H; back.stride = W; nw_surface_noclip(&back);
+	nw_compose(&s, &back);
+	int x, y, w, h; nw_run_rect(&s, &x, &y, &w, &h);
+	auto at = [&](int xx, int yy) { return px[(size_t) yy * W + xx]; };
+	CHECK(at(x + w / 2, y + 2) != at(0, H - 1));   // panel body differs from bare desktop
+	// the "Run:" label ink appears somewhere on the panel's text row
+	int ink = 0, ty = y + h / 2;
+	for (int xx = x + 4; xx < x + w - 4 && !ink; xx++) if (at(xx, ty) == 0x9fb0c0u || at(xx, ty) == 0xffffffu) ink = 1;
+	CHECK(ink == 1);
+}
+
+TEST_CASE("auth dialog chrome: dimmed desktop, panel, password dots and both buttons") {
+	const int W = 420, H = 300;
+	nw_server s; nw_server_init(&s, W, H);
+	s.auth_open = 1;
+	std::strcpy(s.auth_cmd, "/nanos/bin/sysconf.nxe");
+	s.auth_passlen = 3; s.auth_hover = 0;
+	std::vector<uint32_t> px((size_t) W * H, 0), px2((size_t) W * H, 0);
+	nw_surface back; back.px = px.data(); back.w = W; back.h = H; back.stride = W; nw_surface_noclip(&back);
+	nw_compose(&s, &back);
+	int x, y, w, h; nw_auth_rect(&s, &x, &y, &w, &h);
+	auto at = [&](std::vector<uint32_t> &p, int xx, int yy) { return p[(size_t) yy * W + xx]; };
+	CHECK(at(px, x + w / 2, y + 4) != 0x000000u);            // panel body drawn
+	int bx, by, bw, bh; nw_auth_btn_rect(&s, 0, &bx, &by, &bw, &bh);
+	CHECK(at(px, bx + 3, by + 3) == 0x0060dfu);              // hovered Authenticate = darker accent
+	// hover the other button instead: Cancel picks the hover fill, Authenticate the plain accent
+	s.auth_hover = 1;
+	nw_surface back2; back2.px = px2.data(); back2.w = W; back2.h = H; back2.stride = W; nw_surface_noclip(&back2);
+	nw_compose(&s, &back2);
+	CHECK(at(px2, bx + 3, by + 3) == 0x0a84ffu);
+	int cx, cy2, cw, ch2; nw_auth_btn_rect(&s, 1, &cx, &cy2, &cw, &ch2);
+	CHECK(at(px2, cx + 3, cy2 + 3) == 0xdbe1eau);
+}
+
+TEST_CASE("nw_compose_chrome: overlay keyed black with only the chrome painted") {
+	const int W = 300, H = 220;
+	nw_server s; nw_server_init(&s, W, H);
+	std::vector<uint32_t> px((size_t) W * H, 0xffffffff);
+	nw_surface ov; ov.px = px.data(); ov.w = W; ov.h = H; ov.stride = W; nw_surface_noclip(&ov);
+	nw_compose_chrome(&s, &ov);
+	auto at = [&](int x, int y) { return px[(size_t) y * W + x]; };
+	CHECK(at(W / 2, H / 2) == 0x000000u);          // mid-desktop = transparent key
+	int chrome = 0;                                 // top panel and/or taskbar painted something
+	for (int x = 0; x < W && !chrome; x++)
+		if (at(x, 2) != 0x000000u || at(x, H - 3) != 0x000000u) chrome = 1;
+	CHECK(chrome == 1);
+}
+
+TEST_CASE("menu dropdown renders items under an open menu") {
+	const int W = 320, H = 240;
+	nw_server s; nw_server_init(&s, W, H);
+	s.menu_open = 1; s.menu_which = 0; s.menu_hover = 0;
+	std::vector<uint32_t> pa((size_t) W * H, 0), pb((size_t) W * H, 0);
+	nw_surface backA; backA.px = pa.data(); backA.w = W; backA.h = H; backA.stride = W; nw_surface_noclip(&backA);
+	nw_surface backB; backB.px = pb.data(); backB.w = W; backB.h = H; backB.stride = W; nw_surface_noclip(&backB);
+	nw_compose(&s, &backA);
+	s.menu_open = 0;
+	nw_compose(&s, &backB);
+	CHECK(pa != pb);                                // the dropdown painted pixels the closed menu lacks
+}
+
 TEST_CASE("moving a cached window does NOT dirty its frame (drag is re-render-free)") {
 	nw_server s; nw_server_init(&s, 200, 200);
 	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
