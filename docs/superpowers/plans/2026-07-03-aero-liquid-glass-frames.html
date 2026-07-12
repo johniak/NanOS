@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NanOS — okno jako tafla szkła</title>
+<style>
+  :root{
+    --ground:#0b0e14;
+    --paper:#e8ecf4;
+    --dim:#8b94a8;
+    --ink:#17222f;
+    --ink-soft:rgba(23,34,47,.62);
+    --accent:#39d3c0;
+  }
+  html,body{margin:0;padding:0;background:var(--ground);color:var(--paper);
+    font:15px/1.55 -apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;}
+  .page{max-width:1340px;margin:0 auto;padding:28px 24px 64px;}
+
+  header.intro{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin:4px 2px 18px;}
+  header.intro h1{font-size:21px;font-weight:650;letter-spacing:-.01em;margin:0;}
+  header.intro p{margin:0;color:var(--dim);font-size:14px;}
+  header.intro .hint{margin-left:auto;font-size:13px;color:var(--accent);}
+
+  /* ── screen frame + fixed-size stage scaled to fit ─────────────────── */
+  .frame{border-radius:14px;overflow:hidden;box-shadow:0 0 0 1px #1c2331,0 30px 80px -30px rgba(0,0,0,.8);}
+  .scaler{position:relative;overflow:hidden;}
+  .stage{position:absolute;top:0;left:0;width:1280px;height:800px;transform-origin:top left;
+    user-select:none;-webkit-user-select:none;}
+
+  /* wallpaper */
+  .wall{position:absolute;inset:0;
+    background:
+      radial-gradient(rgba(255,255,255,.13) 1px, transparent 1.6px) 0 0/26px 26px,
+      linear-gradient(131deg,#0d1c40 0%,#14406b 34%,#0f6168 63%,#0b3350 100%);}
+  .orb{position:absolute;border-radius:50%;}
+  .orb.teal{left:150px;top:190px;width:340px;height:340px;
+    background:radial-gradient(circle at 34% 30%,#7cf3df,#19b9a2 58%,#0d7a71);}
+  .orb.mag{left:840px;top:70px;width:300px;height:300px;
+    background:radial-gradient(circle at 36% 32%,#ffa8dd,#d4569f 60%,#8d2f6e);}
+  .orb.amber{left:600px;top:520px;width:250px;height:250px;
+    background:radial-gradient(circle at 35% 30%,#ffd98f,#eba23f 62%,#a86a1d);}
+  .streak{position:absolute;height:2px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);}
+  .streak.s1{left:60px;top:430px;width:760px;transform:rotate(-9deg);}
+  .streak.s2{left:520px;top:230px;width:680px;transform:rotate(14deg);height:1px;}
+
+  /* ── shared glass material ──────────────────────────────────────────── */
+  .glass{
+    -webkit-backdrop-filter:blur(24px) saturate(1.65);
+    backdrop-filter:blur(24px) saturate(1.65);
+  }
+
+  /* ── menubar (28 px, dark glass) ───────────────────────────────────── */
+  .menubar{position:absolute;left:0;top:0;right:0;height:28px;z-index:5;
+    display:flex;align-items:center;gap:22px;padding:0 14px;box-sizing:border-box;
+    background:rgba(12,17,28,.42);
+    border-bottom:1px solid rgba(255,255,255,.14);
+    font-size:13px;color:rgba(240,245,252,.92);}
+  .menubar .brand{font-weight:700;}
+  .menubar .mi{opacity:.85;}
+  .menubar .right{margin-left:auto;display:flex;gap:16px;opacity:.85;font-variant-numeric:tabular-nums;}
+
+  /* ── taskbar (bottom, dark glass) ──────────────────────────────────── */
+  .taskbar{position:absolute;left:0;bottom:0;right:0;height:44px;z-index:5;
+    display:flex;align-items:center;gap:10px;padding:0 12px;box-sizing:border-box;
+    background:rgba(12,17,28,.40);
+    border-top:1px solid rgba(255,255,255,.16);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08);}
+  .orbBtn{width:30px;height:30px;border-radius:50%;flex:none;
+    background:radial-gradient(circle at 32% 28%,#8de9db,#1f9d8d 58%,#0d5b52);
+    box-shadow:0 0 0 1px rgba(255,255,255,.35),0 0 14px rgba(57,211,192,.55),inset 0 -4px 8px rgba(0,0,0,.35);
+    display:flex;align-items:center;justify-content:center;
+    color:#04241f;font-weight:800;font-size:14px;}
+  .tbtn{height:30px;padding:0 16px;border-radius:6px;display:flex;align-items:center;
+    font-size:13px;color:rgba(240,245,252,.9);
+    background:linear-gradient(rgba(255,255,255,.14),rgba(255,255,255,.05));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}
+  .tbtn.active{background:linear-gradient(rgba(255,255,255,.30),rgba(255,255,255,.10));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.4),0 0 12px rgba(160,220,255,.35);}
+  .taskbar .clockslot{margin-left:auto;font-size:12.5px;opacity:.8;font-variant-numeric:tabular-nums;padding-right:6px;}
+
+  /* ── window = ONE glass slab ───────────────────────────────────────── */
+  .win{position:absolute;border-radius:11px;box-sizing:border-box;
+    background:linear-gradient(158deg,rgba(212,230,248,.30),rgba(195,215,238,.16) 45%,rgba(205,222,242,.24));
+    box-shadow:
+      0 0 0 1px rgba(8,16,30,.55),               /* dark outer hairline */
+      0 26px 60px -14px rgba(4,10,24,.60),
+      0 10px 24px -10px rgba(4,10,24,.55);
+    transition:box-shadow .18s ease, background .18s ease;}
+  @media (prefers-reduced-motion: reduce){ .win{transition:none;} }
+
+  /* edge-lens ring: in the shader this is the SDF→normal→refracted-UV band (BEVEL 14 px);
+     here it is faked with bright inset falloff + faint chromatic fringes */
+  .win::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,.62),                 /* white inner hairline */
+      inset 0 1px 0 rgba(255,255,255,.85),
+      inset 0 14px 26px -16px rgba(255,255,255,.65),
+      inset 0 -14px 26px -18px rgba(255,255,255,.50),
+      inset 14px 0 26px -20px rgba(255,255,255,.45),
+      inset -14px 0 26px -20px rgba(255,255,255,.45),
+      inset 0 3px 4px -2px rgba(140,225,255,.55),            /* chromatic fringe: cyan */
+      inset 0 -3px 4px -2px rgba(255,190,130,.45);           /* chromatic fringe: warm */
+  }
+  /* specular sheen (Aero-like diagonal glare across the top) */
+  .win::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:linear-gradient(168deg,rgba(255,255,255,.34) 0%,rgba(255,255,255,.10) 22%,transparent 42%);}
+
+  .win.blurred{
+    background:linear-gradient(158deg,rgba(205,212,224,.20),rgba(200,208,220,.10) 45%,rgba(202,210,222,.15));
+    -webkit-backdrop-filter:blur(24px) saturate(1.0);
+    backdrop-filter:blur(24px) saturate(1.0);
+    box-shadow:0 0 0 1px rgba(8,16,30,.45),0 14px 32px -12px rgba(4,10,24,.45);}
+  .win.blurred::after{opacity:.5;}
+
+  /* titlebar region (drag) — drawn ON the slab, not a separate bar */
+  .tbar{position:relative;height:34px;display:flex;align-items:center;justify-content:center;padding:0 14px;cursor:default;}
+  .tbar .title{font-size:13px;font-weight:600;color:var(--ink);
+    text-shadow:0 0 10px rgba(255,255,255,.95),0 0 4px rgba(255,255,255,.9),0 0 18px rgba(255,255,255,.7);}
+  .win.blurred .tbar .title{color:var(--ink-soft);text-shadow:0 0 6px rgba(255,255,255,.55);}
+
+  /* caption buttons: macOS traffic lights as tiny GLASS SPHERES (right side) —
+     translucent tinted body + its own backdrop blur, colour densest at the rim */
+  .caps{position:absolute;top:0;bottom:0;right:14px;display:flex;align-items:center;gap:9px;}
+  .cap{width:16px;height:16px;border-radius:50%;position:relative;
+    -webkit-backdrop-filter:blur(6px) saturate(1.8);
+    backdrop-filter:blur(6px) saturate(1.8);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,.55),        /* glass rim */
+      inset 0 -4px 6px rgba(0,0,0,.28),             /* bottom depth */
+      inset 0 3px 4px rgba(255,255,255,.65),        /* top light */
+      0 2px 4px rgba(0,0,0,.35);}
+  .cap::before{content:"";position:absolute;left:3px;top:1.5px;width:8px;height:5px;border-radius:50%;
+    background:radial-gradient(ellipse at 50% 40%,rgba(255,255,255,1),rgba(255,255,255,0) 78%);
+    filter:blur(.2px);}                              /* specular dot */
+  .cap::after{content:"";position:absolute;left:4px;bottom:1px;width:8px;height:4px;border-radius:50%;
+    background:radial-gradient(ellipse at 50% 60%,rgba(255,255,255,.7),rgba(255,255,255,0) 75%);
+    opacity:.8;}                                     /* caustic — light focused through the sphere */
+  .cap.close{background:
+      radial-gradient(circle at 50% 88%,rgba(255,205,195,.75),rgba(255,140,125,0) 46%),
+      radial-gradient(circle at 50% 50%,rgba(255,110,100,.38) 0%,rgba(255,95,87,.48) 42%,rgba(225,60,48,.82) 74%,rgba(140,22,15,.95) 100%);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),inset 0 -4px 6px rgba(120,10,5,.4),
+      inset 0 3px 4px rgba(255,255,255,.65),0 2px 4px rgba(0,0,0,.35),0 0 10px rgba(255,95,87,.5);}
+  .cap.min{background:
+      radial-gradient(circle at 50% 88%,rgba(255,236,190,.8),rgba(255,215,140,0) 46%),
+      radial-gradient(circle at 50% 50%,rgba(255,205,90,.35) 0%,rgba(254,188,46,.46) 42%,rgba(222,150,20,.82) 74%,rgba(140,88,5,.95) 100%);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),inset 0 -4px 6px rgba(130,85,0,.38),
+      inset 0 3px 4px rgba(255,255,255,.65),0 2px 4px rgba(0,0,0,.35),0 0 10px rgba(254,188,46,.45);}
+  .cap.max{background:
+      radial-gradient(circle at 50% 88%,rgba(205,255,215,.75),rgba(150,240,170,0) 46%),
+      radial-gradient(circle at 50% 50%,rgba(110,235,135,.35) 0%,rgba(40,200,64,.46) 42%,rgba(22,150,42,.82) 74%,rgba(8,90,25,.95) 100%);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),inset 0 -4px 6px rgba(8,90,25,.4),
+      inset 0 3px 4px rgba(255,255,255,.65),0 2px 4px rgba(0,0,0,.35),0 0 10px rgba(40,200,64,.45);}
+  /* unfocused: the spheres go clear-grey glass, like macOS */
+  .win.blurred .cap.close,.win.blurred .cap.min,.win.blurred .cap.max{
+    background:
+      radial-gradient(circle at 50% 88%,rgba(255,255,255,.55),rgba(255,255,255,0) 46%),
+      radial-gradient(circle at 50% 50%,rgba(225,232,240,.30) 0%,rgba(190,200,212,.42) 42%,rgba(140,152,168,.72) 74%,rgba(90,100,115,.85) 100%);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.45),inset 0 -4px 6px rgba(40,50,65,.3),
+      inset 0 3px 4px rgba(255,255,255,.55),0 1px 3px rgba(0,0,0,.25);}
+
+  /* window body: elements inked straight onto the glass */
+  .body{padding:0 16px 16px;color:var(--ink);}
+  .win.blurred .body{color:var(--ink-soft);}
+  .menurow{display:flex;gap:18px;font-size:12.5px;color:var(--ink-soft);
+    padding:2px 0 8px;border-bottom:1px solid rgba(23,34,47,.18);margin-bottom:12px;}
+  .win.blurred .menurow{color:rgba(23,34,47,.4);}
+
+  .doc{font-size:14px;line-height:1.75;white-space:pre-wrap;max-width:62ch;}
+
+  /* Files window */
+  .fbody{display:grid;grid-template-columns:128px 1fr;gap:0 14px;height:calc(100% - 34px);box-sizing:border-box;padding:0 14px 14px;}
+  .side{border-right:1px solid rgba(23,34,47,.16);padding-top:4px;font-size:13px;color:var(--ink-soft);}
+  .side div{padding:5px 8px;border-radius:6px;}
+  .side .sel{background:rgba(255,255,255,.35);color:var(--ink);box-shadow:inset 0 0 0 1px rgba(255,255,255,.5);}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;align-content:start;padding-top:6px;}
+  .item{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;color:var(--ink);padding:8px 2px;border-radius:8px;}
+  .folder{width:38px;height:28px;border-radius:4px;position:relative;
+    background:linear-gradient(#ffd57e,#eda93f);box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 1px 2px rgba(0,0,0,.25);}
+  .folder::before{content:"";position:absolute;left:0;top:-5px;width:16px;height:6px;border-radius:3px 3px 0 0;background:#eda93f;}
+  .fileic{width:26px;height:32px;border-radius:3px;background:linear-gradient(#ffffff,#dde6f0);
+    box-shadow:inset 0 0 0 1px rgba(60,80,105,.35),0 1px 2px rgba(0,0,0,.2);position:relative;}
+  .fileic::before{content:"";position:absolute;left:5px;top:7px;right:5px;height:2px;background:#9fb0c4;box-shadow:0 5px 0 #9fb0c4,0 10px 0 #9fb0c4;}
+
+  /* terminal: dark variant of the same slab */
+  .win.dark{background:linear-gradient(160deg,rgba(10,16,26,.55),rgba(8,13,22,.42));
+    -webkit-backdrop-filter:blur(26px) saturate(1.35);backdrop-filter:blur(26px) saturate(1.35);}
+  .win.dark::before{box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,.28),
+      inset 0 1px 0 rgba(255,255,255,.4),
+      inset 0 12px 24px -16px rgba(255,255,255,.28),
+      inset 0 -12px 24px -18px rgba(255,255,255,.18),
+      inset 12px 0 24px -20px rgba(255,255,255,.16),
+      inset -12px 0 24px -20px rgba(255,255,255,.16),
+      inset 0 2px 3px -2px rgba(140,225,255,.4),
+      inset 0 -2px 3px -2px rgba(255,190,130,.3);}
+  .win.dark::after{background:linear-gradient(168deg,rgba(255,255,255,.14) 0%,rgba(255,255,255,.04) 22%,transparent 42%);}
+  .win.dark .tbar .title{color:#eaf2fb;text-shadow:0 0 10px rgba(120,200,255,.6),0 1px 2px rgba(0,0,0,.7);}
+  .win.dark.blurred .tbar .title{color:rgba(234,242,251,.6);}
+  .term{padding:2px 16px 16px;font:12.5px/1.7 ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;color:#d9f3e9;}
+  .term .p{color:#7ee8c9;}
+  .term .dimline{color:rgba(217,243,233,.6);}
+  .caret{display:inline-block;width:7px;height:14px;background:#d9f3e9;vertical-align:-2px;}
+
+  /* ── legend ─────────────────────────────────────────────────────────── */
+  .legend{margin-top:26px;display:grid;grid-template-columns:1.4fr 1fr;gap:28px;}
+  @media (max-width:900px){.legend{grid-template-columns:1fr;}}
+  .legend h2{font-size:15px;font-weight:650;margin:0 0 10px;color:var(--paper);}
+  .legend ol{margin:0;padding-left:22px;color:#c3cbdb;font-size:14px;}
+  .legend li{margin-bottom:9px;}
+  .legend li b{color:var(--paper);font-weight:600;}
+  .legend .note{color:var(--dim);font-size:13.5px;max-width:58ch;}
+  .legend .note b{color:#c3cbdb;}
+  .kbd{font:12px ui-monospace,Menlo,monospace;background:#161b26;border:1px solid #232b3b;border-radius:4px;padding:1px 6px;color:#aeb8cc;}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="intro">
+    <h1>Okno = jedna tafla szkła</h1>
+    <p>materiał Liquid Glass na całe okno, szklane kule macOS, chrome rysowany wprost na szkle</p>
+    <span class="hint">okna można przeciągać ↔ zobacz żywy backdrop</span>
+  </header>
+
+  <div class="frame"><div class="scaler" id="scaler">
+    <div class="stage" id="stage">
+      <div class="wall">
+        <div class="orb teal"></div>
+        <div class="orb mag"></div>
+        <div class="orb amber"></div>
+        <div class="streak s1"></div>
+        <div class="streak s2"></div>
+      </div>
+
+      <div class="menubar glass">
+        <span class="brand">NanOS</span>
+        <span class="mi">Plik</span><span class="mi">Edycja</span><span class="mi">Widok</span><span class="mi">Pomoc</span>
+        <span class="right"><span>PL</span><span>czw 3 lip</span><span>15:42</span></span>
+      </div>
+
+      <!-- Files (unfocused) -->
+      <div class="win glass blurred" data-app="pliki" style="left:110px;top:150px;width:470px;height:350px;">
+        <div class="tbar"><span class="title">Pliki — /home/jan</span>
+          <div class="caps"><div class="cap min"></div><div class="cap max"></div><div class="cap close"></div></div>
+        </div>
+        <div class="fbody">
+          <div class="side">
+            <div class="sel">jan</div><div>Komputer</div><div>Dokumenty</div><div>Sieć</div>
+          </div>
+          <div class="grid">
+            <div class="item"><span class="folder"></span>Dokumenty</div>
+            <div class="item"><span class="folder"></span>Obrazy</div>
+            <div class="item"><span class="folder"></span>projekty</div>
+            <div class="item"><span class="folder"></span>muzyka</div>
+            <div class="item"><span class="fileic"></span>notatki.txt</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Terminal (unfocused, dark glass) -->
+      <div class="win dark glass blurred" data-app="terminal" style="left:770px;top:110px;width:430px;height:290px;">
+        <div class="tbar"><span class="title">Terminal</span>
+          <div class="caps"><div class="cap min"></div><div class="cap max"></div><div class="cap close"></div></div>
+        </div>
+        <div class="term"><span class="p">jan@nanos:~$</span> make run64-gl-desktop
+<span class="dimline">nwm: GL compositor active (virgl)</span>
+<span class="dimline">nwm-gl: avg frame 14 ms (scene_dirty 22/30)</span>
+<span class="p">jan@nanos:~$</span> <span class="caret"></span></div>
+      </div>
+
+      <!-- Notepad (focused) -->
+      <div class="win glass" data-app="notatnik" style="left:400px;top:270px;width:560px;height:400px;z-index:9;">
+        <div class="tbar"><span class="title">notatki.txt — Notatnik</span>
+          <div class="caps"><div class="cap min"></div><div class="cap max"></div><div class="cap close"></div></div>
+        </div>
+        <div class="body">
+          <div class="menurow"><span>Plik</span><span>Edycja</span><span>Format</span><span>Widok</span><span>Pomoc</span></div>
+          <div class="doc">Szkło = jedna tafla na całe okno.
+
+1. tafla: blur + saturacja + tint (backdrop)
+2. soczewka na krawędzi: refrakcja + aberracja (BEVEL 14 px)
+3. spekular + podwójny hairline (ciemny/biały)
+4. ink: menu, tekst i ikony rysowane wprost na szkle
+
+Okno nieaktywne traci saturację i tint — spójrz na Pliki.</div>
+        </div>
+      </div>
+
+      <div class="taskbar glass">
+        <div class="orbBtn">N</div>
+        <div class="tbtn" data-app="pliki">Pliki</div>
+        <div class="tbtn" data-app="terminal">Terminal</div>
+        <div class="tbtn active" data-app="notatnik">Notatnik</div>
+        <div class="clockslot">nwm • GL</div>
+      </div>
+    </div>
+  </div></div>
+
+  <section class="legend">
+    <div>
+      <h2>Warstwy materiału (kolejność = etapy shadera FS_WIN)</h2>
+      <ol>
+        <li><b>Tafla</b> — backdrop okna rozmyty i nasycony (blur ~24 px, saturate ~165%), plus delikatny niebieskawy tint Aero. Całe okno, bez podziału na ramkę/klienta.</li>
+        <li><b>Soczewka krawędzi</b> — pas ~14 px przy brzegu zagina promienie (SDF → normalna → przesunięcie UV) z aberracją chromatyczną. Tu udawana jasnym gradientem + zimno/ciepłymi obwódkami.</li>
+        <li><b>Spekular + hairliny</b> — ukośny błysk u góry (Aero), 1 px ciemna linia na zewnątrz, 1 px biała wewnątrz.</li>
+        <li><b>Ink</b> — tytuł z białą poświatą (glow jak w Win7), menu, tekst, ikony: rysowane bezpośrednio na szkle, bez nieprzezroczystego klienta. Przyciski to <b>szklane kule</b> w kolorach macOS, ale po prawej jak w Windows (żółta/zielona, czerwona w rogu): kolorowy rdzeń + spekularny punkt + cień u dołu; w oknie nieaktywnym szarzeją jak w macOS.</li>
+        <li><b>Tint per aplikacja</b> — aplikacja deklaruje odcień swojej tafli przy tworzeniu okna (w shaderze: <b>u_tint</b>): domyślny jasny (Notatnik, Pliki) albo ciemny jak Terminal; ta sama tafla, inna barwa.</li>
+        <li><b>Stany</b> — okno nieaktywne: saturacja spada do 100%, tint szarzeje, glow tytułu gaśnie, kule robią się szare.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Jak czytać makietę</h2>
+      <p class="note">HTML <b>nie zakrzywia promieni</b> — refrakcja i aberracja na krawędzi są tu tylko zasugerowane gradientami; w shaderze będą prawdziwym przesunięciem próbkowania backdropu. Reszta (blur, saturacja, tint, spekular, hairliny, ink, stan fokusu) odpowiada 1:1 temu, co zrobi GPU.</p>
+      <p class="note">Kliknij okno, żeby je sfokusować; złap za pasek tytułu i <b>przeciągnij</b> — szkło na żywo rozmywa tapetę i inne okna pod spodem, dokładnie tak, jak będzie to robił kompozytor.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  const stage = document.getElementById('stage');
+  const scaler = document.getElementById('scaler');
+  let scale = 1;
+  function fit(){
+    const w = scaler.clientWidth || scaler.parentElement.clientWidth;
+    scale = Math.min(1, w / 1280);
+    stage.style.transform = 'scale(' + scale + ')';
+    scaler.style.height = Math.round(800 * scale) + 'px';
+  }
+  window.addEventListener('resize', fit); fit();
+
+  let zTop = 20;
+  function focusWin(win){
+    document.querySelectorAll('.win').forEach(function(x){ x.classList.add('blurred'); });
+    win.classList.remove('blurred');
+    win.style.zIndex = ++zTop;
+    document.querySelectorAll('.tbtn').forEach(function(b){
+      b.classList.toggle('active', b.dataset.app === win.dataset.app);
+    });
+  }
+  document.querySelectorAll('.win').forEach(function(win){
+    win.addEventListener('pointerdown', function(){ focusWin(win); });
+    const bar = win.querySelector('.tbar');
+    bar.addEventListener('pointerdown', function(e){
+      if (e.target.closest('.cap')) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY;
+      const ox = win.offsetLeft, oy = win.offsetTop;
+      function move(ev){
+        win.style.left = (ox + (ev.clientX - sx) / scale) + 'px';
+        win.style.top  = (oy + (ev.clientY - sy) / scale) + 'px';
+      }
+      function up(){
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      }
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+  });
+  document.querySelectorAll('.tbtn[data-app]').forEach(function(b){
+    b.addEventListener('click', function(){
+      const win = document.querySelector('.win[data-app="' + b.dataset.app + '"]');
+      if (win) focusWin(win);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

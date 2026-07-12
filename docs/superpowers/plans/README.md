@@ -64,6 +64,7 @@ Brak sterownika NVMe = bloker daily-drivera; ujęty w meta-planie długu (D1), p
 | [Uprawnienia linuksowe](2026-06-22-linux-user-permissions.md) | Cred/DAC/setuid + libc | ✅ (resztę domknęły VT/nwlogin/sudo) |
 | [NetSurf](2026-06-13-netsurf-nanos-port.md) | graficzna przeglądarka, osobne repo | ✅ |
 | [Natywny toolchain GCC](2026-06-28-native-gcc-toolchain.md) | self-hosting binutils+mknx (fazy 0-2) | ⬜ |
+| [Electron apps + MarkText](2026-07-07-electron-marktext/README.md) | reusable Electron runtime/platform; MarkText jako acceptance app | ⬜ |
 
 ## GUI / desktop
 

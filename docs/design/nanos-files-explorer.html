@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NanOS Files — glass explorer</title>
+  <style>
+    @font-face {
+      font-family: NanOS;
+      src: url("assets/fonts/UISans-Regular.ttf") format("truetype");
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: dark;
+      --line: rgba(218, 231, 255, .22);
+      --line-strong: rgba(218, 231, 255, .38);
+      --text: #fff;
+      --muted: rgba(244, 247, 255, .76);
+      --panel-left: rgba(21, 42, 116, .78);
+      --panel-right: rgba(92, 55, 166, .62);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      color: var(--text);
+      font-family: NanOS, Inter, ui-sans-serif, system-ui, sans-serif;
+      background:
+        radial-gradient(ellipse 55% 36% at 92% 2%, rgba(255, 105, 81, .98) 0 36%, transparent 37%),
+        radial-gradient(ellipse 55% 40% at 70% -3%, rgba(244, 162, 65, .9) 0 28%, transparent 29%),
+        radial-gradient(ellipse 74% 50% at -14% 88%, #168ee5 0 27%, transparent 28%),
+        linear-gradient(145deg, #071d55 0%, #23377b 43%, #20224d 72%, #39335f 100%);
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .stage {
+      width: 100%;
+      height: 100%;
+      min-height: 520px;
+      padding: clamp(12px, 3.75vw, 24px);
+      isolation: isolate;
+    }
+
+    .stage::before,
+    .stage::after {
+      content: "";
+      position: fixed;
+      z-index: -1;
+      border-radius: 999px;
+      filter: blur(12px);
+      opacity: .8;
+    }
+
+    .stage::before {
+      width: 36vw;
+      height: 36vw;
+      right: -10vw;
+      top: -13vw;
+      background: #ff676c;
+    }
+
+    .stage::after {
+      width: 42vw;
+      height: 42vw;
+      left: -23vw;
+      bottom: -19vw;
+      background: #098dec;
+    }
+
+    .window {
+      position: relative;
+      width: min(100%, 960px);
+      height: 100%;
+      min-height: 496px;
+      margin: auto;
+      display: grid;
+      grid-template-rows: 88px 242px 1fr 68px;
+      overflow: hidden;
+      border: 2px solid var(--line-strong);
+      border-radius: clamp(28px, 6.5vw, 43px);
+      background:
+        linear-gradient(101deg, var(--panel-left) 0 27%, rgba(80, 61, 157, .62) 54%, var(--panel-right) 100%);
+      box-shadow:
+        0 28px 64px rgba(2, 9, 44, .38),
+        inset 0 1px 0 rgba(255, 255, 255, .26),
+        inset 0 -1px 0 rgba(129, 176, 255, .22);
+      backdrop-filter: blur(42px) saturate(142%);
+      -webkit-backdrop-filter: blur(42px) saturate(142%);
+    }
+
+    .window::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 72% 21%, rgba(255, 118, 121, .92) 0 9%, rgba(255, 126, 123, .44) 19%, transparent 33%),
+        radial-gradient(circle at 57% 32%, rgba(255, 230, 171, .92) 0 7%, rgba(255, 221, 165, .45) 20%, transparent 33%),
+        radial-gradient(ellipse at 86% 88%, rgba(182, 216, 255, .8) 0, rgba(117, 170, 247, .37) 27%, transparent 48%),
+        radial-gradient(ellipse at 21% 88%, rgba(42, 146, 255, .55), transparent 43%);
+    }
+
+    .titlebar {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .titlebar h1 {
+      margin: 0;
+      font-size: 29px;
+      font-weight: 500;
+      letter-spacing: -.5px;
+    }
+
+    .title-folder {
+      position: absolute;
+      left: 29px;
+      top: 30px;
+      color: rgba(226, 236, 255, .82);
+    }
+
+    .traffic {
+      position: absolute;
+      right: 28px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .traffic button {
+      width: 27px;
+      height: 27px;
+      padding: 0;
+      border: 2px solid rgba(255, 255, 255, .58);
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: inset 0 0 5px rgba(255,255,255,.22), 0 2px 5px rgba(18, 27, 71, .16);
+      transition: transform .15s ease, filter .15s ease;
+    }
+
+    .traffic button:hover { transform: scale(1.12); filter: brightness(1.08); }
+    .traffic .minimize { background: #ffb92e; }
+    .traffic .maximize { background: #17cb51; }
+    .traffic .close { background: rgba(255, 77, 74, .18); }
+
+    .toolbar {
+      display: grid;
+      grid-template-rows: 132px 110px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .toolbar-top {
+      display: grid;
+      grid-template-columns: 150px 84px 84px 1fr;
+      align-items: center;
+      padding: 0 32px;
+    }
+
+    .history { display: flex; gap: 42px; }
+
+    .icon-button {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      border: 0;
+      border-radius: 14px;
+      background: transparent;
+      cursor: pointer;
+      transition: background .16s ease, transform .16s ease;
+    }
+
+    .icon-button:hover { background: rgba(255,255,255,.12); }
+    .icon-button:active { transform: translateY(1px); }
+    .history .icon-button { color: rgba(217, 226, 255, .46); }
+
+    .search {
+      justify-self: end;
+      width: min(100%, 188px);
+      height: 84px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 25px;
+      border: 2px solid rgba(255,255,255,.25);
+      border-radius: 24px;
+      background: rgba(255,255,255,.11);
+      box-shadow: inset 0 1px 2px rgba(255,255,255,.12);
+      transition: width .25s ease, background .2s ease, border-color .2s ease;
+    }
+
+    .search:focus-within {
+      width: min(100%, 250px);
+      background: rgba(255,255,255,.17);
+      border-color: rgba(255,255,255,.46);
+    }
+
+    .search input {
+      width: 100%;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      color: white;
+      background: transparent;
+      font-size: 28px;
+    }
+
+    .search input::placeholder { color: rgba(255,255,255,.82); }
+
+    .address-wrap { padding: 0 32px 24px; }
+
+    .address {
+      height: 84px;
+      display: flex;
+      align-items: center;
+      gap: 23px;
+      padding: 0 26px;
+      border: 2px solid rgba(255,255,255,.19);
+      border-radius: 24px;
+      background: rgba(255,255,255,.11);
+      box-shadow: inset 0 1px 2px rgba(255,255,255,.1);
+      font-size: 29px;
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 148px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      padding: 30px 16px;
+      border-right: 1px solid var(--line);
+    }
+
+    .nav-button {
+      width: 100%;
+      height: 73px;
+      margin: 0 0 9px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 20px;
+      background: transparent;
+      cursor: pointer;
+      transition: background .2s ease, transform .15s ease;
+    }
+
+    .nav-button:hover { background: rgba(255,255,255,.1); }
+    .nav-button:active { transform: scale(.97); }
+    .nav-button.active {
+      color: #171524;
+      background: linear-gradient(135deg, #75b8ff 0%, #b4b5dd 56%, #dc8c98 100%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 8px 24px rgba(27, 34, 105, .16);
+    }
+
+    .files {
+      position: relative;
+      min-width: 0;
+      padding: 66px 42px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(130px, 1fr));
+      align-content: start;
+      justify-items: center;
+      gap: 58px 52px;
+    }
+
+    .file {
+      width: min(100%, 180px);
+      padding: 0;
+      border: 0;
+      background: transparent;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .file.hidden { display: none; }
+
+    .folder-tile {
+      position: relative;
+      width: 145px;
+      height: 128px;
+      margin: 0 auto 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 39px;
+      background: linear-gradient(155deg, #54c7f5 0%, #3295ef 68%, #2888ea 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.46),
+        0 14px 30px rgba(23, 61, 149, .16);
+      transition: transform .2s ease, filter .2s ease, box-shadow .2s ease;
+    }
+
+    .file:hover .folder-tile {
+      transform: translateY(-5px) scale(1.025);
+      filter: brightness(1.06);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.52), 0 19px 34px rgba(23, 61, 149, .28);
+    }
+
+    .file:focus-visible { outline: 2px solid #fff; outline-offset: 7px; border-radius: 12px; }
+
+    .file-name {
+      font-size: 28px;
+      line-height: 1.12;
+      letter-spacing: -.4px;
+    }
+
+    .drive-slot {
+      position: absolute;
+      width: 68px;
+      height: 15px;
+      left: 50%;
+      bottom: 25px;
+      translate: -50% 0;
+      border-radius: 99px;
+      background: rgba(62, 74, 98, .72);
+    }
+
+    .status-dot {
+      position: absolute;
+      width: 19px;
+      height: 19px;
+      top: 32px;
+      right: 31px;
+      border-radius: 50%;
+      background: #19d868;
+      box-shadow: 0 0 13px rgba(25,216,104,.28);
+    }
+
+    .empty-state {
+      display: none;
+      grid-column: 1 / -1;
+      padding-top: 28px;
+      color: var(--muted);
+      font-size: 22px;
+    }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px 0 32px;
+      border-top: 1px solid var(--line);
+      background: rgba(77, 89, 190, .15);
+      color: rgba(246,248,255,.78);
+      font-size: 24px;
+      letter-spacing: .1px;
+    }
+
+    .ready { display: flex; align-items: center; gap: 13px; }
+
+    svg {
+      width: 28px;
+      height: 28px;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .title-folder svg { width: 30px; height: 30px; }
+    .folder-tile svg { width: 34px; height: 34px; }
+    .folder-tile .drive-icon { position: absolute; top: 45px; width: 34px; height: 34px; }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 86px;
+      z-index: 5;
+      translate: -50% 16px;
+      padding: 11px 18px;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 14px;
+      background: rgba(22, 28, 86, .7);
+      box-shadow: 0 10px 30px rgba(3,8,40,.2);
+      backdrop-filter: blur(18px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, translate .2s ease;
+    }
+
+    .toast.show { opacity: 1; translate: -50% 0; }
+
+    @media (max-height: 820px) {
+      .window { grid-template-rows: 70px 164px 1fr 54px; }
+      .toolbar { grid-template-rows: 88px 76px; }
+      .toolbar-top { grid-template-columns: 120px 62px 62px 1fr; }
+      .search { height: 58px; }
+      .address-wrap { padding-bottom: 14px; }
+      .address { height: 62px; }
+      .files { padding-top: 32px; }
+      .titlebar h1 { font-size: 24px; }
+      .title-folder { top: 20px; }
+    }
+
+    @media (max-width: 560px) {
+      .stage { padding: 10px; }
+      .window { grid-template-rows: 72px 188px 1fr 58px; border-radius: 28px; }
+      .title-folder { left: 20px; top: 21px; }
+      .traffic { right: 18px; gap: 10px; }
+      .traffic button { width: 20px; height: 20px; }
+      .titlebar h1 { font-size: 23px; }
+      .toolbar { grid-template-rows: 100px 88px; }
+      .toolbar-top { grid-template-columns: 95px 48px 48px 1fr; padding: 0 18px; }
+      .history { gap: 14px; }
+      .search { width: 60px; height: 58px; padding: 0 16px; gap: 10px; }
+      .search input { font-size: 0; }
+      .search:focus-within { position: absolute; z-index: 4; right: 18px; width: calc(100% - 36px); }
+      .search:focus-within input { font-size: 20px; }
+      .address-wrap { padding: 0 18px 15px; }
+      .address { height: 66px; padding: 0 20px; font-size: 23px; }
+      .workspace { grid-template-columns: 88px minmax(0, 1fr); }
+      .sidebar { padding: 18px 9px; }
+      .nav-button { height: 62px; }
+      .files { grid-template-columns: repeat(2, minmax(100px, 1fr)); padding: 38px 12px; gap: 34px 8px; }
+      .folder-tile { width: 104px; height: 96px; margin-bottom: 16px; border-radius: 29px; }
+      .folder-tile .drive-icon { top: 31px; }
+      .drive-slot { width: 54px; height: 11px; bottom: 18px; }
+      .status-dot { width: 15px; height: 15px; top: 23px; right: 19px; }
+      .file-name { font-size: 21px; }
+      .statusbar { padding: 0 18px; font-size: 17px; }
+      .ready { gap: 7px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 18.5V6.2A2.2 2.2 0 0 1 5.2 4h4l2.1 2h7.5A2.2 2.2 0 0 1 21 8.2v10.3a2.2 2.2 0 0 1-2.2 2.2H5.2A2.2 2.2 0 0 1 3 18.5Z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-6v-7h-4v7H4a1 1 0 0 1-1-1V10Z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="1.5"/><path d="M8 21h8M12 16.5V21"/></symbol>
+    <symbol id="i-drive" viewBox="0 0 24 24"><path d="m5 5-2 8v5a1.8 1.8 0 0 0 1.8 1.8h14.4A1.8 1.8 0 0 0 21 18v-5l-2-8a2 2 0 0 0-2-1.5H7A2 2 0 0 0 5 5Z"/><path d="M3 13h18M7 16.5h.01M10 16.5h.01"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m5 11 7-7 7 7M12 4v17"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5.2 3.3 8.2 8 10 4.7-1.8 8-4.8 8-10V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  </svg>
+
+  <main class="stage">
+    <section class="window" aria-label="Eksplorator plików NanOS">
+      <header class="titlebar">
+        <span class="title-folder"><svg><use href="#i-folder"/></svg></span>
+        <h1>Files</h1>
+        <div class="traffic" aria-label="Sterowanie oknem">
+          <button class="minimize" aria-label="Minimalizuj"></button>
+          <button class="maximize" aria-label="Maksymalizuj"></button>
+          <button class="close" aria-label="Zamknij"></button>
+        </div>
+      </header>
+
+      <section class="toolbar" aria-label="Nawigacja">
+        <div class="toolbar-top">
+          <div class="history">
+            <button class="icon-button" aria-label="Wstecz"><svg><use href="#i-left"/></svg></button>
+            <button class="icon-button" aria-label="Dalej"><svg><use href="#i-right"/></svg></button>
+          </div>
+          <button class="icon-button" aria-label="Folder nadrzędny"><svg><use href="#i-up"/></svg></button>
+          <button class="icon-button" aria-label="Katalog domowy"><svg><use href="#i-home"/></svg></button>
+          <label class="search">
+            <svg><use href="#i-search"/></svg>
+            <input id="search" type="search" placeholder="Szuk" autocomplete="off" aria-label="Szukaj plików">
+          </label>
+        </div>
+        <div class="address-wrap">
+          <div class="address"><svg><use href="#i-monitor"/></svg><span>main</span></div>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <nav class="sidebar" aria-label="Lokalizacje">
+          <button class="nav-button" aria-label="Dom"><svg><use href="#i-home"/></svg></button>
+          <button class="nav-button" aria-label="Komputer"><svg><use href="#i-monitor"/></svg></button>
+          <button class="nav-button active" aria-label="Dysk główny"><svg><use href="#i-drive"/></svg></button>
+        </nav>
+
+        <section class="files" aria-live="polite">
+          <button class="file" data-name="documents" aria-label="Otwórz Documents">
+            <span class="folder-tile"><svg><use href="#i-home"/></svg></span>
+            <span class="file-name">Documents</span>
+          </button>
+          <button class="file" data-name="apps" aria-label="Otwórz apps">
+            <span class="folder-tile">
+              <svg class="drive-icon"><use href="#i-drive"/></svg>
+              <span class="status-dot"></span>
+              <span class="drive-slot"></span>
+            </span>
+            <span class="file-name">apps</span>
+          </button>
+          <p class="empty-state">Brak wyników</p>
+        </section>
+      </div>
+
+      <footer class="statusbar">
+        <span id="count">1 folder · 38.6 GB wolne</span>
+        <span class="ready"><svg><use href="#i-shield"/></svg>Gotowe</span>
+      </footer>
+
+      <div class="toast" role="status"></div>
+    </section>
+  </main>
+
+  <script>
+    const search = document.querySelector('#search');
+    const files = [...document.querySelectorAll('.file')];
+    const empty = document.querySelector('.empty-state');
+    const count = document.querySelector('#count');
+    const toast = document.querySelector('.toast');
+    let toastTimer;
+
+    function filterFiles() {
+      const query = search.value.trim().toLowerCase();
+      let visible = 0;
+      files.forEach(file => {
+        const show = file.dataset.name.includes(query);
+        file.classList.toggle('hidden', !show);
+        visible += Number(show);
+      });
+      empty.style.display = visible ? 'none' : 'block';
+      count.textContent = query ? `${visible} wynik${visible === 1 ? '' : 'i'} · 38.6 GB wolne` : '1 folder · 38.6 GB wolne';
+    }
+
+    function notify(message) {
+      clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('show');
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
+    }
+
+    search.addEventListener('input', filterFiles);
+    files.forEach(file => file.addEventListener('click', () => notify(`Otwieranie: ${file.dataset.name}`)));
+    document.querySelectorAll('.nav-button').forEach(button => button.addEventListener('click', () => {
+      document.querySelector('.nav-button.active')?.classList.remove('active');
+      button.classList.add('active');
+    }));
+    document.querySelector('.minimize').addEventListener('click', () => notify('Okno zminimalizowane'));
+    document.querySelector('.maximize').addEventListener('click', () => document.querySelector('.window').classList.toggle('expanded'));
+    document.querySelector('.close').addEventListener('click', () => notify('To tylko podgląd projektu'));
+  </script>
+</body>
+</html>
