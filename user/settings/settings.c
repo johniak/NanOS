@@ -7,6 +7,7 @@
  */
 #include "nwui.h"
 #include "nwui_fs.h"
+#include "nwproto.h"   /* NW_STYLE_* */
 #include "nw_settings.h"
 #include "nw_settings_path.h"
 #include <unistd.h>
@@ -207,7 +208,7 @@ int main(void)
 {
 	load_settings();
 	assoc_load();
-	nwui *u = nwui_open("Settings", 520, 480);
+	nwui *u = nwui_open_style("Settings", 520, 480, NW_STYLE_GLASS_CLIENT);
 	if (!u)
 		return 1;
 	g_u = u;

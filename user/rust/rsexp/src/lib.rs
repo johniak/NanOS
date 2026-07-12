@@ -1256,7 +1256,7 @@ fn load_icon(path: &str, fallback: Icon) -> Icon {
 
 #[no_mangle]
 pub extern "C" fn main() -> i32 {
-    let ui = match Ui::open("Files", 620, 420) {
+    let ui = match Ui::open_glass("Files", 620, 420) {
         Some(u) => u,
         None => return 1,
     };

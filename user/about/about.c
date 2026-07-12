@@ -4,6 +4,7 @@
  * panel. Built on libnwui; the data comes from the shared sysinfo.h helper.
  */
 #include "nwui.h"
+#include "nwproto.h"   /* NW_STYLE_* */
 #include "sysinfo.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -50,7 +51,7 @@ int main(void)
 {
 	/* Tall enough for the whole column (logo + title + version + 4 info rows); the toolkit lays
 	 * out at a fixed size with no auto-fit, so an undersized window clips the lower rows. */
-	nwui *u = nwui_open("About This Computer", 360, 350);
+	nwui *u = nwui_open_style("About This Computer", 360, 350, NW_STYLE_GLASS_CLIENT);
 	if (!u)
 		return 1;
 

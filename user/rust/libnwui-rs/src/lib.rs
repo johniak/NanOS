@@ -55,6 +55,8 @@ pub struct IconItem {
 
 extern "C" {
     fn nwui_open(title: *const u8, w: i32, h: i32) -> *mut NwUi;
+    /// Like nwui_open, but with an explicit style word (NW_STYLE_* from user/libnw/nwproto.h).
+    fn nwui_open_style(title: *const u8, w: i32, h: i32, style: u32) -> *mut NwUi;
     fn nwui_set_root(u: *mut NwUi, root: *mut NwNode);
     fn nwui_focus(u: *mut NwUi, n: *mut NwNode);
     fn nwui_run(u: *mut NwUi);
@@ -204,6 +206,14 @@ impl Ui {
     pub fn open(title: &str, w: i32, h: i32) -> Option<Ui> {
         let t = cstr(title);
         let p = unsafe { nwui_open(t.as_ptr(), w, h) };
+        if p.is_null() { None } else { Some(Ui(p)) }
+    }
+    /// Like open(), but opts the window into light-glass interiors (NW_STYLE_GLASS_CLIENT = 1
+    /// from user/libnw/nwproto.h): a transparent ARGB ink canvas over the GL slab instead of the
+    /// legacy opaque paper background.
+    pub fn open_glass(title: &str, w: i32, h: i32) -> Option<Ui> {
+        let t = cstr(title);
+        let p = unsafe { nwui_open_style(t.as_ptr(), w, h, 1) };
         if p.is_null() { None } else { Some(Ui(p)) }
     }
     pub fn label(&self, s: &str) -> Node { let c = cstr(s); unsafe { Node(nwui_label(self.0, c.as_ptr())) } }

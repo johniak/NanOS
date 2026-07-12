@@ -6,6 +6,7 @@
  * box. Everything reusable lives in the toolkit (textarea, modal, prompt, message, file dialog).
  */
 #include "nwui.h"
+#include "nwproto.h"   /* NW_STYLE_* */
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -162,7 +163,7 @@ static void m_about(nwui_node *s, void *u) { (void) s; (void) u;
 
 int main(int argc, char **argv)
 {
-	nwui *u = nwui_open("Notepad", 560, 420);
+	nwui *u = nwui_open_style("Notepad", 560, 420, NW_STYLE_GLASS_CLIENT);
 	if (!u) return 1;
 	g_u = u;
 	g_ta = nwui_textarea(u, g_text, CAP, on_change, 0);
