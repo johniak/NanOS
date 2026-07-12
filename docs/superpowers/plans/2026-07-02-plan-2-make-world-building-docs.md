@@ -421,7 +421,7 @@ Self-hosted runner rozwiązuje problem kosztu (ciepły cache Dockera → build r
 
 - [ ] **Step 1: Zarejestruj runnera na serwerze**
 
-GitHub → repo NanOS → Settings → Actions → Runners → „New self-hosted runner" (linux/x64) — wykonaj wyświetlone komendy (`config.sh --url https://github.com/johniak/NanOS --token …`), potem jako usługa:
+GitHub → repo NanOS → Settings → Actions → Runners → „New self-hosted runner" (linux/x64) — wykonaj wyświetlone komendy (`config.sh --url https://github.com/NanOS-labs/NanOS --token …`), potem jako usługa:
 
 ```bash
 cd ~/actions-runner && sudo ./svc.sh install && sudo ./svc.sh start
