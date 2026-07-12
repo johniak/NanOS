@@ -161,6 +161,15 @@ Notes and limitations
 - This is purely educational: use it to understand "how it works"
   rather than to build a production OS
 
+Ecosystem & reproducibility
+---------------------------
+Everything NanOS-related — this repo, the cross-SDK, and every ported
+upstream project (openssl, dropbear, git, vim, mesa, the QEMU/virglrenderer
+host GL forks, …) — lives in the [NanOS-labs](https://github.com/NanOS-labs)
+GitHub organization, each fork carrying its own port recipe. A fresh machine
+rebuilds the whole OS with `nanos-sdk/scripts/bootstrap.sh`; the full repo
+map, dependency order and walkthrough are in [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md).
+
 License
 -------
 Academic/educational use.
