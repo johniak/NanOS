@@ -39,6 +39,14 @@ extern const unsigned char nx_font8x16[256][16];
 #define COL_CURSOR_FG  0x101620
 #define COL_CURSOR_BG  0xffffff
 
+/* Glass-mode chrome ink (Task 9): the menubar/taskbar backgrounds go transparent-key black — the GL
+ * compositor paints the actual dark-glass band underneath (nw_compose_gl.c FS_BAR) — so these must
+ * be unambiguously bright: FS_KEYED discards a pixel only when ALL of r,g,b are within ~0.02 (of 1.0,
+ * ~5/255) of pure black, otherwise it is drawn fully opaque (no partial alpha under the key). */
+#define NW_GLASS_INK_FG   0xf0f5fc   /* crisp white: primary labels, clock, Start text */
+#define NW_GLASS_INK_MUT  0xaab4c4   /* muted-but-visible: inactive menu titles, pill rings */
+#define NW_GLASS_INK_FILL 0x3a4456   /* focused taskbar-button fill (brighter than the classic pill) */
+
 /* Runtime theme (set by the shell from settings.yaml; defaults match the compiled-in look).
  * Module-static because the per-window frame cache render (draw_window_to) and the live scene
  * compose both consult them without a server handle in scope. */
@@ -409,8 +417,18 @@ static void draw_nanomark(const struct nw_surface *s, int x, int y, int sz)
 static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
 {
 	int W = s->screen_w;
-	nw_blend_rect(back, 0, 0, W, NW_PANEL_H, COL_PANEL, 205);          /* translucent tint */
-	nw_blend_rect(back, 0, NW_PANEL_H - 1, W, 1, 0x9fb2cc, 140);        /* hairline */
+	/* Glass mode: the GL compositor already painted a dark-glass band + hairline UNDER this overlay
+	 * (nw_compose_gl.c's FS_BAR, drawn after the scene, before this ink is keyed on) — so leave the
+	 * background at the overlay's transparent key black and skip the CPU hairline (the GL one is the
+	 * physically-lit edge). Ink switches to bright colours that clear the chrome key (see
+	 * nw_compose_chrome / FS_KEYED: any RGB not within ~0.02 of pure black survives, fully opaque —
+	 * there is no partial alpha under the key, so ink must be unambiguously bright, not just tinted). */
+	if (!s_glass_frame) {
+		nw_blend_rect(back, 0, 0, W, NW_PANEL_H, COL_PANEL, 205);          /* translucent tint */
+		nw_blend_rect(back, 0, NW_PANEL_H - 1, W, 1, 0x9fb2cc, 140);        /* hairline */
+	}
+	uint32_t fg = s_glass_frame ? NW_GLASS_INK_FG : COL_PANEL_FG;
+	uint32_t mut = s_glass_frame ? NW_GLASS_INK_MUT : COL_PANEL_MUT;
 	int y = (NW_PANEL_H - NW_FONT_H) / 2;
 	if (s->menu_open && s->menu_which == NW_MENU_LOGO)               /* highlight the logo slot */
 		nw_fill_round(back, 2, 2, 26, NW_PANEL_H - 4, 5, COL_TB_TOP, 90);
@@ -422,19 +440,19 @@ static void draw_panel(const struct nw_server *s, const struct nw_surface *back)
 		const char *app = (s->focus >= 0 && s->win[s->focus].used)
 		                ? (s->win[s->focus].title[0] == '\x01' ? s->win[s->focus].title + 1
 		                                                       : s->win[s->focus].title) : "Nano OS";
-		nw_text(back, NW_MENU_X0, y, app && app[0] ? app : "Nano OS", COL_PANEL_FG);
+		nw_text(back, NW_MENU_X0, y, app && app[0] ? app : "Nano OS", fg);
 	}
 	for (int i = 0; i < n; i++) {
 		int x, w; nw_menubar_top_x(s, i, &x, &w);
 		int active = (s->menu_open && s->menu_which == i);
 		if (active) nw_fill_round(back, x, 2, w, NW_PANEL_H - 4, 5, COL_TB_TOP, 110);
 		char t[40]; nw_menu_top_title(spec, i, t, sizeof t);
-		nw_text(back, x + 7, y, t, i == 0 ? COL_PANEL_FG : COL_PANEL_MUT);   /* app name bold-ish */
+		nw_text(back, x + 7, y, t, i == 0 ? fg : mut);   /* app name bold-ish */
 	}
 
 	if (s->clock[0]) {                                               /* clock at the right */
 		int cw = 0; while (s->clock[cw]) cw++;
-		nw_text(back, W - cw * 8 - 12, y, s->clock, COL_PANEL_FG);
+		nw_text(back, W - cw * 8 - 12, y, s->clock, fg);
 	}
 }
 
@@ -462,15 +480,21 @@ static void draw_menu_dropdown(const struct nw_server *s, const struct nw_surfac
 static void draw_taskbar(const struct nw_server *s, const struct nw_surface *back)
 {
 	int W = s->screen_w, y0 = s->screen_h - NW_TASK_H;
-	nw_blend_rect(back, 0, y0, W, NW_TASK_H, COL_DOCK, 235);          /* the bar */
-	nw_blend_rect(back, 0, y0, W, 1, 0x9fb2cc, 170);                  /* top hairline */
+	/* Glass mode: background stays transparent-key black (the GL dark-glass band shows through) and
+	 * the top hairline is skipped (the GL band already draws its own, at the physically correct
+	 * lit edge) — see draw_panel's comment for the same rationale. */
+	if (!s_glass_frame) {
+		nw_blend_rect(back, 0, y0, W, NW_TASK_H, COL_DOCK, 235);          /* the bar */
+		nw_blend_rect(back, 0, y0, W, 1, 0x9fb2cc, 170);                  /* top hairline */
+	}
+	uint32_t fg = s_glass_frame ? NW_GLASS_INK_FG : COL_PANEL_FG;
 
 	/* Start button: the Nano OS "N" mark + "Start", highlighted while the Start menu is open. */
 	int bx, by, bw, bh;
 	nw_start_rect(s, &bx, &by, &bw, &bh);
 	if (s->menu_open && s->menu_from_start) nw_blend_rect(back, bx, by, bw, bh, s_accent, 130);
 	draw_nanomark(back, bx + 8, by + (bh - 16) / 2, 16);
-	nw_text(back, bx + 30, by + (bh - NW_FONT_H) / 2, "Start", COL_PANEL_FG);
+	nw_text(back, bx + 30, by + (bh - NW_FONT_H) / 2, "Start", fg);
 
 	/* one button per open window */
 	int n = nw_task_count(s);
@@ -480,12 +504,21 @@ static void draw_taskbar(const struct nw_server *s, const struct nw_surface *bac
 		const struct nw_window *w = &s->win[idx];
 		nw_taskbar_button_rect(s, i, &bx, &by, &bw, &bh);
 		int focused = (idx == s->focus) && !w->minimized;
-		nw_fill_round(back, bx + 3, by + 5, bw - 6, bh - 10, 6,
-		              focused ? 0x2b3650 : 0x1b2336, focused ? 255 : (w->minimized ? 120 : 205));
+		if (s_glass_frame) {
+			/* pills read as bright hairline rings over the dark glass band; the focused button also
+			 * gets a brighter fill so it stays "visibly highlighted" the way the classic pill was. */
+			if (focused) nw_fill_round(back, bx + 3, by + 5, bw - 6, bh - 10, 6, NW_GLASS_INK_FILL, 255);
+			nw_stroke_round(back, bx + 3, by + 5, bw - 6, bh - 10, 6, NW_GLASS_INK_MUT,
+			                w->minimized ? 140 : 255);
+		} else {
+			nw_fill_round(back, bx + 3, by + 5, bw - 6, bh - 10, 6,
+			              focused ? 0x2b3650 : 0x1b2336, focused ? 255 : (w->minimized ? 120 : 205));
+		}
 		const char *title = (w->title[0] == '\x01') ? w->title + 1 : w->title;
 		nw_fill_round(back, bx + 10, by + (bh - 10) / 2, 10, 10, 3, focused ? s_accent : 0x9fb2cc, 255);
 		char t[19]; int k = 0; for (; title[k] && k < (int) sizeof t - 1; k++) t[k] = title[k]; t[k] = 0;
-		nw_text(back, bx + 26, by + (bh - NW_FONT_H) / 2, t, focused ? 0xffffff : 0xc6d2e6);
+		nw_text(back, bx + 26, by + (bh - NW_FONT_H) / 2, t,
+		        focused ? (s_glass_frame ? NW_GLASS_INK_FG : 0xffffff) : (s_glass_frame ? NW_GLASS_INK_MUT : 0xc6d2e6));
 	}
 }
 

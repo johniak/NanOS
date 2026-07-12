@@ -321,15 +321,37 @@ static const char *FS_SHADOW =
 	"    gl_FragColor = vec4(0.016, 0.039, 0.094, a);\n"    /* rgba(4,10,24) */
 	"}\n";
 
+/* dark-glass menubar/taskbar band (Task 9): a flat frost tint, no bevel/lens — the bars are thin
+ * enough that a sharp sample + heavy dark tint + saturation reads as "smoked glass" without a real
+ * blur pass (see nw_gl_frame for why u_backdrop is a snapshot copy, not g_scene_tex itself). */
+static const char *FS_BAR =
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n"
+    "varying vec2 v_uv;\n"
+    "uniform highp vec4 u_rect;\n"
+    "uniform sampler2D u_backdrop;\n"    /* full-screen snapshot of the composited scene so far */
+    "uniform vec2  u_screen;\n"
+    "uniform float u_topline;\n"         /* +1: hairline at top edge (taskbar); -1: at bottom (menubar) */
+    "void main() {\n"
+    "    vec2 spx = u_rect.xy + v_uv * u_rect.zw;\n"
+    "    vec3 c = texture2D(u_backdrop, vec2(spx.x / u_screen.x, 1.0 - spx.y / u_screen.y)).rgb;\n"
+    "    float luma = dot(c, vec3(0.299, 0.587, 0.114));\n"
+    "    c = mix(vec3(luma), c, 1.35);\n"                     /* saturate like the dark slab */
+    "    c = mix(c, vec3(0.047, 0.067, 0.110), 0.42);\n"      /* rgba(12,17,28,.42) */
+    "    float edge = (u_topline > 0.0) ? v_uv.y : (1.0 - v_uv.y);\n"
+    "    c = mix(c, vec3(1.0), (1.0 - smoothstep(0.0, 1.5 / u_rect.w, edge)) * 0.15);\n"
+    "    gl_FragColor = vec4(c, 1.0);\n"
+    "}\n";
+
 /* ---- program handles + cached uniform locations ----------------------------------------------- */
 struct prog { GLuint id; GLint rect, screen; };
-static struct prog p_tex, p_blit, p_keyed, p_solid, p_blur, p_win, p_shadow;
+static struct prog p_tex, p_blit, p_keyed, p_solid, p_blur, p_win, p_shadow, p_bar;
 static GLint u_tex_tex, u_blit_tex, u_key_tex, u_key_key, u_solid_color;
 static GLint u_blur_tex, u_blur_dir, u_blur_uv0, u_blur_uvsize;
 static GLint u_win_content, u_win_backdrop, u_win_bd_scale, u_win_glass,
              u_win_size, u_win_radius, u_win_grab, u_win_sharp;
 static GLint u_win_client, u_win_caps, u_win_focus, u_win_dark, u_win_inkwin, u_win_debug;
 static GLint u_sh_wsize, u_sh_wradius, u_sh_wfocus;
+static GLint u_bar_backdrop, u_bar_topline;
 static float g_debug;   /* NWM_GLASS_DEBUG=1..4: 1 rim, 2 |offset|, 3 sharp grab, 4 blurred grab */
 
 static struct glkms g_kms;
@@ -446,7 +468,7 @@ int nw_gl_init(int screen_w, int screen_h)
 
 	if (link_prog(&p_tex, FS_TEX) || link_prog(&p_blit, FS_BLIT) || link_prog(&p_keyed, FS_KEYED) ||
 	    link_prog(&p_solid, FS_SOLID) || link_prog_vs(&p_blur, VS_FULL, FS_BLUR) ||
-	    link_prog(&p_win, FS_WIN) || link_prog(&p_shadow, FS_SHADOW)) {
+	    link_prog(&p_win, FS_WIN) || link_prog(&p_shadow, FS_SHADOW) || link_prog(&p_bar, FS_BAR)) {
 		nw_gl_shutdown(); return -1; }
 	u_tex_tex     = glGetUniformLocation(p_tex.id, "u_tex");
 	u_blit_tex    = glGetUniformLocation(p_blit.id, "u_tex");
@@ -475,6 +497,8 @@ int nw_gl_init(int screen_w, int screen_h)
 	u_sh_wsize     = glGetUniformLocation(p_shadow.id, "u_wsize");
 	u_sh_wradius   = glGetUniformLocation(p_shadow.id, "u_wradius");
 	u_sh_wfocus    = glGetUniformLocation(p_shadow.id, "u_wfocus");
+	u_bar_backdrop = glGetUniformLocation(p_bar.id, "u_backdrop");
+	u_bar_topline  = glGetUniformLocation(p_bar.id, "u_topline");
 
 	static const float uquad[] = { 0.f, 0.f,  1.f, 0.f,  0.f, 1.f,  1.f, 1.f };  /* triangle strip */
 	glGenBuffers(1, &g_vbo);
@@ -755,6 +779,34 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			glUseProgram(p_solid.id);
 			glUniform4f(u_solid_color, 0.f, 0.f, 0.f, 130.0f / 255.0f);
 			quad(&p_solid, 0, 0, (float) g_sw, (float) g_sh);
+		}
+
+		/* dark-glass menubar + taskbar bands (Task 9): drawn AFTER windows/modal-dim, BEFORE the CPU
+		 * chrome ink is keyed on next — so windows slide UNDER the bars, and the chrome labels/clock
+		 * (rendered key-black bg + bright ink in glass mode, see nw_compose_set_glass_frame) key
+		 * cleanly on top of them. Gated on !g_no_glass so NWM_NO_GLASS stays byte-identical to the
+		 * classic opaque bars (nw_compose.c's s_glass_frame branch is off in that mode too).
+		 *
+		 * FS_BAR samples a snapshot, NOT g_scene_tex directly: g_scene_fbo (g_scene_tex attached) is
+		 * still the bound render target here, and sampling a texture while it is the active FBO
+		 * attachment is undefined. Reuse g_grab — never FBO-attached, a plain glCopyTexSubImage2D
+		 * target already used this same way for the sharp window grab (fork-rule-safe, no new
+		 * textures/FBOs) — to snapshot each bar's rect at its OWN screen position (not the corner-
+		 * packed window-grab convention), so FS_BAR's plain spx/u_screen sampling maps 1:1. */
+		if (!g_no_glass) {
+			int topbar_h = NW_PANEL_H, taskbar_h = NW_TASK_H;
+			glBindTexture(GL_TEXTURE_2D, g_grab);
+			glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, g_sh - topbar_h, 0, g_sh - topbar_h,
+			                    g_sw, topbar_h);
+			glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, g_sw, taskbar_h);
+
+			glUseProgram(p_bar.id);
+			glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_grab);
+			glUniform1i(u_bar_backdrop, 0);
+			glUniform1f(u_bar_topline, -1.0f);            /* menubar: hairline at its bottom edge */
+			quad(&p_bar, 0.0f, 0.0f, (float) g_sw, (float) topbar_h);
+			glUniform1f(u_bar_topline, 1.0f);             /* taskbar: hairline at its top edge */
+			quad(&p_bar, 0.0f, (float) (g_sh - taskbar_h), (float) g_sw, (float) taskbar_h);
 		}
 
 		/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on BLACK (the transparent
