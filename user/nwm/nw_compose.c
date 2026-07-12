@@ -129,7 +129,13 @@ int nw_backdrop_wants_dark_ink(int x, int y, int w, int h, int prev)
 		n++;
 	}
 	if (!n) return prev >= 0 ? prev : 1;
+	/* The title sits on the light glass SLAB, not on the raw wallpaper: the slab's frost,
+	 * tint and sheen lift the backdrop by roughly a 45% coat of near-white before ink
+	 * lands on it (mockup: light windows carry dark ink + white glow even over a navy
+	 * wallpaper). Composite that lift into the sampled luma, then threshold — only a
+	 * genuinely near-black wallpaper flips a light window to light ink. */
 	int luma = (int) (acc / n);
+	luma = (luma * 115 + 235 * 141) >> 8;       /* luma*0.45 + 235*0.55 (sheen is strongest up top) */
 	if (prev == 1 && luma < 109) return 0;      /* hysteresis band 109..125 */
 	if (prev == 0 && luma > 125) return 1;
 	if (prev < 0) return luma > 117;

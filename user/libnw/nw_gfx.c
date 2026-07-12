@@ -442,6 +442,35 @@ void nw_stroke_round(const struct nw_surface *s, int x, int y, int w, int h, int
 	}
 }
 
+/* nw_over_ring: the 1px AA rounded ring of nw_stroke_round, but as a straight-alpha
+ * src-over write (glass ink) — a rim that can be BRIGHTER than the fill under it. */
+void nw_over_ring(const struct nw_surface *s, int x, int y, int w, int h, int r, uint32_t argb)
+{
+	if (r * 2 > w) r = w / 2;
+	if (r * 2 > h) r = h / 2;
+	/* straight edges */
+	nw_over_rect(s, x + r, y, w - 2 * r, 1, argb);
+	nw_over_rect(s, x + r, y + h - 1, w - 2 * r, 1, argb);
+	nw_over_rect(s, x, y + r, 1, h - 2 * r, argb);
+	nw_over_rect(s, x + w - 1, y + r, 1, h - 2 * r, argb);
+	if (r < 1) return;
+	int cx[4] = { x + r, x + w - r, x + r, x + w - r };
+	int cy[4] = { y + r, y + r, y + h - r, y + h - r };
+	for (int k = 0; k < 4; k++) {
+		int ox = (k & 1) ? cx[k] : cx[k] - r, oy = (k & 2) ? cy[k] : cy[k] - r;
+		for (int yy = 0; yy < r; yy++)
+			for (int xx = 0; xx < r; xx++) {
+				float dx = (ox + xx) + 0.5f - cx[k], dy = (oy + yy) + 0.5f - cy[k];
+				float d = __builtin_sqrtf(dx * dx + dy * dy);
+				int outer = edge_cov(d, r);           /* inside the outer arc */
+				int inner = edge_cov(d, r - 1);        /* inside the 1px-smaller arc */
+				int cov = outer - inner;               /* the 1px ring */
+				if (cov > 0) nw_over_pixel(s, ox + xx, oy + yy,
+					((uint32_t)(cov * (argb >> 24) / 255) << 24) | (argb & 0x00ffffffu));
+			}
+	}
+}
+
 /* In-place separable box blur. Bounded by the scissor/surface; `radius` px, `passes` times. */
 void nw_blur_rect(const struct nw_surface *s, int x, int y, int w, int h, int radius, int passes)
 {

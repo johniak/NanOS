@@ -96,6 +96,7 @@ void nw_vgrad_rect(const struct nw_surface *s, int x, int y, int w, int h,
  * nw_stroke_round draws a 1px AA border instead of filling. */
 void nw_fill_round(const struct nw_surface *s, int x, int y, int w, int h, int r,
                    uint32_t rgb, int a);
+void nw_over_ring(const struct nw_surface *s, int x, int y, int w, int h, int r, uint32_t argb);
 void nw_stroke_round(const struct nw_surface *s, int x, int y, int w, int h, int r,
                      uint32_t rgb, int a);
 
