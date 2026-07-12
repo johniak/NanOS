@@ -45,13 +45,18 @@ QPID=$!
 trap 'kill -9 "$QPID" 2>/dev/null; rm -f "$MON"' EXIT
 echo "smoke-virtio-gpu-gl: QEMU pid=$QPID serial=$SER"
 
-for i in $(seq 1 180); do grep -q "nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
-grep -q "nanos login:" "$SER" 2>/dev/null || { echo "FAIL: never reached login"; tail -25 "$SER"; exit 1; }
+# wait for the VT7 greeter to be spawned (its tty7 line), not just the tty1 getty banner —
+# a ctrl-alt-f7 sent before the greeter accepts input gets swallowed and the typed
+# credentials land on tty1's login prompt instead (the classic flaky-gate failure).
+for i in $(seq 1 180); do grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null && break; sleep 1; done
+grep -q "tty7 greeter\|nanos login:" "$SER" 2>/dev/null || { echo "FAIL: never reached login"; tail -25 "$SER"; exit 1; }
+sleep 3   # give the greeter a beat to start reading the keyboard
 
-# drive the graphical VT login (jan/jan on F7), same as smoke-vt / smoke-virtio-gpu
-MON="$MON" python3 - <<'PY'
+# drive the graphical VT login (jan/jan on F7); retry once if the desktop doesn't come up —
+# the first attempt can race the greeter's input loop.
+SER="$SER" MON="$MON" python3 - <<'PY'
 import socket,time,os
-MON=os.environ["MON"]; s=None
+SER=os.environ["SER"]; MON=os.environ["MON"]; s=None
 for _ in range(30):
     try: s=socket.socket(socket.AF_UNIX); s.connect(MON); break
     except Exception: time.sleep(0.3); s=None
@@ -62,12 +67,30 @@ def key(k): cmd("sendkey "+k); time.sleep(0.06)
 def typ(w):
     for c in w: key(c); time.sleep(0.03)
     key("ret")
-cmd("sendkey ctrl-alt-f7"); time.sleep(6)
-typ("jan"); time.sleep(4)
-typ("jan"); time.sleep(2)
+def desktop_up(deadline):
+    while time.time() < deadline:
+        try:
+            if "nwm: GL compositor active" in open(SER, errors="ignore").read(): return True
+        except OSError: pass
+        time.sleep(2)
+    return False
+# The greeter can take a couple of minutes (TCG) before the VT switch + login land;
+# a fixed one-shot timing budget is the classic flaky failure. Keep retrying the whole
+# sequence until the compositor reports in, within a generous overall deadline.
+deadline = time.time() + 300
+attempt = 0
+while time.time() < deadline:
+    attempt += 1
+    key("ret")                       # clear any half-typed tty1 line from a lost switch
+    cmd("sendkey ctrl-alt-f7"); time.sleep(7)
+    typ("jan"); time.sleep(4)
+    typ("jan"); time.sleep(2)
+    if desktop_up(time.time() + 30):
+        print("desktop up (attempt %d)" % attempt); break
+    print("desktop not up after attempt %d, retrying" % attempt)
 s.close()
 PY
-sleep 12   # let the desktop compose + present a few GL frames
+sleep 8   # let the desktop compose + present a few GL frames
 
 fail=0
 assert_ser() { grep -q "$1" "$SER" 2>/dev/null && echo "  ok: $1" || { echo "  MISSING: $1"; fail=1; }; }
