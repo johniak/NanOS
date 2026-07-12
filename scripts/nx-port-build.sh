@@ -155,6 +155,11 @@ toybox)
 	#  3. strip a trailing ".nxe" from argv[0] before applet dispatch — NanOS runs programs as
 	#     "<name>.nxe", so basename(argv[0]) is e.g. "login.nxe"; toy_find needs "login".
 	sed -i "/#include <sys\/mount.h>/a #include <sys/statfs.h>" lib/portability.h
+	#  4. declare dprintf: the symbol lives in libc.ndl (syscalls.c) but neither picolibc's
+	#     <stdio.h> nor compat-decls.h declares it (the bash port removed the global decl —
+	#     bash's externs.h has a clashing void-returning one), and gcc14 makes the implicit
+	#     declaration in lib/password.c a hard error.
+	sed -i "/#include <sys\/statfs.h>/a int dprintf(int, const char *, ...);" lib/portability.h
 	sed -i "s/#if defined(__linux__)/#if defined(__linux__) || defined(__nanos__)/g" lib/portability.c
 	sed -i "s@char \*ss = basename(s);@char *ss = basename(s); {char*_d=strstr(ss,\".nxe\"); if(_d\&\&!_d[4])*_d=0;}@" main.c
 	# Minimal config: everything off (allnoconfig), then enable the multiplexer + SUID handling +
@@ -186,6 +191,9 @@ sudo)
 	ac_cv_c_bigendian=no
 	ac_cv_func_killpg=yes
 	ac_cv_func_getopt_long=yes
+	ac_cv_func_setresuid=yes
+	ac_cv_func_setreuid=yes
+	ac_cv_func_seteuid=yes
 	EOF
 	./configure --host="$HOST_TRIPLE" --build=x86_64-pc-linux-gnu \
 		--disable-shared --enable-static-sudoers --disable-nls --without-pam --without-ldap \

@@ -277,12 +277,17 @@ PING_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(PING_TRIPLE)/lib/crt0.o"; cp 
 # resolve real functions strictly from libc.a, data from the stub, and absent symbols fail —
 # without it, every AC_CHECK_FUNC passes and gnulib misdetects MSVC/getgrouplist/... and breaks.
 PING_PRECMD   = NM=$(PING_TRIPLE)-nm CONFTEST_STUB_CC=$(PING_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(PING_TRIPLE)/lib &&
+# For build=make recipes (darkhttpd): x86_64 objects need the small-model/no-PIC set + the
+# data-import shim, spliced into the recipe's CFLAGS as $${NXPORT_EXTRA_CFLAGS} (nanos-port
+# defaults it empty for i686).
+NXPORT_XCFLAGS = -e NXPORT_EXTRA_CFLAGS="-fno-pie -fno-PIC -mcmodel=small -mno-red-zone -include nx-dllimport.h"
 else
 PING_TRIPLE  := i686-nanos
 PING_PORT_ENV =
 PING_PREREQ   = @true
 PING_STARTUP  = true
 PING_PRECMD   =
+NXPORT_XCFLAGS =
 endif
 ping: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
@@ -312,16 +317,22 @@ ping: bin/libc.ndl bin/libc.ndl.a
 # Manifest at $(SDK_WORK)/wget-port. `make image` never depends on this.
 WGET_PORT   := $(SDK_WORK)/wget-port
 wget: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(WGET_PORT)/nxport.toml"     || { echo "wget port not found at $(WGET_PORT)/nxport.toml"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	@test -f "$(SDK_TC)/$(PING_TRIPLE)/lib/libssl.a" || { echo "libssl.a not in the $(PING_TRIPLE) sysroot — run 'make ARCH=$(ARCH) openssl' first"; exit 1; }
+	# ARCH-AWARE via the PING_* variables (same triple/env/prereq set; nxport.toml resolves
+	# the openssl sysroot through $${NX_HOST}, which nanos-port defaults + expands).
+	$(PING_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(PING_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
+	$(PING_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(WGET_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	  -e SDK=/sdk $(PING_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(WGET_PORT)/wget.nxe" $(BINFOLDER)wget.nxe
 	@echo "staged $(BINFOLDER)wget.nxe — run 'make image' to install it into /nanos/bin"
 
@@ -357,16 +368,20 @@ git: bin/libc.ndl bin/libc.ndl.a
 # hooks/post_build.sh mknx's the extra binaries. Same reproducible flow as ping/wget.
 SERVICES_PORT := $(SDK_WORK)/inetutils-services-port
 inetd: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(SERVICES_PORT)/nxport.toml"  || { echo "inetutils services port not found at $(SERVICES_PORT)/nxport.toml"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	# ARCH-AWARE via the PING_* variables (same inetutils source family, same triple/env/prereq).
+	$(PING_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(PING_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
+	$(PING_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(SERVICES_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	  -e SDK=/sdk $(PING_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(SERVICES_PORT)/inetd.nxe" $(BINFOLDER)inetd.nxe
 	@for b in telnetd telnet ifconfig traceroute; do \
 	  test -f "$(SERVICES_PORT)/$$b.nxe" && cp "$(SERVICES_PORT)/$$b.nxe" $(BINFOLDER)$$b.nxe && echo "  staged $$b.nxe" || true; \
@@ -377,16 +392,21 @@ inetd: bin/libc.ndl bin/libc.ndl.a
 # nanos-sdk from $(HTTPD_PORT)/nxport.toml (build=make, -DNO_IPV6). Same reproducible flow.
 HTTPD_PORT := $(SDK_WORK)/darkhttpd-port
 httpd: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(HTTPD_PORT)/nxport.toml"     || { echo "darkhttpd port not found at $(HTTPD_PORT)/nxport.toml"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	# ARCH-AWARE via the PING_* variables; build=make, so the x86_64 flag set arrives through
+	# $(NXPORT_XCFLAGS) -> the recipe's $${NXPORT_EXTRA_CFLAGS} splice (no config.h to shim).
+	$(PING_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(PING_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
+	$(PING_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(HTTPD_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	  -e SDK=/sdk $(PING_PORT_ENV) $(NXPORT_XCFLAGS) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(HTTPD_PORT)/darkhttpd.nxe" $(BINFOLDER)darkhttpd.nxe
 	@echo "staged $(BINFOLDER)darkhttpd.nxe — run 'make image' to install it into /nanos/bin"
 
@@ -627,16 +647,21 @@ dropbear: bin/libc.ndl bin/libc.ndl.a
 BB_DIR := $(SDK_WORK)/busybox-1.36.1
 udhcpc: bin/libc.ndl bin/libc.ndl.a
 	@test -f "$(BB_DIR)/nanos-build.sh" || { echo "busybox not set up at $(BB_DIR) (extract busybox-1.36.1 + nanos-build.sh)"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
-	docker run --rm -v "$(SDK_WORK)":/work \
+	# ARCH-AWARE via the PING_* variables; nanos-build.sh reads NX_HOST for the cross triple
+	# and adds the x86_64 small-model/no-PIC/data-import flags itself.
+	$(PING_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(PING_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
+	$(PING_STARTUP)
+	docker run --rm -v "$(SDK_WORK)":/work $(PING_PORT_ENV) \
 	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/busybox-1.36.1 nanos-sdk-dev:latest bash -c '\
-	    test -f /work/toolchain/i686-nanos/lib/libm.a || i686-nanos-ar rcs /work/toolchain/i686-nanos/lib/libm.a; \
+	    test -f /work/toolchain/$(PING_TRIPLE)/lib/libm.a || $(PING_TRIPLE)-ar rcs /work/toolchain/$(PING_TRIPLE)/lib/libm.a; \
 	    rm -f busybox busybox_unstripped networking/udhcp/built-in.o; \
-	    bash nanos-build.sh && i686-nanos-mknx busybox_unstripped udhcpc.nxe --need libc.ndl'
+	    bash nanos-build.sh && $(PING_TRIPLE)-mknx busybox_unstripped udhcpc.nxe --need libc.ndl'
 	cp "$(BB_DIR)/udhcpc.nxe" $(BINFOLDER)udhcpc.nxe
 	@echo "staged $(BINFOLDER)udhcpc.nxe — run 'make image' to install it into /nanos/bin"
 

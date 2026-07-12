@@ -13,6 +13,9 @@
 #ifndef NX_GETOPT_IMPORT_H
 #define NX_GETOPT_IMPORT_H
 
+/* CFLAGS-spliced (-include); .S files must see a no-op (busybox feeds CFLAGS to assembly). */
+#ifndef __ASSEMBLER__
+
 #include <unistd.h>
 #include <getopt.h>
 
@@ -25,5 +28,7 @@ extern int   *__imp_optopt;
 #define optind (*__imp_optind)
 #define opterr (*__imp_opterr)
 #define optopt (*__imp_optopt)
+
+#endif /* !__ASSEMBLER__ */
 
 #endif

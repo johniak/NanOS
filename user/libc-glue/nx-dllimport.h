@@ -16,6 +16,10 @@
 #ifndef NX_DLLIMPORT_H
 #define NX_DLLIMPORT_H
 
+/* Ports splice this into CFLAGS (-include), and some builds (busybox) feed CFLAGS to .S
+ * files too — C declarations are "no such instruction" to the assembler. No-op there. */
+#ifndef __ASSEMBLER__
+
 /* picolibc's ctype classification table `_ctype_b` is a const DATA export of libc.ndl, and
  * the ctype macros (isalpha/isdigit/...) index it by address. Route it through its dllimport
  * slot like the stream/errno data below. This MUST come before any <ctype.h> is pulled in:
@@ -45,10 +49,18 @@ extern char ***__imp_environ;
 #define stderr  (*__imp_stderr)
 #define environ (*__imp_environ)
 
+/* h_errno is the resolver's DATA export (libc-glue resolv.c). Same RIP-relative problem as
+ * the streams; same slot treatment. A later `extern int h_errno;` in <netdb.h> expands to a
+ * compatible redeclaration of the slot. */
+extern int *__imp_h_errno;
+#define h_errno (*__imp_h_errno)
+
 /* errno is NOT a data slot: picolibc is built with -Derrno-function=__errno_location, so
  * <errno.h> already expands `errno` to `(*__errno_location())`. __errno_location is an
  * ordinary FUNCTION export of libc.ndl (glue: tls.c) the loader resolves like any code
  * symbol, returning &__pthread_self()->__errno — a per-thread cell. Nothing to redirect
  * here; we deliberately do NOT #undef/redefine errno (the old `__imp_errno` slot is gone). */
+
+#endif /* !__ASSEMBLER__ */
 
 #endif
