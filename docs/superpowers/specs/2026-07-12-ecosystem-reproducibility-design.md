@@ -139,6 +139,20 @@ only compositor, i915 auto-arm on hardware detection, single `run64` / `flash-de
 the original request; it becomes safe to hard-depend `image64` on Mesa only once mesa-nanos
 exists. Separate spec/plan after step zero lands.
 
+## Relation to the existing "buildable from scratch" plan chain
+
+The 2026-07-02 spec (`2026-07-02-buildable-from-scratch-design.md`) and its plans
+(`2026-07-02-plan-1-repo-reorg-manifest-bootstrap`, `2026-07-02-plan-2-make-world-building-docs`,
+`2026-07-04-gl-userspace-refactor`, `2026-07-04-host-reproducibility-macos-ubuntu`) attack the
+same reproducibility problem. **This spec supersedes their answer to "where do port recipes
+live":** Plan 1 put recipes in `nanos-sdk/ports/<name>/` with a `nanos-fetch` materializer,
+and the GL-refactor plan rescued mesa recipes into `ports/mesa-gl/`; the decision now is
+**per-upstream forks carrying their own recipes** (this document). Everything else in that
+chain remains valid and complementary — `make world`, BUILDING.md, the build server / CI
+plans, the Ubuntu host story — and `bootstrap.sh` + the manifest described here fill the same
+role Plan 1's manifest did, just pointing at forks instead of an in-sdk ports tree. The plans
+index (`docs/superpowers/plans/README.md`) must be updated to reflect this supersession.
+
 ## Risks / notes
 
 - `qemu-src` has no git history; the fork base is reconstructed from `qemu.tar.gz`. If the
