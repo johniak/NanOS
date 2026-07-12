@@ -202,17 +202,20 @@ kompozytorem CPU — kluczowane ramki szkła są bez sensu bez shadera slabu GL,
 Każde szklane okno (i chrome pulpitu wokół niego) rysuje jeden fragment shader, `FS_WIN` w
 `nw_compose_gl.c`, jako pojedynczą przezroczystą "taflę" (slab), a nie płaski rozmyty prostokąt:
 
-- **SDF zaokrąglonego prostokąta** (`sd_box`) daje odległość ze znakiem do krawędzi okna. Pas ~14 px
-  (`BEVEL`) tuż przy tej krawędzi to "pierścień soczewki": tam shader przesuwa próbkę tła *na
-  zewnątrz* wzdłuż gradientu SDF (do 12 px przy pełnym fokusie, łagodniej gdy okno nie jest aktywne) i
-  próbkuje kanały R/G/B przy odrobinę różnych przesunięciach, dając chromatyczne obrzeże refrakcji —
-  to właśnie "płynny" wygląd krawędzi. Poza pierścieniem ciało okna pokazuje po prostu płaskie,
-  rozmyte na GPU tło (mróz/frost). Fazowanie niesie też górno-lewy błysk specularny (wektor `LIGHT`)
-  oraz parę 1-pikselowych linii włosowych: ciemną zewnętrzną i białą wewnętrzną — dzięki temu tafla
-  wygląda jak oświetlona, zakrzywiona szyba, a nie efekt malarski.
-- Na zsoczewkowane/zmrożone ciało nakładany jest **tint**: bladoniebieski Aero przy fokusie, bledszy
-  i gęstszy szary bez fokusu, a dla okien `NW_STYLE_DARK` — prawie czarny tint o większej gęstości; to
-  właśnie daje Terminalowi jego ciemny, szklany wygląd.
+- **SDF zaokrąglonego prostokąta** (`sd_box`) daje odległość ze znakiem `d` do krawędzi okna. Pas ~14 px
+  (`BEVEL`) tuż przy tej krawędzi to "pierścień soczewki", zbudowany z przepisu soczewki w stylu macOS
+  (v3, §9.1.1 niżej): profil nachylenia po łuku koła, przesunięcie small-angle-Snell *do wewnątrz*
+  (które próbkuje treść głębiej — czyli powiększa to, co jest przy krawędzi), aberracja chromatyczna i
+  rozjaśnienie kaustyczne. Poza pierścieniem ciało okna pokazuje po prostu płaskie, rozmyte na GPU tło
+  (mróz/frost), samo lekko wygięte, żeby przejście soczewka→mróz się nie ścinało. Fazowanie niesie też
+  górno-lewy błysk specularny + obrzeże Fresnela oraz parę 1-pikselowych linii włosowych: ciemną
+  zewnętrzną i białą wewnętrzną — dzięki temu tafla wygląda jak oświetlona, zakrzywiona szyba, a nie
+  efekt malarski.
+- Na zsoczewkowane/zmrożone ciało nakładany jest **wzmocnienie nasycenia + przekątny gradient tintu**
+  (v3, §9.1.1): wyższe nasycenie i chłodny niebiesko-biały gradient przy fokusie, płaściej/bledziej bez
+  fokusu, a dla okien `NW_STYLE_DARK` — prawie czarny gradient o większej gęstości; to właśnie daje
+  Terminalowi jego ciemny, szklany wygląd. Na wierzchu jedzie przekątny połysk Aero (miękki biały blask
+  w górnych ~40%).
 - **Kule podpisów** (caption spheres) — żółta / zielona / czerwona szklana kulka, każda z własną
   mini-soczewką, punktem specularnym i kaustyką — są rysowane przez ten sam shader dokładnie nad
   klasycznymi slotami trafień close/maximize/minimize (czerwona w zewnętrznym rogu, jak przed
@@ -223,12 +226,13 @@ Każde szklane okno (i chrome pulpitu wokół niego) rysuje jeden fragment shade
 **Dwa kontrakty atramentu (ink)** decydują, co liczy się jako nieprzezroczysty "atrament" nad taflą
 szkła, oba liczone w tym samym shaderze:
 
-1. **Atrament pasa ramki** (belka tytułu + obramowania, wszystkie okna): renderer CPU 2D kluczuje cały
-   pas na czystą czerń (`nw_compose_set_glass_frame(1)` w `nw_compose.c`) i rysuje w nim tylko
-   wyśrodkowany, jarzący się tytuł. Shader traktuje każdy teksel, którego najjaśniejszy kanał jest ≥
-   ~0,10 (`smoothstep(0.02, 0.10, max(r,g,b))`), jako atrament i kompozytuje go wprost nad gotowym
-   szkłem; reszta pozwala szkłu prześwitywać. To klucz luminancji, nie kanał alfa — patrz "Znane
-   kompromisy" w planie liquid-glass, dlaczego prawie czarny tekst tytułu nie jest reprezentowalny.
+1. **Atrament pasa ramki** (belka tytułu + obramowania, wszystkie okna): renderer CPU 2D czyści cały pas
+   do w pełni przezroczystego płótna ARGB (`nw_compose_set_glass_frame(1)` w `nw_compose.c` +
+   `nw_clear_argb`) i rysuje w nim tylko wyśrodkowaną poświatę tytułu Aero prawdziwymi prymitywami
+   alfa (§9.1.2 niżej). Shader czyta tę alfę wprost — `ctex.a` — jako pokrycie atramentu i kompozytuje
+   ją nad gotowym szkłem; to zastąpiło klucz luminancji z v1/v2 (`smoothstep` na najjaśniejszym kanale),
+   który nie potrafił reprezentować prawie czarnego tekstu tytułu. Atrament pasa to teraz prawdziwa
+   alfa, więc przetrwa dowolny kolor atramentu (także ciemny).
 2. **Atrament klienta** dla okien `NW_STYLE_GLASS_CLIENT`: piksele klienta to `0xAARRGGBB` — górny bajt
    to prawdziwa alfa, kontrolowana przez aplikację per piksel — a shader robi `mix(glass, content,
    alpha)` wewnątrz prostokąta klienta. Okna klasyczne (styl 0, domyślny z `nw_create_window`)
@@ -244,12 +248,137 @@ szkła, oba liczone w tym samym shaderze:
 `NW_BORDER` wynosi 6 px (wcześniej 2 px, przed szkłem) — wystarczająco, by pierścień soczewki fazowania
 czytał się jako odrębny pas wokół klasycznej szerokości ramki.
 
+#### 9.1.1 Przepis soczewki krawędzi + przebieg cienia (v3)
+
+Rim w `FS_WIN` przeszedł przez v2 (stylizowane przesunięcie kwadratowe), a potem przepisanie w v3 na
+konsensusowy przepis "soczewki macOS" (stałe na górze `FS_WIN` w `nw_compose_gl.c`):
+
+- `x = clamp(1.0 + d/BEVEL, 0, 1)` — 0 głęboko wewnątrz tafli, 1 dokładnie na krawędzi.
+- `s = x / sqrt(max(1 - x*x, 0.0625))` — nachylenie profilu po łuku koła, przycięte od dołu, żeby
+  piksel na krawędzi nie eksplodował w tęczowy szum (maks. nachylenie 4.0).
+- `bend = s * (1 - 1/IOR) * thick` px — przesunięcie small-angle-Snell wzdłuż wewnętrznego gradientu
+  SDF (`IOR = 1.50`); `thick` (14–26 px) skaluje się z mniejszym wymiarem okna oraz z `u_focus` (szkło
+  bez fokusu jest cieńsze/łagodniejsze). Próbkowanie *do wewnątrz* o `bend` px to właśnie to, co
+  powiększa treść blisko krawędzi (odpowiada "treść przy krawędzi wygląda na wypchniętą na zewnątrz").
+- `ca = g * (s * CA_PX)` (`CA_PX = 2.5`) przesuwa próbki R i B w przeciwnych kierunkach względem próbki
+  G — obrzeże aberracji chromatycznej.
+- `glass *= 1.0 + CAUSTIC * s * 0.25` (`CAUSTIC = 0.25`) rozjaśnia krawędź proporcjonalnie do
+  nachylenia — kaustyka "światło koncentruje się na krawędzi".
+- Samo mieszanie soczewka/mróz to `lens = smoothstep(0.0, 0.7, x)`, `mix(body, ring, lens)`, gdzie
+  `body` (płaski mróz) też próbkuje z tłumionym `bend * 0.35`, żeby granica soczewka→mróz się nie ścinała.
+- Pseudo-3D normalna `N = normalize(vec3(g*s, 1))` względem stałego kierunku światła (`LIGHT`) napędza
+  błysk specularny; `fres = pow(x, 2.5) * 0.4` to rozjaśnienie krawędzi w stylu Fresnela (Sorrell).
+
+**Materiał tafli** (ten sam shader, zaraz po soczewce): nasycenie `mix(mix(1.0, 1.65, u_focus), 1.35,
+u_dark)` na kolorze po soczewkowaniu; trzy-stopniowy przekątny gradient tintu (fokus/brak
+fokusu/ciemny mają własne kolory+alfy stopni, przepisane z CSS makiety); przekątny połysk Aero
+(`rgba(255,255,255,.34→.10→0)`, o połowę mniejszy bez fokusu, ~0,41× dla ciemnego); potem linie
+włosowe zewnętrzna/wewnętrzna (`rgba(8,16,30,.55)` zewnętrzna, biała `.62` wewnętrzna, wzmocniona do
+`~.85` na samej górnej krawędzi).
+
+**Cienie okien (drop shadows)** to osobny program (`FS_SHADOW`), rysowany jako jeden powiększony quad
+*przed* quadem `FS_WIN` każdego szklanego okna (`nw_gl_frame`, bramkowane na `glass`): analityczny,
+miękki SDF-owy prostokąt, dopełniony `SH_PAD = 36` px poza ramką z każdej strony i przesunięty
+`SH_OFFY = 10` px w dół, zanikający na `20–30` px (głębiej/szerzej przy fokusie) do szczytowej alfy
+`0,60` przy fokusie / `0,42` bez fokusu, kolor `rgba(4,10,24)` — dwuwarstwowy cień z makiety zwinięty
+w jeden miękki analityczny zanik. Bez nowych tekstur/FBO (reguła forka): to program tylko-rysujący,
+współdzielący `VS_QUAD`.
+
+#### 9.1.2 Poświata tytułu + automatyczna polaryzacja atramentu
+
+v1 rysowała pasek tytułu jako 8-kopiową poświatę ±1px; v3 zastępuje ją prawdziwą poświatą Aero, wciąż
+renderowaną na CPU, ale teraz prawdziwą-alfą (`draw_caption_glow` w `nw_compose.c`):
+
+1. Zrasteryzuj pokrycie glifów tytułu raz do lokalnego bufora bajtowego (`rasterize_run_coverage`, ten
+   sam przebieg glifów co `nw_text`/`nw_text_argb`, ze świadomością fallbacku VGA).
+2. Rozmyj to box-blurem dwukrotnie (running-sum, promień `GLOW_R = 6`, potem `GLOW_R/2`) — tani
+   ~Gauss.
+3. Skomponuj najpierw rozmytą "kartkę" (gain `4` przy fokusie / `2` bez fokusu, alfa z limitem) w
+   jasnym lub ciemnym kolorze poświaty, potem ostry rdzeń po remapie `cov143` na wierzchu (przyciemniony
+   do `78%` alfy bez fokusu) — oba przez `nw_over_pixel` (prawdziwa alfa), więc miękkie obrzeże poświaty
+   przetrwa aż do odczytu `ctex.a` w shaderze GL (§9.1 wyżej). Tytuły dłuższe niż `GLOW_MAXW - 4*GLOW_R`
+   (~470 px) są przycinane do statycznego bufora poświaty.
+4. **Polaryzacja** — jasna poświata + ciemny rdzeń nad jasnym tłem, albo ciemna poświata + jasny rdzeń
+   nad ciemnym — pochodzi z `nw_backdrop_wants_dark_ink(x, y, w, h, prev)`: rzadka próbka 8×2 tapety
+   pod paskiem tytułu, luminancja w przestrzeni gamma, próg ~117 z pasmem histerezy `109..125`, żeby
+   okno przeciągane przez granicę jasnej/ciemnej tapety nie migotało. Okna `NW_STYLE_DARK` (Terminal)
+   zawsze wymuszają jasny rdzeń, niezależnie od próbkowanego tła. Decyzja per-okno jest cache'owana w
+   `w->ink_dark` (int8, `-1` = nieustawione) i odświeżana raz na brudne przerenderowanie w
+   `nw_render_dirty_frames`, nie co klatkę.
+
+#### 9.1.3 Jasno-szklane wnętrza (libnwui)
+
+`NW_STYLE_GLASS_CLIENT` rozciąga się poza pas ramki w obszar klienta: `nwui_open_style(title, w, h,
+NW_STYLE_GLASS_CLIENT)` (libnwui) otwiera okno, którego toolkit maluje się w **trybie szklanym** zamiast
+klasycznego nieprzezroczystego tła papieru — `nwui_open(title, w, h)` to po prostu
+`nwui_open_style(..., 0)`.
+
+- Okno czyści się do w pełni przezroczystego płótna ARGB (`nw_clear_argb`, nie `nw_fill_rect`), a każdy
+  widget maluje przez rodzinę prymitywów prawdziwej-alfy dodaną w tym celu (`user/libnw/nw_gfx.{c,h}`):
+  `nw_clear_argb`, `nw_over_pixel/rect/round` (src-over, które też akumuluje alfę celu) oraz
+  `nw_text_argb` (glify przez ten sam remap gamma `cov143` co klasyczny tekst, skalowane przez alfę
+  koloru atramentu). Dowolne wywołanie maskowane-RGB (`nw_fill_*`, `nw_blend_*`, `nw_draw_char_t`)
+  zawsze zapisuje alfę 0, co pod shaderem GL czyniłoby ten piksel niewidzialnym — więc w trybie
+  szklanym każde malowanie w obrębie widgetu idzie ścieżką ARGB, nie tylko te, które dostają nowy kolor.
+- Paleta (`nwui_paint.c`, prawdziwe ARGB) mapuje język atramentu/scrimów makiety na toolkit: `GCOL_INK`
+  (`#17222f`) / `GCOL_INK_SOFT` (to samo przy 62%) dla tekstu, `GCOL_SCRIM` (biel 25%) dla ciał paneli,
+  `GCOL_FIELD` (biel 50%) dla studni pól/list/textarea, `GCOL_SEL`/`GCOL_SEL_RING` (biel 22%/35%) dla
+  pigułki zaznaczenia + jej wcięcia, `GCOL_BTN_TOP/BOT/RING` dla pigułek przycisków. Dwie z nich zostały
+  dostrojone w przebiegu zgodności Zadania 10, nie zostawione na dosłownych liczbach z CSS makiety:
+  `GCOL_FIELD` podniesiono z nominalnych 35% makiety, bo studnia oparta na silniejszym
+  nasyceniu/tincie tafli v3 nadal czytała się wyraźnie niebiesko przy 35%; a alfa pierścienia fokusu
+  używana przez każdą studnię (`argb_op(COL_TF_FOC, ...)`, było 200/255) została *obniżona* do 90/255 —
+  `glass_ring` (niżej) kompozytuje pierścień na CAŁYM obszarze zanim wejdzie wypełnienie wcięte, więc
+  prawie nieprzezroczysty niebieski pierścień akcentu pod przezroczystym białym wypełnieniem składa się
+  w wynik dużo bardziej niebieski i nieprzezroczysty, niż sugerowałaby którakolwiek alfa z osobna; to
+  samo składanie jest powodem, dla którego `GCOL_SEL`/`GCOL_SEL_RING` zostały obniżone z dosłownych
+  35%/50% makiety (ich wnętrze składa się bliżej zamierzonych ~35% dopiero gdy sam pierścień jest niższy).
+- `glass_ring(s, x, y, w, h, r, ring, fill)` udaje przezroczysty 1px obrys (nie ma prawdziwej-alfy
+  odpowiednika `nw_stroke_round`): wypełnia CAŁY prostokąt kolorem `ring`, potem wypełnia wnętrze
+  (wcięte o 1px) kolorem `fill`, zostawiając widoczny 1px pas `ring` na krawędzi. Ponieważ oba
+  wypełnienia to prawdziwe kompozycje alfa (nie nadpisania nieprzezroczyste), dowolne dwa kolory podane
+  tutaj składają się na zachodzeniu — patrz uwaga o palecie wyżej, zanim dostroisz któryś z argumentów
+  z osobna.
+- Kontenery ogólne (row/column/box) z tłem ustawionym przez aplikację (`n->has_bg`, np.
+  `.colors(fg, bg)`) miały lukę w mapowaniu: tryb szklany wymuszał alfę 255 na `n->bg`, więc każdy panel
+  autorstwa aplikacji (pasek boczny Plików, pasek stanu) renderował się w pełni nieprzezroczyście,
+  łamiąc ciągłość tafli szkła. Naprawiony kontrakt (przypadek domyślny w `nwui_paint.c`): kolor
+  **legacy** `0xRRGGBB` (górny bajt 0 — zwykłe, sprzed-szkła wywołanie `.colors()`) kompozytuje się jako
+  przezroczysty scrim przy alfie `0x59`, zgodnie z ogólną alfą pól/paneli; kolor z **niezerowym** górnym
+  bajtem jest honorowany dosłownie — aplikacja dokonała jawnego wyboru alfy. Okna legacy (nie-szklane)
+  są nietknięte w obu przypadkach.
+- Ikony PNG w stylu `NWUI_ICON_KEY` mieszają swoją prawdziwą alfę per-piksel przez `nw_over_pixel` w
+  trybie szklanym (`nw_blend_pixel` w legacy) — alfa ikon nigdy nie przechodzi przez LUT glifów
+  `cov143`.
+- Fallback CPU (`NWM_NO_GL=1`): klasyczny kompozytor ignoruje górny bajt alfy, więc płótno aplikacji w
+  stylu szklanym pokazuje się na czarno wszędzie, gdzie malowała ścieżką ARGB (przezroczystość →
+  zapisana jako `0x000000`); każdy piksel atramentu wciąż niesie własne nieprzezroczyste RGB, więc
+  tekst/ikony pozostają w pełni czytelne na tym czarnym płótnie. Akceptowane ograniczenie kosmetyczne
+  fallbacku, nie błąd.
+
+#### 9.1.4 Ciemno-szklane pasy menu i zadań
+
+Górny pasek i pasek zadań chrome pulpitu dostają ten sam ciemno-szklany materiał co okno
+`NW_STYLE_DARK`, przez trzeci program, `FS_BAR` (płaski mróz, bez fazowania/soczewki — paski są na tyle
+cienkie, że ostra próbka + mocny tint + nasycenie czyta się jako mrożone szkło bez prawdziwego przebiegu
+blura): nasycenie `1,35`, tint w stronę `rgba(12,17,28)` przy gęstości `,42`, plus 1px linia włosowa na
+tej krawędzi, która graniczy z pulpitem (`u_topline` wybiera górę vs. dół). Oba quady pasów są rysowane w
+`nw_gl_frame` *po* oknach/przyciemnieniu modalnym i *przed* nałożeniem kluczowanej nakładki chrome CPU —
+więc okna widocznie wsuwają się **pod** paski, a atrament chrome (jasne kolory w trybie szklanym:
+`NW_GLASS_INK_FG/MUT/FILL` w `nw_compose.c`, dobrane tak, by jednoznacznie przechodziły odrzucenie
+`FS_KEYED` przy ~5/255 od czerni) siedzi na nich na wierzchu. `FS_BAR` próbkuje migawkę
+`glCopyTexSubImage2D` właśnie skomponowanej sceny we własnym prostokącie ekranowym paska (ponownie
+używając `g_grab`, nigdy nie podpiętego jako FBO), a nie `g_scene_tex` wprost — próbkowanie tekstury,
+która jest właśnie podpiętym załącznikiem aktywnego FBO, jest niezdefiniowane, a FBO sceny jest wciąż
+podpięte w tym momencie klatki.
+
 **Pokrętła debug/ucieczki**, poza `NWM_NO_GL`/`NWM_NO_GLASS` opisanymi wyżej:
 
-- `NWM_GLASS_DEBUG=1..4` podmienia finalny kolor tafli na diagnostykę: `1` = surowy współczynnik
-  `rim` (kanał czerwony), `2` = wielkość przesunięcia refrakcji znormalizowana do `REFRACT`, `3` =
-  ostry chwyt tła bez soczewkowania, `4` = rozmyty chwyt tła. Przydatne do izolowania, czy glitch
-  wizualny leży w matematyce SDF/rim, w przesunięciu, czy w samych teksturach chwytu/rozmycia.
+- `NWM_GLASS_DEBUG=1..4` podmienia finalny kolor tafli na diagnostykę: `1` = profil soczewki `x`
+  (kanał czerwony, 0 głęboko wewnątrz → 1 na krawędzi), `2` = wielkość `bend` Snella znormalizowana do
+  jej teoretycznego maksimum (`1,33 * 26,0` px), `3` = ostry chwyt tła bez soczewkowania, `4` = rozmyty
+  chwyt tła. Przydatne do izolowania, czy glitch wizualny leży w matematyce SDF/soczewki, w
+  przesunięciu, czy w samych teksturach chwytu/rozmycia.
 
 Gate: `scripts/smoke-virtio-gpu-gl.sh` (`make smoke-virtio-gpu-gl`) — bramka developerska (wymaga
 fork-QEMU virgl **i** GUI cocoa; scanout `gl=es`/ANGLE→Metal nie ma ścieżki headless), SKIPuje bez
@@ -257,6 +386,9 @@ forka, celowo poza headless `verify64`.
 
 | Ścieżka | Co |
 |---|---|
-| `user/nwm/nw_compose_gl.{c,h}` | natywnie GPU kompozytor GL ES nwm (okna + blur szkła na GPU + nakładka chrome CPU) |
+| `user/nwm/nw_compose_gl.{c,h}` | natywnie GPU kompozytor GL ES nwm (okna + blur szkła na GPU + nakładka chrome CPU); `FS_WIN`/`FS_SHADOW`/`FS_BAR` |
+| `user/nwm/nw_compose.c` | chrome CPU (panel/pasek zadań), poświata tytułu Aero + próbnik polaryzacji atramentu |
+| `user/libnw/nw_gfx.{c,h}`, `user/libnw/nw_over_core.h` | LUT gamma `nw_cov143` + rodzina prymitywów ARGB prawdziwej alfy |
+| `user/libnwui/nwui.{c,h}`, `user/libnwui/nwui_paint.c` | `nwui_open_style` + malowarki/paleta widgetów w trybie szklanym |
 | `user/glkms/glkms_init.{c,h}` | wspólna sekwencja GBM+EGL+KMS (też oracle glkms) |
 | `scripts/smoke-virtio-gpu-gl.sh` | gate pulpitu GL (developerski, SKIPuje bez forka) |
