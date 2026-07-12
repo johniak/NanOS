@@ -83,8 +83,12 @@ int		 initgroups (const char *, gid_t);
  * (toybox id/groups, dropbear, gnulib mgetgroups in inetutils/wget/grep) trips gcc14's
  * implicit-declaration error. Unconditional on purpose — glibc gates it behind
  * _BSD/_DEFAULT_SOURCE, but gnulib replacement headers re-probe declarations with plain
- * flags and would miss a gated one. */
+ * flags and would miss a gated one. Guarded on the NAME: sudo's compat layer #defines
+ * getgrouplist to its own sudo_getgrouplist wrapper before system headers, and a prototype
+ * here would macro-expand into garbage. */
+#ifndef getgrouplist
 int		 getgrouplist (const char *, gid_t, gid_t *, int *);
+#endif
 #endif /* !__INSIDE_CYGWIN__ */
 
 #ifdef __cplusplus
