@@ -32,8 +32,11 @@ make flash-dell                          # or write the Dell USB stick
 x86_64 is the only architecture (`ARCH` defaults to it) — the i686/32-bit flow was retired
 on 2026-07-13 (`docs/superpowers/plans/2026-07-13-i686-retirement.md`): no `arch/x86`, no
 32-bit image/userland targets, no i686-elf toolchain in the build container, no i686-nanos
-SDK toolchain. NetSurf built only against that flow, so `make netsurf` errors until the
-browser-on-x86_64 follow-up port lands.
+SDK toolchain. The whole org was audited the same day: `nanos-port` and every fork recipe
+(hooks/nxport.toml/build scripts) now default to the `x86_64-nanos` triple (env-driven
+`NX_HOST` behaviour unchanged). Two follow-up ports remain from the i686 era: **NetSurf**
+(`make netsurf` errors with a pointer) and the **nap package-manager client**
+(`nano-packages/client` still targets the retired i686-nanos Rust spec).
 
 `bootstrap.sh` is idempotent — a half-finished run resumes where it stopped. Override the
 workspace location with `SDK_WORK=...` (that is how the clean-room gate runs).
@@ -66,7 +69,7 @@ audit). Checkout paths are relative to `$SDK_WORK` (`~/Projects/nanos-sdk-work`)
 |---|---|---|
 | `NanOS` | The OS: kernel, drivers, userland, compositor, images | everything |
 | `nanos-sdk` | Cross toolchain (binutils 2.43 + gcc 14.2.0 patched for x86_64-nanos via `toolchain/patch.sh`; the retired i686-nanos hunks stay in patch.sh by design), picolibc sysroot, the `nanos-port` driver, `ports.manifest`, `bootstrap.sh`, `migrate-fork.sh` | all ports |
-| `nano-packages` | "nap" — the NanOS package manager (Rust client + Django registry). Design/plan in its `docs/` | standalone |
+| `nano-packages` | "nap" — the NanOS package manager (Rust client + Django registry). Design/plan in its `docs/`; client targets the retired i686-nanos spec — x86_64 port is a follow-up | standalone |
 
 ### Ports (checkout path → make target)
 
