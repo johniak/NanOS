@@ -122,6 +122,25 @@ the Windows-style `.ndl` mechanism). Therefore:
 - Every disabled optional module gets an entry in `NanOS-labs/marktext-nanos` `NANOS_NOTES.md`
   (app-local) or the runtime notes (if platform-wide).
 
+## Runtime Data Files (fonts, ICU, locales, certificates)
+
+Chromium/Electron load several data files at startup. Where each lives on NanOS (paths inside a
+running NanOS), reusing existing bundles where they already exist:
+
+| Data | Path | Status |
+|---|---|---|
+| ICU data | `/disks/main/nanos/lib/electron/icudtl.dat` | staged with the runtime (plan 04) |
+| Locale packs | `/disks/main/nanos/lib/electron/locales/` | staged with the runtime (plan 04) |
+| V8 snapshots | `/disks/main/nanos/lib/electron/{snapshot_blob,v8_context_snapshot}.bin` | staged with the runtime (plan 04) |
+| Fonts | `/nanos/share/fonts/` (already in every image: IBM Plex Sans, JetBrains Mono; staged from `assets/fonts/` by the `_image64` recipe, `Makefile` ~1583) | **exists today** |
+| CA certificates | `/nanos/ssl/cert.pem` (the OpenSSL/TLS bundle, staged from `disk-content/ssl/cert.pem`, `Makefile` ~1695) | **exists today** |
+
+**Font discovery is deterministic.** Chromium gets one fixed font directory (`/nanos/share/fonts/`)
+wired through Skia in plan 03 subplan 04 — no host paths, no fontconfig scan. Bundling more faces
+(a wider Unicode range than the two UI fonts) is a plan-03/04 decision; the directory is the
+contract. The runtime data files under `/disks/main/nanos/lib/electron/` do not exist until plan 04
+builds the runtime; fonts and certs are present in a freshly built image now.
+
 ## Platform Gap Matrix
 
 Owned by plan 01 (`01-nanos-platform-gaps.md`). Each row is a NanOS API that Node/Chromium/Electron
@@ -192,8 +211,24 @@ describe running `scripts/electron/package-app.sh <app-dir>` to produce a
 
 ## Known Unsupported Electron APIs
 
-Filled by plan 04 (`04-electron-runtime.md`) as APIs are disabled or stubbed. Every entry names the
-Electron API, why it is unsupported on NanOS, and the JS-visible behavior (throw / no-op / fallback).
+Plan 04 (`04-electron-runtime.md`) fills this per-API as things are disabled or stubbed. Each entry
+names the Electron API, why it is unsupported on NanOS, and the JS-visible behavior (throw / no-op /
+fallback).
+
+### Chromium sandbox — disabled (security limitation)
+
+NanOS does not provide Chromium's Linux sandbox primitives (seccomp-bpf, user namespaces, the
+setuid/namespace helper). The sandbox is therefore **off**:
+
+- **Runtime:** the NanOS Electron launcher passes `--no-sandbox` by default (plan 05 launcher). It
+  is a runtime/launch default, **never** set per-app.
+- **Build:** the GN args disable the sandbox at build time on the unsupported-platform path
+  (`is_official_build=false`; sandbox off) — plan 03 subplan 00 owns the exact GN args.
+- **Consequence:** renderer processes run without OS-level isolation. Malicious or exploited web
+  content is not contained the way it is on Linux. Acceptable for the MarkText acceptance app
+  (trusted local content); documented here as a real limitation for any app loading remote content.
+- **Follow-up:** a real NanOS sandbox (a capability/namespace analogue Chromium can target) is a
+  future platform project, out of scope for this program.
 
 ## Acceptance
 
@@ -211,6 +246,18 @@ Final gate script (contract defined now, implemented in plan 06): `scripts/smoke
 
 The smoke follows the house style in the execution guide "QEMU Smoke House Style" (headless boot,
 bounded waits, fault check, provably-can-fail).
+
+## File Watching Policy
+
+NanOS has no `inotify` (header only; see the gap matrix), by decision — file watching is
+**polling-based** at the platform level, not a per-app patch:
+
+- The NanOS Electron launcher sets `CHOKIDAR_USEPOLLING=1` (and, where relevant,
+  `UV_USE_IO_URING=0`) in the runtime environment (plan 05 launcher), so libuv/chokidar fall back
+  to stat-polling watchers instead of `inotify`. Plan 06 must **not** patch this into MarkText.
+- **Idle-CPU contract:** polling watchers must not spin the CPU. The final `scripts/smoke-marktext.sh`
+  (plan 06) asserts that an idle MarkText under polling stays below an agreed CPU threshold — a
+  regression guard so the polling fallback never turns into a busy loop.
 
 ## Debugging
 
