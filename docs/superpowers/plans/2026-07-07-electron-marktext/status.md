@@ -1,0 +1,23 @@
+# Electron/MarkText Plan Status
+
+Single source of truth for program status (README links here — do not duplicate checkboxes
+elsewhere). Update after each gate, not only milestones. Keep entries factual: date, commit, gate,
+result. Row format is defined in EXECUTION_GUIDE.md "Work Package Protocol".
+
+## Milestones
+
+- [ ] M0 Source Freeze
+- [ ] M1 Platform Gap Matrix
+- [ ] M2 Node
+- [ ] M3 Chromium Content
+- [ ] M4 Electron Runtime
+- [ ] M5 Generic Packager
+- [ ] M6 MarkText Build
+- [ ] M7 MarkText Run
+
+## Log
+
+| Date | Commit | Gate | Result |
+|---|---|---|---|
+| 2026-07-07 | _plan only_ | Plan package created | Pending execution |
+

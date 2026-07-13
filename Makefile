@@ -269,7 +269,7 @@ wget: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk $(PING_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(WGET_PORT)/wget.nxe" $(BINFOLDER)wget.nxe
-	@echo "staged $(BINFOLDER)wget.nxe — run 'make image' to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)wget.nxe — run 'make image64' to install it into /nanos/bin"
 
 # GNU git 2.54.0 (optional, external). Unmodified upstream source built for NanOS via nanos-port's
 # build="make" path (git ships its own Makefile; the cross knobs live in a committed config.mak in
@@ -301,7 +301,7 @@ git: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk $(PING_PORT_ENV) $(NXPORT_XCFLAGS) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(GIT_PORT)/git.nxe" $(BINFOLDER)git.nxe
-	@echo "staged $(BINFOLDER)git.nxe — run 'make image' to install it into /nanos/bin (+ /nanos/libexec/git-core)"
+	@echo "staged $(BINFOLDER)git.nxe — run 'make image64' to install it into /nanos/bin (+ /nanos/libexec/git-core)"
 
 # GNU inetutils SERVICES build (FAZA H): the internet super-server inetd (and, as the build
 # grows, telnetd + the telnet/ifconfig/traceroute clients) from the SAME inetutils source as
@@ -327,7 +327,7 @@ inetd: bin/libc.ndl bin/libc.ndl.a
 	@for b in telnetd telnet ifconfig traceroute; do \
 	  test -f "$(SERVICES_PORT)/$$b.nxe" && cp "$(SERVICES_PORT)/$$b.nxe" $(BINFOLDER)$$b.nxe && echo "  staged $$b.nxe" || true; \
 	done
-	@echo "staged $(BINFOLDER)inetd.nxe (+ telnetd/telnet/ifconfig/traceroute) — run 'make image' to install"
+	@echo "staged $(BINFOLDER)inetd.nxe (+ telnetd/telnet/ifconfig/traceroute) — run 'make image64' to install"
 
 # darkhttpd (optional, external): single-file HTTP/1.1 static server (FAZA H4). Built by the
 # nanos-sdk from $(HTTPD_PORT)/nxport.toml (build=make, -DNO_IPV6). Same reproducible flow.
@@ -349,7 +349,7 @@ httpd: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk $(PING_PORT_ENV) $(NXPORT_XCFLAGS) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(HTTPD_PORT)/darkhttpd.nxe" $(BINFOLDER)darkhttpd.nxe
-	@echo "staged $(BINFOLDER)darkhttpd.nxe — run 'make image' to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)darkhttpd.nxe — run 'make image64' to install it into /nanos/bin"
 
 # OpenSSL 3.0.15 (optional, external): libcrypto + libssl + the `openssl` CLI (FAZA 1 of the
 # TLS/SSH plan). Built by the nanos-sdk from $(OPENSSL_PORT)/nxport.toml (own Perl Configure via
@@ -590,7 +590,7 @@ udhcpc: bin/libc.ndl bin/libc.ndl.a
 	    rm -f busybox busybox_unstripped networking/udhcp/built-in.o; \
 	    bash nanos-build.sh && $(PING_TRIPLE)-mknx busybox_unstripped udhcpc.nxe --need libc.ndl'
 	cp "$(BB_DIR)/udhcpc.nxe" $(BINFOLDER)udhcpc.nxe
-	@echo "staged $(BINFOLDER)udhcpc.nxe — run 'make image' to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)udhcpc.nxe — run 'make image64' to install it into /nanos/bin"
 
 # zlib 1.3.1 (optional, external): the FIRST library port — a static libz.a + zlib.h/zconf.h
 # installed into the SDK sysroot, NOT an app (no .nxe, nothing on the disk image). It is the
@@ -802,7 +802,7 @@ externals:
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
 	  else echo "  skip $$name (not built: $$src)"; fi; \
 	done; \
-	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image' to install them"
+	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image64' to install them"
 
 # Desktop artwork: convert the branded PNGs (NanOS wallpaper + logo) to NanOS's flat 32bpp surface
 # format on the host (needs python3 + Pillow), staged into bin/ where _image64 installs them under

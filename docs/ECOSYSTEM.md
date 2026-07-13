@@ -18,16 +18,22 @@ git clone git@github.com:NanOS-labs/NanOS.git     ~/Projects/NanOS
 ~/Projects/nanos-sdk/scripts/bootstrap.sh    # host checks, clone all forks, toolchain, docker
 cd ~/Projects/NanOS
 make docker-image
-make ARCH=x86_64 zlib openssl ncurses            # library layer
-make ARCH=x86_64 toybox sudo grep bzip2          # base userland
-make ARCH=x86_64 ping wget inetd httpd udhcpc dropbear   # network layer
-make ARCH=x86_64 vim htop git sqlite bash        # apps
-make ARCH=x86_64 libpng libjpeg && make netsurf  # browser
-make libdrm mesa gles2info glkms nwm-gl          # GL userspace
-make externals && make image64                   # the disk image
-make run64                                       # boot it (SMP, cocoa display)
-make flash-dell                                  # or write the Dell USB stick
+make zlib openssl ncurses                # library layer
+make toybox sudo grep bzip2              # base userland
+make ping wget inetd httpd udhcpc dropbear   # network layer
+make vim htop git sqlite bash            # apps
+make libpng libjpeg                      # image codecs
+make libdrm mesa gles2info glkms nwm-gl  # GL userspace
+make externals && make image64           # the disk image
+make run64                               # boot it (SMP, cocoa display)
+make flash-dell                          # or write the Dell USB stick
 ```
+
+x86_64 is the only architecture (`ARCH` defaults to it) — the i686/32-bit flow was retired
+on 2026-07-13 (`docs/superpowers/plans/2026-07-13-i686-retirement.md`): no `arch/x86`, no
+32-bit image/userland targets, no i686-elf toolchain in the build container, no i686-nanos
+SDK toolchain. NetSurf built only against that flow, so `make netsurf` errors until the
+browser-on-x86_64 follow-up port lands.
 
 `bootstrap.sh` is idempotent — a half-finished run resumes where it stopped. Override the
 workspace location with `SDK_WORK=...` (that is how the clean-room gate runs).
@@ -59,7 +65,7 @@ audit). Checkout paths are relative to `$SDK_WORK` (`~/Projects/nanos-sdk-work`)
 | Repo | What | Consumed by |
 |---|---|---|
 | `NanOS` | The OS: kernel, drivers, userland, compositor, images | everything |
-| `nanos-sdk` | Cross toolchain (binutils 2.43 + gcc 14.2.0 patched for i686/x86_64-nanos via `toolchain/patch.sh`), picolibc sysroot, the `nanos-port` driver, `ports.manifest`, `bootstrap.sh`, `migrate-fork.sh` | all ports |
+| `nanos-sdk` | Cross toolchain (binutils 2.43 + gcc 14.2.0 patched for x86_64-nanos via `toolchain/patch.sh`; the retired i686-nanos hunks stay in patch.sh by design), picolibc sysroot, the `nanos-port` driver, `ports.manifest`, `bootstrap.sh`, `migrate-fork.sh` | all ports |
 | `nano-packages` | "nap" — the NanOS package manager (Rust client + Django registry). Design/plan in its `docs/` | standalone |
 
 ### Ports (checkout path → make target)
@@ -85,7 +91,7 @@ audit). Checkout paths are relative to `$SDK_WORK` (`~/Projects/nanos-sdk-work`)
 | `vim-nanos` | vim (upstream fork) | recipe at source root (x86_64 flow, committed cross config.cache) | `vim` symlink + `vim-port` | `make vim` |
 | `ncurses-nanos` | ncurses (mirror fork) | recipe at source root; libtinfo/fallback-terminfo strategy | `ncurses-port/src` (+recipe copied up) | `make ncurses` |
 | `bash-nanos` | GNU bash 5.2 (savannah) | NanOS build in `nanos/` | `~/Projects/bash-nanos` | `make bash` |
-| `netsurf-nanos` | NetSurf | NanWM libnsfb backend + ports | `~/Projects/netsurf-nanos` | `make netsurf` |
+| `netsurf-nanos` | NetSurf | NanWM libnsfb backend + ports (i686-era; awaiting the browser-on-x86_64 follow-up port) | `~/Projects/netsurf-nanos` | — |
 | `sqlite-nanos` | SQLite 3.46.1 amalgamation | `nanos/` build + compat + sqltest | `~/Projects/sqlite-nanos` | `make sqlite` |
 
 ### Graphics / GL

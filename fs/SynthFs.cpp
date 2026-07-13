@@ -240,7 +240,7 @@ int statusString(char* buf, int cap, const ProcInfo& pi) {
 
 // /proc/version: the kernel identification string.
 int versionString(char* buf, int cap) {
-	int p = putStr(buf, 0, cap, "NanOS version 0.1 (i686) #1 SMP\n");
+	int p = putStr(buf, 0, cap, "NanOS version 0.1 (x86_64) #1 SMP\n");
 	buf[p] = 0;
 	return p;
 }
