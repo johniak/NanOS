@@ -109,6 +109,16 @@ uint32_t mmuFbMax();
 int  mmuMapUserFbAt(AddressSpace*, uint32_t va, uint64_t fbPhys, uint32_t bytes);   // fbPhys 64-bit: real HW LFB >4 GiB
 void mmuUnmapUserFb(AddressSpace*, uint32_t va, uint32_t bytes);
 
+// Cross-process shared memory (MAP_SHARED of a memfd). mmuMapUserSharedAt maps an Shm-owned frame at
+// `va` (allocated from the same fb window as GEM BOs), tagged PTE_SHARED so this space's teardown
+// drops the PTE WITHOUT freeing the frame and fork ALIASES it — the Shm owns the frame and frees it
+// only at its last fd close. Unmap uses mmuUnmapUserFb (drops PTEs, never frees). shmFrameAlloc /
+// shmFrameFree hand the Shm real zeroed frames from the physical allocator (above every user VA
+// window, so they stay identity-addressable under any CR3).
+int  mmuMapUserSharedAt(AddressSpace*, uint32_t va, uint64_t phys, uint32_t bytes);
+uint64_t shmFrameAlloc();
+void     shmFrameFree(uint64_t frame);
+
 // Growable anonymous user heap (the brk/sbrk region). It lives at a fixed high VA,
 // above RAM and the framebuffer window, so it is independent of the 4 MiB user window.
 // mmuUserHeapBase/Max bound it; mmuSetUserBrk grows (maps fresh zeroed USER|RW frames)

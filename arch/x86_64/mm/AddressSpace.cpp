@@ -178,8 +178,12 @@ void AddressSpace::freeUserWindow(uint64_t userVa) {
 	uint64_t ptPhys = entryAddr(p2[pdi]);
 	uint64_t* pt = (uint64_t*) m_env.physToVirt(m_env.ctx, ptPhys);
 	for (int e = 0; e < 512; e++)
-		if (entryPresent(pt[e]))
-			m_env.freeFrame(m_env.ctx, entryAddr(pt[e]));   // the mapped user frame
+		if (entryPresent(pt[e]) && !(pt[e] & PTE_SHARED))
+			m_env.freeFrame(m_env.ctx, entryAddr(pt[e]));   // the mapped user frame (NOT a shared-object
+		                                                    // frame: an Shm behind a MAP_SHARED memfd owns
+		                                                    // those and frees them at its last fd close —
+		                                                    // freeing here would pull memory out from under
+		                                                    // another process still mapping it)
 	m_env.freeFrame(m_env.ctx, ptPhys);                     // the page table itself
 	p2[pdi] = 0;
 }
@@ -221,6 +225,15 @@ bool AddressSpace::copyUserWindowFrom(const AddressSpace& src, uint64_t userVa) 
 			continue;
 		uint64_t srcPa = entryAddr(spt[e]);
 		uint64_t flags = spt[e] & (FLAG_MASK | PTE_NX);
+		if (flags & PTE_SHARED) {
+			// A MAP_SHARED memfd frame: ALIAS it (map the same physical page), do NOT deep-copy — the
+			// frame is owned by an Shm kept alive by the fd the child inherits, and both processes must
+			// see each other's writes. Copying would fork the memory (breaking sharing) and, worse, the
+			// PTE_SHARED bit would mark a fresh private frame that teardown then refuses to free (a leak).
+			if (!map(base | ((uint64_t) e << 12), srcPa, flags))
+				return false;
+			continue;
+		}
 		uint64_t newPa = m_env.allocFrame(m_env.ctx);
 		if (!newPa)
 			return false;   // OOM: caller tears the partial copy down

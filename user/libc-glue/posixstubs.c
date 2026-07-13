@@ -430,25 +430,9 @@ int fsetxattr(int fd, const char* n, const void* v, size_t s, int f) { (void)fd;
 #include <stdio.h>
 FILE *open_memstream(char **ptr, size_t *sizeloc) { (void) ptr; (void) sizeloc; errno = ENOSYS; return NULL; }
 
-/* memfd_create: an anonymous memory-backed fd. NanOS /tmp is RamFs (memory), so a uniquely-named
- * file created there and immediately unlinked is exactly that — the fd keeps the memory file alive
- * with no directory entry. Mesa/GBM use it as an mmap-able, ftruncate-able buffer. Seal flags
- * (MFD_ALLOW_SEALING) are accepted but not enforced (no F_ADD_SEALS); MFD_CLOEXEC is a no-op. */
-#include <fcntl.h>
-int memfd_create(const char *name, unsigned int flags) {
-	static unsigned ctr;
-	char path[64];
-	int fd;
-	(void) name; (void) flags;
-	snprintf(path, sizeof path, "/tmp/.memfd-%d-%u", (int) getpid(), ctr++);
-	fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
-	if (fd < 0) return -1;
-	/* NanOS tracks open files by PATH, not by an inode handle, so an unlinked-but-open file can no
-	 * longer be ftruncate()'d / mmap()'d (its path is gone). Unlike Linux's anonymous memfd we keep
-	 * the /tmp entry linked so path-based fd ops keep working; it is a uniquely-named, mode-0600
-	 * scratch file. TODO: unlinked-open-file handles would let this be truly anonymous. */
-	return fd;
-}
+/* memfd_create now lives in syscalls.c as a real SYS_memfd_create wrapper (a frame-backed anonymous
+ * object whose mmap(MAP_SHARED) is true cross-process shared memory). The old shim here opened a
+ * /tmp RamFs file, which could not share pages between processes. */
 
 /* dl_iterate_phdr: NanOS has no glibc-style shared-object phdr chain (single .nxe per process +
  * the DynLoader for .ndl modules), so iterate nothing and return 0. The only consumer, Mesa's

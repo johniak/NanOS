@@ -1,6 +1,7 @@
 #include "SyscallDispatch.h"
 #include "Syscall.h"
 #include "Epoll.h"       // epoll_ctl/epoll_wait marshal the interest set here (dispatch-side scan)
+#include "Shm.h"         // memfd MAP_SHARED: map the object's shared frames into the fb window
 #include "Process.h"
 #include "Exec.h"
 #include "SignalDispatch.h"
@@ -643,6 +644,11 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		// epoll_create1(flags). (Legacy epoll_create(size) also routes here; size is ignored.)
 		ret = g_sys->epollCreate((int) a0);
 		break;
+	case SYS_memfd_create:
+		// memfd_create(name*, flags). The name is only advisory (Linux uses it for /proc/<pid>/fd
+		// labels); NanOS ignores it and keys off the flags (MFD_CLOEXEC). Returns a frame-backed fd.
+		ret = g_sys->memfdCreate((unsigned) a1);
+		break;
 	case SYS_epoll_ctl:
 		// epoll_ctl(epfd, op, fd, event*).
 		ret = doEpollCtl(g_sys, (int) a0, (int) a1, (int) a2, (void*) a3);
@@ -971,6 +977,44 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		uint64_t offset = (uint64_t) a4;
 		Process* p = ProcTable::current();
 		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
+		if (fd >= 0) {                          // memfd MAP_SHARED? -> map the object's own frames
+			kernel::Shm* shm = g_sys->shmAt(fd);
+			if (shm && (a2 & 0x1 /*MAP_SHARED*/)) {
+				// Real cross-process shared memory: map the Shm's frames (the SAME physical pages every
+				// other mapper sees) into a private VA in the fb window. That window's munmap drops PTEs
+				// without freeing frames, and PTE_SHARED makes teardown/fork leave the frames to the Shm —
+				// exactly the ownership a shared object needs. NanOS has no demand paging, so the whole
+				// mapped range must already be backed (Linux would fault a hole in on access); a mapping
+				// that runs past the object's ftruncate'd size is -EINVAL rather than a silent zero-map.
+				if (length == 0) { ret = -22; break; }               // -EINVAL
+				if (offset & 0xFFFu) { ret = -22; break; }           // -EINVAL: unaligned file offset
+				unsigned bytes = (length + 0xFFFu) & ~0xFFFu;
+				if (bytes == 0) { ret = -22; break; }                // round-up overflow
+				unsigned firstPage = (unsigned) (offset / 0x1000);
+				unsigned npages = bytes / 0x1000;
+				if (shm->frameAt(firstPage + npages - 1) == 0) { ret = -22; break; }  // beyond the object
+				if (p->fbNext == 0)
+					p->fbNext = arch::mmuFbBase();
+				unsigned va;
+				int fi = kernel::mmapFreeFind(p->fbFree, p->fbFreeCount, bytes);
+				if (fi >= 0) {
+					va = kernel::mmapFreeCarve(p->fbFree, &p->fbFreeCount, fi, bytes);
+				} else {
+					if (p->fbNext + bytes > arch::mmuFbMax()) { ret = -12; break; }   // window full
+					va = p->fbNext;
+					p->fbNext = va + bytes;
+				}
+				bool ok = true;
+				for (unsigned i = 0; i < npages; i++) {
+					uint64_t phys = shm->frameAt(firstPage + i);
+					if (!phys || arch::mmuMapUserSharedAt(space, va + i * 0x1000, phys, 0x1000) != 0) {
+						ok = false; break;
+					}
+				}
+				ret = ok ? (long) va : -12;      // partial VA leaks on failure (accepted, as the fb path)
+				break;
+			}
+		}
 		if (fd >= 0) {                          // device region? (fb0, GEM BO, ...)
 			uint64_t phys = 0; unsigned dlen = 0;
 			if (g_sys->mmapAt(fd, offset, &phys, &dlen) >= 0) {   // offset 0 -> mmapInfo (fb0)

@@ -6,6 +6,8 @@
 #include "Scheduler.h"
 #include "Eventfd.h"    // eventfd2 fd backing (u64 counter + wait queue)
 #include "Epoll.h"      // epoll_create1 interest set
+#include "Shm.h"        // memfd frame-backed shared-memory object (MAP_SHARED backing)
+#include <arch/mmu.h>   // arch::shmFrameAlloc/shmFrameFree (physical frame backend for Shm)
 #include "Socket.h"     // FAZA 9: socket fd backing + the socket API
 #include "Tcp.h"        // tcpListen/tcpAccept/tcpState for listen()/accept()
 #include "Net.h"        // hton/ntoh + ipv4() for sockaddr marshalling
@@ -18,6 +20,19 @@
 #include <arch/input.h>
 
 namespace kernel {
+
+// Physical-frame backend for memfd's Shm objects. The kernel hands out real zeroed frames from the
+// frame allocator; the host doctest build (no allocator, Syscall.cpp is a test module) backs them
+// with malloc so this file still links. Frames are page-aligned and their value doubles as their
+// address (identity-mapped RAM in the kernel; a malloc'd block in tests) — exactly what Shm expects.
+#ifdef NANOS_HOST_TEST
+static unsigned long knxShmFrameAlloc()        { void* p = malloc(4096); if (p) memset(p, 0, 4096); return (unsigned long) p; }
+static void          knxShmFrameFree(unsigned long f) { if (f) free((void*) f); }
+#else
+static unsigned long knxShmFrameAlloc()        { return (unsigned long) arch::shmFrameAlloc(); }
+static void          knxShmFrameFree(unsigned long f) { arch::shmFrameFree((unsigned long long) f); }
+#endif
+static const ShmFrames g_shmBackend = { knxShmFrameAlloc, knxShmFrameFree };
 
 // Wall clock: a boot epoch (seeded once from the RTC) plus seconds since boot (the 1000 Hz
 // scheduler tick). MI, so filesystem code can timestamp inodes without touching the arch.
@@ -68,6 +83,7 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].isChar = false;
 		fds[i].efd = 0;
 		fds[i].epoll = 0;
+		fds[i].shm = 0;
 	}
 	// fd 0,1,2 = stdin/stdout/stderr -> console, bound to VT 1 (the kernel console). init/getty
 	// reopen /dev/ttyN explicitly for their text VTs; this default only matters for PID 1 before
@@ -107,6 +123,8 @@ Syscalls::Syscalls(const Syscalls& o) {
 			fds[i].efd->ref();
 		if (fds[i].used && fds[i].epoll)     // fork shares the epoll instance
 			fds[i].epoll->ref();
+		if (fds[i].used && fds[i].shm)       // fork shares the memfd's frames (child re-maps -> same memory)
+			fds[i].shm->ref();
 	}
 }
 
@@ -210,6 +228,10 @@ int Syscalls::close(int fd, bool* freedShared) {
 		if (fds[fd].epoll->unref()) delete fds[fd].epoll;
 		fds[fd].epoll = 0;
 	}
+	if (fds[fd].shm) {                        // drop this memfd reference (frees the frames at the last close)
+		if (fds[fd].shm->unref()) delete fds[fd].shm;
+		fds[fd].shm = 0;
+	}
 	if (fds[fd].isChar)                       // drop a char-device open (pty: may trigger master EOF)
 		vfs->deviceClose(fds[fd].path);
 	fds[fd].used = false;
@@ -266,6 +288,7 @@ void Syscalls::shareInto(int dst, int src) {
 	fds[dst].isChar = fds[src].isChar;
 	fds[dst].efd = fds[src].efd;
 	fds[dst].epoll = fds[src].epoll;
+	fds[dst].shm = fds[src].shm;
 	if (fds[dst].pipe) {
 		if (fds[dst].pipeWrite) fds[dst].pipe->addWriter();
 		else fds[dst].pipe->addReader();
@@ -278,6 +301,8 @@ void Syscalls::shareInto(int dst, int src) {
 		fds[dst].efd->ref();
 	if (fds[dst].epoll)              // dup shares the epoll instance
 		fds[dst].epoll->ref();
+	if (fds[dst].shm)                // dup shares the memfd's frames
+		fds[dst].shm->ref();
 }
 
 int Syscalls::pipe(int out[2]) {
@@ -313,7 +338,7 @@ int Syscalls::eventfdCreate(unsigned long long initval, int flags) {
 	fds[fd].flags = (flags & 0x800) ? O_NONBLOCK : 0;      // EFD_NONBLOCK -> internal O_NONBLOCK
 	fds[fd].cloexec = (flags & 0x80000) != 0;              // EFD_CLOEXEC
 	fds[fd].pipe = 0; fds[fd].pipeWrite = false; fds[fd].sock = 0; fds[fd].isChar = false;
-	fds[fd].efd = e; fds[fd].epoll = 0;
+	fds[fd].efd = e; fds[fd].epoll = 0; fds[fd].shm = 0;
 	return fd;
 }
 
@@ -327,7 +352,24 @@ int Syscalls::epollCreate(int flags) {
 	fds[fd].offset = 0; fds[fd].size = 0; fds[fd].flags = 0;
 	fds[fd].cloexec = (flags & 0x80000) != 0;             // EPOLL_CLOEXEC
 	fds[fd].pipe = 0; fds[fd].pipeWrite = false; fds[fd].sock = 0; fds[fd].isChar = false;
-	fds[fd].efd = 0; fds[fd].epoll = e;
+	fds[fd].efd = 0; fds[fd].epoll = e; fds[fd].shm = 0;
+	return fd;
+}
+
+// memfd_create(2): a new fd backed by a frame-owning Shm. The fd behaves like an anonymous regular
+// file (read/write/lseek/ftruncate/fstat), and mmap(MAP_SHARED) on it hands out the SAME physical
+// frames to every process, so writes are mutually visible — true shared memory. `flags`: MFD_CLOEXEC
+// (0x1) sets FD_CLOEXEC; other flags (MFD_ALLOW_SEALING) are accepted but not enforced.
+int Syscalls::memfdCreate(unsigned flags) {
+	RecursiveGuard g(m_fdLock);
+	Shm* s = new Shm(g_shmBackend);
+	int fd = allocFd();
+	if (fd < 0) { delete s; return fd; }
+	fds[fd].used = true; fds[fd].isConsole = false; fds[fd].vt = 0; fds[fd].path = String();
+	fds[fd].offset = 0; fds[fd].size = 0; fds[fd].flags = 0;
+	fds[fd].cloexec = (flags & 0x1u) != 0;                // MFD_CLOEXEC
+	fds[fd].pipe = 0; fds[fd].pipeWrite = false; fds[fd].sock = 0; fds[fd].isChar = false;
+	fds[fd].efd = 0; fds[fd].epoll = 0; fds[fd].shm = s;
 	return fd;
 }
 
@@ -472,6 +514,28 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 		memcpy(buf, &v, 8);
 		return 8;
 	}
+	if (fds[fd].shm) {                        // memfd read: byte I/O through the shared frames, at the fd offset
+		unsigned long off = (unsigned long) fds[fd].offset;
+#ifdef NANOS_HOST_TEST
+		unsigned r = fds[fd].shm->readAt(off, buf, n);   // host frames are malloc'd — directly reachable
+#else
+		if (n == 0) return 0;
+		// The Shm's frames are identity-mapped only under the kernel directory; the caller's `buf`
+		// only under the process directory. Bounce through a kernel-heap buffer (shared kernel half,
+		// reachable under either CR3): fill it from the frames under the kernel dir, then copy it out
+		// to the user buffer under the caller's dir.
+		char* kbuf = (char*) malloc(n);
+		if (!kbuf) return -ENOMEM;
+		uint32_t saved = arch::mmuCurrentDirPhys();
+		arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
+		unsigned r = fds[fd].shm->readAt(off, kbuf, n);
+		arch::mmuLoadDirPhys(saved);
+		memcpy(buf, kbuf, r);
+		free(kbuf);
+#endif
+		fds[fd].offset += (off_t) r;
+		return (int) r;                       // 0 = EOF (read at/after the logical size)
+	}
 	if (fds[fd].sock) {                       // recv on a socket (TCP byte stream / UDP datagram)
 		Socket* s = fds[fd].sock;
 		if (s->domain == AF_PACKET)           // AF_PACKET read() must strip L2 (cooked) — busybox
@@ -516,6 +580,27 @@ int Syscalls::write(int fd, const void* buf, unsigned n) {
 		if (r < 0) return -EINVAL;            // 0xffffffffffffffff is illegal
 		if (r == 0) return -EAGAIN;           // would overflow the counter -> block until a reader drains
 		return 8;
+	}
+	if (fds[fd].shm) {                        // memfd write: byte I/O into the shared frames, at the fd offset
+		unsigned long off = (unsigned long) fds[fd].offset;
+#ifdef NANOS_HOST_TEST
+		unsigned w = fds[fd].shm->writeAt(off, buf, n);  // host frames are malloc'd — directly reachable
+#else
+		if (n == 0) return 0;
+		// Bounce through a kernel-heap buffer (see read()): copy the user buffer in under the caller's
+		// directory, then push it to the frames under the kernel directory.
+		char* kbuf = (char*) malloc(n);
+		if (!kbuf) return -ENOMEM;
+		memcpy(kbuf, buf, n);
+		uint32_t saved = arch::mmuCurrentDirPhys();
+		arch::mmuLoadDirPhys(arch::mmuKernelDirPhys());
+		unsigned w = fds[fd].shm->writeAt(off, kbuf, n);
+		arch::mmuLoadDirPhys(saved);
+		free(kbuf);
+#endif
+		if (w == 0 && n > 0) return -ENOSPC;  // past the ftruncate'd frames (a memfd grows via ftruncate)
+		fds[fd].offset += (off_t) w;
+		return (int) w;                       // the Shm tracks its own logical size (lseek/fstat read it back)
 	}
 	if (fds[fd].sock)                         // send on a socket (must be connected, like write(2))
 		return socketSendTo(fds[fd].sock, buf, n, 0, 0);
@@ -578,7 +663,7 @@ off_t Syscalls::lseek(int fd, off_t off, int whence) {
 	else if (whence == SEEK_CUR)
 		base = fds[fd].offset;
 	else if (whence == SEEK_END)
-		base = fds[fd].size;
+		base = fds[fd].shm ? (off_t) fds[fd].shm->length() : fds[fd].size;   // memfd size lives on the Shm
 	else
 		return -EINVAL;
 	off_t pos = base + off;
@@ -647,6 +732,15 @@ int Syscalls::fstat(int fd, LinuxStat* out) {
 		out->st_mtime = 0;
 		out->st_ino = 0;
 		out->st_blocks = 0;
+		return 0;
+	}
+	if (fds[fd].shm) {                        // memfd: an anonymous regular file, size from the Shm
+		out->st_mode = 0x81B6;               // S_IFREG | 0666
+		out->st_size = (uint64_t) fds[fd].shm->length();
+		out->st_nlink = 1;
+		out->st_uid = 0; out->st_gid = 0; out->st_mtime = 0;
+		out->st_ino = 0;
+		out->st_blocks = (out->st_size + 511) / 512;
 		return 0;
 	}
 	FileStat st;
@@ -809,6 +903,9 @@ int Syscalls::truncate(String path, off_t length) {
 }
 int Syscalls::ftruncate(int fd, off_t length) {
 	if (!valid(fd) || fds[fd].isConsole) return -9;
+	if (length < 0) return -22;                                  // -EINVAL
+	if (fds[fd].shm)                                             // memfd: (re)size the frame-backed object
+		return fds[fd].shm->setSize((unsigned long) length) == 0 ? 0 : -12;   // -ENOMEM on OOM
 	int r = vfs->truncate(fds[fd].path, (unsigned) length);
 	if (r == 0) fds[fd].size = length;
 	return r;

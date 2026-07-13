@@ -88,6 +88,39 @@ TEST_CASE("protect toggles PTE_RW while preserving the physical page (V8 W^X fli
 	CHECK(as.protect(0x900000, 0, PTE_RW) == false);
 }
 
+TEST_CASE("freeUserWindow frees normal leaves but SKIPS PTE_SHARED frames (memfd MAP_SHARED)") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	// Two leaves in the same PT: one ordinary anon page, one shared-object (Shm) page. Both leaf
+	// frames come from the fake allocator so the live-frame count is meaningful.
+	uint64_t leafNormal = fakeAlloc(m);
+	uint64_t leafShared = fakeAlloc(m);
+	as.map(0x400000, leafNormal, PTE_PRESENT | PTE_RW | PTE_USER);
+	as.map(0x401000, leafShared, PTE_PRESENT | PTE_RW | PTE_USER | PTE_SHARED);
+	CHECK((as.leafEntry(0x401000) & PTE_SHARED) != 0u);   // the bit propagated into the PTE
+	int before = m->allocCount;                            // PML4 + 2 leaves + PDPT + PD + PT = 6
+	as.freeUserWindow(0x400000);
+	// Teardown freed: the normal leaf + the page table itself (2). It did NOT free the shared frame
+	// (the Shm owns it). Had PTE_SHARED been ignored, allocCount would be one lower.
+	CHECK(m->allocCount == before - 2);
+}
+
+TEST_CASE("copyUserWindowFrom ALIASES a PTE_SHARED leaf (fork keeps memfd sharing, no copy/leak)") {
+	FakeMem* m = makeMem();
+	AddressSpace src(envOf(m));
+	uint64_t leafShared = fakeAlloc(m);
+	src.map(0x400000, leafShared, PTE_PRESENT | PTE_RW | PTE_USER | PTE_SHARED);
+	AddressSpace dst(envOf(m));            // fork child: fresh PML4
+	int before = m->allocCount;
+	CHECK(dst.copyUserWindowFrom(src, 0x400000));
+	// The child maps the SAME physical frame (writes are mutually visible) — an alias, not a copy.
+	CHECK(dst.translate(0x400000) == leafShared);
+	CHECK((dst.leafEntry(0x400000) & PTE_SHARED) != 0u);
+	// Only the child's PDPT+PD+PT were allocated (3). NO fresh leaf frame — a deep copy would have
+	// allocated a 4th (and marked it PTE_SHARED, which teardown then leaks).
+	CHECK(m->allocCount == before + 3);
+}
+
 TEST_CASE("first map allocates PDPT+PD+PT; a neighbour reuses them") {
 	FakeMem* m = makeMem();
 	AddressSpace as(envOf(m));

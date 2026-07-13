@@ -460,6 +460,14 @@ int eventfd_write(int fd, eventfd_t value) {
 	return (write(fd, &value, 8) == 8) ? 0 : -1;
 }
 
+/* memfd_create(2): an anonymous, frame-backed fd whose mmap(MAP_SHARED) is real cross-process shared
+ * memory (Chromium/Electron build their Mojo shared buffers on it). The kernel ignores `name` (it is
+ * only a /proc label on Linux) and keys off `flags` (MFD_CLOEXEC). Grow it with ftruncate before
+ * mmap — a memfd starts empty. */
+int memfd_create(const char* name, unsigned int flags) {
+	return reterr(sys3(SYS_memfd_create, (int) name, (int) flags, 0));
+}
+
 /* epoll (level-triggered): create1/ctl/wait over the kernel interest set. epoll_create(size) is
  * the legacy spelling — size is advisory and ignored, as on modern Linux. */
 int epoll_create1(int flags) { return reterr(sys3(SYS_epoll_create1, flags, 0, 0)); }

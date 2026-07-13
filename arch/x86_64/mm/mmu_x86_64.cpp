@@ -235,6 +235,41 @@ int mmuMapUserFbAt(AddressSpace* s, uint32_t va, uint64_t fbPhys, uint32_t bytes
 	return ok ? 0 : -1;
 }
 
+// Map a shared-object frame (an Shm page behind a MAP_SHARED memfd) at `va`, present+writable+user,
+// AND tagged PTE_SHARED so this address space's teardown drops the PTE without freeing the frame
+// (the Shm owns it) and fork aliases rather than copies it. Reuses the device/GEM fb window's VA (the
+// dispatch allocates `va` from p->fbNext/fbFree exactly like a GEM BO); munmap of that window already
+// drops PTEs without freeing frames, which is the correct behaviour for a shared frame too. `phys`
+// is a single page-aligned frame; `bytes` is normally one page but a multi-page span is fine.
+int mmuMapUserSharedAt(AddressSpace* s, uint32_t va, uint64_t phys, uint32_t bytes) {
+	uint64_t base = phys & kernel::PAGE_MASK;
+	uint64_t len = (bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK;
+	uint64_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	bool ok = s->impl.mapRange(va, base, len,
+			kernel::PTE_PRESENT | kernel::PTE_RW | kernel::PTE_USER | kernel::PTE_SHARED);
+	kernel::loadCr3(saved);
+	return ok ? 0 : -1;
+}
+
+// Frame backend for the Shm shared-memory object: hand it real physical frames (zeroed, like every
+// other user page) and take them back. Frames come from g_fa, so they sit at/above FRAMES_MIN_PA —
+// above every user VA window — and stay identity-addressable under any process CR3.
+uint64_t shmFrameAlloc() {
+	uint32_t f = g_fa->alloc();
+	if (!f) return 0;
+	// Zeroing touches the frame by identity, which is only mapped under the kernel directory — a
+	// memfd's ftruncate runs on the caller's CR3, where that physical VA is NOT identity-mapped (it
+	// would land in the user window and #PF). Switch to the kernel directory to clear it, exactly as
+	// mmuMapAnon / mmuSetUserBrk do for the frames they allocate.
+	uint64_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	memset((void*) (uintptr_t) f, 0, 0x1000);
+	kernel::loadCr3(saved);
+	return f;
+}
+void shmFrameFree(uint64_t frame) { g_fa->free((uint32_t) frame); }
+
 void mmuUnmapUserFb(AddressSpace* s, uint32_t va, uint32_t bytes) {
 	uint64_t end = (uint64_t) va + ((bytes + ~kernel::PAGE_MASK) & kernel::PAGE_MASK);
 	uint64_t saved = kernel::readCr3();

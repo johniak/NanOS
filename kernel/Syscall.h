@@ -26,6 +26,8 @@ namespace kernel {
 #define EAGAIN 11
 #define EFAULT 14
 #define EINVAL 22
+#define ENOMEM 12
+#define ENOSPC 28
 #define EROFS 30
 #define EMFILE 24
 #define EPIPE 32
@@ -79,6 +81,7 @@ struct PollFd { int fd; short events; short revents; };
 struct Socket;   // net/Socket.h — a socket fd's backing (FAZA 9)
 class Eventfd;   // Eventfd.h — an eventfd2 fd's backing (u64 counter + wait queue)
 class Epoll;     // Epoll.h — an epoll_create1 instance's interest set
+class Shm;       // Shm.h — a memfd's frame-backed shared-memory object (MAP_SHARED backing)
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
@@ -123,6 +126,7 @@ class Syscalls {
 		bool isChar;        // this fd is a char-device path (pty/etc): open/close are ref-counted
 		Eventfd* efd;       // non-null => this fd is an eventfd2 counter (read/write/poll route to it)
 		Epoll* epoll;       // non-null => this fd is an epoll instance (epoll_ctl/epoll_wait target)
+		Shm* shm;           // non-null => this fd is a memfd (read/write/lseek/ftruncate/fstat/mmap route to it)
 	};
 	static const int MAXFD = 128;   // per-process fd table (was an artificial 32; heap-backed)
 	Fd fds[MAXFD];
@@ -304,6 +308,13 @@ public:
 	bool epollReady(Epoll* e);   // any registered fd ready? (for the rare poll() of an epoll fd)
 	bool fdIsOpen(int fd) { return valid(fd); }   // for epoll_ctl's EBADF check
 	int listOpenFds(int* out, int max);           // fill open fd numbers (/proc/<pid>/fd), return count
+
+	// memfd_create(2): an anonymous, frame-backed fd (a real cross-process MAP_SHARED object — the
+	// backing Chromium/Electron build their Mojo shared buffers on). read/write/lseek/ftruncate/fstat
+	// all route to the Shm; mmap(MAP_SHARED) maps its frames. Refcounts like an eventfd (dup/fork
+	// share, close frees at the last ref). `flags` accepts MFD_CLOEXEC (0x1) — the rest are ignored.
+	int memfdCreate(unsigned flags);                                 // -> new fd, or -errno
+	Shm* shmAt(int fd) { return valid(fd) ? fds[fd].shm : 0; }       // non-null iff fd is a memfd
 
 	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
 	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).

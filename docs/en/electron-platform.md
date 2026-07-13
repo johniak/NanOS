@@ -169,8 +169,8 @@ or the emptiness that proves the row).
 | `mprotect` RW↔RX flip | implemented | `arch::mmuProtectUser` + `AddressSpace::protect` (toggles PTE_RW + TLB shootdown); `SYS_mprotect`; `scripts/smoke-mprotect.sh` (mmapexectest) PASS | V8 W^X code gen. NX not enabled, so PROT_EXEC is a no-op and write-protection is via PTE_RW; absent pages skipped (no ENOMEM) to not regress guard-page callers |
 | `madvise` | implemented (advisory no-op) | `include/sys/mman.h:42` | V8 GC hints |
 | `mincore` | implemented (all pages resident; no reclaim) | `posixstubs.c:466` | Chromium |
-| `memfd_create` | implemented (uniquely-named `/tmp` file, kept linked, no seals) | `posixstubs.c`; `scripts/smoke-memfd.sh` PASS | Chromium shared memory. NOT unlinked-anonymous (NanOS tracks fds by path, so an unlinked-open file loses ftruncate/mmap); the `/tmp` entry stays until close |
-| `MAP_SHARED` cross-process writeback | **missing-required** | shmdualtest hangs: a file mmap allocates fresh private pages eagerly filled from the file (`SyscallDispatch.cpp` ~1023) — MAP_PRIVATE semantics, no write-back, no page sharing | Chromium shmem — remaining Task 1.5 work: page-frame-backed RamFs + shared mapping |
+| `memfd_create` | implemented (real anonymous, frame-backed; no seals) | `SYS_memfd_create` → `Syscalls::memfdCreate` → `kernel/Shm.h`; `syscalls.c`; `scripts/smoke-memfd.sh` PASS | Chromium shared memory. Now truly anonymous (a kernel `Shm` object, no `/tmp` file); `read`/`write`/`lseek`/`ftruncate`/`fstat`/`mmap` all route to the Shm. Grow with ftruncate before mmap |
+| `MAP_SHARED` cross-process writeback | **implemented** (memfd only) | `SyscallDispatch.cpp` mmap2 shm branch maps the `Shm`'s frames (`arch::mmuMapUserSharedAt`, tagged `PTE_SHARED`); `freeUserWindow` skips + `copyUserWindowFrom` aliases shared frames; `scripts/smoke-shmshare.sh` (shmdualtest) PASS | Chromium shmem. Frames are owned by the `Shm` (freed at last fd close), so a mapping does NOT itself pin the object — **keep the memfd fd open while mapped** (exactly how Chromium holds it). Regular-file / anonymous `MAP_SHARED` remain private-copy; only memfd shares |
 | `MAP_FIXED_NOREPLACE` | not-needed-yet | absent; add only if V8 build probes (matrix row first) | V8 heap placement |
 | `F_ADD_SEALS` (memfd seals) | not-needed-yet | absent; add only if Chromium rejects unsealed memfds | Chromium shmem |
 
@@ -200,8 +200,9 @@ or the emptiness that proves the row).
 | `sigaltstack` | disabled-by-flag (stub reports disabled) | `posixstubs.c`; Decisions: V8 stack checks are limit-based | build V8 with wasm trap-handler off (plans 02/03) |
 | Chromium Linux sandbox syscalls (seccomp/namespaces) | disabled-by-flag | none present | `--no-sandbox` runtime default (plan 05 launcher); security limitation (Task 1.8) |
 
-**Work list for Tasks 1.2–1.5** (the `missing-required` rows): `eventfd`, `epoll`, `pipe2`, `dup3`,
-`mprotect` real RW↔RX, `/proc/self/exe`, `/proc/self/fd`, and proving `MAP_SHARED` writeback.
+**Tasks 1.2–1.5 — all landed** (formerly the `missing-required` rows): `eventfd`, `epoll`, `pipe2`,
+`dup3`, `mprotect` real RW↔RX, `/proc/self/exe`, `/proc/self/fd`, and `MAP_SHARED` cross-process
+writeback (memfd). Each has a host test (`make test64`) and a QEMU boot smoke wired into `verify64`.
 
 ## How To Port Another Electron App
 

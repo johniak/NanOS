@@ -125,6 +125,7 @@
 #define SYS_epoll_wait    232
 #define SYS_pipe2         293
 #define SYS_dup3          292
+#define SYS_memfd_create  319   /* anonymous frame-backed fd -> cross-process MAP_SHARED (Chromium/Electron shmem) */
 #define SYS_kcmp 312         /* KCMP_FILE only — Mesa's os_same_file_description (GEM handle
                               * namespace sharing); see Syscalls::kcmp for the NanOS semantics */
 #define SYS_clock_gettime 228

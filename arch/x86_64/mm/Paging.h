@@ -28,6 +28,13 @@ const uint64_t PTE_PRIV    = 1ULL << 9;                  // AVL bit 9 (ignored b
                                                          // at a PER-PROCESS private table — re-privatize
                                                          // is a no-op, and teardown frees it. Cleared on
                                                          // the shared kernel-half entries (adoptKernelDirectory).
+const uint64_t PTE_SHARED  = 1ULL << 10;                 // AVL bit 10 (ignored by HW): this LEAF frame is
+                                                         // owned by a shared object (an Shm behind a
+                                                         // MAP_SHARED memfd), NOT by this address space.
+                                                         // Teardown drops the PTE but must NOT free the
+                                                         // frame (another process may still map it), and
+                                                         // fork ALIASES it (same frame) instead of copying,
+                                                         // so both processes see each other's writes.
 const uint64_t PAGE_MASK   = 0x000FFFFFFFFFF000ULL;      // bits 12..51: the 4 KiB frame address
 const uint64_t FLAG_MASK   = 0xFFF;                      // low 12 control bits (incl. the AVL PTE_PRIV)
 
