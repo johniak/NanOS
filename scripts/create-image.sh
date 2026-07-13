@@ -2,15 +2,15 @@
 # Creates the NanOS disk-image skeleton. Runs INSIDE the nanos-build container (Linux);
 # no Docker, no mount, no loop device (parted + mtools + mke2fs -E offset + debugfs/limine).
 #
-# Two layouts, selected by NANOS_BOOT:
-#   * NANOS_BOOT=limine  -> hybrid GPT image bootable under BOTH BIOS and UEFI via Limine
-#                           (x86_64 live-USB target). bios_boot + ESP/FAT + ext4 root (label NANOS).
-#   * (unset, default)   -> legacy GRUB i386-pc MBR image (the frozen i686 path; unchanged).
+# One layout: hybrid GPT image bootable under BOTH BIOS and UEFI via Limine (the x86_64
+# live-USB target). bios_boot + ESP/FAT + ext4 root (label NANOS). NANOS_BOOT=limine is
+# accepted for compatibility; the legacy GRUB i386-pc MBR layout was retired with i686
+# (docs/superpowers/plans/2026-07-13-i686-retirement.md).
 # The kernel + /nanos tree are populated separately by the Makefile's _image/_image64 (debugfs).
 
 set -e
 
-IMAGE_PATH="${IMAGE_PATH:-disk/image.img}"
+IMAGE_PATH="${IMAGE_PATH:-disk/image64.img}"
 
 # Skeleton is built once; the kernel + files are (re)written separately each build.
 if [ -f "$IMAGE_PATH" ]; then
@@ -19,7 +19,11 @@ if [ -f "$IMAGE_PATH" ]; then
 fi
 mkdir -p "$(dirname "$IMAGE_PATH")"
 
-if [ "$NANOS_BOOT" = limine ]; then
+if [ -n "${NANOS_BOOT:-}" ] && [ "$NANOS_BOOT" != limine ]; then
+    echo "create-image.sh: unknown NANOS_BOOT='$NANOS_BOOT' (the legacy i686 GRUB layout is retired)" >&2
+    exit 1
+fi
+if true; then
     # ---- Hybrid GPT + Limine (BIOS + UEFI) ----
     # Layout (parted aligns to 1 MiB): P1 bios_boot @1MiB(1MiB), P2 ESP/FAT32 @2MiB(64MiB),
     # P3 ext4 root @66MiB(rest). The P3 byte offset is fixed at 69206016 — the Makefile uses it too.
@@ -80,57 +84,3 @@ LCONF
     echo "Hybrid GPT+Limine image created: $IMAGE_PATH (root @ $ROOT_OFFSET)"
     exit 0
 fi
-
-# ---- Legacy GRUB i386-pc MBR image (frozen i686 path) ----
-OFFSET=1048576   # 2048 sectors * 512 bytes = 1MiB
-SECTORS=522240   # (256MB - 1MB) / 512  — grown from 32MB to fit large apps (NetSurf ~7MB + res)
-
-echo "Creating GRUB2 HDD image..."
-
-# Embedded GRUB config baked into core.img: hand control to the real grub.cfg
-# on the partition. 'normal' gives a full shell with error messages.
-EMBED_CFG=$(mktemp)
-cat > "$EMBED_CFG" << 'GRUBCFG'
-set root=(hd0,msdos1)
-set prefix=(hd0,msdos1)/boot/grub
-terminal_input console
-terminal_output console
-normal
-GRUBCFG
-
-# 256MB disk image.
-dd if=/dev/zero of="$IMAGE_PATH" bs=1M count=256 status=none
-echo "Created 256MB disk image"
-
-# MBR partition table, single bootable ext2 partition at 1MiB.
-parted -s "$IMAGE_PATH" mklabel msdos
-parted -s "$IMAGE_PATH" mkpart primary ext2 1MiB 100%
-parted -s "$IMAGE_PATH" set 1 boot on
-echo "Created MBR partition table"
-
-# ext2 filesystem at the partition offset (1024-byte blocks).
-PART_BLOCKS=$((SECTORS * 512 / 1024))
-mke2fs -t ext4 -q -E offset=$OFFSET "$IMAGE_PATH" ${PART_BLOCKS}k
-echo "Created ext2 filesystem at offset $OFFSET"
-
-# Populate /boot/grub/grub.cfg via debugfs (no mount needed).
-debugfs -w -R "mkdir /boot" "$IMAGE_PATH?offset=$OFFSET"
-debugfs -w -R "mkdir /boot/grub" "$IMAGE_PATH?offset=$OFFSET"
-debugfs -w -R "write grub.cfg /boot/grub/grub.cfg" "$IMAGE_PATH?offset=$OFFSET"
-echo "Populated filesystem via debugfs"
-
-# Install GRUB2: core.img with embedded config + all needed modules.
-grub-mkimage -O i386-pc -o /tmp/core.img \
-    -c "$EMBED_CFG" \
-    -p "(hd0,msdos1)/boot/grub" \
-    normal part_msdos ext2 multiboot biosdisk boot configfile
-
-# boot.img -> MBR (first 440 bytes); core.img -> right after the MBR.
-dd if=/usr/lib/grub/i386-pc/boot.img of="$IMAGE_PATH" bs=440 count=1 conv=notrunc status=none
-dd if=/tmp/core.img of="$IMAGE_PATH" bs=512 seek=1 conv=notrunc status=none
-echo "Installed GRUB2 bootloader"
-
-rm -f "$EMBED_CFG" /tmp/core.img
-
-echo ""
-echo "Image created: $IMAGE_PATH"

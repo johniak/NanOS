@@ -19,20 +19,16 @@ MI_SOURCES+= memory_manager.o Heap.o List.o String.o icxxabi.o string_funcs.o
 SOURCES=$(MI_SOURCES) $(ARCH_SOURCES)
 
 BINFOLDER=bin/
-IMAGE=disk/image.img
-# Partition starts at LBA 2048 (1MiB offset)
-IMAGE_PART=$(IMAGE)?offset=1048576
-# x86_64 staged GRUB disk image (Plan 5): a separate image carrying the staged ELF64 kernel
-# + an ext4 partition for /disks/main. Same partition layout/offset as the i686 image.
+# The x86_64 disk image (hybrid GPT + Limine, BIOS+UEFI).
 IMAGE64=disk/image64.img
 # Hybrid GPT+Limine layout: the ext4 root (P3) starts at 34 MiB (after bios_boot @1MiB + ESP @2MiB,32MiB).
 IMAGE64_PART=$(IMAGE64)?offset=69206016
 
 DOCKER_IMAGE=nanos-build
-# Build the image for the host's NATIVE architecture (no --platform): the i686-elf cross
+# Build the image for the host's NATIVE architecture (no --platform): the x86_64-elf cross
 # toolchain and all image tools are arch-agnostic, so on Apple Silicon this runs natively
 # instead of under QEMU amd64 emulation — the single biggest build speedup. The output
-# (i686 kernel + i386-pc GRUB image) is identical regardless of build-host arch.
+# is identical regardless of build-host arch.
 DOCKER_RUN=docker run --rm -v $(CURDIR):/src -w /src $(DOCKER_IMAGE)
 
 ifeq ($(wildcard /etc/nanos-build),)
@@ -43,42 +39,27 @@ ifeq ($(wildcard /etc/nanos-build),)
 docker-image:
 	docker build -t $(DOCKER_IMAGE) docker/
 
-build: docker-image
-	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _all'
-
-image: docker-image
-	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _image'
-
-iso: docker-image
-	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" _iso'
-
 # GNU bash (optional, external). The bash sources AND its build scaffolding (nx-gcc wrapper,
 # build.sh, config.cache, port patches) live in a SEPARATE fork repo — NOT here. This target
 # only runs that build inside the cross-toolchain container (both repos bind-mounted) and
-# copies the resulting bash.nxe into bin/, where _image installs it as the /apps/bash bundle.
+# copies the resulting bash.nxe into bin/, where _image64 installs it as the /apps/bash bundle.
 # Absent fork => the target errors clearly; `make image` itself never depends on this, so a
 # missing fork can't break a normal build.
 BASH_FORK ?= $(HOME)/Projects/bash-nanos
-# Arch-aware (mirrors smoke64 / the in-tree x86_64 userland): for ARCH=x86_64 the fork builds
-# against the 64-bit picolibc sysroot + x86_64-elf-gcc, links the elf64 .nxe linker script and
-# turns the ELF into a v4 .nxe with mknx64 (NX_LP64=1 fixes bash's LP64 sizeof answers). i686
-# passes no env, so build.sh/nx-gcc fall back to their 32-bit defaults — unchanged.
-ifeq ($(ARCH),x86_64)
+# The fork builds against the 64-bit picolibc sysroot + x86_64-elf-gcc, links the elf64 .nxe
+# linker script and turns the ELF into a v4 .nxe with mknx64 (NX_LP64=1 fixes bash's LP64
+# sizeof answers).
 BASH_ENV = -e NX_CC=x86_64-elf-gcc -e NX_HOST=x86_64-elf -e NX_PICO=/opt/picolibc/x86_64-elf \
   -e NX_MKNX=/src/bin/mknx64 -e NX_LDSCRIPT=/src/arch/x86_64/user-nx.ld \
   -e 'NX_ARCHFLAGS=-mcmodel=small -mno-red-zone' -e NX_LP64=1
 # The fork links /src/bin/{crt0.o,nxhdr.o,libc.ndl.a} + mknx64 — they must be the ELF64 build.
 BASH_PREREQ = $(DOCKER_RUN) sh -c 'make ARCH=x86_64 bin/libc.ndl bin/libc.ndl.a bin/crt0.o bin/nxhdr.o bin/mknx64'
-else
-BASH_ENV =
-BASH_PREREQ = @true
-endif
 bash: docker-image
 	@test -f "$(BASH_FORK)/nanos/build.sh" || { echo "bash fork not found at $(BASH_FORK)/nanos (set BASH_FORK=/path/to/bash-nanos)"; exit 1; }
 	$(BASH_PREREQ)
 	docker run --rm -v $(CURDIR):/src -v "$(BASH_FORK)":/bash $(BASH_ENV) -w /bash $(DOCKER_IMAGE) sh /bash/nanos/build.sh build
 	cp "$(BASH_FORK)/nanos/bash.nxe" $(BINFOLDER)bash.nxe
-	@echo "staged $(BINFOLDER)bash.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it"
+	@echo "staged $(BINFOLDER)bash.nxe — run 'make image64' to install it"
 
 # GNU grep / vim / bzip2 (optional, external). The upstream sources live in the nanos-sdk work
 # dir. These targets are ARCH-AWARE:
@@ -649,7 +630,7 @@ dropbear: bin/libc.ndl bin/libc.ndl.a
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
 # busybox tree) and mknx it. No busybox source patches — sysroot headers + EXTRA_CFLAGS only.
-# The action helper (dhcpcfg.nxe) ships separately as /nanos/config/udhcpc.script via _image.
+# The action helper (dhcpcfg.nxe) ships separately as /nanos/config/udhcpc.script via _image64.
 BB_DIR := $(SDK_WORK)/busybox-1.36.1
 udhcpc: bin/libc.ndl bin/libc.ndl.a
 	@test -f "$(BB_DIR)/nanos-build.sh" || { echo "busybox not set up at $(BB_DIR) (extract busybox-1.36.1 + nanos-build.sh)"; exit 1; }
@@ -921,7 +902,7 @@ externals:
 	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image' to install them"
 
 # Desktop artwork: convert the branded PNGs (NanOS wallpaper + logo) to NanOS's flat 32bpp surface
-# format on the host (needs python3 + Pillow), staged into bin/ where _image installs them under
+# format on the host (needs python3 + Pillow), staged into bin/ where _image64 installs them under
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
@@ -930,13 +911,8 @@ assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020
 	python3 scripts/png2raw.py "$(ART_DIR)/logo.png"      $(BINFOLDER)logo.raw      96x96     --bg 0xf4f8fd
-	@echo "staged $(BINFOLDER)wallpaper.raw + logo.raw — run 'make image' to install them"
+	@echo "staged $(BINFOLDER)wallpaper.raw + logo.raw — run 'make image64' to install them"
 
-# -cpu Nehalem: expose RDRAND so the kernel CSPRNG seeds from a hardware RNG (the default qemu32
-# CPU lacks it — without this flag archHwRandom returns false and the seed is RDTSC-jitter+RTC only).
-# Default set by arch/$(ARCH)/arch.mk (i686 -> Nehalem, x86_64 -> qemu64); ?= lets the arch value
-# (assigned at the line 4 include, before this) win.
-QEMU_CPU ?= -cpu Nehalem
 # RAM: 512 MiB. The kernel reads the real size from multiboot and lays out its windows above it
 # (mmu_x86.cpp), so this is just the QEMU knob — bump it freely (up to ~1 GiB with the current
 # window placement). More RAM = bigger kernel heap + a bigger user frame pool.
@@ -961,32 +937,12 @@ QEMU_SMP64 ?= -accel tcg,thread=multi -smp $(NCPU64)
 # size. Override with QEMU_DISPLAY64= to drop it (e.g. on a non-Retina host or for screendumps).
 QEMU_DISPLAY64 ?= -display cocoa,zoom-to-fit=on
 
-run: image
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE),format=raw $(NIC_NET)
-
-run-iso: iso
-	$(QEMU) -cdrom nanos.iso
-
-# Networking harness (FAZA 0 of docs/superpowers/plans/2026-06-12-networking.md). Attach an
-# Intel e1000 (82540EM = PCI 8086:100E — a REAL NIC with the canonical Linux driver) on QEMU's
-# user-mode NAT and dump EVERY frame (RX+TX) to a pcap. NIC_OPTS is shared by run-net and
-# scripts/net-capture.sh so the wire we observe is exactly the wire we ship. The NAT hands the
-# guest 10.0.2.15 (gateway 10.0.2.2, DNS forwarder 10.0.2.3, DHCP server 10.0.2.2); traffic
-# reaches the real internet through the host, so `ping wp.pl` can actually go out. The pcap is
-# the "no-shortcuts" gate: we byte-compare our ARP/IP/ICMP/DNS/TCP against real Linux. hostfwd
-# (host:5555 -> guest:80) lets a host client reach a guest server for loopback-free tests.
-PCAP ?= /tmp/nanos.pcap
-# hostfwd map (host port -> guest service): 5555->80 (httpd), 2323->23 (telnetd), 5007->7 (echo),
-# 5013->13 (daytime), 5443->5443 (openssl s_server TLS), 2222->22 (sshd) — the inetd built-ins +
-# services + the TLS/SSH servers let a host client reach the guest servers.
-# NIC_NET = the NIC + NAT + host port-forwards. `make run` uses it so a host `telnet localhost 2323`
-# reaches the guest's telnetd out of the box (no extra flags). run-net adds a filter-dump pcap.
+# NIC + user-mode NAT + host port-forwards, shared by run64: 5555->80 (httpd), 2323->23
+# (telnetd), 5007->7 (echo), 5013->13 (daytime), 5443->5443 (openssl s_server TLS),
+# 2222->22 (sshd) — the inetd built-ins + services + the TLS/SSH servers let a host client
+# reach the guest servers out of the box (e.g. `telnet localhost 2323`).
 NIC_NET=-netdev user,id=n0,hostfwd=tcp::5555-:80,hostfwd=tcp::2323-:23,hostfwd=tcp::5007-:7,hostfwd=tcp::5013-:13,hostfwd=tcp::5443-:5443,hostfwd=tcp::2222-:22 \
         -device e1000,netdev=n0
-NIC_OPTS=$(NIC_NET) -object filter-dump,id=d0,netdev=n0,file=$(PCAP)
-
-run-net: image
-	$(QEMU) $(QEMU_CPU) $(QEMU_MEM) -drive file=$(IMAGE),format=raw $(NIC_OPTS)
 
 # Tests run in a lightweight NATIVE-arch image (no amd64 emulation -> fast), since
 # they need only g++/lcov, not the cross toolchain or GRUB.
@@ -1166,7 +1122,7 @@ verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smo
 
 clean:
 	$(DOCKER_RUN) make _clean
-	-rm -rf iso/ nanos.iso $(IMAGE) coverage/
+	-rm -rf coverage/
 
 # Machine-independence guard: the MI layer (init/kernel/mm/fs/lib/drivers) must
 # only reach the arch via <arch/...> contracts — never x86 internals. Runs on the
@@ -1369,17 +1325,13 @@ run64-gl-desktop: image64-gl
 run64-gl-test: image64
 	QEMU_GL="$(QEMU_GL)" IMG="$(IMAGE64)" bash scripts/run64-gl-selftest.sh
 
-# Doom (in-tree doomgeneric), ARCH-AWARE host wrapper. Stages bin/doom.nxe in the container for
-# the selected arch — i686 (default) or x86_64 — using the arch-selected userland toolchain,
-# picolibc sysroot, linker script and mknx (see the $(BINFOLDER)doom.nxe rule). For i686 doom is
-# also built by `make image` (it is in USER_PROGS); for x86_64 it is NOT in the minimal
-# X64_USER_PROGS subset, so this target stages it and `make image64` then installs the /apps/doom
-# bundle + /bin/doom.nxe symlink. Switching ARCH reuses bin/ for userland objects, so run
-# `make clean` when crossing arches (the documented x86_64 convention) before `make ARCH=x86_64 doom`.
+# Doom (in-tree doomgeneric) host wrapper. Stages bin/doom.nxe in the container (doom is NOT
+# in the minimal X64_USER_PROGS subset); `make image64` then installs the /apps/doom bundle +
+# /bin/doom.nxe symlink.
 .PHONY: doom
 doom:
 	$(DOCKER_RUN) sh -c 'make -j"$$(nproc)" ARCH=$(ARCH) doom'
-	@echo "staged $(BINFOLDER)doom.nxe (ARCH=$(ARCH)) — run 'make image' (i686) or 'make image64' (x86_64) to install /apps/doom"
+	@echo "staged $(BINFOLDER)doom.nxe — run 'make image64' to install /apps/doom"
 
 # x86_64 minimal userland (Plan 6): build the 64-bit init.nxe in the container (crt0 +
 # nxhdr + libnanos + init, linked at 0x800000, then mknx64 -> v4 .nxe). Host-side wrapper.
@@ -1393,7 +1345,7 @@ init64:
 # nxhdr) and the pthread arch port run in ring 3. To run one: install it as PID 1 (overwrite
 # /nanos/core/init.nxe in the image) and boot. The sysroot-inject below mirrors the i686
 # `make <app>` cp lines, arch-selected via NANOS_TRIPLE (= x86_64-nanos when ARCH=x86_64).
-NANOS_TRIPLE := $(if $(filter x86_64,$(ARCH)),x86_64-nanos,i686-nanos)
+NANOS_TRIPLE := x86_64-nanos
 SDK_SYSROOT  := $(SDK_TC)/$(NANOS_TRIPLE)
 SDK_DEV_IMG  ?= nanos-sdk-dev:latest
 SMOKE_PROGS  := hello pthread_hello
@@ -1608,7 +1560,7 @@ _image64: _all _userland64 _kext
 	# Hybrid GPT image bootable under BOTH BIOS and UEFI via Limine (limine.conf on the ESP points at
 	# /nanos/core/kernel.bin on the ext4 root by label — no /boot/grub/grub.cfg needed).
 	IMAGE_PATH=$(IMAGE64) NANOS_BOOT=limine ./scripts/create-image.sh
-	# System volume skeleton (mirror i686 _image): /nanos/{core,bin,lib,kext,config,cache,logs,
+	# System volume skeleton (mirror of the retired i686 _image): /nanos/{core,bin,lib,kext,config,cache,logs,
 	# share/terminfo/x} + the /apps bundle root + the /bin link farm, created upfront so every
 	# subsequent install step (and the optional-app blocks below) finds its parent directory.
 	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/firmware\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/icons\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
@@ -1657,7 +1609,7 @@ _image64: _all _userland64 _kext
 	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
 	# nanowm desktop apps -> /apps/<name>/<name>.nxe bundles + /bin/<name>.nxe symlink (the link farm),
-	# the layout nwm spawns them from. Mirrors the i686 APP_PROGS loop.
+	# the layout nwm spawns them from. Mirrors the retired i686 APP_PROGS loop.
 	for p in $(X64_GUI_APPS); do \
 	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
@@ -1666,7 +1618,7 @@ _image64: _all _userland64 _kext
 	done
 	# Desktop artwork. The wallpaper ships as the source PNG; nanowm decodes it and cover-fits it to
 	# the live resolution at runtime (so it fills ANY panel). The logo stays a fixed 96x96 raw (About
-	# blits it directly, no scaling). Mirrors the i686 _image artwork block.
+	# blits it directly, no scaling). Mirrors the retired i686 _image artwork block.
 	if [ -f assets/wallpaper.png ]; then \
 	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
@@ -1703,7 +1655,7 @@ _image64: _all _userland64 _kext
 	# Network/login config templates -> /nanos/config/etc (kernel copies them into the writable /etc
 	# tmpfs at boot, see Kernel.cpp populateEtc). /etc/shells in particular lists the valid login
 	# shells: dropbear's getusershell() rejects an SSH login whose passwd shell isn't there. Mirrors
-	# the i686 _image etc population.
+	# the retired i686 _image etc population.
 	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells profile; do \
 	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE64_PART)"; \
@@ -1712,7 +1664,7 @@ _image64: _all _userland64 _kext
 	printf "rm /users/jan/.bashrc\nwrite config/skel/.bashrc /users/jan/.bashrc\nset_inode_field /users/jan/.bashrc uid 1000\nset_inode_field /users/jan/.bashrc gid 1000\n" | debugfs -w "$(IMAGE64_PART)"
 	# GNU bash (optional): installed as an /apps/bash bundle + a /bin/bash.nxe symlink ONLY if
 	# `make ARCH=x86_64 bash` staged bin/bash.nxe. passwd's login shell is /disks/main/bin/bash.nxe,
-	# so this is what PID 1 execve()s. Mirrors the i686 _image bash population. Skipped silently
+	# so this is what PID 1 execve()s. Mirrors the retired i686 _image bash population. Skipped silently
 	# otherwise (init falls back to nsh). The /apps + /bin link-farm dirs are created here.
 	-printf "mkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null
 	if [ -f $(BINFOLDER)bash.nxe ]; then \
@@ -1722,7 +1674,7 @@ _image64: _all _userland64 _kext
 	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# grep + bzip2 (optional, external): system utilities -> /nanos/bin, installed only if
-	# `make ARCH=x86_64 grep|bzip2` staged them. Mirrors the i686 _image population.
+	# `make ARCH=x86_64 grep|bzip2` staged them. Mirrors the retired i686 _image population.
 	if [ -f $(BINFOLDER)grep.nxe ]; then \
 	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
@@ -1772,19 +1724,19 @@ _image64: _all _userland64 _kext
 	fi
 	# ping (optional, external): GNU inetutils ping built by `make ARCH=x86_64 ping` (the nanos-sdk
 	# port) and staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
-	# Mirrors the i686 _image population.
+	# Mirrors the retired i686 _image population.
 	if [ -f $(BINFOLDER)ping.nxe ]; then \
 	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# openssl (optional, external): OpenSSL CLI built by `make ARCH=x86_64 openssl` (the nanos-sdk
 	# port), staged into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
-	# Mirrors the i686 _image population.
+	# Mirrors the retired i686 _image population.
 	if [ -f $(BINFOLDER)openssl.nxe ]; then \
 	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# CA trust store + config (Mozilla bundle): OpenSSL's compiled OPENSSLDIR is /disks/main/nanos/ssl;
 	# ship cert.pem + openssl.cnf there so the TLS clients can verify chains without a per-command
-	# -CAfile and the CLI finds its config. Mirrors the i686 _image population. Skipped if absent.
+	# -CAfile and the CLI finds its config. Mirrors the retired i686 _image population. Skipped if absent.
 	if [ -f disk-content/ssl/cert.pem ]; then \
 	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE64_PART)"; \
@@ -1794,7 +1746,7 @@ _image64: _all _userland64 _kext
 	# `make ARCH=x86_64 dropbear` staged them. init's start_sshd() generates a persistent ed25519
 	# host key under /nanos/config on first boot and launches `dropbear -r .. -p 22`; login is the
 	# passwd shell (bash) over the kernel PTY. Also create root's home + .ssh (pubkey authorized_keys
-	# location). Mirrors the i686 _image dropbear population. The host reaches sshd via hostfwd 2222->22.
+	# location). Mirrors the retired i686 _image dropbear population. The host reaches sshd via hostfwd 2222->22.
 	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
 	  for b in dropbear dropbearkey dbclient; do \
 	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
@@ -1802,7 +1754,7 @@ _image64: _all _userland64 _kext
 	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	fi
 	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
-	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the i686 _image bundle.
+	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the retired i686 _image bundle.
 	if [ -f $(BINFOLDER)vim.nxe ]; then \
 	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
@@ -1817,13 +1769,13 @@ _image64: _all _userland64 _kext
 	  tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null; \
 	  printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
-	# terminfo DB for vim (mirror i686 _image): the xterm-256color entry, with setaf/setab rewritten
+	# terminfo DB for vim (mirror of the retired i686 _image): the xterm-256color entry, with setaf/setab rewritten
 	# to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form vim's term_color() drives correctly (the stock
 	# conditional form leaks junk through vim's minimal tgoto). Shipped under /nanos/share/terminfo,
 	# matching TERM=xterm-256color + TERMINFO. Done above, inside the vim block (its only consumer).
 	# Doom (optional, in-tree doomgeneric): an /apps/doom bundle (the binary + its shareware
 	# IWAD doom1.wad) + a /bin/doom.nxe symlink, installed only if `make ARCH=x86_64 doom`
-	# staged bin/doom.nxe. Mirrors the i686 _image doom bundle (APP_PROGS + the WAD write), but
+	# staged bin/doom.nxe. Mirrors the retired i686 _image doom bundle (APP_PROGS + the WAD write), but
 	# guarded by file presence since doom is not in the minimal X64_USER_PROGS subset. doom mmaps
 	# /dev/fb0 and reads /dev/input0, both now present on x86_64 (the framebuffer multiboot tag).
 	if [ -f $(BINFOLDER)doom.nxe ]; then \
@@ -1838,7 +1790,7 @@ _image64: _all _userland64 _kext
 	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
 	# res/ is installed recursively (dirs first top-down, then files). Built by `make ARCH=x86_64
 	# netsurf` (the netsurf-nanos port stack); launch inside nanowm. Skipped if bin/netsurf.nxe absent.
-	# Mirrors the i686 _image netsurf population.
+	# Mirrors the retired i686 _image netsurf population.
 	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
 	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
@@ -1861,209 +1813,9 @@ _image64: _all _userland64 _kext
 
 -include $(OBJECTS:.o=.d)
 
-# Build the GRUB2 ext2 skeleton once, then (re)write the kernel into it.
-_disk-image:
-	./scripts/create-image.sh
-
-_image: _all _userland _kext _disk-image
-	# System volume layout: NanOS itself lives under /nanos (core/bin/lib/kext/config/
-	# cache/logs); non-system user apps live in /apps. GRUB stays in /boot. mkdir is
-	# idempotent across rebuilds.
-	-printf "mkdir /nanos\nmkdir /nanos/core\nmkdir /nanos/bin\nmkdir /nanos/lib\nmkdir /nanos/kext\nmkdir /nanos/config\nmkdir /nanos/cache\nmkdir /nanos/logs\nmkdir /nanos/share\nmkdir /nanos/share/terminfo\nmkdir /nanos/share/terminfo/x\nmkdir /apps\nmkdir /bin\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null
-	# Kernel + init (PID 1) in core.
-	printf "rm /nanos/core/kernel.bin\nwrite $(BINFOLDER)kernel.bin /nanos/core/kernel.bin\n" | debugfs -w "$(IMAGE_PART)"
-	printf "rm /nanos/core/init.nxe\nwrite $(BINFOLDER)init.nxe /nanos/core/init.nxe\n" | debugfs -w "$(IMAGE_PART)"
-	# Account database -> /nanos/config (NanOS keeps system config here, not in /etc). The
-	# 7th field is the login shell: init/nterm launch getpwuid()->pw_shell, so editing this
-	# file sets the default shell (the read-only-disk equivalent of chsh).
-	printf "rm /nanos/config/passwd\nwrite config/passwd /nanos/config/passwd\n" | debugfs -w "$(IMAGE_PART)"
-	# Network config templates -> /nanos/config/etc (copied into the writable /etc tmpfs at boot).
-	-printf "mkdir /nanos/config/etc\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null
-	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells; do \
-	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE_PART)"; \
-	done
-	# DHCP: the udhcpc action helper (compiled .nxe; udhcpc exec()s it) -> /nanos/config/udhcpc.script,
-	# plus the busybox udhcpc client itself -> /nanos/bin (only if `make udhcpc` staged it).
-	printf "rm /nanos/config/udhcpc.script\nwrite $(BINFOLDER)dhcpcfg.nxe /nanos/config/udhcpc.script\n" | debugfs -w "$(IMAGE_PART)"
-	if [ -f $(BINFOLDER)udhcpc.nxe ]; then \
-	  printf "rm /nanos/bin/udhcpc.nxe\nwrite $(BINFOLDER)udhcpc.nxe /nanos/bin/udhcpc.nxe\n" | debugfs -w "$(IMAGE_PART)"; fi
-	# GNU git (optional, external): installed ONLY if `make git` staged bin/git.nxe. The single
-	# binary goes to TWO places: /nanos/bin/git.nxe (the shell runs `git` -> .nxe by name) AND
-	# /nanos/libexec/git-core/git (no extension) — git's compiled exec-path, where run-command
-	# self-execs the literal program "git" for forked subcommands (git gc -> git pack-objects).
-	if [ -f $(BINFOLDER)git.nxe ]; then \
-	  printf "rm /nanos/bin/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/bin/git.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "mkdir /nanos/libexec\nmkdir /nanos/libexec/git-core\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /nanos/libexec/git-core/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/libexec/git-core/git.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  for c in gc repack pack-objects pack-refs prune prune-packed reflog rerere worktree maintenance commit-graph multi-pack-index fsck update-server-info upload-pack receive-pack; do \
-	    printf "rm /nanos/libexec/git-core/git-%s.nxe\nln /nanos/libexec/git-core/git.nxe /nanos/libexec/git-core/git-%s.nxe\n" "$$c" "$$c" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  done; \
-	  echo "  installed git -> /nanos/bin/git.nxe + /nanos/libexec/git-core/{git,git-<cmd>}.nxe (run-command execs git-<cmd>; libc execve appends .nxe)"; fi
-	# System utilities -> /nanos/bin.
-	for p in $(SYS_PROGS); do \
-	  printf "rm /nanos/bin/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /nanos/bin/$$p.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	done
-	# Non-system apps -> /apps. Each app is a self-contained BUNDLE directory
-	# /apps/<name>/ holding <name>.nxe (the entry binary) plus any data files. /bin is a
-	# flat link farm: a symbolic link /bin/<name>.nxe -> the app's bundle binary, so the
-	# shell can run an app by name without knowing its bundle layout (à la /usr/local/bin).
-	for p in $(APP_PROGS); do \
-	  printf "mkdir /apps/$$p\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /apps/$$p/$$p.nxe\nwrite $(BINFOLDER)$$p.nxe /apps/$$p/$$p.nxe\nset_inode_field /apps/$$p/$$p.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "rm /bin/$$p.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "symlink /bin/$$p.nxe /apps/$$p/$$p.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	done
-	# Shared libraries the dynamic loader resolves against (see kernel/DynLoader.cpp).
-	for l in $(USER_LIBS_NDL); do \
-	  printf "rm /nanos/lib/$$l\nwrite $(BINFOLDER)$$l /nanos/lib/$$l\n" | debugfs -w "$(IMAGE_PART)"; \
-	done
-	# Loadable kernel modules (.nkext) -> /nanos/kext; the kernel scans + loads them at boot.
-	for m in $(KEXTS); do \
-	  printf "rm /nanos/kext/$$m.nkext\nwrite $(BINFOLDER)$$m.nkext /nanos/kext/$$m.nkext\n" | debugfs -w "$(IMAGE_PART)"; \
-	done
-	# GNU bash (optional): installed as an /apps/bash bundle + /bin link ONLY if `make bash`
-	# staged bin/bash.nxe from the external fork. Skipped silently otherwise.
-	if [ -f $(BINFOLDER)bash.nxe ]; then \
-	  printf "mkdir /apps/bash\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /apps/bash/bash.nxe\nwrite $(BINFOLDER)bash.nxe /apps/bash/bash.nxe\nset_inode_field /apps/bash/bash.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "rm /bin/bash.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "symlink /bin/bash.nxe /apps/bash/bash.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# vim (optional, external): built by the nanos-sdk port and staged into bin/vim.nxe, same
-	# pattern as bash. Its runtime (syntax/help/etc.) is a `data` entry the port driver installs
-	# into the bundle; vim itself runs without it (`-u NONE`). Skipped if bin/vim.nxe is absent.
-	if [ -f $(BINFOLDER)vim.nxe ]; then \
-	  printf "mkdir /apps/vim\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/vim.nxe\nwrite $(BINFOLDER)vim.nxe /apps/vim/vim.nxe\nset_inode_field /apps/vim/vim.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "rm /bin/vim.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "symlink /bin/vim.nxe /apps/vim/vim.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "mkdir /apps/vim/runtime\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /apps/vim/runtime/defaults.vim\nwrite user/vim-runtime/defaults.vim /apps/vim/runtime/defaults.vim\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# bzip2 (optional, external): built by the nanos-sdk port and staged into bin/bzip2.nxe. A
-	# system utility (flat in /nanos/bin) since it is a single self-contained binary. Skipped if
-	# absent. bzip2 -d decompresses (same binary), so no separate bunzip2 is shipped.
-	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
-	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# grep (optional, external): GNU grep built by the nanos-sdk port and staged into bin/grep.nxe.
-	# A system utility (flat in /nanos/bin) — a single self-contained binary. Skipped if absent.
-	if [ -f $(BINFOLDER)grep.nxe ]; then \
-	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# ping (optional, external): GNU inetutils ping built by `make ping` (the nanos-sdk port) and
-	# staged into bin/ping.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
-	if [ -f $(BINFOLDER)ping.nxe ]; then \
-	  printf "rm /nanos/bin/ping.nxe\nwrite $(BINFOLDER)ping.nxe /nanos/bin/ping.nxe\nset_inode_field /nanos/bin/ping.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# wget (optional, external): GNU wget built by `make wget` (the nanos-sdk port), staged into
-	# bin/wget.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
-	if [ -f $(BINFOLDER)wget.nxe ]; then \
-	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# openssl (optional, external): OpenSSL CLI built by `make openssl` (the nanos-sdk port), staged
-	# into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
-	if [ -f $(BINFOLDER)openssl.nxe ]; then \
-	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# CA trust store (Mozilla bundle): the TLS clients (openssl s_client, wget https) verify server
-	# certificate chains against /nanos/ssl/cert.pem = OpenSSL's compiled OPENSSLDIR. Shipped so a
-	# guest TLS connection can return "Verify return code: 0 (ok)" without a per-command -CAfile.
-	if [ -f disk-content/ssl/cert.pem ]; then \
-	  printf "mkdir /nanos/ssl\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /nanos/ssl/cert.pem\nwrite disk-content/ssl/cert.pem /nanos/ssl/cert.pem\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "rm /nanos/ssl/openssl.cnf\nwrite disk-content/ssl/openssl.cnf /nanos/ssl/openssl.cnf\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
-	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
-	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
-	# res/ is installed recursively (dirs first top-down, then files) so arbitrary nesting works.
-	# Launch inside nanowm with `-f nanwm` (selects the nanowm libnsfb surface). Skipped if absent.
-	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
-	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  if [ -d $(BINFOLDER)netsurf-res ]; then \
-	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
-	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	    done; \
-	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
-	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE_PART)"; \
-	    done; \
-	  fi; \
-	fi
-	# Dropbear SSH (optional, external): server + keygen + client -> /nanos/bin. Also create root's
-	# home (/disks/main/root, set in passwd) + a .ssh dir + /etc/dropbear (runtime host keys), so
-	# pubkey auth has somewhere to read authorized_keys from and dropbear can store host keys.
-	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
-	  for b in dropbear dropbearkey dbclient; do \
-	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  done; \
-	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	fi
-	# inetd (optional, external): GNU inetutils inetd built by `make inetd` (the nanos-sdk services
-	# port), staged into bin/inetd.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
-	if [ -f $(BINFOLDER)inetd.nxe ]; then \
-	  printf "rm /nanos/bin/inetd.nxe\nwrite $(BINFOLDER)inetd.nxe /nanos/bin/inetd.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# telnetd (optional, external): GNU inetutils telnetd from the same services build. Remote bash
-	# login over a kernel pty (launched by inetd; execs nanologin -> the user's shell).
-	if [ -f $(BINFOLDER)telnetd.nxe ]; then \
-	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# inetutils diagnostic clients (FAZA I): telnet / ifconfig / traceroute -> /nanos/bin.
-	for b in telnet ifconfig traceroute; do \
-	  if [ -f $(BINFOLDER)$$b.nxe ]; then \
-	    printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  fi; \
-	done
-	# darkhttpd (optional, external): single-file HTTP server -> /nanos/bin, plus its document
-	# root /apps/www (the served site: index.html). Skipped if the binary is absent.
-	if [ -f $(BINFOLDER)darkhttpd.nxe ]; then \
-	  printf "rm /nanos/bin/darkhttpd.nxe\nwrite $(BINFOLDER)darkhttpd.nxe /nanos/bin/darkhttpd.nxe\n" | debugfs -w "$(IMAGE_PART)"; \
-	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE_PART)" 2>/dev/null; \
-	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# Desktop artwork. The wallpaper ships as the source PNG; nanowm decodes it and cover-fits it to
-	# the live resolution at runtime. The logo stays a fixed 96x96 raw (About blits it directly).
-	if [ -f assets/wallpaper.png ]; then \
-	  printf "rm /nanos/share/wallpaper.png\nwrite assets/wallpaper.png /nanos/share/wallpaper.png\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	if [ -f $(BINFOLDER)logo.raw ]; then \
-	  printf "rm /nanos/share/logo.raw\nwrite $(BINFOLDER)logo.raw /nanos/share/logo.raw\n" | debugfs -w "$(IMAGE_PART)"; \
-	fi
-	# Doom's shareware IWAD is a data file inside the doom app bundle (its layer -iwad's it).
-	printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE_PART)"
-	# terminfo database: the xterm-256color entry (matches TERM), shipped under /nanos/share/
-	# terminfo. We rewrite setaf/setab to the SIMPLE \E[3%p1%dm / \E[4%p1%dm form instead of the
-	# stock conditional `%?%p1%{8}%<%t...` string. Reason: vim's term_color() recognises the
-	# simple form and does its OWN 16-vs-256-colour selection (emitting \E[3Nm / \E[9Nm / \E[38;5;Nm
-	# correctly), whereas for any other setaf it falls back to its minimal tgoto(), which does not
-	# implement terminfo's %{n}/%<%/%t conditional+arithmetic grammar and leaks junk like
-	# "6}38;5;Nm". Recompiled with tic. (Properly fixing the general case means full terminfo
-	# param support in vim's tgoto — out of scope; this is the standard "give vim a terminfo it
-	# can drive" approach used by other minimal systems.)
-	infocmp xterm-256color 2>/dev/null \
-	  | sed -E 's@setaf=[^,]*,@setaf=\\E[3%p1%dm,@; s@setab=[^,]*,@setab=\\E[4%p1%dm,@' \
-	  > /tmp/xterm-256color.ti
-	tic -x -o /tmp/nanos-terminfo /tmp/xterm-256color.ti 2>/dev/null
-	printf "rm /nanos/share/terminfo/x/xterm-256color\nwrite /tmp/nanos-terminfo/x/xterm-256color /nanos/share/terminfo/x/xterm-256color\n" | debugfs -w "$(IMAGE_PART)"
-	# Reconcile the ext block/inode bitmaps after the debugfs writes: `debugfs write` can leave the
-	# free-counts/bitmaps slightly off, so a final `e2fsck -fy` makes every built image e2fsck-clean
-	# (exit 1 = "fixed", which is expected here, so don't fail the build on it).
-	e2fsck -fy "$(IMAGE_PART)" || true
-
-_iso: _all
-	mkdir -p iso/boot/grub
-	cp $(BINFOLDER)kernel.bin iso/boot/
-	cp grub.cfg iso/boot/grub/
-	grub-mkrescue -o nanos.iso iso/
-
 _clean:
 	-rm $(BINFOLDER)*.o $(BINFOLDER)*.d $(BINFOLDER)kernel.bin
-	-rm $(BINFOLDER)*.elf $(BINFOLDER)*.nxe $(BINFOLDER)*.ndl $(BINFOLDER)*.a $(BINFOLDER)mknx
+	-rm $(BINFOLDER)*.elf $(BINFOLDER)*.nxe $(BINFOLDER)*.ndl $(BINFOLDER)*.a $(BINFOLDER)mknx64
 	-rm -rf $(BINFOLDER)libimp $(BINFOLDER)k64
 
 # ----------------------------------------------------------------------------
@@ -2071,17 +1823,11 @@ _clean:
 # linker script/base 0x400000, NOT in kernel SOURCES). picolibc headers come via
 # -isystem; SyscallNr.h via -Ikernel. No <string.h> clash (lib/ is not on the path).
 # ----------------------------------------------------------------------------
-# picolibc + the userland codegen flags are arch-selected: i686 uses the 32-bit sysroot and
-# the plain (no extra arch) flags; x86_64 uses the 64-bit sysroot built into nanos-build
-# (commit 170f150) and the SysV-AMD64 userland flags (SSE on for varargs/float, small code
-# model + non-PIC for the fixed low base, no red zone). i686 is unchanged below.
-ifeq ($(ARCH),x86_64)
+# The 64-bit picolibc sysroot built into nanos-build (commit 170f150) + the SysV-AMD64
+# userland flags (SSE on for varargs/float, small code model + non-PIC for the fixed low
+# base, no red zone).
 PICOLIBC=/opt/picolibc/x86_64-elf
 USER_ARCHFLAGS=-mcmodel=small -mno-red-zone
-else
-PICOLIBC=/opt/picolibc/i686-elf
-USER_ARCHFLAGS=
-endif
 SBASE=user/third_party/sbase
 # kernel/ is on -iquote (not -I): SyscallNr.h is a "quoted" include, and this keeps the
 # new kernel/Signal.h from shadowing picolibc's <signal.h> on the case-insensitive macOS
@@ -2113,13 +1859,6 @@ SBASE_UTIL_BASENAME=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
 SBASE_UTIL_DIRNAME=$(BINFOLDER)eprintf.o $(BINFOLDER)fshut.o
 LIBUTF_OBJS=$(patsubst $(SBASE)/libutf/%.c,$(BINFOLDER)%.o,$(wildcard $(SBASE)/libutf/*.c))
 GLUE_LS=$(BINFOLDER)dirent.o $(BINFOLDER)pwd_grp.o
-# Programs built. Placement (see _image): init -> /nanos/core (PID 1); system utilities
-# -> /nanos/bin; non-system apps (games/demos/tests) -> /apps.
-USER_PROGS=init nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname sigtest fbtest timetest brktest inputtest fstest free usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom nwm notepad form rustform nwexp settings terminal about crashtest socktest pingtest nettest unixtest tcpsrv nanologin greeter dhcpcfg randhex errnotest pthrtest pthrstress pfract smptorture nettorture usbstorm fputorture
-SYS_PROGS=nsh cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free nwm greeter socktest pingtest nettest unixtest tcpsrv nanologin randhex errnotest
-APP_PROGS=sigtest fbtest timetest brktest inputtest fstest usedll pipetest forkmany orphan clonetest ptytest nterm tuitest racetest envtest mmaptest mousetest doom notepad form rustform nwexp settings terminal about crashtest pthrtest pthrstress pfract smptorture nettorture usbstorm fputorture
-# Shared libraries (.ndl) shipped to /nanos/lib (see _image).
-USER_LIBS_NDL=greet.ndl libc.ndl libnw.ndl libnwui.ndl
 # Per-program glue for DYNAMICALLY-linked programs: startup + header placeholder only —
 # the C library (picolibc + syscall/cwd/signal glue + the signal trampoline) now lives in
 # libc.ndl, pulled in by name via the import library instead of static-linked.
@@ -2240,35 +1979,18 @@ $(BINFOLDER)%.o: user/libnwui/%.c
 	@mkdir -p $(BINFOLDER)
 	$(CXX) $(USER_CFLAGS) $(DYNHDR) -MMD -MP -c $< -o $@
 
-# mknx: host build tool (native cc) that turns the linked ELF into a .nxe/.ndl —
-# extracts the load image + R_386_32 base relocations + exports/imports, replacing
-# `objcopy -O binary`. Needs the format header (kernel/NxFormat.h) via -Ikernel.
-MKNX=$(BINFOLDER)mknx
-$(MKNX): tools/mknx.c kernel/NxFormat.h
-	@mkdir -p $(BINFOLDER)
-	cc -O2 -Wall -Ikernel -o $@ tools/mknx.c
-
-# 64-bit variant: same source, -DNX_FORCE64 selects the ELF64 / R_X86_64_* path and the
-# v4 .nxe layout (64-bit nxaddr_t). Host-native cc, just like mknx.
+# mknx64: host build tool (native cc) that turns the linked ELF64 into a .nxe/.ndl —
+# extracts the load image + R_X86_64_* base relocations + exports/imports (v4 layout,
+# 64-bit nxaddr_t). Needs the format header (kernel/NxFormat.h) via -Ikernel.
 MKNX64=$(BINFOLDER)mknx64
 $(MKNX64): tools/mknx.c kernel/NxFormat.h
 	@mkdir -p $(BINFOLDER)
 	cc -O2 -Wall -DNX_FORCE64 -Ikernel -o $@ tools/mknx.c
 
-# Arch-selected mknx for the libc.ndl chain: i686 emits the 32-bit (R_386_32) format, x86_64
-# the ELF64 (R_X86_64_*) v4 layout. The shared-library rules below reference $(MKNX_TOOL) so
-# they produce the right format for the active ARCH.
-ifeq ($(ARCH),x86_64)
 MKNX_TOOL=$(MKNX64)
-# Userland linker script: x86_64 programs use the elf64-x86-64 variant (OUTPUT_FORMAT +
-# the low fixed base for R_X86_64_32S); i686 uses the original 32-bit script.
+# Userland linker script: elf64-x86-64 OUTPUT_FORMAT + the low fixed base for R_X86_64_32S.
 USER_NX_LD=arch/x86_64/user-nx.ld
-else
-MKNX_TOOL=$(MKNX)
-USER_NX_LD=user/nx.ld
-endif
 
-ifeq ($(ARCH),x86_64)
 # ----------------------------------------------------------------------------
 # x86_64 minimal in-tree userland (Plan 6): freestanding, SSE ON (decision #3 — SysV AMD64
 # requires SSE for varargs/float; the kernel keeps -mno-sse, see arch/x86_64/arch.mk). Small
@@ -2303,11 +2025,9 @@ user/init64.o: user/init64.c
 	$(CROSS)gcc $(USER64_CFLAGS) -c $< -o $@
 
 # The DYN_GLUE / libc.ndl chain wants bin/crt0.o (and bin/nxhdr.o) as ELF64. crt0.o carries
-# the main-thread TLS bootstrap (calls __nx_init_tls before main, see user/crt064.S) and must
-# be assembled from the 64-bit startup; an explicit rule overrides the generic user/%.S
-# pattern (which would wrongly assemble the i686 user/crt0.S as elf64). nxhdr.o builds from
-# user/nxhdr.c via the generic user/%.c rule (USER_CFLAGS is now the x86_64 picolibc set), so
-# it needs no override here.
+# the main-thread TLS bootstrap (calls __nx_init_tls before main, see user/crt064.S); the
+# explicit rule (over the generic user/%.S pattern) keeps the nasm format pinned. nxhdr.o
+# builds from user/nxhdr.c via the generic user/%.c rule, so it needs no override here.
 $(BINFOLDER)crt0.o: user/crt064.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf64 $< -o $@
@@ -2318,9 +2038,8 @@ $(BINFOLDER)crt0.o: user/crt064.S
 	# real .nxe links keep the script's definitions (a defined symbol beats weak-undef).
 	$(CROSS)objcopy $(foreach s,__nx_tls_image __nx_tls_filesz __nx_tls_memsz __nx_tls_align_sym __nx_init_array_start __nx_init_array_end __nx_ctors_start __nx_ctors_end,--weaken-symbol=$(s)) $@
 
-# The signal trampoline is arch-specific: bin/sigtramp.o (in LIBC_GLUE_OBJS) is the 64-bit
-# __nx_sigtramp from user/sigtramp64.S, overriding the generic user/%.S pattern (which would
-# wrongly take the [BITS 32] user/sigtramp.S). Same exported symbol (__nx_sigtramp).
+# The signal trampoline: bin/sigtramp.o (in LIBC_GLUE_OBJS) is the 64-bit __nx_sigtramp
+# from user/sigtramp64.S (explicit rule over the generic user/%.S pattern).
 $(BINFOLDER)sigtramp.o: user/sigtramp64.S
 	@mkdir -p $(BINFOLDER)
 	nasm -f elf64 $< -o $@
@@ -2335,11 +2054,10 @@ $(BINFOLDER)clone.o: user/libc-glue/pthread/clone64.s
 $(BINFOLDER)__set_thread_area.o: user/libc-glue/pthread/__set_thread_area64.s
 	@mkdir -p $(BINFOLDER)
 	$(CXX) -c $< -o $@
-endif
 
 # Generic DYNAMIC link: every program links its objects + the import library (NO static
 # libc) and declares "needed: libc.ndl", so the loader maps libc.ndl and binds its imports
-# by name. `--emit-relocs` keeps the R_386_32 relocations so mknx can build the relocation
+# by name. `--emit-relocs` keeps the relocations so mknx64 can build the relocation
 # table (the .nxe loads at any base). Each program below just declares its object prereqs.
 $(BINFOLDER)%.nxe: $(MKNX_TOOL)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(@:.nxe=.elf) $(filter %.o,$^) $(filter %.a,$^) -lgcc
@@ -2347,8 +2065,8 @@ $(BINFOLDER)%.nxe: $(MKNX_TOOL)
 
 # Per-program object sets: DYN_GLUE (crt0+nxhdr) + program objects + the libc import
 # library (an ARCHIVE — the linker pulls only the members the program references, so it
-# imports just the symbols it uses). libc.ndl is a prereq so it is built/shipped. Doom +
-# usedll have explicit rules (extra math / a second needed library).
+# imports just the symbols it uses). libc.ndl is a prereq so it is built/shipped. Doom has
+# an explicit rule (extra math).
 DYN_DEPS=$(DYN_GLUE) $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl
 # init.nxe links dynamically against libc.ndl (prereqs here + the generic %.nxe recipe) on
 # BOTH arches now: x86_64's full libc.ndl works in ring 3, so PID 1 is the real user/init.c
@@ -2457,17 +2175,7 @@ $(BINFOLDER)properties.nxe: $(DYN_GLUE) $(BINFOLDER)properties.o $(BINFOLDER)lib
 $(BINFOLDER)terminal.nxe: $(DYN_GLUE) $(BINFOLDER)terminal.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX_TOOL)
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)terminal.elf $(DYN_GLUE) $(BINFOLDER)terminal.o $(BINFOLDER)vt.o $(BINFOLDER)libnw.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
 	$(MKNX_TOOL) $(BINFOLDER)terminal.elf $@ --need libnw.ndl
-# rustform: the SAME demo written in RUST, proving the C-ABI libnwui is language-agnostic. A
-# cargo staticlib (no_std, -Z build-std for the bare i686-nanos target) is linked with crt0 +
-# the import libraries, then mknx'd like any app; --need libnwui.ndl pulls the whole chain.
-RUST_TARGET=user/rust/i686-nanos.json
-RUST_LIB=user/rust/rustform/target/i686-nanos/release/librustform.a
-$(RUST_LIB): user/rust/rustform/src/lib.rs user/rust/rustform/src/nanos.rs user/rust/rustform/Cargo.toml $(RUST_TARGET)
-	cd user/rust/rustform && cargo build -Z build-std=core,alloc -Z json-target-spec --target ../i686-nanos.json --release
-$(BINFOLDER)rustform.nxe: $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a $(BINFOLDER)libnwui.ndl $(BINFOLDER)libnw.ndl $(BINFOLDER)libc.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)rustform.elf $(DYN_GLUE) $(RUST_LIB) $(BINFOLDER)libnwui.ndl.a $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)rustform.elf $@ --need libnwui.ndl
-# rsexp: the x86_64 Rust file explorer (the desktop's Files app). Same scheme as rustform but for
+# rsexp: the x86_64 Rust file explorer (the desktop's Files app). Rust staticlib for
 # the x86_64-nanos target, depending on the reusable libnwui-rs bindings crate. Linked with the
 # x64 glue + USER_NX_LD + MKNX_TOOL; --need libnwui.ndl pulls the toolkit + PNG/fs helpers.
 #
@@ -2493,27 +2201,6 @@ $(BINFOLDER)rsexp.nxe: user/rust/rsexp/src/lib.rs user/rust/libnwui-rs/src/lib.r
 	 fi
 $(BINFOLDER)tuitest.nxe:   $(DYN_DEPS) $(BINFOLDER)tuitest.o
 $(BINFOLDER)racetest.nxe:  $(DYN_DEPS) $(BINFOLDER)racetest.o
-
-# ---- Stage-2 dynamic-linking demo: greet.ndl (shared lib) + usedll (imports from it) ----
-$(BINFOLDER)greet.o: user/lib/greet.c
-	@mkdir -p $(BINFOLDER)
-	$(CXX) $(USER_CFLAGS) -MMD -MP -c $< -o $@
-$(BINFOLDER)greet_import.o: user/lib/greet_import.S
-	@mkdir -p $(BINFOLDER)
-	nasm -f elf $< -o $@
-
-# greet.ndl: a relocatable shared library exporting nx_greet/nx_greeting. No crt0/libc —
-# just the header placeholder (nxhdr.o) + the library code. mknx --dll marks it a library
-# and emits the named export table the loader binds against.
-$(BINFOLDER)greet.ndl: $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/dll.ld -o $(BINFOLDER)greet.elf $(BINFOLDER)nxhdr.o $(BINFOLDER)greet.o
-	$(MKNX) $(BINFOLDER)greet.elf $@ --dll --export nx_greet --export nx_greeting
-
-# usedll: imports printf from libc.ndl AND nx_greet/nx_greeting from greet.ndl — two needed
-# libraries, so it has its own rule with both --need flags.
-$(BINFOLDER)usedll.nxe: $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc.ndl.a $(BINFOLDER)libc.ndl $(BINFOLDER)greet.ndl $(MKNX)
-	$(LD) -nostdlib -Wl,--emit-relocs -T user/nx.ld -o $(BINFOLDER)usedll.elf $(DYN_GLUE) $(BINFOLDER)usedll.o $(BINFOLDER)greet_import.o $(BINFOLDER)libc.ndl.a -lgcc
-	$(MKNX) $(BINFOLDER)usedll.elf $@ --need libc.ndl --need greet.ndl
 
 # ---- Stage 3: the shared C library libc.ndl + its import library ----
 # libc.ndl bundles picolibc + the syscall/cwd porting glue into ONE relocatable shared
@@ -2620,11 +2307,10 @@ $(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
 	rm -f $@ && ar rcs $@ $(BINFOLDER)libnwuiimp/*.o
 
 # All programs + shared libraries (init -> /nanos/core, the rest -> /nanos/bin, libs -> /nanos/lib).
-_userland: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(USER_PROGS))) $(addprefix $(BINFOLDER),$(USER_LIBS_NDL))
 
 # x86_64 in-tree userland subset (Plan 10 Task 7): the shell + the sbase coreutils + init,
 # all dynamically linked against the 64-bit libc.ndl (the same dynamic path as i686, via the
-# arch-selected MKNX_TOOL/USER_NX_LD). The full USER_PROGS set (nanowm, Rust demo, Doom, the
+# MKNX_TOOL/USER_NX_LD). The full program set (nanowm, Doom, the
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
@@ -2634,7 +2320,7 @@ X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc 
 X64_GUI_PROGS=nwm greeter
 # nanowm desktop client apps. nwm spawns them by absolute path from /disks/main/apps/<name>/<name>.nxe
 # (see NWEXP_PATH etc. in user/nwm/nwm.c), so — unlike the compositor — they install as /apps bundles
-# (+ a /bin symlink), exactly like the i686 APP_PROGS loop, NOT into /nanos/bin.
+# (+ a /bin symlink), NOT into /nanos/bin.
 X64_GUI_APPS=rsexp settings about notepad viewer properties form terminal nwbench
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
 X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
@@ -2648,30 +2334,20 @@ _userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BIN
 # we deliberately omit -Ilib so the macOS case-insensitivity trap can't bite when building in
 # /src. (See docs/filesystem.md: /nanos/kext.)
 # Kexts run in ring 0 with the KERNEL ABI, so they take the same machine-dependent codegen
-# flags as the kernel ($(KARCHFLAGS): on x86_64 that is -mno-red-zone -mno-sse -mno-mmx
-# -mno-80387 — a ring-0 module must not touch SSE/x87 or the red zone across interrupts;
-# empty on i686). $(CXX)/$(LD) are already the arch cross toolchain ($(CROSS)gcc).
+# flags as the kernel ($(KARCHFLAGS) = -mno-red-zone -mno-sse -mno-mmx -mno-80387 — a
+# ring-0 module must not touch SSE/x87 or the red zone across interrupts). $(CXX)/$(LD)
+# are already the cross toolchain ($(CROSS)gcc).
 KEXT_CFLAGS=-ffreestanding -nostdlib -nostdinc++ --no-exceptions --no-rtti \
   -fno-sized-deallocation -fno-leading-underscore -fno-pic -fno-stack-protector \
   -Iarch/include -Ikernel -Idrivers -Iinclude $(KARCHFLAGS) $(KOPTFLAGS)
 
-# Arch knobs for the kext format: x86_64 emits ELF64 (.nxlib.kernel slots are 8-byte `dq`,
-# RIP-relative `jmp [rel ...]` thunks, base < 2 GiB via kext64.ld) and is packed by mknx64
-# (v4 / R_X86_64_*); i686 keeps the historical 32-bit thunks (4-byte `dd`, absolute `jmp`)
-# and mknx (v3 / R_386_32).
-ifeq ($(ARCH),x86_64)
+# Kext format knobs: ELF64 (.nxlib.kernel slots are 8-byte `dq`, RIP-relative
+# `jmp [rel ...]` thunks, base < 2 GiB via kext64.ld), packed by mknx64 (v4 / R_X86_64_*).
 KEXT_LD=kext/kext64.ld
 KIMP_BITS=64
 KIMP_DW=dq
 KIMP_ALIGN=8
 KIMP_REL=rel
-else
-KEXT_LD=kext/kext.ld
-KIMP_BITS=32
-KIMP_DW=dd
-KIMP_ALIGN=4
-KIMP_REL=
-endif
 
 # Kernel import library for kexts, GENERATED from kexports.def (single source of truth): a
 # module links these thunks/slots (__imp_knx_* in section .nxlib.kernel), which mknx turns
@@ -2915,7 +2591,7 @@ _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which
 # breaks Doom's tentative globals) and warnings off; -DNORMALUNIX -DLINUX select the POSIX
 # code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
-# replaces the shipped backends. Built as the `doom` program in USER_PROGS.
+# replaces the shipped backends. Built as the `doom` program (staged by `make doom`).
 DOOM_DIR=user/third_party/doomgeneric
 DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
 DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
@@ -2937,16 +2613,12 @@ $(BINFOLDER)doom.nxe: $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $
 	$(LD) -nostdlib -Wl,--emit-relocs -T $(USER_NX_LD) -o $(BINFOLDER)doom.elf $(DYN_GLUE) $(DOOM_OBJS) $(BINFOLDER)doomgeneric_nanos.o $(BINFOLDER)libc.ndl.a -L$(PICOLIBC)/lib -lc -lgcc
 	$(MKNX_TOOL) $(BINFOLDER)doom.elf $(BINFOLDER)doom.nxe --need libc.ndl
 
-# Arch-aware `make doom`: stage bin/doom.nxe for the selected arch (i686 default, or
-# ARCH=x86_64). The .nxe rule above already uses the arch-selected toolchain ($(CXX)/$(LD)),
-# 64-bit picolibc sysroot ($(PICOLIBC)), linker script ($(USER_NX_LD)) and mknx ($(MKNX_TOOL)),
-# so the SAME rule produces an ELF32 v3 .nxe for i686 or an ELF64 v4 .nxe for x86_64. On i686
-# doom is also part of USER_PROGS (built by `make image`); on x86_64 it is NOT in the minimal
-# X64_USER_PROGS subset, so `make ARCH=x86_64 doom` is the way to stage it, and `make image64`
-# then installs the /apps/doom bundle + /bin/doom.nxe symlink (only if bin/doom.nxe exists).
+# `make doom`: stage bin/doom.nxe. Doom is NOT in the minimal X64_USER_PROGS subset, so this
+# target is the way to stage it; `make image64` then installs the /apps/doom bundle +
+# /bin/doom.nxe symlink (only if bin/doom.nxe exists).
 .PHONY: doom
 doom: $(BINFOLDER)doom.nxe
-	@echo "staged $(BINFOLDER)doom.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install the /apps/doom bundle"
+	@echo "staged $(BINFOLDER)doom.nxe — run 'make image64' to install the /apps/doom bundle"
 
 # Pull in all userland header-dependency files (.d), so a changed header recompiles only
 # the objects that include it. Missing on a clean build -> everything compiles (correct).

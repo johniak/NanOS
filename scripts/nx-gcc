@@ -7,19 +7,19 @@
 #
 # Env (set by build.sh, ultimately by the NanOS `make bash` target — arch-aware):
 #   NANOS         the NanOS repo mount (default /src)
-#   PICO          picolibc prefix         (i686 default, x86_64-elf when ARCH=x86_64)
-#   NX_CC         the cross gcc           (i686-elf-gcc default, x86_64-elf-gcc for x86_64)
-#   NX_ARCHFLAGS  extra codegen flags     (x86_64 needs -mcmodel=small -mno-red-zone)
-#   NX_LDSCRIPT   the .nxe linker script  ($NANOS/user/nx.ld i686, arch/x86_64/user-nx.ld x64)
-# i686 stays the default for every var, so the original 32-bit build is unchanged.
+#   PICO          picolibc prefix         (default /opt/picolibc/x86_64-elf)
+#   NX_CC         the cross gcc           (default x86_64-elf-gcc)
+#   NX_ARCHFLAGS  extra codegen flags     (default -mcmodel=small -mno-red-zone)
+#   NX_LDSCRIPT   the .nxe linker script  (default arch/x86_64/user-nx.ld)
+# Defaults are the x86_64 values (i686 retired 2026-07-13); env overrides win as before.
 set -e
 : "${NANOS:=/src}"
-: "${PICO:=/opt/picolibc/i686-elf}"
-GCC="${NX_CC:-i686-elf-gcc}"
-: "${NX_ARCHFLAGS:=}"
-: "${NX_LDSCRIPT:=$NANOS/user/nx.ld}"
+: "${PICO:=/opt/picolibc/x86_64-elf}"
+GCC="${NX_CC:-x86_64-elf-gcc}"
+: "${NX_ARCHFLAGS:=-mcmodel=small -mno-red-zone}"
+: "${NX_LDSCRIPT:=$NANOS/arch/x86_64/user-nx.ld}"
 
-# picolibc on bare i686-elf never defines _POSIX_VERSION (its guards are rtems/svr4/cygwin
+# picolibc on bare *-elf never defines _POSIX_VERSION (its guards are rtems/svr4/cygwin
 # only), so bash would pick `union wait` (undefined here) for job status. We are POSIX-ish
 # and picolibc gates nothing on _POSIX_VERSION itself, so defining it is safe and makes bash
 # take the `int WAIT` path.
