@@ -114,28 +114,27 @@ audit). Checkout paths are relative to `$SDK_WORK` (`~/Projects/nanos-sdk-work`)
   above, re-sign quirk documented. Not our code.
 - **`~/Projects/git`** — clean upstream clone used for reference only.
 
-## Clean-room gate verdict (2026-07-12)
+## Clean-room gate verdict (2026-07-13): **GREEN**
 
 `SDK_WORK=/tmp/fresh-sdk-work bootstrap.sh` + the full make sequence, sourcing ONLY the
 NanOS-labs org (toolchain rsync-seeded from the live workspace — its from-source build is
 covered by the nanos-sdk flow):
 
-- **PASS (the critical path)**: docker-image, zlib, openssl, bzip2, sqlite, bash, libjpeg,
-  libdrm, **mesa**, gles2info, glkms, **nwm-gl**, externals, **image64, image64-gl**, and the
-  fresh image boots: smoke-x86_64 + smoke-virtio-gpu + smoke-vt green.
-- **FAIL — pre-existing port-rebuild rot, NOT migration regressions** (A/B-verified: sudo,
-  toybox, ncurses fail byte-identically against the live pre-migration workspace; sudo's
-  tree is byte-identical to upstream): ncurses, toybox, sudo, grep, ping, wget, inetd,
-  httpd, udhcpc, dropbear, vim, htop, git, libpng, netsurf. Two failure families:
-  (a) autotools conftest "cannot compile and link" (ncurses, libpng, several inetutils),
-  (b) drifted port glue vs current libc-glue/scripts (sudo's configure now takes the
-  no-sudoedit branch whose upstream stub doesn't compile; toybox sed adaptations; grep's
-  git-clone mtimes retrigger automake). The staged `.nxe` artifacts in the images still
-  work; what rotted is the REBUILD path. Un-rotting these is the follow-up (the `make world`
-  plan) — each fix lands in the port's own fork now that they are tracked.
-- **test64**: host-test link fixed (commit 909f1ff); 3,245,146 assertions pass; the ≥90%
-  line-coverage gate fails at 88.0% — pre-existing debt from the recent glass/rsexp UI work
-  (`user/nwm/nw_compose.c` at 54.9% is the main gap).
+- **Every stage passes**: docker-image + zlib, openssl, ncurses, toybox, sudo, grep, bzip2,
+  ping, wget, inetd (+telnetd/telnet/ifconfig/traceroute), httpd, udhcpc, dropbear, vim,
+  htop, git, sqlite, bash, libpng, libjpeg + the GL chain (libdrm, mesa, gles2info, glkms,
+  nwm-gl) + externals (**14/14 apps staged**) + **image64 + image64-gl**.
+- **`verify64` fully green clean-room**: host tests (3.25M assertions, coverage ≥90%) +
+  BIOS/UEFI/big-RAM boots + e1000e MSI + live-USB (+SMP/storm) + VT switch + virtio-gpu +
+  i915 + all four SMP gates. Final image re-verified with smoke-x86_64/usb/vt/virtio-gpu.
+- The 2026-07-12 first run had exposed a 15-port pre-existing rebuild rot (autotools EXEEXT
+  family from crt0's script-symbol refs, hand-patched-but-unversioned sysroot headers,
+  i686-hardwired Makefile targets, per-port glue drift). All of it was fixed on 2026-07-13 —
+  root causes and fixes are recorded in the NanOS/nanos-sdk commit history (a8cd954,
+  3596157, 772f595, cb04e20 + per-fork `nanos:` commits).
+- **Known exclusion**: NetSurf builds only through the legacy i686 flow, which is dead at
+  the libc level (the pthread/TLS layer is x86_64-only) and scheduled for deletion; the
+  browser was never part of image64. **Browser-on-x86_64 is the documented follow-up port.**
 
 ## Provenance notes
 
