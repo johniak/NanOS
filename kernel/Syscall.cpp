@@ -4,6 +4,8 @@
 #include "Termios.h"
 #include "Clock.h"
 #include "Scheduler.h"
+#include "Eventfd.h"    // eventfd2 fd backing (u64 counter + wait queue)
+#include "Epoll.h"      // epoll_create1 interest set
 #include "Socket.h"     // FAZA 9: socket fd backing + the socket API
 #include "Tcp.h"        // tcpListen/tcpAccept/tcpState for listen()/accept()
 #include "Net.h"        // hton/ntoh + ipv4() for sockaddr marshalling
@@ -64,6 +66,8 @@ Syscalls::Syscalls(Vfs* vfs, ConsoleWriteFn cw) {
 		fds[i].pipeWrite = false;
 		fds[i].sock = 0;
 		fds[i].isChar = false;
+		fds[i].efd = 0;
+		fds[i].epoll = 0;
 	}
 	// fd 0,1,2 = stdin/stdout/stderr -> console, bound to VT 1 (the kernel console). init/getty
 	// reopen /dev/ttyN explicitly for their text VTs; this default only matters for PID 1 before
@@ -99,6 +103,10 @@ Syscalls::Syscalls(const Syscalls& o) {
 			socketRef(fds[i].sock);
 		if (fds[i].used && fds[i].isChar)    // fork shares the char device: bump its open count
 			vfs->deviceOpen(fds[i].path);
+		if (fds[i].used && fds[i].efd)       // fork shares the eventfd counter (both see each other)
+			fds[i].efd->ref();
+		if (fds[i].used && fds[i].epoll)     // fork shares the epoll instance
+			fds[i].epoll->ref();
 	}
 }
 
@@ -194,6 +202,14 @@ int Syscalls::close(int fd, bool* freedShared) {
 		socketClose(fds[fd].sock);
 		fds[fd].sock = 0;
 	}
+	if (fds[fd].efd) {                        // drop this eventfd reference (frees at the last close)
+		if (fds[fd].efd->unref()) delete fds[fd].efd;
+		fds[fd].efd = 0;
+	}
+	if (fds[fd].epoll) {                      // drop this epoll reference (frees at the last close)
+		if (fds[fd].epoll->unref()) delete fds[fd].epoll;
+		fds[fd].epoll = 0;
+	}
 	if (fds[fd].isChar)                       // drop a char-device open (pty: may trigger master EOF)
 		vfs->deviceClose(fds[fd].path);
 	fds[fd].used = false;
@@ -237,6 +253,8 @@ void Syscalls::shareInto(int dst, int src) {
 	fds[dst].pipeWrite = fds[src].pipeWrite;
 	fds[dst].sock = fds[src].sock;
 	fds[dst].isChar = fds[src].isChar;
+	fds[dst].efd = fds[src].efd;
+	fds[dst].epoll = fds[src].epoll;
 	if (fds[dst].pipe) {
 		if (fds[dst].pipeWrite) fds[dst].pipe->addWriter();
 		else fds[dst].pipe->addReader();
@@ -245,6 +263,10 @@ void Syscalls::shareInto(int dst, int src) {
 		socketRef(fds[dst].sock);
 	if (fds[dst].isChar)             // dup shares the char device: bump its open count
 		vfs->deviceOpen(fds[dst].path);
+	if (fds[dst].efd)                // dup shares the eventfd counter
+		fds[dst].efd->ref();
+	if (fds[dst].epoll)              // dup shares the epoll instance
+		fds[dst].epoll->ref();
 }
 
 int Syscalls::pipe(int out[2]) {
@@ -265,6 +287,50 @@ int Syscalls::pipe(int out[2]) {
 	out[0] = r;
 	out[1] = w;
 	return 0;
+}
+
+// eventfd2(2): a new fd backed by a u64 counter. `flags` arrive as Linux EFD_* bits (EFD_SEMAPHORE
+// 0x1, EFD_NONBLOCK 0x800 == Linux O_NONBLOCK, EFD_CLOEXEC 0x80000 == Linux O_CLOEXEC); translate
+// them to the kernel-internal O_NONBLOCK/cloexec the same way socket()'s SOCK_NONBLOCK path does.
+int Syscalls::eventfdCreate(unsigned long long initval, int flags) {
+	RecursiveGuard g(m_fdLock);
+	Eventfd* e = new Eventfd(initval, (flags & 0x1) != 0 /* EFD_SEMAPHORE */);
+	int fd = allocFd();
+	if (fd < 0) { delete e; return fd; }
+	fds[fd].used = true; fds[fd].isConsole = false; fds[fd].vt = 0; fds[fd].path = String();
+	fds[fd].offset = 0; fds[fd].size = 0;
+	fds[fd].flags = (flags & 0x800) ? O_NONBLOCK : 0;      // EFD_NONBLOCK -> internal O_NONBLOCK
+	fds[fd].cloexec = (flags & 0x80000) != 0;              // EFD_CLOEXEC
+	fds[fd].pipe = 0; fds[fd].pipeWrite = false; fds[fd].sock = 0; fds[fd].isChar = false;
+	fds[fd].efd = e; fds[fd].epoll = 0;
+	return fd;
+}
+
+// epoll_create1(2): a new fd backed by an interest set. `flags` may carry EPOLL_CLOEXEC (0x80000).
+int Syscalls::epollCreate(int flags) {
+	RecursiveGuard g(m_fdLock);
+	Epoll* e = new Epoll();
+	int fd = allocFd();
+	if (fd < 0) { delete e; return fd; }
+	fds[fd].used = true; fds[fd].isConsole = false; fds[fd].vt = 0; fds[fd].path = String();
+	fds[fd].offset = 0; fds[fd].size = 0; fds[fd].flags = 0;
+	fds[fd].cloexec = (flags & 0x80000) != 0;             // EPOLL_CLOEXEC
+	fds[fd].pipe = 0; fds[fd].pipeWrite = false; fds[fd].sock = 0; fds[fd].isChar = false;
+	fds[fd].efd = 0; fds[fd].epoll = e;
+	return fd;
+}
+
+// Is any fd registered in this epoll instance currently ready? Reuses pollScan over a snapshot of
+// the interest set — only used for the rare case of poll()/select() ON an epoll fd (epoll_wait
+// itself scans in the dispatch, console-aware).
+bool Syscalls::epollReady(Epoll* e) {
+	if (!e) return false;
+	Epoll::Interest it[Epoll::MAXI];
+	int n = e->snapshot(it, Epoll::MAXI);
+	if (n == 0) return false;
+	PollFd pf[Epoll::MAXI];
+	for (int i = 0; i < n; i++) { pf[i].fd = it[i].fd; pf[i].events = (short) it[i].events; pf[i].revents = 0; }
+	return pollScan(pf, n) > 0;
 }
 
 int Syscalls::dup(int fd) {
@@ -325,6 +391,7 @@ bool Syscalls::fdReadable(int fd) {
 WaitQueue* Syscalls::fdWaitQueue(int fd) {
 	if (!valid(fd)) return 0;
 	if (fds[fd].sock) return &fds[fd].sock->rxWait;   // blocked recv/accept/connect park here
+	if (fds[fd].efd) return fds[fd].efd->waitQueue(); // a blocking eventfd read parks here
 	if (fds[fd].pipe) return fds[fd].pipe->waitQueue();
 	if (fds[fd].isConsole) return 0;          // console blocks inside arch::inputRead, not here
 	return vfs->waitQueueAt(fds[fd].path);    // a char device (pty) exposes its queue; else 0
@@ -363,6 +430,11 @@ int Syscalls::pollScan(PollFd* pfds, int nfds) {
 				if ((ev & POLLOUT) && p->writable()) re |= POLLOUT;
 				if (p->readers() == 0) re |= POLLERR;
 			}
+		} else if (fds[fd].efd) {
+			if ((ev & POLLIN) && fds[fd].efd->readable()) re |= POLLIN;   // counter > 0
+			if ((ev & POLLOUT) && fds[fd].efd->writable()) re |= POLLOUT; // room to add (~always)
+		} else if (fds[fd].epoll) {
+			if ((ev & POLLIN) && epollReady(fds[fd].epoll)) re |= POLLIN; // any registered fd ready
 		} else if (fds[fd].isConsole) {
 			re |= ev & (POLLIN | POLLOUT);     // console: treat as ready (refined later)
 		} else {
@@ -380,6 +452,15 @@ int Syscalls::pollScan(PollFd* pfds, int nfds) {
 int Syscalls::read(int fd, void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].epoll)                        // an epoll fd is not readable via read(2)
+		return -EINVAL;
+	if (fds[fd].efd) {                        // eventfd read: 8-byte counter drain (0 -> EAGAIN/block)
+		if (n < 8) return -EINVAL;
+		unsigned long long v;
+		if (fds[fd].efd->read(&v) == 0) return -EAGAIN;
+		memcpy(buf, &v, 8);
+		return 8;
+	}
 	if (fds[fd].sock) {                       // recv on a socket (TCP byte stream / UDP datagram)
 		Socket* s = fds[fd].sock;
 		if (s->domain == AF_PACKET)           // AF_PACKET read() must strip L2 (cooked) — busybox
@@ -414,6 +495,17 @@ int Syscalls::read(int fd, void* buf, unsigned n) {
 int Syscalls::write(int fd, const void* buf, unsigned n) {
 	if (!valid(fd))
 		return -EBADF;
+	if (fds[fd].epoll)                        // an epoll fd is not writable via write(2)
+		return -EINVAL;
+	if (fds[fd].efd) {                        // eventfd write: add 8-byte value (overflow -> EAGAIN/block)
+		if (n < 8) return -EINVAL;
+		unsigned long long v;
+		memcpy(&v, buf, 8);
+		int r = fds[fd].efd->write(v);
+		if (r < 0) return -EINVAL;            // 0xffffffffffffffff is illegal
+		if (r == 0) return -EAGAIN;           // would overflow the counter -> block until a reader drains
+		return 8;
+	}
 	if (fds[fd].sock)                         // send on a socket (must be connected, like write(2))
 		return socketSendTo(fds[fd].sock, buf, n, 0, 0);
 	if (fds[fd].pipe) {                       // write end of a pipe

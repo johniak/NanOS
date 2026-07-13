@@ -22,6 +22,8 @@
 #include <signal.h>
 #include <poll.h>
 #include <utime.h>
+#include <sys/eventfd.h>
+#include <sys/epoll.h>
 
 /* Force ALL THREE standard stream objects to be linked into libc.ndl. picolibc's tinystdio
  * declares stdin/stdout/stderr as `FILE *const` pointer variables pulled from libc.a only on
@@ -82,8 +84,13 @@ static int reterr(int r) {
 	return r;
 }
 
-int write(int fd, const void* b, int n) { return reterr(sys3(SYS_write, fd, (int) b, n)); }
-int read(int fd, void* b, int n)        { return reterr(sys3(SYS_read, fd, (int) b, n)); }
+/* ssize_t (not int) return: callers see picolibc's `ssize_t read/write(...)` prototype and read the
+ * full 64-bit rax. An `int -1` error return only sets eax, so the sign bit never reaches rax's high
+ * half — the caller then sees 0x00000000FFFFFFFF (4294967295), not -1. Returning ssize_t makes the
+ * compiler sign-extend the error into all 64 bits. (Latent x86_64 ABI bug; exposed by the first
+ * strict `read()==-1` check — eventfd's EAGAIN path.) */
+ssize_t write(int fd, const void* b, size_t n) { return reterr(sys3(SYS_write, fd, (int) b, (int) n)); }
+ssize_t read(int fd, void* b, size_t n)        { return reterr(sys3(SYS_read, fd, (int) b, (int) n)); }
 int open(const char* p, int fl, ...) {
 	return reterr(sys3(SYS_open, (int) p, fl, 0));   // kernel resolves relative paths vs the cwd
 }
@@ -437,6 +444,31 @@ int getentropy(void* buf, size_t n) {
 	if (r < 0) return -1;                       /* errno set by getrandom */
 	if ((size_t) r != n) { errno = EIO; return -1; }
 	return 0;
+}
+
+/* ---- Event-loop primitives (libuv/Chromium/Electron). The kernel objects live in
+ * kernel/Eventfd.h + kernel/Epoll.h; these are the thin syscall wrappers. ---- */
+
+/* eventfd2(2): a 64-bit counter fd for cross-thread/process wakeups. */
+int eventfd(unsigned int initval, int flags) {
+	return reterr(sys3(SYS_eventfd2, (int) initval, flags, 0));
+}
+int eventfd_read(int fd, eventfd_t* value) {
+	return (read(fd, value, 8) == 8) ? 0 : -1;   /* read() sets errno on short/error */
+}
+int eventfd_write(int fd, eventfd_t value) {
+	return (write(fd, &value, 8) == 8) ? 0 : -1;
+}
+
+/* epoll (level-triggered): create1/ctl/wait over the kernel interest set. epoll_create(size) is
+ * the legacy spelling — size is advisory and ignored, as on modern Linux. */
+int epoll_create1(int flags) { return reterr(sys3(SYS_epoll_create1, flags, 0, 0)); }
+int epoll_create(int size)   { (void) size; return reterr(sys3(SYS_epoll_create1, 0, 0, 0)); }
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event* event) {
+	return reterr(sys4(SYS_epoll_ctl, epfd, op, fd, (int) event));
+}
+int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
+	return reterr(sys4(SYS_epoll_wait, epfd, (int) events, maxevents, timeout));
 }
 /* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the
  * monotonic tick count. Real per-process CPU accounting, not a 0 stub. */

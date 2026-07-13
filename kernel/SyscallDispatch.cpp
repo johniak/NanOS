@@ -1,5 +1,6 @@
 #include "SyscallDispatch.h"
 #include "Syscall.h"
+#include "Epoll.h"       // epoll_ctl/epoll_wait marshal the interest set here (dispatch-side scan)
 #include "Process.h"
 #include "Exec.h"
 #include "SignalDispatch.h"
@@ -81,6 +82,65 @@ static int pollScanConsoleAware(Syscalls* g_sys, PollFd* pfds, int nfds) {
 			n++;
 	}
 	return n;
+}
+
+// ---- epoll_ctl/epoll_wait -------------------------------------------------------------------
+// EPOLL_CTL_* ops and the Linux x86_64 struct epoll_event, which is __packed__ (12 bytes:
+// u32 events at +0, u64 data at +4 — NO padding). Read/write it with memcpy so the unaligned
+// 8-byte data field is handled correctly. EPOLL* readiness bits equal the POLL* bits.
+static const int EPOLL_CTL_ADD = 1, EPOLL_CTL_DEL = 2, EPOLL_CTL_MOD = 3;
+
+static int doEpollCtl(Syscalls* g_sys, int epfd, int op, int fd, void* uev) {
+	Epoll* e = g_sys->epollAt(epfd);
+	if (!e) return -EBADF;                     // epfd is not an epoll instance
+	if (!g_sys->fdIsOpen(fd)) return -EBADF;   // target fd must be open
+	if (fd == epfd) return -EINVAL;            // an epoll cannot monitor itself
+	unsigned events = 0;
+	unsigned long long data = 0;
+	if (op != EPOLL_CTL_DEL) {
+		if (!uev) return -EFAULT;
+		memcpy(&events, uev, 4);
+		memcpy(&data, (unsigned char*) uev + 4, 8);
+	}
+	switch (op) {
+		case EPOLL_CTL_ADD: return e->add(fd, events, data);
+		case EPOLL_CTL_MOD: return e->mod(fd, events, data);
+		case EPOLL_CTL_DEL: return e->del(fd);
+		default:            return -EINVAL;
+	}
+}
+
+// One epoll_wait: snapshot the interest set, scan readiness (console-aware, same as poll), and on
+// any ready fd write up to maxevents packed epoll_events back. Blocks on the same tick-rescan +
+// signal/timeout model as SYS_poll. timeout is ms (-1 = infinite, 0 = non-blocking).
+static int doEpollWait(Syscalls* g_sys, int epfd, void* uevents, int maxevents, int timeout) {
+	Epoll* e = g_sys->epollAt(epfd);
+	if (!e) return -EBADF;
+	if (maxevents <= 0 || !uevents) return -EINVAL;
+	unsigned start = Scheduler::ticks();
+	for (;;) {
+		Epoll::Interest it[Epoll::MAXI];
+		int n = e->snapshot(it, Epoll::MAXI);
+		PollFd pf[Epoll::MAXI];
+		for (int i = 0; i < n; i++) { pf[i].fd = it[i].fd; pf[i].events = (short) it[i].events; pf[i].revents = 0; }
+		int ready = n ? pollScanConsoleAware(g_sys, pf, n) : 0;
+		if (ready > 0) {
+			unsigned char* dst = (unsigned char*) uevents;
+			int out = 0;
+			for (int i = 0; i < n && out < maxevents; i++) {
+				if (!pf[i].revents) continue;
+				unsigned ev = (unsigned) (unsigned short) pf[i].revents;   // POLL* == EPOLL* bits
+				memcpy(dst + out * 12, &ev, 4);
+				memcpy(dst + out * 12 + 4, &it[i].data, 8);
+				out++;
+			}
+			return out;
+		}
+		if (timeout == 0) return 0;
+		if (hasPendingSignalCurrent()) return -ERESTARTSYS;
+		if (timeout > 0 && Scheduler::ticks() - start >= (unsigned) timeout) return 0;
+		Scheduler::ioWait();
+	}
 }
 
 // ---- Sockets (FAZA 9) -------------------------------------------------------------------
@@ -574,6 +634,23 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		break;
 	case SYS_dup2:
 		ret = g_sys->dup2((int) a0, (int) a1);
+		break;
+	case SYS_eventfd2:
+		// eventfd2(initval, flags). a0 = initval (u32 from userland, widened), a1 = EFD_* flags.
+		ret = g_sys->eventfdCreate((unsigned) a0, (int) a1);
+		break;
+	case SYS_epoll_create1:
+		// epoll_create1(flags). (Legacy epoll_create(size) also routes here; size is ignored.)
+		ret = g_sys->epollCreate((int) a0);
+		break;
+	case SYS_epoll_ctl:
+		// epoll_ctl(epfd, op, fd, event*).
+		ret = doEpollCtl(g_sys, (int) a0, (int) a1, (int) a2, (void*) a3);
+		break;
+	case SYS_epoll_wait:
+		// epoll_wait(epfd, events*, maxevents, timeout_ms). epoll_pwait's sigmask is not applied
+		// (NanOS has no per-wait signal mask swap here); the base wait semantics are identical.
+		ret = doEpollWait(g_sys, (int) a0, (void*) a1, (int) a2, (int) a3);
 		break;
 	case SYS_kcmp:
 		// kcmp(pid1, pid2, type, idx1, idx2) — KCMP_FILE fd comparison (Mesa iris GEM-namespace

@@ -77,6 +77,8 @@ struct PollFd { int fd; short events; short revents; };
 #define O_CLOEXEC 0x40000
 
 struct Socket;   // net/Socket.h — a socket fd's backing (FAZA 9)
+class Eventfd;   // Eventfd.h — an eventfd2 fd's backing (u64 counter + wait queue)
+class Epoll;     // Epoll.h — an epoll_create1 instance's interest set
 
 typedef int (*ConsoleWriteFn)(const char* buf, unsigned len);
 
@@ -119,6 +121,8 @@ class Syscalls {
 		bool pipeWrite;     // which end (write end if true, read end otherwise)
 		Socket* sock;       // non-null => this fd is a socket (read/write/poll/close route to it)
 		bool isChar;        // this fd is a char-device path (pty/etc): open/close are ref-counted
+		Eventfd* efd;       // non-null => this fd is an eventfd2 counter (read/write/poll route to it)
+		Epoll* epoll;       // non-null => this fd is an epoll instance (epoll_ctl/epoll_wait target)
 	};
 	static const int MAXFD = 128;   // per-process fd table (was an artificial 32; heap-backed)
 	Fd fds[MAXFD];
@@ -288,6 +292,17 @@ public:
 	WaitQueue* fdWaitQueue(int fd);
 	int mmapInfo(int fd, uint64_t* physOut, unsigned* lenOut);   // for SYS_mmap of a device
 	int mmapAt(int fd, uint64_t off, uint64_t* physOut, unsigned* lenOut);   // offset-aware (GEM)
+
+	// ---- Event-loop primitives (Node/Chromium/Electron). eventfd2 is an fd-backed u64 counter;
+	// epoll_create1 an fd-backed interest set. Both refcount like a pipe end (dup/fork share,
+	// close frees at the last ref). epoll_wait's blocking loop lives in the dispatch (it reuses
+	// pollScanConsoleAware over the interest snapshot), so here we only expose create/ctl + access.
+	int eventfdCreate(unsigned long long initval, int flags);        // eventfd2(2) -> new fd
+	Eventfd* eventfdAt(int fd) { return valid(fd) ? fds[fd].efd : 0; }
+	int epollCreate(int flags);                                      // epoll_create1(2) -> new fd
+	Epoll* epollAt(int fd) { return valid(fd) ? fds[fd].epoll : 0; }
+	bool epollReady(Epoll* e);   // any registered fd ready? (for the rare poll() of an epoll fd)
+	bool fdIsOpen(int fd) { return valid(fd); }   // for epoll_ctl's EBADF check
 
 	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
 	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).

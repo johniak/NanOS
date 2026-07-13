@@ -136,8 +136,8 @@ or the emptiness that proves the row).
 
 | Feature | Status | Evidence | Consumer |
 |---|---|---|---|
-| `eventfd` | missing-required | `grep -rli eventfd kernel user/libc-glue` → empty | libuv/Chromium message pump (Task 1.2) |
-| `epoll_create1/ctl/wait` | missing-required | `grep -rli epoll …` → empty | libuv/Chromium message pump (Task 1.2, level-triggered) |
+| `eventfd` | implemented | `kernel/Eventfd.h` + dispatch `SYS_eventfd2`; `scripts/smoke-eventfd.sh` PASS | libuv/Chromium message pump |
+| `epoll_create1/ctl/wait` | implemented (level-triggered) | `kernel/Epoll.h` + dispatch; `smoke-eventfd.sh` epolltest PASS | libuv/Chromium message pump; EPOLLET accepted-not-honored |
 | `timerfd_*` | not-needed-yet | grep empty; Decisions: timers via `epoll_wait` timeout | libuv timers |
 | `pipe2` | missing-required | not in `kernel/SyscallNr.h` (only `SYS_pipe`) | libuv pipes with `O_CLOEXEC\|O_NONBLOCK` |
 | `dup3` | missing-required | not in `kernel/SyscallNr.h` (only `SYS_dup`/`SYS_dup2`) | libuv fd setup |

@@ -117,6 +117,13 @@
 #define SYS_futex 202
 #define SYS_set_thread_area 205   /* unused on x86_64 (TLS via arch_prctl); kept for the dispatch */
 #define SYS_getrandom 318
+/* Event-loop primitives for Node/Chromium/Electron (real x86_64 numbers; verified free here). */
+#define SYS_eventfd2      290
+#define SYS_epoll_create1 291
+#define SYS_epoll_ctl     233
+#define SYS_epoll_wait    232
+#define SYS_pipe2         293
+#define SYS_dup3          292
 #define SYS_kcmp 312         /* KCMP_FILE only — Mesa's os_same_file_description (GEM handle
                               * namespace sharing); see Syscalls::kcmp for the NanOS semantics */
 #define SYS_clock_gettime 228
