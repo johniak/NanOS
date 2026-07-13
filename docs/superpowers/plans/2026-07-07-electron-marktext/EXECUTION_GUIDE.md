@@ -40,12 +40,17 @@ the same commit that lands your change.
 - `SDK_WORK` defaults to `$(HOME)/Projects/nanos-sdk-work` (`Makefile` ~line 91). Big external
   checkouts (Chromium, Electron, Node, MarkText) live there. **Never vendor them into this repo.**
 - **Build hardware reality check (Chromium/Electron only).** A Chromium build is 30–50k compile
-  jobs. Running it inside an x86_64 Docker container emulated on an Apple Silicon Mac is NOT
-  viable (days-to-weeks per build). Before starting plan 03, secure a **native x86_64 Linux
-  builder** (workstation or cloud box: 16+ cores, 64 GiB RAM, 250 GiB free SSD) and run the
-  Chromium/Electron `fetch`/`gn`/`ninja` steps there; only the final binaries come back for
-  `.nxe` conversion and image staging. `ccache` is mandatory (wired in the canonical GN args).
-  Node (plan 02) is ~100× smaller and can stay in the normal SDK flow.
+  jobs — big, but the NanOS build does **not** emulate x86_64. The `nanos-build` Docker image runs
+  **natively** for the host arch (arm64 on the Apple Silicon dev Mac) and carries an `x86_64-elf`
+  **cross-toolchain** built from source (`docker/Dockerfile`; `Makefile` ~line 28 "no --platform").
+  So target x86_64 code is cross-compiled by a native compiler — the same flow that already builds
+  Mesa/QEMU/etc. on this Mac. An Apple M4 with `ccache` builds Chromium in **hours, not days**;
+  cross-compile host tools (mksnapshot, protoc, mojo) run native arm64. **No separate x86_64 Linux
+  box is required** (an earlier draft of this note wrongly assumed an emulated x86_64 container).
+  The real plan-03 risk is therefore *porting*, not hardware: Chromium's GN build must cross-compile
+  to `x86_64-nanos` (host/target split, sysroot = picolibc + libc-glue) and Chromium strongly prefers
+  its own bundled **clang** over the toolchain's `x86_64-elf-gcc` — plan 03 subplan 00 owns the GN
+  args and toolchain decision. `ccache` is mandatory. Node (plan 02) is ~100× smaller; normal SDK flow.
 - **Fast QEMU iteration loop.** Rebuilding one `.nxe` does not require a full `make image64`:
   inject the changed binary into the existing image (loopback/debugfs write, same trick
   `scripts/arm-i915.sh` and `scripts/push-dell.sh` use on the stick, or `scripts/qemu-drive.py`)
