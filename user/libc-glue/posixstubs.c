@@ -443,7 +443,10 @@ int memfd_create(const char *name, unsigned int flags) {
 	snprintf(path, sizeof path, "/tmp/.memfd-%d-%u", (int) getpid(), ctr++);
 	fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (fd < 0) return -1;
-	unlink(path);
+	/* NanOS tracks open files by PATH, not by an inode handle, so an unlinked-but-open file can no
+	 * longer be ftruncate()'d / mmap()'d (its path is gone). Unlike Linux's anonymous memfd we keep
+	 * the /tmp entry linked so path-based fd ops keep working; it is a uniquely-named, mode-0600
+	 * scratch file. TODO: unlinked-open-file handles would let this be truly anonymous. */
 	return fd;
 }
 

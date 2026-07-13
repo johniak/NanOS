@@ -51,7 +51,10 @@ class RamFs: public FileSystem {
 	bool ensureCap(RamNode* f, unsigned want);
 
 public:
-	RamFs();
+	// rootMode sets the mount-point directory's permission bits. Defaults to 0755; /tmp mounts with
+	// 01777 (world-writable + sticky) so unprivileged programs can create temp files there (Node,
+	// Chromium/memfd), while the sticky bit keeps users from deleting each other's files.
+	explicit RamFs(unsigned rootMode = 0755);
 
 	// FileSystem interface.
 	int mount();

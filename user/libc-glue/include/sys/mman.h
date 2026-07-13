@@ -42,6 +42,10 @@ int   msync(void* addr, size_t length, int flags);
 int   madvise(void* addr, size_t length, int advice);
 int   mincore(void* addr, size_t length, unsigned char* vec);
 
+/* memfd_create(2): an anonymous memory-backed fd (file under RamFs /tmp). Chromium/GBM use it as
+ * an mmap-able, ftruncate-able shared-memory buffer. Implemented in libc-glue/posixstubs.c. */
+int   memfd_create(const char* name, unsigned int flags);
+
 #ifdef __cplusplus
 }
 #endif

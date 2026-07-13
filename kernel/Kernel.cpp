@@ -486,7 +486,7 @@ void Kernel::start() {
 	// Writable in-memory filesystem (tmpfs) at /tmp, the Unix way to give programs a
 	// place to write transient files (e.g. Doom's config + savegames). Cleared on reboot.
 	okBegin("Mounting tmpfs at /tmp");
-	vfs->mount("/tmp", new RamFs());
+	vfs->mount("/tmp", new RamFs(01777));   // sticky + world-writable so non-root can create temp files
 	okEnd();
 
 	// Writable /run (RamFs), the runtime-state dir (sudo's auth-timestamp dir /run/sudo, pid files,

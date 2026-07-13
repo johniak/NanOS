@@ -896,7 +896,7 @@ coverage: test-image
 # 64-bit paging/AddressSpace doctests (test_paging64 / test_addressspace64). Wires the x86_64
 # host gate into a single routine command so the 64-bit paging math is checked every run, not
 # only when someone remembers to pass ARCH=x86_64.
-.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-procself smoke-vt smoke-smp verify64
+.PHONY: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-procself smoke-memfd smoke-vt smoke-smp verify64
 test64: test-image
 	$(TEST_DOCKER_RUN) make ARCH=x86_64 _test
 
@@ -962,6 +962,10 @@ smoke-mprotect: image64
 # `smoke-procself` is the /proc/self gate (plan 01 Task 1.4): exe readlink + fd listing + cwd.
 smoke-procself: image64
 	bash scripts/smoke-procself.sh
+
+# `smoke-memfd` is the user-writable-tmp + memfd gate (plan 01 Task 1.5 groundwork).
+smoke-memfd: image64
+	bash scripts/smoke-memfd.sh
 
 # Regression gate for the xHCI-DMA-under-user-CR3 fault: rebuilds the kernel with the endpoint ring
 # forced into the user-window VA range and asserts root-on-USB boots with no kernel exception (the
@@ -1063,7 +1067,7 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-procself smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-procself smoke-memfd smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
 	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + i915 (link/load/harness) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
@@ -2118,6 +2122,8 @@ $(BINFOLDER)eventfdtest.nxe: $(DYN_DEPS) $(BINFOLDER)eventfdtest.o
 $(BINFOLDER)epolltest.nxe: $(DYN_DEPS) $(BINFOLDER)epolltest.o
 $(BINFOLDER)mmapexectest.nxe: $(DYN_DEPS) $(BINFOLDER)mmapexectest.o
 $(BINFOLDER)procselftest.nxe: $(DYN_DEPS) $(BINFOLDER)procselftest.o
+$(BINFOLDER)shmdualtest.nxe: $(DYN_DEPS) $(BINFOLDER)shmdualtest.o
+$(BINFOLDER)memfdtest.nxe: $(DYN_DEPS) $(BINFOLDER)memfdtest.o
 $(BINFOLDER)pthrtest.nxe: $(DYN_DEPS) $(BINFOLDER)pthrtest.o
 $(BINFOLDER)pthrstress.nxe: $(DYN_DEPS) $(BINFOLDER)pthrstress.o
 $(BINFOLDER)pfract.nxe:    $(DYN_DEPS) $(BINFOLDER)pfract.o
@@ -2306,7 +2312,7 @@ $(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest eventfdtest epolltest mmapexectest procselftest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest eventfdtest epolltest mmapexectest procselftest shmdualtest memfdtest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter

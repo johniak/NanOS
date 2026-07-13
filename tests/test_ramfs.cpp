@@ -4,6 +4,16 @@
 
 using namespace kernel;
 
+TEST_CASE("RamFs root mode: default 0755, /tmp mounts 01777 (sticky, world-writable)") {
+	RamFs def;                       // default mount
+	FileStat st;
+	CHECK(def.stat(String("/"), st) == 0);
+	CHECK((st.mode & 07777) == 0755);
+	RamFs tmp(01777);                // the /tmp mount
+	CHECK(tmp.stat(String("/"), st) == 0);
+	CHECK((st.mode & 07777) == 01777);   // sticky bit + rwx for all -> non-root can create temp files
+}
+
 TEST_CASE("RamFs create/write/read round-trips a file") {
 	RamFs fs;
 	CHECK(fs.mount() == 0);

@@ -27,8 +27,9 @@ bool nameEq(const char* a, const char* b, int len) {
 }
 }
 
-RamFs::RamFs() {
+RamFs::RamFs(unsigned rootMode) {
 	root = mk(true);
+	root->mode = rootMode & 07777;   // /tmp mounts 01777 (sticky, world-writable); default 0755
 }
 
 int RamFs::mount() { return 0; }

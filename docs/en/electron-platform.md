@@ -150,8 +150,8 @@ or the emptiness that proves the row).
 | `mprotect` RW↔RX flip | implemented | `arch::mmuProtectUser` + `AddressSpace::protect` (toggles PTE_RW + TLB shootdown); `SYS_mprotect`; `scripts/smoke-mprotect.sh` (mmapexectest) PASS | V8 W^X code gen. NX not enabled, so PROT_EXEC is a no-op and write-protection is via PTE_RW; absent pages skipped (no ENOMEM) to not regress guard-page callers |
 | `madvise` | implemented (advisory no-op) | `include/sys/mman.h:42` | V8 GC hints |
 | `mincore` | implemented (all pages resident; no reclaim) | `posixstubs.c:466` | Chromium |
-| `memfd_create` | implemented (file-backed under RamFs `/tmp`, no seals) | `posixstubs.c` (~397) | Chromium shared memory |
-| `MAP_SHARED` cross-process writeback | implemented-but-insufficient | shmdualtest (Task 1.5) not yet run — writeback through RamFs file unproven | Chromium shmem |
+| `memfd_create` | implemented (uniquely-named `/tmp` file, kept linked, no seals) | `posixstubs.c`; `scripts/smoke-memfd.sh` PASS | Chromium shared memory. NOT unlinked-anonymous (NanOS tracks fds by path, so an unlinked-open file loses ftruncate/mmap); the `/tmp` entry stays until close |
+| `MAP_SHARED` cross-process writeback | **missing-required** | shmdualtest hangs: a file mmap allocates fresh private pages eagerly filled from the file (`SyscallDispatch.cpp` ~1023) — MAP_PRIVATE semantics, no write-back, no page sharing | Chromium shmem — remaining Task 1.5 work: page-frame-backed RamFs + shared mapping |
 | `MAP_FIXED_NOREPLACE` | not-needed-yet | absent; add only if V8 build probes (matrix row first) | V8 heap placement |
 | `F_ADD_SEALS` (memfd seals) | not-needed-yet | absent; add only if Chromium rejects unsealed memfds | Chromium shmem |
 
@@ -164,7 +164,7 @@ or the emptiness that proves the row).
 | `/proc/self/exe` readlink | implemented | `SynthFs::readlink` + `Process.exe` (set at execve); `scripts/smoke-procself.sh` PASS | Electron app-path resolution |
 | `/proc/self/fd` listing | implemented | `SynthFs::readdir` fd dir + `ProcTable::openFds`; smoke-procself PASS | Chromium fd introspection |
 | `/proc/self` resolution | implemented | `classifyProc` maps `self`→`ProcTable::selfPid()` | all of the above |
-| user-writable `/tmp` | **missing-required** | found in Task 1.4: `jan` can `chdir /tmp` but `open(O_CREAT)` there returns -1 (searchable, not writable) | Node/Electron temp files — follow-up: make `/tmp` mode 1777 (sticky, world-writable) |
+| user-writable `/tmp` | implemented | `/tmp` now mounts `RamFs(01777)` (sticky, world-writable); `scripts/smoke-memfd.sh` PASS | Node/Electron temp files + memfd |
 | `/proc/<pid>/stat` (52 fields), `/task`, `cpuinfo`, `meminfo` | implemented (htop-level) | htop port; `SynthFs.cpp` | Node `os`, Chromium |
 | `statfs`/`fstatfs` | implemented | `syscalls.c:226` | Node `fs` |
 | `fstatat` + `*at` family | implemented | `syscalls.c:867` | Node `fs` |
