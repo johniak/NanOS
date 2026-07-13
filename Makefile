@@ -768,15 +768,21 @@ libjpeg: bin/libc.ndl bin/libc.ndl.a
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	@echo "installed libjpeg.a + libturbojpeg.a + headers into the $(LIBJPEG_TRIPLE) sysroot ($(SDK_TC)/$(LIBJPEG_TRIPLE)) — link downstream ports with -ljpeg"
 
-# NetSurf graphical web browser: RETIRED WITH i686. The full port stack (netsurf-nanos repo:
-# zlib, libpng/jpeg, libcurl over OpenSSL, libcss/libdom/libhubbub/... + the nanowm libnsfb
-# backend) built only against the 32-bit libc flow; the browser-on-x86_64 port is the
-# documented follow-up (docs/ECOSYSTEM.md). The repo stays cloned by nanos-sdk bootstrap.
-netsurf:
-	@echo "netsurf was built only by the retired i686 flow (dead at the libc level: the"
-	@echo "pthread/TLS layer is x86_64-only). The browser-on-x86_64 port is the documented"
-	@echo "follow-up — see docs/ECOSYSTEM.md (known exclusion) and the netsurf-nanos repo."
-	@exit 1
+# NetSurf graphical web browser: the engine libs (libcss/libdom/libhubbub/libcurl/...), the
+# NanWM libnsfb surface backend, and the netsurf.nxe app all live in the separate netsurf-nanos
+# repo (github.com/NanOS-labs/netsurf-nanos), whose port recipes are ARCH-aware via NX_HOST.
+# `make netsurf` refreshes the x86_64-nanos sysroot from this checkout's bin/ (libc.ndl +
+# libnw.ndl + headers), rebuilds the whole port stack in the nanos-sdk-dev container, and
+# stages netsurf.nxe + its res/ tree into bin/. `make image64` then installs the /apps/netsurf
+# bundle (+ /bin/netsurf.nxe symlink). Needs `make openssl` done once (HTTPS). Launch in nwm.
+NETSURF_REPO ?= $(HOME)/Projects/netsurf-nanos
+netsurf: bin/libc.ndl bin/libc.ndl.a bin/libnw.ndl bin/libnw.ndl.a
+	@test -f "$(NETSURF_REPO)/scripts/build-all.sh" || { echo "netsurf-nanos repo not found at $(NETSURF_REPO)"; exit 1; }
+	NX_HOST=x86_64-nanos sh "$(NETSURF_REPO)/scripts/sync-sysroot.sh"
+	NX_HOST=x86_64-nanos sh "$(NETSURF_REPO)/scripts/build-all.sh"
+	cp "$(NETSURF_REPO)/ports/netsurf/netsurf.nxe" $(BINFOLDER)netsurf.nxe
+	rm -rf $(BINFOLDER)netsurf-res && cp -R "$(NETSURF_REPO)/ports/netsurf/res" $(BINFOLDER)netsurf-res
+	@echo "staged $(BINFOLDER)netsurf.nxe + res — run 'make image64' to install /apps/netsurf"
 
 # Stage EVERY already-built external app into bin/ in one go (best-effort: skips any whose artifact
 # is not present, so a partial set still works). The staged .nxe are build artifacts that `make
@@ -802,6 +808,11 @@ externals:
 	  if [ -f "$$src" ]; then cp "$$src" "$(BINFOLDER)$$name.nxe"; echo "  staged $$name.nxe"; n=$$((n+1)); \
 	  else echo "  skip $$name (not built: $$src)"; fi; \
 	done; \
+	if [ -f "$(NETSURF_REPO)/ports/netsurf/netsurf.nxe" ]; then \
+	  cp "$(NETSURF_REPO)/ports/netsurf/netsurf.nxe" $(BINFOLDER)netsurf.nxe; \
+	  rm -rf $(BINFOLDER)netsurf-res && cp -R "$(NETSURF_REPO)/ports/netsurf/res" $(BINFOLDER)netsurf-res; \
+	  echo "  staged netsurf.nxe + res"; n=$$((n+1)); \
+	else echo "  skip netsurf (not built: $(NETSURF_REPO)/ports/netsurf/netsurf.nxe)"; fi; \
 	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image64' to install them"
 
 # Build EVERY external port from source and produce the full bootable image — the whole
@@ -820,6 +831,7 @@ world: docker-image
 	$(MAKE) libpng libjpeg
 	@test -x "$(MESA_PORT)/tools/intel_clc" || $(MAKE) mesa-intel-clc
 	$(MAKE) libdrm mesa gles2info glkms nwm-gl
+	$(MAKE) netsurf
 	$(MAKE) externals
 	$(MAKE) assets || true
 	$(MAKE) image64
@@ -1748,6 +1760,26 @@ _image64: _all _userland64 _kext
 	  printf "rm /apps/doom/doom1.wad\nwrite disk/doom1.wad /apps/doom/doom1.wad\n" | debugfs -w "$(IMAGE64_PART)"; \
 	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	fi
+	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
+	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
+	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
+	# res/ is installed recursively (dirs first top-down, then files). Built by `make netsurf`
+	# (the netsurf-nanos port stack); launch inside nwm. Skipped if bin/netsurf.nxe is absent.
+	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
+	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  if [ -d $(BINFOLDER)netsurf-res ]; then \
+	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
+	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	    done; \
+	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
+	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE64_PART)"; \
+	    done; \
+	  fi; \
 	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).

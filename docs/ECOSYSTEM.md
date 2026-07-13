@@ -34,6 +34,7 @@ make doom                                # in-tree doomgeneric (/apps/doom + sha
 make libpng libjpeg                      # image codecs
 make mesa-intel-clc                      # first run only (host tool for iris)
 make libdrm mesa gles2info glkms nwm-gl  # GL userspace
+make netsurf                             # NetSurf browser (netsurf-nanos stack -> /apps/netsurf)
 make externals && make image64           # stage everything + the disk image
 ```
 
@@ -44,9 +45,10 @@ on 2026-07-13 (`docs/superpowers/plans/2026-07-13-i686-retirement.md`): no `arch
 32-bit image/userland targets, no i686-elf toolchain in the build container, no i686-nanos
 SDK toolchain. The whole org was audited the same day: `nanos-port` and every fork recipe
 (hooks/nxport.toml/build scripts) now default to the `x86_64-nanos` triple (env-driven
-`NX_HOST` behaviour unchanged). Two follow-up ports remain from the i686 era: **NetSurf**
-(`make netsurf` errors with a pointer) and the **nap package-manager client**
-(`nano-packages/client` still targets the retired i686-nanos Rust spec).
+`NX_HOST` behaviour unchanged). NetSurf was re-ported to x86_64 on 2026-07-13 (`make
+netsurf` rebuilds the whole netsurf-nanos stack for the 64-bit sysroot); one follow-up
+port remains from the i686 era: the **nap package-manager client** (`nano-packages/client`
+still targets the retired i686-nanos Rust spec).
 
 `bootstrap.sh` is idempotent — a half-finished run resumes where it stopped. Override the
 workspace location with `SDK_WORK=...` (that is how the clean-room gate runs).
@@ -106,7 +108,7 @@ audit). Checkout paths are relative to `$SDK_WORK` (`~/Projects/nanos-sdk-work`)
 | `vim-nanos` | vim (upstream fork) | recipe at source root (x86_64 flow, committed cross config.cache) | `vim` symlink + `vim-port` | `make vim` |
 | `ncurses-nanos` | ncurses (mirror fork) | recipe at source root; libtinfo/fallback-terminfo strategy | `ncurses-port/src` (+recipe copied up) | `make ncurses` |
 | `bash-nanos` | GNU bash 5.2 (savannah) | NanOS build in `nanos/` | `~/Projects/bash-nanos` | `make bash` |
-| `netsurf-nanos` | NetSurf | NanWM libnsfb backend + ports (i686-era; awaiting the browser-on-x86_64 follow-up port) | `~/Projects/netsurf-nanos` | — |
+| `netsurf-nanos` | NetSurf | NanWM libnsfb backend + 17 NX_HOST-aware port recipes (x86_64 since 2026-07-13) | `~/Projects/netsurf-nanos` | `make netsurf` |
 | `sqlite-nanos` | SQLite 3.46.1 amalgamation | `nanos/` build + compat + sqltest | `~/Projects/sqlite-nanos` | `make sqlite` |
 
 ### Graphics / GL
@@ -153,9 +155,11 @@ covered by the nanos-sdk flow):
   i686-hardwired Makefile targets, per-port glue drift). All of it was fixed on 2026-07-13 —
   root causes and fixes are recorded in the NanOS/nanos-sdk commit history (a8cd954,
   3596157, 772f595, cb04e20 + per-fork `nanos:` commits).
-- **Known exclusion**: NetSurf builds only through the legacy i686 flow, which is dead at
-  the libc level (the pthread/TLS layer is x86_64-only) and scheduled for deletion; the
-  browser was never part of image64. **Browser-on-x86_64 is the documented follow-up port.**
+- **Former known exclusion, now closed**: NetSurf originally built only through the legacy
+  i686 flow. On 2026-07-13 the whole netsurf-nanos stack (17 ports + netsurf.nxe) was rebuilt
+  against the x86_64-nanos sysroot (the recipes were already NX_HOST-aware; only the zlib
+  hooks needed parameterizing) and `make netsurf` + the image64 `/apps/netsurf` bundle were
+  restored. The browser is part of `make world`.
 
 ## Provenance notes
 
