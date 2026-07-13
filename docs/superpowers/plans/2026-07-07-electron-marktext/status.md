@@ -21,4 +21,5 @@ result. Row format is defined in EXECUTION_GUIDE.md "Work Package Protocol".
 |---|---|---|---|
 | 2026-07-07 | _plan only_ | Plan package created | Pending execution |
 | 2026-07-13 | _wip_ | M0 Source Freeze (LOCK-OK/DOC-OK/MATRIX-STUB-OK) | PASS — pinned MarkText 43bd8b7 (0.20.0-dev), Electron 42.1.0, Chromium 148.0.7778.97, Node v24.15.0; electron-stack.lock + electron-platform.md written. Fork locations adapted to NanOS-labs. |
+| 2026-07-13 | _wip_ | M1 Task 1.1 Gap Matrix (re-verified vs tree) | PASS — matrix filled. missing-required: eventfd, epoll, pipe2, dup3, mprotect(real RW↔RX, currently no-op stub posixstubs.c:423), /proc/self/exe, /proc/self/fd. Tasks 1.2–1.5 (kernel impl) NOT started; M1 milestone still open. |
 

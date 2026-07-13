@@ -124,15 +124,63 @@ the Windows-style `.ndl` mechanism). Therefore:
 
 ## Platform Gap Matrix
 
-Filled by plan 01 (`01-nanos-platform-gaps.md`). Each row is a NanOS API that Node/Chromium/
-Electron needs; status moves `missing → implemented` only with a passing probe/test.
+Owned by plan 01 (`01-nanos-platform-gaps.md`). Each row is a NanOS API that Node/Chromium/Electron
+needs; a `missing-required` row moves to `implemented` only with a passing QEMU microtest. Statuses:
+`implemented`, `implemented-but-insufficient`, `missing-required`, `disabled-by-flag`,
+`disabled-by-policy`, `not-needed-yet`.
 
-| API | Needed by | Status | Probe / test | Notes |
-|---|---|---|---|---|
-| _(populated by plan 01)_ | | | | |
+Evidence re-verified against the tree on **2026-07-13** (grep commands below each cite the file:line
+or the emptiness that proves the row).
 
-Known-missing at freeze time (from the execution guide): `epoll_create1/ctl/wait`, `eventfd`,
-`timerfd_*`, `inotify` (header only), real `sigaltstack`, `memfd` seals, `MAP_FIXED_NOREPLACE`.
+### Event loop / IPC readiness
+
+| Feature | Status | Evidence | Consumer |
+|---|---|---|---|
+| `eventfd` | missing-required | `grep -rli eventfd kernel user/libc-glue` → empty | libuv/Chromium message pump (Task 1.2) |
+| `epoll_create1/ctl/wait` | missing-required | `grep -rli epoll …` → empty | libuv/Chromium message pump (Task 1.2, level-triggered) |
+| `timerfd_*` | not-needed-yet | grep empty; Decisions: timers via `epoll_wait` timeout | libuv timers |
+| `pipe2` | missing-required | not in `kernel/SyscallNr.h` (only `SYS_pipe`) | libuv pipes with `O_CLOEXEC\|O_NONBLOCK` |
+| `dup3` | missing-required | not in `kernel/SyscallNr.h` (only `SYS_dup`/`SYS_dup2`) | libuv fd setup |
+| `accept4` | implemented | `SyscallNr.h:44 SYS_accept4=288`; `sockets.c:55` | Chromium net service |
+
+### Memory / V8
+
+| Feature | Status | Evidence | Consumer |
+|---|---|---|---|
+| `mprotect` RW↔RX flip | **missing-required** | `posixstubs.c:423` — no-op stub `return 0`, "userland cannot change page protections" | **V8 W^X code gen (Task 1.3)** |
+| `madvise` | implemented (advisory no-op) | `include/sys/mman.h:42` | V8 GC hints |
+| `mincore` | implemented (all pages resident; no reclaim) | `posixstubs.c:466` | Chromium |
+| `memfd_create` | implemented (file-backed under RamFs `/tmp`, no seals) | `posixstubs.c` (~397) | Chromium shared memory |
+| `MAP_SHARED` cross-process writeback | implemented-but-insufficient | shmdualtest (Task 1.5) not yet run — writeback through RamFs file unproven | Chromium shmem |
+| `MAP_FIXED_NOREPLACE` | not-needed-yet | absent; add only if V8 build probes (matrix row first) | V8 heap placement |
+| `F_ADD_SEALS` (memfd seals) | not-needed-yet | absent; add only if Chromium rejects unsealed memfds | Chromium shmem |
+
+### Process / path introspection
+
+| Feature | Status | Evidence | Consumer |
+|---|---|---|---|
+| `fork`/`execve`/`wait*` | implemented | multiprocessing stack | Electron child processes |
+| pthreads / TLS / futex | implemented (musl port, real munmap) | pthread port | V8/libuv threading |
+| `/proc/self/exe` readlink | missing-required | `SynthFs.cpp` `PROC_FILES[]` = comm/cmdline/stat/statm/status — no `exe` | Electron app-path resolution (Task 1.4) |
+| `/proc/self/fd` listing | missing-required | same `PROC_FILES[]` — no `fd` dir | Chromium fd introspection (Task 1.4) |
+| `/proc/<pid>/stat` (52 fields), `/task`, `cpuinfo`, `meminfo` | implemented (htop-level) | htop port; `SynthFs.cpp` | Node `os`, Chromium |
+| `statfs`/`fstatfs` | implemented | `syscalls.c:226` | Node `fs` |
+| `fstatat` + `*at` family | implemented | `syscalls.c:867` | Node `fs` |
+| `statx` | not-needed-yet | absent; Node/glibc fall back to `fstatat` | Node `fs` |
+| `clock_gettime` MONOTONIC/REALTIME | implemented | networking-stack fix | libuv timers |
+| `getrandom`, `/dev/urandom` | implemented (real CSPRNG) | TLS/SSL stack | Chromium RNG |
+
+### Deliberately not provided (policy / by-design)
+
+| Feature | Status | Evidence | Consequence |
+|---|---|---|---|
+| `dlopen` | missing-required-by-design (returns NULL; `.ndl` model) | `posixstubs.c` + `include/dlfcn.h` | native modules must be statically registered (plan 02 Task 2.5) |
+| `inotify` | disabled-by-policy (polling watchers) | header only (`include/sys/inotify.h`) | launcher sets `CHOKIDAR_USEPOLLING=1` (plan 05) |
+| `sigaltstack` | disabled-by-flag (stub reports disabled) | `posixstubs.c`; Decisions: V8 stack checks are limit-based | build V8 with wasm trap-handler off (plans 02/03) |
+| Chromium Linux sandbox syscalls (seccomp/namespaces) | disabled-by-flag | none present | `--no-sandbox` runtime default (plan 05 launcher); security limitation (Task 1.8) |
+
+**Work list for Tasks 1.2–1.5** (the `missing-required` rows): `eventfd`, `epoll`, `pipe2`, `dup3`,
+`mprotect` real RW↔RX, `/proc/self/exe`, `/proc/self/fd`, and proving `MAP_SHARED` writeback.
 
 ## How To Port Another Electron App
 
