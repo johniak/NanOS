@@ -161,8 +161,10 @@ or the emptiness that proves the row).
 |---|---|---|---|
 | `fork`/`execve`/`wait*` | implemented | multiprocessing stack | Electron child processes |
 | pthreads / TLS / futex | implemented (musl port, real munmap) | pthread port | V8/libuv threading |
-| `/proc/self/exe` readlink | missing-required | `SynthFs.cpp` `PROC_FILES[]` = comm/cmdline/stat/statm/status — no `exe` | Electron app-path resolution (Task 1.4) |
-| `/proc/self/fd` listing | missing-required | same `PROC_FILES[]` — no `fd` dir | Chromium fd introspection (Task 1.4) |
+| `/proc/self/exe` readlink | implemented | `SynthFs::readlink` + `Process.exe` (set at execve); `scripts/smoke-procself.sh` PASS | Electron app-path resolution |
+| `/proc/self/fd` listing | implemented | `SynthFs::readdir` fd dir + `ProcTable::openFds`; smoke-procself PASS | Chromium fd introspection |
+| `/proc/self` resolution | implemented | `classifyProc` maps `self`→`ProcTable::selfPid()` | all of the above |
+| user-writable `/tmp` | **missing-required** | found in Task 1.4: `jan` can `chdir /tmp` but `open(O_CREAT)` there returns -1 (searchable, not writable) | Node/Electron temp files — follow-up: make `/tmp` mode 1777 (sticky, world-writable) |
 | `/proc/<pid>/stat` (52 fields), `/task`, `cpuinfo`, `meminfo` | implemented (htop-level) | htop port; `SynthFs.cpp` | Node `os`, Chromium |
 | `statfs`/`fstatfs` | implemented | `syscalls.c:226` | Node `fs` |
 | `fstatat` + `*at` family | implemented | `syscalls.c:867` | Node `fs` |

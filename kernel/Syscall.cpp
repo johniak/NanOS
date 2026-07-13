@@ -221,6 +221,17 @@ int Syscalls::close(int fd, bool* freedShared) {
 
 // Lowest free descriptor >= from (POSIX), or -EMFILE. `from` defaults to 0, so a closed
 // 0/1/2 is reusable (dup2); F_DUPFD passes a floor.
+// List the open fd numbers into `out` (up to `max`), ascending. Backs /proc/<pid>/fd via
+// ProcTable::openFds. Structure lock held so a concurrent open/close can't tear a slot mid-scan.
+int Syscalls::listOpenFds(int* out, int max) {
+	RecursiveGuard g(m_fdLock);
+	int n = 0;
+	for (int fd = 0; fd < MAXFD && n < max; fd++)
+		if (fds[fd].used)
+			out[n++] = fd;
+	return n;
+}
+
 int Syscalls::allocFd(int from) {
 	if (from < 0) from = 0;
 	for (int fd = from; fd < MAXFD; fd++)

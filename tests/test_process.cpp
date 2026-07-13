@@ -209,6 +209,26 @@ TEST_CASE("reapStopped: reports a stopped child once, then nothing") {
 	CHECK(ProcTable::reapStopped(parent->pid, 9999, &out) == 0);
 }
 
+TEST_CASE("setExe + selfPid back /proc/<pid>/exe and /proc/self") {
+	ProcTable::init();
+	Process* a = ProcTable::alloc(0);
+	const char* av[] = { "procselftest", 0 };
+	ProcTable::setCommand(a, av, 1);
+
+	// exe defaults empty; setExe records the resolved path, surfaced via ProcInfo.exe.
+	ProcInfo pi;
+	REQUIRE(ProcTable::infoByPid(a->pid, &pi));
+	CHECK(pi.exe[0] == 0);
+	ProcTable::setExe(a, "/bin/procselftest.nxe");
+	REQUIRE(ProcTable::infoByPid(a->pid, &pi));
+	CHECK(strcmp(pi.exe, "/bin/procselftest.nxe") == 0);
+
+	// selfPid tracks the running process (0 when none is current).
+	CHECK(ProcTable::selfPid() == 0);
+	ProcTable::setCurrent(a);
+	CHECK(ProcTable::selfPid() == a->pid);
+}
+
 TEST_CASE("infoByPid: a job-control stopped process reads state 'T'") {
 	ProcTable::init();
 	Process* a = ProcTable::alloc(0);

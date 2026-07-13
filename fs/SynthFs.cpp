@@ -639,8 +639,14 @@ static int classifyProc(const char* path, int* pidOut, const char** fileOut) {
 	if (path[i] == 0)
 		return 1;                       // "/proc/"
 	int pid = 0;
-	if (!parseUint(path, &i, &pid))
+	// "/proc/self/..." resolves to the calling process (Linux). Accept it before the numeric parse.
+	if (path[i] == 's' && path[i+1] == 'e' && path[i+2] == 'l' && path[i+3] == 'f'
+	        && (path[i+4] == 0 || path[i+4] == '/')) {
+		pid = ProcTable::selfPid();
+		i += 4;
+	} else if (!parseUint(path, &i, &pid)) {
 		return 0;                       // non-numeric child (e.g. "uptime")
+	}
 	*pidOut = pid;
 	if (path[i] == 0)
 		return 2;                       // "/proc/<pid>"
@@ -692,6 +698,10 @@ static bool isProcFile(const char* name) {
 			return true;
 	return false;
 }
+// "/proc/<pid>/exe" and "/proc/<pid>/fd/<n>" are symlinks; "/proc/<pid>/fd" is a directory.
+static bool isFdDir(const char* file)   { return streq(file, "fd"); }
+static bool isFdEntry(const char* file) { return file[0]=='f' && file[1]=='d' && file[2]=='/' && file[3]; }
+static bool isExeLink(const char* file) { return streq(file, "exe"); }
 
 static int appendStr(char* buf, int p, int cap, const char* s) {
 	for (int i = 0; s[i] && p < cap - 1; i++)
@@ -867,11 +877,20 @@ int SynthFs::stat(String path, FileStat& out) {
 		ProcInfo pi;
 		if (!ProcTable::infoByPid(pid, &pi))
 			return -1;
-		if (c == 3 && !isProcFile(file))
-			return -1;
-		out.type = (c == 3) ? NODE_FILE : NODE_DIR;
+		if (c == 3) {
+			out.nlink = 1;
+			out.uid = out.gid = out.mtime = 0;
+			out.size = 0;
+			out.ino = 0x50000000u + (unsigned) pid;
+			if (isExeLink(file) || isFdEntry(file)) { out.type = NODE_OTHER; out.mode = 0xA000 | 0777; return 0; }  // symlink
+			if (isFdDir(file))                      { out.type = NODE_DIR;   out.mode = 0x4000 | 0555; return 0; }  // fd directory
+			if (!isProcFile(file)) return -1;
+			out.type = NODE_FILE; out.mode = 0x8000 | 0444;
+			return 0;
+		}
+		out.type = NODE_DIR;
 		out.size = 0;
-		out.mode = (c == 3) ? (0x8000 | 0444) : (0x4000 | 0555);
+		out.mode = 0x4000 | 0555;
 		out.nlink = 1;
 		out.uid = out.gid = out.mtime = 0;
 		out.ino = 0x50000000u + (unsigned) pid;   // synthetic /proc ino, clear of disk inodes
@@ -945,11 +964,24 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 			out.add(de);
 		}
 		// The thread-group dir: ps/htop read the main thread via /proc/<pid>/task/<pid>/stat.
-		DirEntry td;
-		const char* tn = "task";
-		int tk = 0; for (; tn[tk]; tk++) td.name[tk] = tn[tk]; td.name[tk] = 0;
-		td.type = NODE_DIR;
-		out.add(td);
+		pushEntry(out, "task", NODE_DIR);
+		pushEntry(out, "exe", NODE_OTHER);   // symlink to the executable
+		pushEntry(out, "fd", NODE_DIR);      // directory of open fds
+		return 0;
+	}
+	if (pc == 3 && isFdDir(file)) {                      // /proc/<pid>/fd -> one entry per open fd
+		int fds[128];
+		int nf = ProcTable::openFds(pid, fds, 128);
+		if (nf < 0)
+			return -1;
+		pushDotEntries(out);
+		for (int k = 0; k < nf; k++) {
+			DirEntry de;
+			int j = utoa((unsigned) fds[k], de.name);
+			de.name[j] = 0;
+			de.type = NODE_OTHER;            // each fd is a symlink (to the open file)
+			out.add(de);
+		}
 		return 0;
 	}
 	if (pc == 4) {                                       // /proc/<pid>/task -> one entry per thread id
@@ -993,6 +1025,31 @@ int SynthFs::readdir(String path, List<DirEntry>& out) {
 		}
 	}
 	return 0;
+}
+
+// readlink for the dynamic /proc symlinks. "/proc/<pid>/exe" -> the recorded executable path;
+// "/proc/<pid>/fd/<n>" -> a best-effort placeholder (NanOS does not track a path per open fd, and
+// the gate only enumerates fd/). Returns the byte count (no NUL), or -EINVAL for non-symlink paths.
+int SynthFs::readlink(String path, char* buf, unsigned size) {
+	int pid = 0;
+	const char* file = 0;
+	if (classifyProc((char*) path, &pid, &file) == 3) {
+		if (isExeLink(file)) {
+			ProcInfo pi;
+			if (!ProcTable::infoByPid(pid, &pi))
+				return -1;
+			unsigned len = 0;
+			while (pi.exe[len] && len < size) { buf[len] = pi.exe[len]; len++; }
+			return (int) len;
+		}
+		if (isFdEntry(file)) {
+			const char* t = "anon_inode:[fd]";
+			unsigned len = 0;
+			while (t[len] && len < size) { buf[len] = t[len]; len++; }
+			return (int) len;
+		}
+	}
+	return -22;   // -EINVAL: not a symlink
 }
 
 }

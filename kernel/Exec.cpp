@@ -285,6 +285,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	p->fbNext = 0;                           // device/GEM window likewise starts empty
 	p->fbFreeCount = 0;
 	ProcTable::setCommand(p, argv, argc);
+	ProcTable::setExe(p, (char*) pp);        // resolved image path -> /proc/<pid>/exe target
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
 	sigExecReset(caller->sig, p->psig);      // caught handlers -> default across exec (calling thread)
 	p->sys->closeCloexec();                  // FD_CLOEXEC descriptors do not survive exec
@@ -343,6 +344,8 @@ int forkProcess(arch::TrapFrame* tf) {
 		child->comm[i] = parent->comm[i];      // inherit name until the child exec's
 	for (int i = 0; i < (int) sizeof child->cmdline; i++)
 		child->cmdline[i] = parent->cmdline[i];
+	for (int i = 0; i < (int) sizeof child->exe; i++)
+		child->exe[i] = parent->exe[i];        // inherit the exe path until the child exec's its own
 	child->pgid = parent->pgid;                // inherit the process group + session
 	child->sid = parent->sid;
 	child->cttyDev = parent->cttyDev;          // inherit the controlling terminal (VT or pty)

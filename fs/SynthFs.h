@@ -118,6 +118,7 @@ public:
 	int read(String path, unsigned size, unsigned off, void* buf);
 	int stat(String path, FileStat& out);
 	int readdir(String path, List<DirEntry>& out);
+	int readlink(String path, char* buf, unsigned size);   // /proc/<pid>/{exe,fd/<n>} targets
 	// mkdir on the read-only synthetic tree always fails, but POSIX orders existence before
 	// writability: an existing path must report EEXIST, not EROFS. Without this, `mkdir -p`
 	// (and cp -r, which mkdir's each component) aborts on the first existing read-only parent

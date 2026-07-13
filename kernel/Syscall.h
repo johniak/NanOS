@@ -303,6 +303,7 @@ public:
 	Epoll* epollAt(int fd) { return valid(fd) ? fds[fd].epoll : 0; }
 	bool epollReady(Epoll* e);   // any registered fd ready? (for the rare poll() of an epoll fd)
 	bool fdIsOpen(int fd) { return valid(fd); }   // for epoll_ctl's EBADF check
+	int listOpenFds(int* out, int max);           // fill open fd numbers (/proc/<pid>/fd), return count
 
 	// ---- Sockets (FAZA 9). Addresses cross the ABI as Linux sockaddr_in (family/port-BE/addr-BE).
 	// The socket lives in the fd table (read/write/close/poll/dup/fork-refcount route to it).

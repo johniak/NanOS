@@ -86,6 +86,7 @@ struct Process {
 	bool kthread;        // kernel thread (idle/clock): no user address space
 	char comm[16];       // short name (Linux `comm`)
 	char cmdline[128];   // full command line (argv joined by spaces)
+	char exe[256];       // resolved executable path (Linux /proc/<pid>/exe target); set at execve
 
 	// Process credentials (Linux task_struct->cred analogue). The canonical store; the
 	// process's Syscalls points its cred* here. fork copies the parent's; execve keeps it
@@ -183,6 +184,7 @@ struct ProcInfo {
 	int nthreads;        // live threads in the group (Linux stat field 20, status Threads)
 	char comm[16];
 	char cmdline[128];
+	char exe[256];       // resolved executable path (for /proc/<pid>/exe readlink)
 	// Credential snapshot for /proc/<pid>/status (Uid/Gid/Groups lines).
 	unsigned ruid, euid, suid, fsuid;
 	unsigned rgid, egid, sgid, fsgid;
@@ -280,6 +282,9 @@ public:
 	static int snapshot(ProcInfo* out, int max);     // fill `out`, return live count
 	static bool infoByPid(int pid, ProcInfo* out);   // one process, false if absent
 	static void setCommand(Process* p, const char* const* argv, int argc);  // comm + cmdline
+	static void setExe(Process* p, const char* path);   // resolved /proc/<pid>/exe target (execve)
+	static int  openFds(int pid, int* out, int max);    // list a process's open fd numbers (/proc/<pid>/fd); -1 if absent
+	static int  selfPid();                              // the calling process's pid (for /proc/self), or 0
 };
 
 }

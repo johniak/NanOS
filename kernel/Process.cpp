@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "Syscall.h"     // Syscalls::listOpenFds — /proc/<pid>/fd enumeration
 #include "Scheduler.h"   // Task / TaskState for the /proc state char
 #include "Spinlock.h"    // SMP: RecursiveIrqGuard over the shared g_procs[] table
 #include <arch/smp.h>    // SMP: "current process/thread" is per-CPU
@@ -381,6 +382,7 @@ static void fillInfo(const Process* p, ProcInfo* out) {
 	out->nthreads = p->threadCount;
 	copyName(out->comm, sizeof out->comm, p->comm);
 	copyName(out->cmdline, sizeof out->cmdline, p->cmdline);
+	copyName(out->exe, sizeof out->exe, p->exe);
 	out->ruid = p->cred.ruid; out->euid = p->cred.euid; out->suid = p->cred.suid; out->fsuid = p->cred.fsuid;
 	out->rgid = p->cred.rgid; out->egid = p->cred.egid; out->sgid = p->cred.sgid; out->fsgid = p->cred.fsgid;
 	out->ngroups = p->cred.ngroups;
@@ -422,6 +424,34 @@ void ProcTable::setCommand(Process* p, const char* const* argv, int argc) {
 			p->cmdline[c++] = *s;
 	}
 	p->cmdline[c] = 0;
+}
+
+// Record the resolved executable path (the /proc/<pid>/exe symlink target). Set by execve after
+// path resolution; inherited across fork until the child exec's its own image.
+void ProcTable::setExe(Process* p, const char* path) {
+	RecursiveIrqGuard g(g_procLock);
+	if (!p) return;
+	int i = 0;
+	if (path)
+		for (; path[i] && i < (int) sizeof p->exe - 1; i++)
+			p->exe[i] = path[i];
+	p->exe[i] = 0;
+}
+
+// List a process's open fd numbers into `out` (up to `max`), for /proc/<pid>/fd. Returns the count,
+// or -1 if the pid is not live. Delegates to the process's fd table.
+int ProcTable::openFds(int pid, int* out, int max) {
+	RecursiveIrqGuard g(g_procLock);
+	Process* p = byPid(pid);
+	if (!p || !p->sys)
+		return -1;
+	return p->sys->listOpenFds(out, max);
+}
+
+// The calling process's pid — backs "/proc/self". 0 before the first process is set.
+int ProcTable::selfPid() {
+	Process* p = current();
+	return p ? p->pid : 0;
 }
 
 
