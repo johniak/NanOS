@@ -6,7 +6,7 @@ result. Row format is defined in EXECUTION_GUIDE.md "Work Package Protocol".
 
 ## Milestones
 
-- [ ] M0 Source Freeze
+- [x] M0 Source Freeze
 - [ ] M1 Platform Gap Matrix
 - [ ] M2 Node
 - [ ] M3 Chromium Content
@@ -20,4 +20,5 @@ result. Row format is defined in EXECUTION_GUIDE.md "Work Package Protocol".
 | Date | Commit | Gate | Result |
 |---|---|---|---|
 | 2026-07-07 | _plan only_ | Plan package created | Pending execution |
+| 2026-07-13 | _wip_ | M0 Source Freeze (LOCK-OK/DOC-OK/MATRIX-STUB-OK) | PASS — pinned MarkText 43bd8b7 (0.20.0-dev), Electron 42.1.0, Chromium 148.0.7778.97, Node v24.15.0; electron-stack.lock + electron-platform.md written. Fork locations adapted to NanOS-labs. |
 

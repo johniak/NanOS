@@ -1,0 +1,32 @@
+# Electron stack source freeze for the NanOS Electron/MarkText program.
+#
+# Single source of truth for every pinned version this program builds. No `latest`,
+# no floating `^`/`~` at build time. Every downstream plan (01-07) keys off this file;
+# changing a pin means redoing plan 00 and updating the lock in the same commit.
+#
+# Produced by: docs/superpowers/plans/2026-07-07-electron-marktext/00-platform-contract.md (Task 0.1)
+# Frozen on:   2026-07-13
+#
+# Fork policy (supersedes the plan's repo-local per-port patch dirs): per the
+# NanOS-labs ecosystem decision (2026-07-12), any upstream we patch becomes a fork
+# under github.com/NanOS-labs on branch `nanos`, with its port recipe inside the fork.
+# The `repo` fields below are the UPSTREAMS we pin against; our patched builds will
+# live at NanOS-labs/{node,chromium,electron,marktext}-nanos, created when plan 02+
+# starts patching. Nothing is forked yet at M0 (source freeze only).
+
+[marktext]
+repo             = "https://github.com/marktext/marktext"
+commit           = "43bd8b77795fb27b1a9512737c000f7362031ea0"
+version          = "0.20.0-dev"          # plan estimated 0.19.0; master moved to 0.20.0-dev
+package_manager  = "pnpm@10.33.4"
+node_engine      = ">=20.19.0"
+electron_range   = "~42.1.0"             # plan estimated ^42.1.0; actual devDependency range
+pnpm_lock_sha256 = "c22649b231aecc0e5b16698c74f0c1a43509a7e9a84dddbec73c13a1d9f9dcf0"
+
+[electron]
+npm_range_seen   = "~42.1.0"
+version          = "42.1.0"              # resolved exact from MarkText pnpm-lock.yaml (electron@42.1.0)
+repo             = "https://github.com/electron/electron"
+tag              = "v42.1.0"
+chromium_version = "148.0.7778.97"       # from electron v42.1.0 DEPS
+node_version     = "v24.15.0"            # from electron v42.1.0 DEPS
