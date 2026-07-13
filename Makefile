@@ -804,12 +804,32 @@ externals:
 	done; \
 	echo "staged $$n external app(s) into $(BINFOLDER) — run 'make image64' to install them"
 
+# Build EVERY external port from source and produce the full bootable image — the whole
+# ECOSYSTEM.md recipe in one command. Layers run serially via recursive make because each
+# one consumes the previous one's sysroot artifacts (vim/htop need ncurses' libtinfo, wget
+# needs openssl, mesa needs libdrm...). mesa-intel-clc is a one-time host-tool bootstrap:
+# built only when $(MESA_PORT)/tools/intel_clc is missing (the mesa target hard-requires it).
+# Needs the port checkouts at $(SDK_WORK) (nanos-sdk bootstrap.sh) + the bash/sqlite forks
+# in ~/Projects. Cold run is hours (toolchain-heavy); warm reruns are mostly incremental.
+world: docker-image
+	$(MAKE) zlib openssl ncurses
+	$(MAKE) toybox sudo grep bzip2
+	$(MAKE) ping wget inetd httpd udhcpc dropbear
+	$(MAKE) vim htop git sqlite bash
+	$(MAKE) libpng libjpeg
+	@test -x "$(MESA_PORT)/tools/intel_clc" || $(MAKE) mesa-intel-clc
+	$(MAKE) libdrm mesa gles2info glkms nwm-gl
+	$(MAKE) externals
+	$(MAKE) assets || true
+	$(MAKE) image64
+	@echo "world: every port built + staged, image64 ready — 'make run64' to boot it"
+
 # Desktop artwork: convert the branded PNGs (NanOS wallpaper + logo) to NanOS's flat 32bpp surface
 # format on the host (needs python3 + Pillow), staged into bin/ where _image64 installs them under
 # /nanos/share. The compositor uses wallpaper.raw as the desktop background and About shows logo.raw;
 # both fall back gracefully if absent. Source PNGs live in assets/ (override with ART_DIR=).
 ART_DIR ?= $(CURDIR)/assets
-.PHONY: assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa mesa-intel-clc gles2info glkms nwm-gl   # never confuse these with the assets/ dir or bin/ files
+.PHONY: world assets externals bash grep vim bzip2 ping wget git inetd httpd udhcpc zlib ncurses libpng libjpeg htop libdrm mesa mesa-intel-clc gles2info glkms nwm-gl  # never confuse these with the assets/ dir or bin/ files
 assets:
 	@command -v python3 >/dev/null 2>&1 || { echo "need python3 + Pillow for assets"; exit 1; }
 	python3 scripts/png2raw.py "$(ART_DIR)/wallpaper.png" $(BINFOLDER)wallpaper.raw 1024x768 --bg 0x0a1020

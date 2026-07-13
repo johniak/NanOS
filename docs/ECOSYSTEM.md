@@ -17,17 +17,26 @@ git clone git@github.com:NanOS-labs/nanos-sdk.git ~/Projects/nanos-sdk
 git clone git@github.com:NanOS-labs/NanOS.git     ~/Projects/NanOS
 ~/Projects/nanos-sdk/scripts/bootstrap.sh    # host checks, clone all forks, toolchain, docker
 cd ~/Projects/NanOS
+make world                               # everything below in one command
+make run64                               # boot it (SMP, cocoa display)
+make flash-dell                          # or write the Dell USB stick
+```
+
+`make world` runs the full layered recipe in dependency order — equivalent to:
+
+```sh
 make docker-image
 make zlib openssl ncurses                # library layer
 make toybox sudo grep bzip2              # base userland
 make ping wget inetd httpd udhcpc dropbear   # network layer
 make vim htop git sqlite bash            # apps
 make libpng libjpeg                      # image codecs
+make mesa-intel-clc                      # first run only (host tool for iris)
 make libdrm mesa gles2info glkms nwm-gl  # GL userspace
-make externals && make image64           # the disk image
-make run64                               # boot it (SMP, cocoa display)
-make flash-dell                          # or write the Dell USB stick
+make externals && make image64           # stage everything + the disk image
 ```
+
+Every layer is also a standalone target for selective rebuilds.
 
 x86_64 is the only architecture (`ARCH` defaults to it) — the i686/32-bit flow was retired
 on 2026-07-13 (`docs/superpowers/plans/2026-07-13-i686-retirement.md`): no `arch/x86`, no
