@@ -276,3 +276,43 @@ TEST_CASE("arpTick: INCOMPLETE retransmits then fails; REACHABLE goes STALE") {
 	CHECK(arpLookup(ipv4(10,0,2,3))->state == ARP_STALE);
 	netReset(); arpReset();
 }
+
+TEST_CASE("STALE entry keeps resolving (stale MAC) and probes a refresh; a reply revives it") {
+	// Regression: STALE used to be a dead end — arpResolve() returned false forever (no
+	// re-request; arpTick ignores STALE), so ALL traffic to the gateway died 30s after the
+	// last ARP learn. Real-world symptom: `ping google.com` -> "unknown host" (the DNS query
+	// never left the box) about a minute after boot. Linux STALE semantics: keep using the
+	// last known MAC, re-verify in the background.
+	NetDevice dev; setup(dev);
+	arpSetClock(fakeClock);
+	g_fakeNow = 1000;
+	// Learn the gateway (reply), then age it to STALE.
+	feedArp(&dev, OUR_MAC, GW_MAC, ARP_OP_REPLY, GW_MAC, ipv4(10,0,2,2), OUR_MAC, ipv4(10,0,2,15));
+	REQUIRE(arpLookup(ipv4(10,0,2,2)) != nullptr);
+	g_fakeNow += 31000; arpTick(g_fakeNow);
+	REQUIRE(arpLookup(ipv4(10,0,2,2))->state == ARP_STALE);
+
+	// A STALE entry must still resolve — with the last known MAC — and emit ONE refresh probe.
+	clearCap();
+	uint8_t mac[6] = {0};
+	CHECK(arpResolve(&dev, ipv4(10,0,2,2), mac) == true);
+	CHECK(std::memcmp(mac, GW_MAC, 6) == 0);
+	CHECK(g_capCount == 1);                                  // background re-verify request
+	CHECK(rd16be(g_cap + ETH_HLEN + 6) == ARP_OP_REQUEST);
+
+	// Probes are rate-limited: an immediate second resolve does NOT send another request.
+	CHECK(arpResolve(&dev, ipv4(10,0,2,2), mac) == true);
+	CHECK(g_capCount == 1);
+	// ...but after PROBE_MS it re-probes again (still resolving meanwhile).
+	g_fakeNow += 1500;
+	CHECK(arpResolve(&dev, ipv4(10,0,2,2), mac) == true);
+	CHECK(g_capCount == 2);
+
+	// The probe reply revives the entry to REACHABLE (normal fast path again).
+	feedArp(&dev, OUR_MAC, GW_MAC, ARP_OP_REPLY, GW_MAC, ipv4(10,0,2,2), OUR_MAC, ipv4(10,0,2,15));
+	CHECK(arpLookup(ipv4(10,0,2,2))->state == ARP_REACHABLE);
+	clearCap();
+	CHECK(arpResolve(&dev, ipv4(10,0,2,2), mac) == true);
+	CHECK(g_capCount == 0);                                  // no probe when REACHABLE
+	netReset(); arpReset();
+}

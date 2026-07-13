@@ -132,6 +132,18 @@ bool arpResolve(NetDevice* dev, uint32_t ip, uint8_t out[6]) {
 		memcpy(out, e->mac, 6);
 		return true;
 	}
+	if (e && e->state == ARP_STALE) {
+		// Linux STALE semantics: keep using the last known MAC and re-verify in the
+		// background (learn() flips it back to REACHABLE when the reply arrives). STALE
+		// must never block traffic — treating it as a miss with no re-request made it a
+		// dead end: everything to the gateway silently died 30s after the last learn.
+		memcpy(out, e->mac, 6);
+		if (now() - e->lastTick > PROBE_MS) {   // rate-limit the refresh probes
+			e->lastTick = now();
+			arpRequest(dev, ip);
+		}
+		return true;
+	}
 	if (!e) {
 		e = findFree();
 		memset(e, 0, sizeof(*e));
