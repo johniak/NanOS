@@ -1,14 +1,16 @@
 # NanOS build environment.
-# Builds an i686-elf cross-toolchain from source and bundles every tool needed
-# to compile the kernel and assemble the bootable GRUB2 ext2 image.
+# Builds the x86_64-elf cross-toolchain from source and bundles every tool needed
+# to compile the kernel and assemble the bootable disk image (hybrid GPT + Limine).
 # QEMU is intentionally NOT here: builds run in this container, testing runs
 # natively on the host.
+# (The i686-elf toolchain + 32-bit picolibc layers were retired with the i686 flow,
+# docs/superpowers/plans/2026-07-13-i686-retirement.md.)
 FROM debian:trixie-slim
 
 # Pinned toolchain versions for reproducibility.
 ARG BINUTILS_VERSION=2.43
 ARG GCC_VERSION=14.2.0
-ARG TARGET=i686-elf
+ARG TARGET=x86_64-elf
 ARG PREFIX=/opt/cross
 
 ENV PATH="${PREFIX}/bin:${PATH}"
@@ -25,8 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The i386-pc GRUB modules (boot.img + *.mod) live in grub-pc-bin, which Debian only
 # packages for amd64/i386 — but the files are i386 target data that grub-common's
-# grub-mkimage uses on ANY host. Fetch the amd64 .deb and drop its /usr/lib/grub/i386-pc
-# into place so the bootable image builds whether the container is amd64 or arm64.
+# grub-mkimage uses on ANY host. grub-mkrescue needs them for the bringup64 rescue ISO
+# (a GRUB BIOS-boot implementation detail — unrelated to the retired i686 NanOS flow).
 RUN set -eux; cd /tmp; \
     dpkg --add-architecture amd64; \
     apt-get update; \
@@ -37,6 +39,7 @@ RUN set -eux; cd /tmp; \
     rm -rf /tmp/grubpc grub-pc-bin*.deb /var/lib/apt/lists/*
 
 # Build binutils, then gcc (all-gcc + libgcc only — freestanding kernel).
+# ~20-40 min first build (amd64 emulated on Apple Silicon), then cached.
 RUN set -eux; \
     cd /tmp; \
     wget -q "https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.xz"; \
@@ -51,7 +54,8 @@ RUN set -eux; \
     mkdir /tmp/build-gcc; cd /tmp/build-gcc; \
     ../gcc-${GCC_VERSION}/configure \
         --target="${TARGET}" --prefix="${PREFIX}" \
-        --disable-nls --enable-languages=c,c++ --without-headers; \
+        --disable-nls --enable-languages=c,c++ --without-headers \
+        --disable-libssp --disable-libsanitizer; \
     make -j"$(nproc)" all-gcc all-target-libgcc; \
     make install-gcc install-target-libgcc; \
     cd /; rm -rf /tmp/*
@@ -61,84 +65,24 @@ RUN set -eux; \
 RUN apt-get update && apt-get install -y --no-install-recommends lcov \
     && rm -rf /var/lib/apt/lists/*
 
-# picolibc: a C library for the NanOS userland. Built as a SEPARATE static library
-# against the cross-gcc above (NOT a toolchain rebuild), so this trailing layer
-# never invalidates the expensive toolchain cache. Programs link libc.a + our thin
-# syscall glue; sbase cat/ls compile against picolibc's headers.
+# Marker the Makefile checks to know it is running inside the build container.
+RUN touch /etc/nanos-build
+
+# picolibc: the C library for the NanOS userland. Built as a SEPARATE static library
+# against the cross-gcc above (NOT a toolchain rebuild), so this trailing layer never
+# invalidates the expensive toolchain cache. Programs link libc.a + our thin syscall
+# glue. Built non-PIC / small code model (-fno-pic -mcmodel=small -mno-red-zone via the
+# cross-file) so objects emit absolute relocs that mknx64 handles, not GOTPCREL/PLT.
 ARG PICOLIBC_VERSION=1.8.6
 RUN apt-get update && apt-get install -y --no-install-recommends \
         meson ninja-build python3 git \
     && rm -rf /var/lib/apt/lists/*
-COPY picolibc-i686-elf.txt /tmp/picolibc-i686-elf.txt
-RUN set -eux; \
-    git clone --depth 1 --branch "${PICOLIBC_VERSION}" \
-        https://github.com/picolibc/picolibc /tmp/picolibc; \
-    cd /tmp/picolibc; \
-    meson setup build --cross-file /tmp/picolibc-i686-elf.txt \
-        -Dprefix=/opt/picolibc/i686-elf \
-        -Dincludedir=include -Dlibdir=lib \
-        -Dmultilib=false -Dpicocrt=false -Dpicolib=true -Dsemihost=false \
-        -Dposix-console=true \
-        -Dtests=false -Dformat-default=double -Dthread-local-storage=false \
-        -Derrno-function=__errno_location; \
-    ninja -C build; \
-    ninja -C build install; \
-    cd /; rm -rf /tmp/picolibc /tmp/picolibc-i686-elf.txt
-
-# Rust toolchain (trailing layer — never invalidates the C toolchain cache). For writing
-# NanOS apps in Rust against the C-ABI libnwui. We compile for a CUSTOM bare i686 target with
-# no SIMD + soft-float (matching the C userland / the emulated CPU), which needs nightly +
-# rust-src to build core/alloc for it (-Z build-std).
-ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
-ENV PATH="/opt/cargo/bin:${PATH}"
-RUN set -eux; \
-    wget -q -O /tmp/rustup.sh https://sh.rustup.rs; \
-    sh /tmp/rustup.sh -y --default-toolchain nightly --profile minimal --component rust-src; \
-    rm /tmp/rustup.sh; \
-    rustc --version
-
-# Second cross-toolchain: x86_64-elf (the long-mode port target). Built from the SAME
-# pinned binutils/gcc sources as i686-elf, into the same PREFIX (the triple-prefixed
-# binaries don't collide: x86_64-elf-gcc vs i686-elf-gcc). Appended as a trailing layer
-# so it never invalidates the cached i686-elf toolchain above. ~20-40 min first build
-# (amd64 emulated on Apple Silicon), then cached.
-ARG TARGET64=x86_64-elf
-RUN set -eux; \
-    cd /tmp; \
-    wget -q "https://ftp.gnu.org/gnu/binutils/binutils-${BINUTILS_VERSION}.tar.xz"; \
-    wget -q "https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz"; \
-    tar xf "binutils-${BINUTILS_VERSION}.tar.xz"; \
-    tar xf "gcc-${GCC_VERSION}.tar.xz"; \
-    mkdir build-binutils64; cd build-binutils64; \
-    ../binutils-${BINUTILS_VERSION}/configure \
-        --target="${TARGET64}" --prefix="${PREFIX}" \
-        --with-sysroot --disable-nls --disable-werror; \
-    make -j"$(nproc)"; make install; \
-    mkdir /tmp/build-gcc64; cd /tmp/build-gcc64; \
-    ../gcc-${GCC_VERSION}/configure \
-        --target="${TARGET64}" --prefix="${PREFIX}" \
-        --disable-nls --enable-languages=c,c++ --without-headers \
-        --disable-libssp --disable-libsanitizer; \
-    make -j"$(nproc)" all-gcc all-target-libgcc; \
-    make install-gcc install-target-libgcc; \
-    cd /; rm -rf /tmp/*
-
-# Marker the Makefile checks to know it is running inside the build container.
-RUN touch /etc/nanos-build
-
-# x86_64-elf picolibc: the 64-bit counterpart of the i686-elf picolibc above, built
-# against the x86_64-elf cross-gcc for the long-mode port's libc.ndl. Trailing layer
-# (after both toolchains + the marker) so it never invalidates the expensive cached
-# toolchain layers. meson/ninja/git/python3 were already installed by the i686 picolibc
-# layer. Built non-PIC / small code model (-fno-pic -mcmodel=small -mno-red-zone via the
-# cross-file) so objects emit absolute relocs that mknx64 handles, not GOTPCREL/PLT.
 COPY picolibc-x86_64-elf.txt /tmp/picolibc-x86_64-elf.txt
 # Backport picolibc's upstream malloc 16-byte alignment fix to 1.8.6: nano-malloc derives
 # MALLOC_CHUNK_ALIGN from offsetof(align_chunk_t, u), whose union {void*,double,long long,size_t}
 # aligns to 8 on x86_64 — but the System V AMD64 ABI requires 16 (max_align_t). Widening the union
 # with `long double` (alignof 16 here) raises the alignment to 16 so malloc/calloc/realloc satisfy
-# 16-byte SSE stores (e.g. Mesa ralloc's `movaps %xmm0,(%rax)`). i686 uses a different picolibc build
-# (long double there is alignof 4) and is intentionally NOT patched.
+# 16-byte SSE stores (e.g. Mesa ralloc's `movaps %xmm0,(%rax)`).
 COPY picolibc-nano-malloc-align16.patch /tmp/picolibc-nano-malloc-align16.patch
 RUN set -eux; \
     git clone --depth 1 --branch "${PICOLIBC_VERSION}" \
@@ -155,6 +99,18 @@ RUN set -eux; \
     ninja -C build; \
     ninja -C build install; \
     cd /; rm -rf /tmp/picolibc /tmp/picolibc-x86_64-elf.txt /tmp/picolibc-nano-malloc-align16.patch
+
+# Rust toolchain (trailing layer — never invalidates the C toolchain cache). For writing
+# NanOS apps in Rust against the C-ABI libnwui (rsexp/libnwui-rs). We compile for the CUSTOM
+# bare x86_64-nanos target (user/rust/x86_64-nanos.json), which needs nightly + rust-src to
+# build core/alloc for it (-Z build-std).
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo
+ENV PATH="/opt/cargo/bin:${PATH}"
+RUN set -eux; \
+    wget -q -O /tmp/rustup.sh https://sh.rustup.rs; \
+    sh /tmp/rustup.sh -y --default-toolchain nightly --profile minimal --component rust-src; \
+    rm /tmp/rustup.sh; \
+    rustc --version
 
 # Limine bootloader (BIOS+UEFI) for the hybrid GPT image. The vN.x-binary branch ships prebuilt
 # BIOS stages + BOOTX64.EFI and a tiny host `limine` deploy tool we build with the host cc. Fetched
