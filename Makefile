@@ -62,13 +62,10 @@ bash: docker-image
 	@echo "staged $(BINFOLDER)bash.nxe — run 'make image64' to install it"
 
 # GNU grep / vim / bzip2 (optional, external). The upstream sources live in the nanos-sdk work
-# dir. These targets are ARCH-AWARE:
-#   * i686 (default): copy the hand-built .nxe the nanos-sdk produced (the original 32-bit flow,
-#     left untouched — `make image` never depends on it, so a missing artifact can't break a build).
-#   * x86_64: rebuild the .nxe from source inside the nanos-build container via the reproducible
-#     driver scripts/nx-port-build.sh (nx-gcc wrapper -> picolibc + libc-glue + a NanOS .nxe link,
-#     mknx64 -> v4 .nxe). Mirrors `make bash`: the same NX_* env selects the 64-bit toolchain,
-#     linker script, mknx and LP64 sizes; the driver applies the per-app LP64/POSIX fixes.
+# dir. Each rebuilds its .nxe from source inside the nanos-build container via the reproducible
+# driver scripts/nx-port-build.sh (nx-gcc wrapper -> picolibc + libc-glue + a NanOS .nxe link,
+# mknx64 -> v4 .nxe). Mirrors `make bash`: the same NX_* env selects the toolchain, linker
+# script, mknx and LP64 sizes; the driver applies the per-app LP64/POSIX fixes.
 SDK_WORK ?= $(HOME)/Projects/nanos-sdk-work
 # Shared x86_64 build env + the ELF64 startup/libc prereqs (same set `make bash` rebuilds).
 NXPORT_ENV = -e NX_CC=x86_64-elf-gcc -e NX_HOST=x86_64-elf -e NX_PICO=/opt/picolibc/x86_64-elf \
@@ -79,28 +76,19 @@ NXPORT_PREREQ = $(DOCKER_RUN) sh -c 'make ARCH=x86_64 bin/libc.ndl bin/libc.ndl.
 NXPORT_RUN = docker run --rm -v $(CURDIR):/src $(NXPORT_ENV) -w /src
 
 grep:
-ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
 	$(NXPORT_RUN) -v "$(SDK_WORK)/grep-3.11":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh grep
 	cp "$(SDK_WORK)/grep-3.11/grep.nxe" $(BINFOLDER)grep.nxe
-else
-	@test -f "$(SDK_WORK)/grep-3.11/src/grep.nxe" || { echo "grep.nxe not found at $(SDK_WORK)/grep-3.11/src (build it with the nanos-sdk first)"; exit 1; }
-	cp "$(SDK_WORK)/grep-3.11/src/grep.nxe" $(BINFOLDER)grep.nxe
-endif
-	@echo "staged $(BINFOLDER)grep.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)grep.nxe — run 'make image64' to install it into /nanos/bin"
 
-# toybox (0BSD multicall): the user-identity tools (login/su/passwd/id/groups/whoami). x86_64 only
-# (i686 is frozen). Built via the nanos-sdk port flow; installed as a single setuid-root toybox.nxe
+# toybox (0BSD multicall): the user-identity tools (login/su/passwd/id/groups/whoami).
+# Built via the nanos-sdk port flow; installed as a single setuid-root toybox.nxe
 # with a per-command symlink farm (image64 install). Source: $(SDK_WORK)/toybox-0.8.11.
 .PHONY: toybox
 toybox:
-ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
 	$(NXPORT_RUN) -v "$(SDK_WORK)/toybox-0.8.11":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh toybox
 	cp "$(SDK_WORK)/toybox-0.8.11/toybox.nxe" $(BINFOLDER)toybox.nxe
-else
-	@echo "toybox is x86_64-only (i686 is frozen)"; exit 1
-endif
 	@echo "staged $(BINFOLDER)toybox.nxe — run 'make image64' to install it + the login/su/passwd/id symlinks"
 
 # sudo (Todd Miller, ISC license): real sudo with the sudoers policy linked statically. x86_64
@@ -108,28 +96,22 @@ endif
 # $(SDK_WORK)/sudo-1.9.15p5.
 .PHONY: sudo
 sudo:
-ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
 	$(NXPORT_RUN) -v "$(SDK_WORK)/sudo-1.9.15p5":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh sudo
 	cp "$(SDK_WORK)/sudo-1.9.15p5/sudo.nxe" $(BINFOLDER)sudo.nxe
-else
-	@echo "sudo is x86_64-only (i686 is frozen)"; exit 1
-endif
 	@echo "staged $(BINFOLDER)sudo.nxe — run 'make image64' to install it setuid-root into /nanos/bin"
 
-# Vim (the editor). ARCH-AWARE:
-#   * i686 (default): copy the hand-built 32-bit .nxe the nanos-sdk produced (original flow, intact).
-#   * x86_64: build from source via the REPRODUCIBLE nanos-port driver (mirrors `make ping`/`make
-#     ncurses`) against the x86_64-nanos sysroot, linking libtinfo.a from the ncurses port. The
-#     manifest ($(VIM_PORT)/nxport.toml) REUSES the i686 vim_cv_* cross-cache; hooks/pre_configure.sh
-#     scrubs the stale i686 build state the `dir:` copy carries over. We first refresh the SDK sysroot
+# Vim (the editor): built from source via the REPRODUCIBLE nanos-port driver (mirrors `make
+# ping`/`make ncurses`) against the x86_64-nanos sysroot, linking libtinfo.a from the ncurses
+# port. The manifest ($(VIM_PORT)/nxport.toml) reuses the committed vim_cv_* cross-cache;
+# hooks/pre_configure.sh scrubs stale build state the `dir:` copy carries over. We first
+# refresh the SDK sysroot
 #     from THIS checkout (POSIX headers + libc.ndl{,.a} + the nx-dllimport.h data-import shim + the
 #     crt0/nxhdr startup objects + mknx64) so the x86_64 build tracks the live ABI. Requires `make
 #     ARCH=x86_64 ncurses` first (libtinfo.a + curses.h/term.h in the sysroot). `make image*` never
 #     depends on this; a missing artifact is skipped by _image/_image64.
 VIM_PORT := $(SDK_WORK)/vim-port
 VIM_SRC  := $(SDK_WORK)/vim
-ifeq ($(ARCH),x86_64)
 VIM_TRIPLE   := x86_64-nanos
 # CFLAGS = NanOS x86_64 user ABI (fixed-base ET_EXEC, small model, no red zone) + the dllimport shim
 # force-included into every TU (x86_64 references picolibc's stdout/stderr/errno DATA RIP-relative,
@@ -137,9 +119,7 @@ VIM_TRIPLE   := x86_64-nanos
 VIM_PORT_ENV  = -e NX_HOST=x86_64-nanos -e NX_LP64=1 \
   -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone -include nx-dllimport.h" \
   -e LDFLAGS="-no-pie"
-endif
 vim:
-ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
 	@test -d "$(SDK_TC)/$(VIM_TRIPLE)/include" || { echo "nanos-sdk $(VIM_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(SDK_TC)/$(VIM_TRIPLE)/lib/libtinfo.a" || { echo "libtinfo.a not in the $(VIM_TRIPLE) sysroot — run 'make ARCH=x86_64 ncurses' first"; exit 1; }
@@ -157,11 +137,7 @@ ifeq ($(ARCH),x86_64)
 	  -e SDK=/sdk $(VIM_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(VIM_PORT)/vim.nxe" $(BINFOLDER)vim.nxe
-else
-	@test -f "$(SDK_WORK)/vim/src/vim.nxe" || { echo "vim.nxe not found at $(SDK_WORK)/vim/src (build it with the nanos-sdk first)"; exit 1; }
-	cp "$(SDK_WORK)/vim/src/vim.nxe" $(BINFOLDER)vim.nxe
-endif
-	@echo "staged $(BINFOLDER)vim.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /apps/vim"
+	@echo "staged $(BINFOLDER)vim.nxe — run 'make image64' to install it into /apps/vim"
 
 # htop (interactive process monitor). x86_64-ONLY (like the vim port): builds from source via the
 # reproducible nanos-port driver against the x86_64-nanos sysroot, linking libncurses.a/libtinfo.a
@@ -171,7 +147,6 @@ endif
 HTOP_PORT := $(SDK_WORK)/htop-port
 HTOP_TRIPLE := x86_64-nanos
 htop:
-ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
 	@test -d "$(SDK_TC)/$(HTOP_TRIPLE)/include" || { echo "nanos-sdk $(HTOP_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(SDK_TC)/$(HTOP_TRIPLE)/lib/libtinfo.a" || { echo "libtinfo.a not in the $(HTOP_TRIPLE) sysroot — run 'make ARCH=x86_64 ncurses' first"; exit 1; }
@@ -192,9 +167,6 @@ ifeq ($(ARCH),x86_64)
 	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(HTOP_PORT)/htop.nxe" $(BINFOLDER)htop.nxe
-else
-	@echo "htop port is x86_64-only — run 'make ARCH=x86_64 htop'"; exit 1
-endif
 	@echo "staged $(BINFOLDER)htop.nxe — run 'make image64' to install it into /nanos/bin"
 
 # SQLite 3.46.1 — the real `sqlite3` command-line shell + libsqlite.ndl shared library. x86_64-ONLY.
@@ -206,28 +178,19 @@ endif
 # for apps that want to import the SQL engine by name). `make image*` never depends on this.
 SQLITE_FORK ?= $(HOME)/Projects/sqlite-nanos
 sqlite:
-ifeq ($(ARCH),x86_64)
 	@test -f "$(SQLITE_FORK)/sqlite3.c" || { echo "sqlite fork not found at $(SQLITE_FORK) (set SQLITE_FORK=/path/to/sqlite-nanos)"; exit 1; }
 	$(NXPORT_PREREQ)
 	$(NXPORT_RUN) -v "$(SQLITE_FORK)":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh sqlite3
 	cp "$(SQLITE_FORK)/sqlite3.nxe" $(BINFOLDER)sqlite3.nxe
 	@cp "$(SQLITE_FORK)/libsqlite.ndl"   $(BINFOLDER)libsqlite.ndl   2>/dev/null || true
 	@cp "$(SQLITE_FORK)/libsqlite.ndl.a" $(BINFOLDER)libsqlite.ndl.a 2>/dev/null || true
-else
-	@echo "sqlite port is x86_64-only — run 'make ARCH=x86_64 sqlite'"; exit 1
-endif
 	@echo "staged $(BINFOLDER)sqlite3.nxe (+ libsqlite.ndl) — run 'make image64' to install into /nanos/bin (+ /nanos/lib)"
 
 bzip2:
-ifeq ($(ARCH),x86_64)
 	$(NXPORT_PREREQ)
 	$(NXPORT_RUN) -v "$(SDK_WORK)/bzip2-1.0.8":/work/src $(DOCKER_IMAGE) sh /src/scripts/nx-port-build.sh bzip2
 	cp "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" $(BINFOLDER)bzip2.nxe
-else
-	@test -f "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" || { echo "bzip2.nxe not found at $(SDK_WORK)/bzip2-1.0.8 (build it with the nanos-sdk first)"; exit 1; }
-	cp "$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" $(BINFOLDER)bzip2.nxe
-endif
-	@echo "staged $(BINFOLDER)bzip2.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)bzip2.nxe — run 'make image64' to install it into /nanos/bin"
 
 # GNU inetutils ping (optional, external). The plan's real ping: SOCK_RAW/ICMP + getaddrinfo,
 # unmodified upstream. Unlike grep/vim (prebuilt by hand), this target is REPRODUCIBLE: it
@@ -240,11 +203,10 @@ endif
 # either arch — only the cross triple changes. For ARCH=x86_64 the port targets the x86_64-nanos
 # sysroot, sets NX_HOST=x86_64-nanos (configure --host / CC / mknx) + NX_LP64=1 (the driver
 # appends the 64-bit sizeofs over the shared 32-bit config.cache), and the in-tree x86_64
-# crt0/nxhdr the toolchain default-links are refreshed too (like `make git`). i686 is unchanged.
+# crt0/nxhdr the toolchain default-links are refreshed too (like `make git`).
 NANOS_SDK   ?= $(HOME)/Projects/nanos-sdk
 SDK_TC      := $(SDK_WORK)/toolchain
 PING_PORT   := $(SDK_WORK)/inetutils-port
-ifeq ($(ARCH),x86_64)
 PING_TRIPLE  := x86_64-nanos
 PING_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
 PING_PREREQ   = $(NXPORT_PREREQ)
@@ -260,20 +222,12 @@ PING_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(PING_TRIPLE)/lib/crt0.o"; cp 
 PING_PRECMD   = NM=$(PING_TRIPLE)-nm CONFTEST_STUB_CC=$(PING_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(PING_TRIPLE)/lib &&
 # For build=make recipes (darkhttpd): x86_64 objects need the small-model/no-PIC set + the
 # data-import shim, spliced into the recipe's CFLAGS as $${NXPORT_EXTRA_CFLAGS} (nanos-port
-# defaults it empty for i686).
+# defaults it empty).
 NXPORT_XCFLAGS = -e NXPORT_EXTRA_CFLAGS="-fno-pie -fno-PIC -mcmodel=small -mno-red-zone -include nx-dllimport.h"
-else
-PING_TRIPLE  := i686-nanos
-PING_PORT_ENV =
-PING_PREREQ   = @true
-PING_STARTUP  = true
-PING_PRECMD   =
-NXPORT_XCFLAGS =
-endif
 ping: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(PING_PORT)/nxport.toml"     || { echo "inetutils port not found at $(PING_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(PING_PREREQ)
 	# Refresh the SDK sysroot from this repo (the source of truth for headers + libc).
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
@@ -281,7 +235,7 @@ ping: bin/libc.ndl bin/libc.ndl.a
 	# The dllimport shim (stdin/stdout/stderr/environ/_ctype_b -> libc.ndl IAT slots). x86_64
 	# code references these DATA exports RIP-relative (R_X86_64_PC32), which mknx can't auto-
 	# import; the shim turns each into an __imp_<name> slot deref. The port's post_configure
-	# hook #includes it into config.h (only for x86_64; i686 uses absolute relocs and skips it).
+	# hook #includes it into config.h.
 	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
 	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
 	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
@@ -291,7 +245,7 @@ ping: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk $(PING_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(PING_PORT)/ping.nxe" $(BINFOLDER)ping.nxe
-	@echo "staged $(BINFOLDER)ping.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)ping.nxe — run 'make image64' to install it into /nanos/bin"
 
 # GNU wget 1.21.4 (optional, external). Unmodified upstream, HTTP-only (no TLS yet). Same
 # reproducible flow as `make ping`: refresh the SDK sysroot from this checkout, drive nanos-port.
@@ -407,9 +361,9 @@ httpd: bin/libc.ndl bin/libc.ndl.a
 # sets NX_HOST=x86_64-nanos (pre_configure picks the custom 64-bit-limb `nanos-x86_64` Configure
 # target + the LP64/non-PIC small-model cflags + the nx-dllimport.h data-import shim) and NX_LP64=1.
 # The in-tree x86_64 crt0/nxhdr/mknx the toolchain default-links are refreshed first (like ping).
-# i686 is unchanged (generic `gcc` target, absolute relocs, no shim).
+
 # ---- libdrm 2.4.123 (virtgpu-only, static) — the GL stack's DRM userspace (Task 7) ----
-# x86_64 only. nanos-port's meson build type hardcodes the i686 nanos-cross.meson, so this port
+# nanos-port's meson build type hardcodes the legacy nanos-cross.meson, so this port
 # drives meson directly via build.sh with an x86_64 cross file (cross-nanos64.ini). Installs
 # libdrm.a + headers into the x86_64-nanos sysroot for the Mesa port (Task 8) to consume.
 LIBDRM_PORT := $(SDK_WORK)/libdrm-port
@@ -430,7 +384,7 @@ libdrm: bin/libc.ndl bin/libc.ndl.a
 # ---- Mesa 24.2.8 (gallium-virgl + EGL + GLES2 + GBM, static) — the GL stack (Task 8) ----
 # Consumes the libdrm sysroot; installs the static .a closure + EGL/GLES2/gbm headers back into the
 # x86_64-nanos sysroot for the GL apps (gles2info/glkms) and nwm to link. Drives meson directly via
-# build.sh (same reason as libdrm: nanos-port's meson build type is i686-only).
+# build.sh (same reason as libdrm: nanos-port's meson build type predates x86_64).
 MESA_PORT := $(SDK_WORK)/mesa-port
 
 # Common docker env for the mesa-port link scripts.
@@ -546,28 +500,21 @@ image64-gl: nwm-gl
 	@echo "image64-gl -> $(IMAGE64_GL) (nwm = GPU-native GL compositor, logs wiped)"
 
 OPENSSL_PORT := $(SDK_WORK)/openssl-port
-ifeq ($(ARCH),x86_64)
 OPENSSL_TRIPLE  := x86_64-nanos
 OPENSSL_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
 OPENSSL_PREREQ   = $(NXPORT_PREREQ)
 OPENSSL_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(OPENSSL_TRIPLE)-mknx"
-else
-OPENSSL_TRIPLE  := i686-nanos
-OPENSSL_PORT_ENV =
-OPENSSL_PREREQ   = @true
-OPENSSL_STARTUP  = true
-endif
 openssl: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(OPENSSL_TRIPLE)/include" || { echo "nanos-sdk $(OPENSSL_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(OPENSSL_PORT)/nxport.toml"   || { echo "openssl port not found at $(OPENSSL_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(OPENSSL_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(OPENSSL_TRIPLE)/include/"
 	cp kernel/SyscallNr.h          "$(SDK_TC)/$(OPENSSL_TRIPLE)/include/SyscallNr.h"
 	# The dllimport shim (stdin/stdout/stderr/environ/_ctype_b -> libc.ndl IAT slots). x86_64
 	# code references these DATA exports RIP-relative (R_X86_64_PC32), which mknx can't auto-import;
 	# pre_configure -include's it into every TU via CFLAGS (OpenSSL's make build has no autotools
-	# config.h to append to). i686 uses absolute relocs and skips it (NX_HOST != x86_64-nanos).
+	# config.h to append to).
 	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(OPENSSL_TRIPLE)/include/nx-dllimport.h"
 	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/libc.a"
 	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(OPENSSL_TRIPLE)/lib/libc.ndl"
@@ -577,7 +524,7 @@ openssl: bin/libc.ndl bin/libc.ndl.a
 	  -e SDK=/sdk $(OPENSSL_PORT_ENV) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	cp "$(OPENSSL_PORT)/openssl.nxe" $(BINFOLDER)openssl.nxe
-	@echo "staged $(BINFOLDER)openssl.nxe — run 'make image' (i686) or 'make image64' (x86_64) to install it into /nanos/bin"
+	@echo "staged $(BINFOLDER)openssl.nxe — run 'make image64' to install it into /nanos/bin"
 
 # Dropbear (optional, external): small SSH-2 server (dropbear) + keygen (dropbearkey) + client
 # (dbclient) — FAZA 4/5 of the TLS/SSH plan. Bundles its own crypto, runs as root without privsep.
@@ -591,25 +538,18 @@ openssl: bin/libc.ndl bin/libc.ndl.a
 # -no-pie); x86_64 adds the LP64 small-model/no-red-zone flags + -include nx-dllimport.h (so the
 # stdio/errno DATA exports referenced RIP-relative are redirected through libc.ndl's import table).
 # The in-tree x86_64 crt0/nxhdr/mknx the toolchain default-links are refreshed first (like ping).
-# i686 keeps the original 32-bit flags (generic gcc, absolute relocs, no shim).
+
 DROPBEAR_PORT := $(SDK_WORK)/dropbear-port
-ifeq ($(ARCH),x86_64)
 DROPBEAR_TRIPLE   := x86_64-nanos
 DROPBEAR_PORT_ENV  = -e NX_HOST=x86_64-nanos -e NX_LP64=1 \
   -e 'CFLAGS=-Os -fno-pie -fno-PIC -mcmodel=small -mno-red-zone -include nx-dllimport.h' \
   -e 'LDFLAGS=-no-pie'
 DROPBEAR_PREREQ    = $(NXPORT_PREREQ)
 DROPBEAR_STARTUP   = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(DROPBEAR_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(DROPBEAR_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(DROPBEAR_TRIPLE)-mknx"
-else
-DROPBEAR_TRIPLE   := i686-nanos
-DROPBEAR_PORT_ENV  = -e 'CFLAGS=-Os -fno-pie -fno-PIC' -e 'LDFLAGS=-no-pie'
-DROPBEAR_PREREQ    = @true
-DROPBEAR_STARTUP   = true
-endif
 dropbear: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include" || { echo "nanos-sdk $(DROPBEAR_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(DROPBEAR_PORT)/nxport.toml"   || { echo "dropbear port not found at $(DROPBEAR_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(DROPBEAR_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include/"
 	cp kernel/SyscallNr.h          "$(SDK_TC)/$(DROPBEAR_TRIPLE)/include/SyscallNr.h"
@@ -625,7 +565,7 @@ dropbear: bin/libc.ndl bin/libc.ndl.a
 	@for b in dropbearkey dbclient; do \
 	  test -f "$(DROPBEAR_PORT)/$$b.nxe" && cp "$(DROPBEAR_PORT)/$$b.nxe" $(BINFOLDER)$$b.nxe && echo "  staged $$b.nxe" || true; \
 	done
-	@echo "staged $(BINFOLDER)dropbear.nxe (+ dropbearkey/dbclient) — run 'make image' (i686) or 'make image64' (x86_64) to install"
+	@echo "staged $(BINFOLDER)dropbear.nxe (+ dropbearkey/dbclient) — run 'make image64' to install"
 
 # busybox udhcpc (DHCP client, FAZA F). Reproducible like ping/wget: refresh the SDK sysroot from
 # this checkout, then cross-build busybox configured with ONLY udhcpc (nanos-build.sh in the
@@ -668,29 +608,22 @@ udhcpc: bin/libc.ndl bin/libc.ndl.a
 # small-model/no-red-zone cflags + the nx-dllimport.h data-import shim, force-included so zlib's
 # gz*.c errno references become __imp_errno IAT slots when a downstream app links libz.a) and
 # NX_LP64=1. The in-tree x86_64 crt0/nxhdr/libc the cross gcc default-links (zlib's configure runs
-# link probes) are refreshed first, like ping. i686 is unchanged (generic cross gcc, no shim).
+# link probes) are refreshed first, like ping.
 ZLIB_PORT := $(SDK_WORK)/zlib-port
-ifeq ($(ARCH),x86_64)
 ZLIB_TRIPLE  := x86_64-nanos
 ZLIB_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
 ZLIB_PREREQ   = $(NXPORT_PREREQ)
 ZLIB_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(ZLIB_TRIPLE)-mknx"
-else
-ZLIB_TRIPLE  := i686-nanos
-ZLIB_PORT_ENV =
-ZLIB_PREREQ   = @true
-ZLIB_STARTUP  = true
-endif
 zlib: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(ZLIB_TRIPLE)/include" || { echo "nanos-sdk $(ZLIB_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(ZLIB_PORT)/nxport.toml"   || { echo "zlib port not found at $(ZLIB_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(ZLIB_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(ZLIB_TRIPLE)/include/"
 	cp kernel/SyscallNr.h          "$(SDK_TC)/$(ZLIB_TRIPLE)/include/SyscallNr.h"
 	# The dllimport shim (errno/stdin/stdout/stderr -> libc.ndl IAT slots). x86_64 code references
 	# these DATA exports RIP-relative (R_X86_64_PC32), which mknx can't auto-import; pre_configure
-	# -include's it into every TU via CFLAGS. i686 uses absolute relocs and skips it (NX_HOST != x86_64-nanos).
+	# -include's it into every TU via CFLAGS.
 	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(ZLIB_TRIPLE)/include/nx-dllimport.h"
 	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/libc.a"
 	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(ZLIB_TRIPLE)/lib/libc.ndl"
@@ -708,7 +641,7 @@ zlib: bin/libc.ndl bin/libc.ndl.a
 # the driver skip mknx (a library has no app binary), build="autotools" runs ncurses' configure
 # (--host + the shared cross config.cache + the port's `cache` answers), and hooks/post_build.sh
 # `make install`s the libs+headers into the sysroot. TERMINFO is COMPILED IN via
-# --with-fallbacks=xterm-256color (no runtime terminfo DB shipped, matching the i686 port);
+# --with-fallbacks=xterm-256color (no runtime terminfo DB shipped, as in the original port);
 # --disable-db-install ships none. `make image`/`make image64` never depends on this.
 #
 # ARCH-AWARE (mirrors `make zlib`/`make ping`): for ARCH=x86_64 the port targets the x86_64-nanos
@@ -717,32 +650,24 @@ zlib: bin/libc.ndl bin/libc.ndl.a
 # shim is appended to include/ncurses_cfg.h by hooks/post_configure.sh (guarded with USE_BUILD_CC so
 # ncurses' host build-tools that compile the fallbacks never see it). The in-tree x86_64
 # crt0/nxhdr/libc/mknx (link probes + final lib) are refreshed first, and the honest-conftest data
-# stub regenerated (PRECMD) so autoconf's link probes detect functions faithfully. i686 is
+# stub regenerated (PRECMD) so autoconf's link probes detect functions faithfully.
 # unchanged (generic cross gcc, absolute relocs, no shim, no extra CFLAGS).
 NCURSES_PORT := $(SDK_WORK)/ncurses-port
-ifeq ($(ARCH),x86_64)
 NCURSES_TRIPLE := x86_64-nanos
 NCURSES_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1 -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone"
 NCURSES_PREREQ   = $(NXPORT_PREREQ)
 NCURSES_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(NCURSES_TRIPLE)-mknx"
 NCURSES_PRECMD   = NM=$(NCURSES_TRIPLE)-nm CONFTEST_STUB_CC=$(NCURSES_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(NCURSES_TRIPLE)/lib &&
-else
-NCURSES_TRIPLE := i686-nanos
-NCURSES_PORT_ENV =
-NCURSES_PREREQ   = @true
-NCURSES_STARTUP  = true
-NCURSES_PRECMD   =
-endif
 ncurses: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(NCURSES_TRIPLE)/include" || { echo "nanos-sdk $(NCURSES_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(NCURSES_PORT)/nxport.toml" || { echo "ncurses port not found at $(NCURSES_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(NCURSES_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(NCURSES_TRIPLE)/include/"
 	cp kernel/SyscallNr.h          "$(SDK_TC)/$(NCURSES_TRIPLE)/include/SyscallNr.h"
 	# The dllimport shim (stdout/stderr/errno -> libc.ndl IAT slots). x86_64 lib objects reference
 	# these DATA exports RIP-relative (R_X86_64_PC32); the port's post_configure hook #includes it
-	# into ncurses_cfg.h (only for x86_64; i686 uses absolute relocs and skips it).
+	# into ncurses_cfg.h.
 	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(NCURSES_TRIPLE)/include/nx-dllimport.h"
 	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/libc.a"
 	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(NCURSES_TRIPLE)/lib/libc.ndl"
@@ -762,7 +687,7 @@ ncurses: bin/libc.ndl bin/libc.ndl.a
 # libpng16.a + headers into the sysroot. Depends on zlib being in the SAME sysroot first
 # (`make [ARCH=x86_64] zlib`): libpng's configure finds -lz + zlib.h on the default cross search path,
 # so no --with-zlib-prefix is needed. SSE2 filter intrinsics are disabled (--enable-intel-sse=no in
-# the manifest) so libpng uses the portable C path — matches the i686 port and avoids the QEMU-CPU
+# the manifest) so libpng uses the portable C path — avoids the QEMU-CPU
 # SIMD trap. `make image`/`make image64` never depends on this.
 #
 # ARCH-AWARE (mirrors `make ncurses`/`make zlib`): for ARCH=x86_64 the port targets the x86_64-nanos
@@ -772,33 +697,24 @@ ncurses: bin/libc.ndl bin/libc.ndl.a
 # so libpng's RIP-relative reference to picolibc's `stderr` DATA becomes an __imp_stderr IAT slot a
 # downstream app's mknx fills. The in-tree x86_64 crt0/nxhdr/libc/mknx (link probes + final lib) are
 # refreshed first, and the honest-conftest data stub regenerated (PRECMD) so autoconf's link probes
-# (AC_CHECK_LIB(z,...) etc.) detect symbols faithfully. i686 is unchanged (generic cross gcc, absolute
+# (AC_CHECK_LIB(z,...) etc.) detect symbols faithfully.
 # relocs, no shim, no extra CFLAGS).
 LIBPNG_PORT := $(SDK_WORK)/libpng-port
-ifeq ($(ARCH),x86_64)
 LIBPNG_TRIPLE := x86_64-nanos
 LIBPNG_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1 -e CFLAGS="-O2 -fno-pie -mcmodel=small -mno-red-zone"
 LIBPNG_PREREQ   = $(NXPORT_PREREQ)
 LIBPNG_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(LIBPNG_TRIPLE)-mknx"
 LIBPNG_PRECMD   = NM=$(LIBPNG_TRIPLE)-nm CONFTEST_STUB_CC=$(LIBPNG_TRIPLE)-gcc.real sh /work/toolchain/bin/gen-conftest-stubs.sh /work/toolchain/$(LIBPNG_TRIPLE)/lib &&
-else
-LIBPNG_TRIPLE := i686-nanos
-LIBPNG_PORT_ENV =
-LIBPNG_PREREQ   = @true
-LIBPNG_STARTUP  = true
-LIBPNG_PRECMD   =
-endif
 libpng: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(LIBPNG_TRIPLE)/include" || { echo "nanos-sdk $(LIBPNG_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/libz.a" || { echo "libz.a not in the $(LIBPNG_TRIPLE) sysroot — run 'make $(if $(filter x86_64,$(ARCH)),ARCH=x86_64 ,)zlib' first"; exit 1; }
 	@test -f "$(LIBPNG_PORT)/nxport.toml" || { echo "libpng port not found at $(LIBPNG_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(LIBPNG_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(LIBPNG_TRIPLE)/include/"
 	cp kernel/SyscallNr.h          "$(SDK_TC)/$(LIBPNG_TRIPLE)/include/SyscallNr.h"
 	# The dllimport shim (stderr/errno -> libc.ndl IAT slots). x86_64 lib objects reference these DATA
 	# exports RIP-relative (R_X86_64_PC32); the port's post_configure hook #includes it into config.h
-	# (only for x86_64; i686 uses absolute relocs and skips it).
 	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(LIBPNG_TRIPLE)/include/nx-dllimport.h"
 	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/libc.a"
 	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(LIBPNG_TRIPLE)/lib/libc.ndl"
@@ -818,7 +734,7 @@ libpng: bin/libc.ndl bin/libc.ndl.a
 # NX_HOST-aware), install="sysroot" makes the driver skip mknx (a library has no app binary), and
 # hooks/post_build.sh `cmake --install`s libjpeg.a + libturbojpeg.a + headers into the per-arch
 # sysroot. SIMD is off (-DWITH_SIMD=OFF in the manifest) so the portable C codec is used — matches
-# the i686 port and avoids the hand-written NASM SIMD path that has no NanOS ABI. `make image`/
+# the original port and avoids the hand-written NASM SIMD path that has no NanOS ABI. `make image`/
 # `make image64` never depends on this.
 #
 # ARCH-AWARE (mirrors `make libpng`/`make ncurses`): for ARCH=x86_64 the port targets the x86_64-nanos
@@ -827,23 +743,16 @@ libpng: bin/libc.ndl bin/libc.ndl.a
 # the NX_HOST-aware cmake toolchain file itself (CMAKE_C_FLAGS_INIT for x86_64), so a downstream app
 # linking libjpeg.a binds picolibc's `stderr` (jerror.c's default handlers) through the libc.ndl IAT.
 # The in-tree x86_64 crt0/nxhdr/libc/mknx are refreshed first (cmake links the cjpeg/djpeg helper
-# binaries). i686 is unchanged (generic cross gcc, absolute relocs, no shim, no extra CFLAGS).
+
 LIBJPEG_PORT := $(SDK_WORK)/libjpeg-port
-ifeq ($(ARCH),x86_64)
 LIBJPEG_TRIPLE := x86_64-nanos
 LIBJPEG_PORT_ENV = -e NX_HOST=x86_64-nanos -e NX_LP64=1
 LIBJPEG_PREREQ   = $(NXPORT_PREREQ)
 LIBJPEG_STARTUP  = cp $(BINFOLDER)crt0.o "$(SDK_TC)/$(LIBJPEG_TRIPLE)/lib/crt0.o"; cp $(BINFOLDER)nxhdr.o "$(SDK_TC)/$(LIBJPEG_TRIPLE)/lib/nxhdr.o"; cp $(BINFOLDER)mknx64 "$(SDK_TC)/bin/$(LIBJPEG_TRIPLE)-mknx"
-else
-LIBJPEG_TRIPLE := i686-nanos
-LIBJPEG_PORT_ENV =
-LIBJPEG_PREREQ   = @true
-LIBJPEG_STARTUP  = true
-endif
 libjpeg: bin/libc.ndl bin/libc.ndl.a
 	@test -d "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include" || { echo "nanos-sdk $(LIBJPEG_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(LIBJPEG_PORT)/nxport.toml" || { echo "libjpeg port not found at $(LIBJPEG_PORT)/nxport.toml"; exit 1; }
-	# x86_64: (re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first; i686 uses the prereqs as-is.
+	# (Re)build the in-tree 64-bit libc/crt0/nxhdr/mknx first.
 	$(LIBJPEG_PREREQ)
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include/"
 	cp kernel/SyscallNr.h          "$(SDK_TC)/$(LIBJPEG_TRIPLE)/include/SyscallNr.h"
@@ -859,21 +768,15 @@ libjpeg: bin/libc.ndl bin/libc.ndl.a
 	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
 	@echo "installed libjpeg.a + libturbojpeg.a + headers into the $(LIBJPEG_TRIPLE) sysroot ($(SDK_TC)/$(LIBJPEG_TRIPLE)) — link downstream ports with -ljpeg"
 
-# NetSurf graphical web browser (optional, external): a full stack of ported libraries (zlib,
-# libpng/jpeg, libcurl over the ported OpenSSL, libcss/libdom/libhubbub/...) + the bespoke nanowm
-# libnsfb surface backend, all in the separate netsurf-nanos repo. `make netsurf` refreshes the SDK
-# sysroot from this checkout, then runs that repo's ordered build-all (each port cross-builds in the
-# nanos-sdk-dev container — build-all runs on the HOST and shells into Docker per port, so it is NOT
-# run inside a container here), and stages netsurf.nxe + its res/ tree into bin/. `make image`
-# installs the /apps/netsurf bundle. Launch it inside nanowm with `-f nanwm`.
-NETSURF_REPO ?= $(HOME)/Projects/netsurf-nanos
-netsurf: bin/libc.ndl bin/libc.ndl.a bin/libnw.ndl bin/libnw.ndl.a
-	@test -f "$(NETSURF_REPO)/scripts/build-all.sh" || { echo "netsurf-nanos repo not found at $(NETSURF_REPO)"; exit 1; }
-	sh "$(NETSURF_REPO)/scripts/sync-sysroot.sh"
-	sh "$(NETSURF_REPO)/scripts/build-all.sh"
-	cp "$(NETSURF_REPO)/ports/netsurf/netsurf.nxe" $(BINFOLDER)netsurf.nxe
-	rm -rf $(BINFOLDER)netsurf-res && cp -R "$(NETSURF_REPO)/ports/netsurf/res" $(BINFOLDER)netsurf-res
-	@echo "staged $(BINFOLDER)netsurf.nxe + res — run 'make image' to install /apps/netsurf"
+# NetSurf graphical web browser: RETIRED WITH i686. The full port stack (netsurf-nanos repo:
+# zlib, libpng/jpeg, libcurl over OpenSSL, libcss/libdom/libhubbub/... + the nanowm libnsfb
+# backend) built only against the 32-bit libc flow; the browser-on-x86_64 port is the
+# documented follow-up (docs/ECOSYSTEM.md). The repo stays cloned by nanos-sdk bootstrap.
+netsurf:
+	@echo "netsurf was built only by the retired i686 flow (dead at the libc level: the"
+	@echo "pthread/TLS layer is x86_64-only). The browser-on-x86_64 port is the documented"
+	@echo "follow-up — see docs/ECOSYSTEM.md (known exclusion) and the netsurf-nanos repo."
+	@exit 1
 
 # Stage EVERY already-built external app into bin/ in one go (best-effort: skips any whose artifact
 # is not present, so a partial set still works). The staged .nxe are build artifacts that `make
@@ -918,11 +821,8 @@ assets:
 # window placement). More RAM = bigger kernel heap + a bigger user frame pool.
 QEMU_MEM=-m 512
 
-# The x86_64 emulator + CPU, INDEPENDENT of the selected ARCH. The `run64`/`bringup64` targets are
-# inherently 64-bit, but they are usually invoked as plain `make run64` (no ARCH=x86_64), so `$(QEMU)`
-# / `$(QEMU_CPU)` would resolve from the DEFAULT (i686) arch.mk to qemu-system-i386 — which loads the
-# 64-bit kernel, faults entering long mode, triple-faults and reboots into an endless GRUB loop. Pin
-# the 64-bit emulator here so these targets always boot the x86_64 image with the right machine.
+# The x86_64 emulator + CPU for the run64/bringup64 targets (historically pinned separately
+# from the per-arch $(QEMU); kept as the single knob the 64-bit run targets use).
 QEMU64     ?= qemu-system-x86_64
 QEMU_CPU64 ?= -cpu qemu64
 # SMP for the interactive run64: 4 vCPUs + MTTCG (each vCPU on its own host thread) so the cores
@@ -1343,8 +1243,8 @@ init64:
 # (printf) and a pthread/TLS program (errno + a thread) with the x86_64-nanos SDK toolchain
 # against the SDK sysroot, proving the 4-artifact libc contract (libc.ndl + import lib + crt0 +
 # nxhdr) and the pthread arch port run in ring 3. To run one: install it as PID 1 (overwrite
-# /nanos/core/init.nxe in the image) and boot. The sysroot-inject below mirrors the i686
-# `make <app>` cp lines, arch-selected via NANOS_TRIPLE (= x86_64-nanos when ARCH=x86_64).
+# /nanos/core/init.nxe in the image) and boot. The sysroot-inject below mirrors the
+# `make <app>` cp lines (NANOS_TRIPLE = x86_64-nanos).
 NANOS_TRIPLE := x86_64-nanos
 SDK_SYSROOT  := $(SDK_TC)/$(NANOS_TRIPLE)
 SDK_DEV_IMG  ?= nanos-sdk-dev:latest
@@ -1356,7 +1256,7 @@ ifneq ($(ARCH),x86_64)
 else
 	# 1) (Re)build the 64-bit libc artifacts in the kernel-toolchain container (ELF64 libc.ndl +
 	#    import lib + the TLS-bootstrap crt0 + nxhdr). `make clean` first avoids mixing a stale
-	#    i686 bin/*.o into the x86_64 link (the libc-glue objects are not arch-suffixed).
+	#    stale bin/*.o of another vintage into the link (libc-glue objects are not suffixed).
 	$(DOCKER_RUN) sh -c 'make ARCH=x86_64 bin/libc.ndl bin/libc.ndl.a bin/crt0.o bin/nxhdr.o'
 	# 2) Inject them + the LP64 porting headers + the x86_64 SyscallNr.h into the SDK sysroot.
 	@test -d "$(SDK_SYSROOT)/include" || { echo "nanos-sdk toolchain not found at $(SDK_SYSROOT)"; exit 1; }
@@ -1383,7 +1283,7 @@ endif
 else
 # ============================================================================
 # CONTAINER side (Linux): real compilation, image and ISO creation.
-# Tools resolved from the container PATH (i686-elf toolchain in /opt/cross).
+# Tools resolved from the container PATH (x86_64-elf toolchain in /opt/cross).
 # ============================================================================
 
 CXX=$(CROSS)gcc
@@ -1404,7 +1304,7 @@ KINCLUDES=-Iarch/include -Iinit -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -
 #                                   buffers, NXE headers); type-based aliasing would miscompile it.
 #   -fno-delete-null-pointer-checks don't assume a dereferenced pointer is non-null (low/identity-
 #                                   mapped addresses are real here).
-# Not -O3: keeps NXE/kernel size + behaviour predictable (i686-elf gcc has no SSE to vectorise into).
+# Not -O3: keeps NXE/kernel size + behaviour predictable.
 # Host tests build with their own flags (HOST_CXXFLAGS), unaffected.
 #
 # USERLAND gets -O2 now: the compositor's hot pixel loops (nw_gfx/nw_compose blit, blend, glyphs)
@@ -1425,16 +1325,12 @@ ASFLAGS=
 # container's own case-sensitive FS, then copy the kernel back.
 KSRC=/tmp/nanos-ksrc
 
-# Kernel objects live in a PER-ARCH subdirectory so the elf32 (i686) and elf64 (x86_64)
+# Kernel objects live in their own subdirectory so kernel and userland objects of the same
 # objects of the same basename (Kernel.o, Exec.o, ...) never collide in bin/. Switching ARCH
 # without a clean would otherwise mix ELF classes (stale elf32 objects linked into an elf64
-# kernel → mangling/format mismatches). i686 keeps bin/ (unchanged); x86_64 uses bin/k64/.
+# kernel → mangling/format mismatches). Kernel objects build into bin/k64/.
 # The final kernel.bin still lands at bin/kernel.bin (only one arch is current at a time).
-ifeq ($(ARCH),x86_64)
 KOBJ=$(BINFOLDER)k64/
-else
-KOBJ=$(BINFOLDER)
-endif
 
 # Full link set as paths under the per-arch object dir.
 OBJECTS=$(addprefix $(KOBJ),$(SOURCES))
@@ -1462,15 +1358,13 @@ _convcheck:
 	 tar -cf - --exclude=.git --exclude=disk --exclude=bin --exclude=iso --exclude=coverage -C /src . | tar -xf - -C $(KSRC)
 	cd $(KSRC) && $(CXX) -fsyntax-only -Wconversion $(CXXFLAGS) $(FILE)
 
-# -lgcc trails the objects so libgcc helper routines first referenced by an object (e.g.
-# __udivdi3 for 64-bit division on i686 — pulled in by the LP64 widening of Plan 7) resolve.
+# -lgcc trails the objects so libgcc helper routines first referenced by an object resolve.
 # (LDFLAGS also lists -lgcc, but a library only satisfies symbols undefined to its left.)
-# kernel.bin lands in the per-arch $(KOBJ) too (bin/kernel.bin for i686, bin/k64/kernel.bin for
-# x86_64) so the two arches' final binaries never overwrite each other in bin/.
+# kernel.bin lands in $(KOBJ) (bin/k64/kernel.bin) alongside the kernel objects.
 $(KOBJ)kernel.bin: $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) -lgcc
 
-# Kernel object rules write into the per-arch $(KOBJ) (bin/ for i686, bin/k64/ for x86_64).
+# Kernel object rules write into $(KOBJ) (bin/k64/).
 $(KOBJ)%.o: %.cpp
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -MMD -MP $< -o $@
@@ -1785,27 +1679,6 @@ _image64: _all _userland64 _kext
 	  printf "rm /bin/doom.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  printf "symlink /bin/doom.nxe /apps/doom/doom.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
-	# NetSurf graphical browser (optional, external): an /apps/netsurf bundle — the .nxe plus its
-	# res/ tree (default/quirks/internal CSS, the Messages catalogue, the internal bitmap font,
-	# icons, locale dirs) — plus a /bin/netsurf.nxe symlink (the app-bundle + link-farm pattern).
-	# res/ is installed recursively (dirs first top-down, then files). Built by `make ARCH=x86_64
-	# netsurf` (the netsurf-nanos port stack); launch inside nanowm. Skipped if bin/netsurf.nxe absent.
-	# Mirrors the retired i686 _image netsurf population.
-	if [ -f $(BINFOLDER)netsurf.nxe ]; then \
-	  printf "mkdir /apps/netsurf\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
-	  printf "rm /apps/netsurf/netsurf.nxe\nwrite $(BINFOLDER)netsurf.nxe /apps/netsurf/netsurf.nxe\nset_inode_field /apps/netsurf/netsurf.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
-	  printf "rm /bin/netsurf.nxe\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
-	  printf "symlink /bin/netsurf.nxe /apps/netsurf/netsurf.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
-	  if [ -d $(BINFOLDER)netsurf-res ]; then \
-	    printf "mkdir /apps/netsurf/res\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
-	    ( cd $(BINFOLDER)netsurf-res && find . -mindepth 1 -type d | sed 's#^\./##' ) | while read d; do \
-	      printf "mkdir /apps/netsurf/res/$$d\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
-	    done; \
-	    ( cd $(BINFOLDER)netsurf-res && find . -type f | sed 's#^\./##' ) | while read f; do \
-	      printf "rm /apps/netsurf/res/$$f\nwrite $(BINFOLDER)netsurf-res/$$f /apps/netsurf/res/$$f\n" | debugfs -w "$(IMAGE64_PART)"; \
-	    done; \
-	  fi; \
-	fi
 	# Reconcile the ext bitmaps after the debugfs writes so the built image is e2fsck-clean
 	# (exit 1 = "fixed" is expected here, so don't fail the build on it).
 	e2fsck -fy "$(IMAGE64_PART)" || true
@@ -1917,7 +1790,7 @@ $(BINFOLDER)%.o: user/libc-glue/%.S
 # Vendored musl pthread internals (user/libc-glue/pthread). Compiled with the musl internal
 # headers (pthread_impl.h/atomic.h/syscall.h/...) on the include path AHEAD of nothing else
 # that defines them, and the weak_alias/hidden compat macros force-included. The .s files are
-# GNU-as (AT&T) — i686-elf-gcc assembles them directly.
+# GNU-as (AT&T) — the cross gcc assembles them directly.
 # The vendored musl headers must out-rank USER_CFLAGS's `-iquote kernel`: the .c files do
 # `#include "futex.h"` / `"syscall.h"`, names that ALSO exist under kernel/. Listing the musl
 # include dir as `-iquote` FIRST makes it win the quoted-include search. -Wno-unused-value
@@ -2583,9 +2456,7 @@ KEXTS=kbd mouse e1000 e1000e i219
 # i915 ships in the image but is a safe no-op unless armed via /nanos/config/i915 (=1): unarmed,
 # its nkext_init returns before any DRM/i915 init, so it never double-inits DRM core against
 # virtio_gpu and adds nothing to a normal boot. Armed (Dell bring-up), it runs the full driver.
-ifeq ($(ARCH),x86_64)
 KEXTS+= virtio_gpu i915
-endif
 _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 
 # Doom (doomgeneric). Old-C source needs -fcommon (GCC 10+ defaults to -fno-common, which

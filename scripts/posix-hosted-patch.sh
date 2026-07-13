@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# posix-hosted-patch.sh — adapt a copied picolibc i686-elf header tree so the i686-nanos target
+# posix-hosted-patch.sh — adapt a copied picolibc *-elf header tree so the nanos target
 # sees a hosted POSIX surface instead of the bare-metal one. picolibc gates a lot of standard
 # POSIX behind __CYGWIN__/__rtems__/__SPU__ (target identity) rather than __POSIX_VISIBLE
 # (feature level), so a stock cross gcc — even with _GNU_SOURCE — never sees those declarations.
@@ -121,7 +121,7 @@ if [ -f "$DIRENT" ] && ! grep -q 'DT_DIR' "$DIRENT"; then
 fi
 
 # --- sys/utime.h: picolibc declares struct utimbuf but leaves utime() to a per-arch override
-#     that i686-elf does not ship. NanOS exports utime, so add the prototype. ---
+#     that bare *-elf picolibc does not ship. NanOS exports utime, so add the prototype. ---
 UT="$INC/sys/utime.h"
 if [ -f "$UT" ] && ! grep -q 'int utime' "$UT"; then
 	awk '

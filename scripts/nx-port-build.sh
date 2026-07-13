@@ -2,8 +2,7 @@
 # nx-port-build.sh — cross-build an external app (grep / bzip2 / vim) for NanOS, inside the
 # nanos-build container, using the nx-gcc wrapper (picolibc + libc-glue + NanOS .nxe link).
 #
-# This is the arch-aware build driver the NanOS `make grep|vim|bzip2` targets invoke when
-# ARCH=x86_64 (the i686 targets keep copying their hand-built .nxe, so i686 is untouched).
+# This is the build driver the NanOS `make grep|vim|bzip2|...` targets invoke.
 # It mirrors the bash fork's build.sh, generalised over a handful of apps. The per-app recipe
 # (build system + configure flags) is the only app-specific knowledge; everything else — the
 # nx-gcc CC, the LP64 cache fix, mknx — is shared.
@@ -13,8 +12,7 @@
 #   /work/src   the app's upstream source tree (e.g. $(SDK_WORK)/grep-3.11)
 # The produced <app>.nxe is written back into /work/src so the Makefile can copy it to bin/.
 #
-# Env (the Makefile sets these for x86_64; the defaults are the i686 values, unused here since
-# i686 copies a prebuilt .nxe — but kept so the script is correct if ever run for i686):
+# Env (set by the Makefile; the fallback defaults match):
 #   NX_HOST       configure --host triple  (x86_64-elf)
 #   NX_PICO       picolibc prefix          (/opt/picolibc/x86_64-elf)
 #   NX_CC         the cross gcc            (x86_64-elf-gcc)
@@ -30,10 +28,10 @@ HERE=/src/scripts
 
 export NANOS=/src
 export CC="$HERE/nx-gcc"
-export PICO="${NX_PICO:-/opt/picolibc/i686-elf}"
+export PICO="${NX_PICO:-/opt/picolibc/x86_64-elf}"
 export NX_CC NX_ARCHFLAGS NX_LDSCRIPT
-HOST_TRIPLE="${NX_HOST:-i686-elf}"
-MKNX="${NX_MKNX:-/src/bin/mknx}"
+HOST_TRIPLE="${NX_HOST:-x86_64-elf}"
+MKNX="${NX_MKNX:-/src/bin/mknx64}"
 
 # Build from a copy on the container's case-sensitive fs (dodges the macOS case trap), exactly
 # like the bash fork does. The copy also keeps the mounted source tree pristine.
