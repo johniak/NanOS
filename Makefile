@@ -169,6 +169,38 @@ htop:
 	cp "$(HTOP_PORT)/htop.nxe" $(BINFOLDER)htop.nxe
 	@echo "staged $(BINFOLDER)htop.nxe — run 'make image64' to install it into /nanos/bin"
 
+# Node.js v24.15.0 — the JavaScript runtime Electron embeds (plan 02). x86_64-ONLY. Cross-builds Node
+# + its embedded V8 from $(NODE_SRC) (fetched by scripts/electron/fetch-node.sh) in the nanos-sdk-dev
+# container against the x86_64-nanos sysroot, then mknx-converts the ELF to bin/node.nxe. The exact
+# configure+make record is scripts/electron/build-node.sh; the port (compiler-flag wrappers, source
+# patches, the build log) lives in ports/node/ and docs/en/node-port.md. `make image*` never depends
+# on this. NOTE: currently blocked on the SDK libstdc++ threading rebuild (see docs/en/node-port.md).
+NODE_SRC     ?= $(SDK_WORK)/node-src
+NODE_TRIPLE  := x86_64-nanos
+node:
+	@test -d "$(NODE_SRC)" || { echo "node source not found at $(NODE_SRC) — run 'bash scripts/electron/fetch-node.sh' first"; exit 1; }
+	@test -d "$(SDK_TC)/$(NODE_TRIPLE)/include" || { echo "nanos-sdk $(NODE_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
+	$(NXPORT_PREREQ)
+	# Refresh the x86_64-nanos sysroot from THIS checkout so the cross build tracks the live ABI
+	# (POSIX + Node-specific headers, libc.ndl{,.a}, the crt0/nxhdr startup objects, mknx).
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(NODE_TRIPLE)/include/"
+	cp kernel/SyscallNr.h            "$(SDK_TC)/$(NODE_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(NODE_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/$(NODE_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/$(NODE_TRIPLE)/lib/libc.ndl"
+	cp $(BINFOLDER)crt0.o            "$(SDK_TC)/$(NODE_TRIPLE)/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o           "$(SDK_TC)/$(NODE_TRIPLE)/lib/nxhdr.o"
+	cp $(BINFOLDER)mknx64            "$(SDK_TC)/bin/$(NODE_TRIPLE)-mknx"
+	docker run --rm --memory=14g \
+	  -v "$(CURDIR)":/src -v "$(SDK_TC)":/work/toolchain -v "$(NODE_SRC)":/work/node \
+	  -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e JOBS=4 \
+	  -w /work/node nanos-sdk-dev:latest bash /src/scripts/electron/build-node.sh
+	x86_64-nanos-mknx "$(NODE_SRC)/out/Release/node" $(BINFOLDER)node.nxe --need libc.ndl || \
+	  docker run --rm -v "$(SDK_TC)":/work/toolchain -v "$(NODE_SRC)":/work/node -v "$(CURDIR)/bin":/out \
+	    -e PATH="/work/toolchain/bin:/usr/bin:/bin" nanos-sdk-dev:latest \
+	    x86_64-nanos-mknx /work/node/out/Release/node /out/node.nxe --need libc.ndl
+	@echo "staged $(BINFOLDER)node.nxe — run 'make image64' to install it into /nanos/bin"
+
 # SQLite 3.46.1 — the real `sqlite3` command-line shell + libsqlite.ndl shared library. x86_64-ONLY.
 # Built from the SQLite fork (amalgamation sqlite3.c + the CLI shell.c) via the reproducible
 # nx-port-build.sh driver: SQLite has no configure step, so the driver just cross-compiles + links

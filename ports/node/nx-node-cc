@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# nx-node-cc — compiler wrapper for the NanOS Node/V8 cross build.
+#
+# Node's build (via gyp with --dest-os=linux) hands the TARGET compiler a set of flags that assume a
+# glibc/Linux gcc. The x86_64-nanos gcc (picolibc-based) rejects a few of them. Rather than fight
+# gyp, this wrapper strips the flags the nanos toolchain doesn't accept and forwards everything else
+# verbatim to the real cross compiler. Every stripped flag is a documented porting decision (see
+# docs/en/node-port.md), not a silent drop.
+#
+# NX_BASE selects the underlying compiler (x86_64-nanos-gcc / -g++); it must be on PATH.
+set -u
+: "${NX_BASE:=x86_64-nanos-gcc}"
+
+args=()
+for a in "$@"; do
+	case "$a" in
+		# -pthread: gyp adds it for linux targets; NanOS threading lives inside libc (musl-pthread on
+		#   picolibc), so there is no separate -lpthread and the nanos gcc does not know the driver flag.
+		# -rdynamic: exports the dynamic symbol table for dladdr/backtrace; a NanOS .nxe is a static
+		#   fixed-base image with no dynamic symbol table, so the flag is meaningless (and unknown).
+		-pthread) ;;
+		-rdynamic) ;;
+		*) args+=("$a") ;;
+	esac
+done
+exec "$NX_BASE" "${args[@]}"

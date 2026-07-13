@@ -141,40 +141,49 @@ int setrlimit(int resource, const struct rlimit* rl) { (void) resource; (void) r
 int getpriority(int which, int who) { (void) which; (void) who; return 0; }
 int setpriority(int which, int who, int prio) { (void) which; (void) who; (void) prio; return 0; }
 
-/* syscall(): NanOS has no Linux-style numeric syscall multiplexer in userland — syscalls are
- * exposed as named libc functions (libc.ndl imports). Ports that call syscall() directly (htop's
- * capget capability probe) get -ENOSYS; those paths are not reached at runtime here (every NanOS
- * process runs as root, so htop never probes capabilities).
- *
- * The ONE forwarded number is SYS_kcmp: Mesa's os_same_file_description() calls
- * syscall(SYS_kcmp, pid, pid, KCMP_FILE, fd1, fd2) to decide whether two DRM fds share a GEM
- * handle namespace. Without it Mesa returns "can't tell" and iris falls back to a dma-buf
- * PRIME export/import roundtrip NanOS doesn't support (Dell boot #45: PRIME_HANDLE_TO_FD
- * ret=-22 -> gbm_bo_get_handle()==0 -> drmModeAddFB "no buffer object handle" -> no scanout). */
+/* syscall(): a real generic numeric multiplexer. NanOS's kernel uses the Linux x86_64 syscall
+ * numbers (SYS_write=1, SYS_mmap=9, ...), so forwarding `number` + up to six args straight to the
+ * kernel via the `syscall` instruction makes raw-syscall code "just work" for every call the kernel
+ * implements; unimplemented numbers come back as -ENOSYS from the kernel dispatch, exactly as the old
+ * stub returned. This is what lets V8/abseil's low-level paths (syscall(SYS_write), syscall(SYS_mmap),
+ * getcpu, sched_*) run without per-site patches, and it subsumes the old SYS_kcmp special case
+ * (Mesa's os_same_file_description). Returns the result, or -1 with errno set (glibc semantics). */
 long syscall(long number, ...) {
-	if (number == SYS_kcmp) {
-		va_list ap;
-		long a[5];
-		va_start(ap, number);
-		for (int i = 0; i < 5; i++)
-			a[i] = va_arg(ap, long);
-		va_end(ap);
-		long r;
+	va_list ap;
+	long a[6];
+	va_start(ap, number);
+	for (int i = 0; i < 6; i++)
+		a[i] = va_arg(ap, long);
+	va_end(ap);
+	long r;
 #if defined(__x86_64__)
-		register long r10 __asm__("r10") = a[3];
-		register long r8  __asm__("r8")  = a[4];
-		__asm__ __volatile__("syscall" : "=a"(r)
-			: "a"((long) SYS_kcmp), "D"(a[0]), "S"(a[1]), "d"(a[2]), "r"(r10), "r"(r8)
-			: "rcx", "r11", "memory");
+	register long r10 __asm__("r10") = a[3];
+	register long r8  __asm__("r8")  = a[4];
+	register long r9  __asm__("r9")  = a[5];
+	__asm__ __volatile__("syscall" : "=a"(r)
+		: "a"(number), "D"(a[0]), "S"(a[1]), "d"(a[2]), "r"(r10), "r"(r8), "r"(r9)
+		: "rcx", "r11", "memory");
 #else
-		__asm__ __volatile__("int $0x80"
-			: "=a"(r) : "a"((long) SYS_kcmp), "b"(a[0]), "c"(a[1]), "d"(a[2]), "S"(a[3]), "D"(a[4])
-			: "memory");
+	__asm__ __volatile__("int $0x80"
+		: "=a"(r) : "a"(number), "b"(a[0]), "c"(a[1]), "d"(a[2]), "S"(a[3]), "D"(a[4])
+		: "memory");
 #endif
-		if (r < 0) { errno = (int) -r; return -1; }
-		return r;
-	}
-	(void) number; errno = ENOSYS; return -1;
+	if (r < 0 && r > -4096) { errno = (int) -r; return -1; }
+	return r;
+}
+
+/* prctl(2): NanOS's kernel has no prctl handler, so forward through the generic syscall() (which
+ * returns -ENOSYS). Callers use it only for advisory VMA naming (abseil labelling V8 arenas) and
+ * ignore the result. SYS_prctl is the Linux x86_64 number. */
+#ifndef SYS_prctl
+#define SYS_prctl 157
+#endif
+int prctl(int option, ...) {
+	va_list ap; long a[4];
+	va_start(ap, option);
+	for (int i = 0; i < 4; i++) a[i] = va_arg(ap, long);
+	va_end(ap);
+	return (int) syscall(SYS_prctl, (long) option, a[0], a[1], a[2], a[3]);
 }
 
 /* realpath: canonicalize PATH lexically (make absolute via getcwd if relative, then collapse
@@ -456,6 +465,14 @@ int mincore(void *addr, size_t length, unsigned char *vec) {
 	if (vec) for (i = 0; i < pages; i++) vec[i] = 1;
 	return 0;
 }
+
+/* mlock/mlockall: NanOS has no swap and never reclaims a mapping, so every page is permanently
+ * resident — the guarantee mlock asks for already holds. Report success without a syscall. Used by
+ * OpenSSL's secure heap (Node's bundled OpenSSL) to pin key material. */
+int mlock(const void *addr, size_t len)   { (void) addr; (void) len; return 0; }
+int munlock(const void *addr, size_t len) { (void) addr; (void) len; return 0; }
+int mlockall(int flags)                   { (void) flags; return 0; }
+int munlockall(void)                      { return 0; }
 
 /* CPU affinity: report a single schedulable CPU (Mesa sizes thread pools from CPU_COUNT; our
  * libstdc++ has threads disabled, so single-threaded is correct). sched_yield: no-op. */

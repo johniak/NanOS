@@ -1,0 +1,13 @@
+diff --git a/deps/v8/third_party/abseil-cpp/absl/base/internal/direct_mmap.h b/deps/v8/third_party/abseil-cpp/absl/base/internal/direct_mmap.h
+index 1beb2ee4..ec0103d9 100644
+--- a/deps/v8/third_party/abseil-cpp/absl/base/internal/direct_mmap.h
++++ b/deps/v8/third_party/abseil-cpp/absl/base/internal/direct_mmap.h
+@@ -24,7 +24,7 @@
+ 
+ #include <sys/mman.h>
+ 
+-#ifdef __linux__
++#if defined(__linux__) && !defined(__NANOS__)  // NanOS: use libc mmap(), no Linux raw syscalls
+ 
+ #include <sys/types.h>
+ #ifdef __BIONIC__

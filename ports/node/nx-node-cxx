@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# nx-node-cxx — C++ compiler wrapper for the NanOS Node/V8 cross build. See ports/node/nx-node-cc for
+# the rationale; this one drives the C++ cross compiler.
+set -u
+: "${NX_BASE:=x86_64-nanos-g++}"
+
+args=()
+for a in "$@"; do
+	case "$a" in
+		-pthread) ;;    # threads live in libc on NanOS; the nanos g++ rejects the driver flag
+		-rdynamic) ;;   # no dynamic symbol table in a static .nxe; the flag is meaningless
+		*) args+=("$a") ;;
+	esac
+done
+exec "$NX_BASE" "${args[@]}"

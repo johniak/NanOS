@@ -1,0 +1,4 @@
+# Node/V8 source patches applied by scripts/electron/build-node.sh before configure.
+# Each patch carries the standard port-patch header (EXECUTION_GUIDE) and guards NanOS-specific
+# code with #ifdef __NANOS__. Empty so far — the port has stayed at the flag/libc level (compiler
+# wrappers + libc-glue additions + -D__linux__), no source edits yet.

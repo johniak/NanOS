@@ -1,13 +1,17 @@
 /*
- * syscall.h — NanOS exposes syscalls to userland as named libc functions (libc.ndl imports),
- * not a Linux numeric multiplexer. Provide syscall() for ports that call it directly; the
- * libc-glue implementation returns -ENOSYS for every number EXCEPT SYS_kcmp (see posixstubs.c).
- * Only the SYS_* numbers a port actually references are defined here — deliberately NOT
- * SYS_ioprio_get/set, so htop's ioprio code (guarded by #ifdef SYS_ioprio_get) stays compiled out.
+ * syscall.h — NanOS's kernel uses the Linux x86_64 syscall numbers, and libc-glue's syscall() is a
+ * real generic multiplexer (posixstubs.c) that forwards `number` + args straight to the kernel
+ * (unimplemented numbers come back -ENOSYS). So we expose the kernel's authoritative number list
+ * (SyscallNr.h, staged into this sysroot) — this is what lets V8/abseil's raw-syscall paths
+ * (syscall(SYS_write), syscall(SYS_mmap), sched_*, getcpu) compile and run without per-site patches.
  */
 #pragma once
 
 long syscall(long number, ...);
+
+/* The kernel's Linux-x86_64 SYS_* numbers (its __x86_64__ section applies here). Staged into the
+ * sysroot include by the port's sysroot-refresh step. */
+#include <SyscallNr.h>
 
 /* kcmp(2), KCMP_FILE only — the one number syscall() actually forwards to the kernel. Mesa's
  * os_same_file_description() uses it to prove two DRM fds share a GEM handle namespace (iris

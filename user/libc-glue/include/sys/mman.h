@@ -42,8 +42,18 @@ int   msync(void* addr, size_t length, int flags);
 int   madvise(void* addr, size_t length, int advice);
 int   mincore(void* addr, size_t length, unsigned char* vec);
 
-/* memfd_create(2): an anonymous memory-backed fd (file under RamFs /tmp). Chromium/GBM use it as
- * an mmap-able, ftruncate-able shared-memory buffer. Implemented in libc-glue/posixstubs.c. */
+/* Memory locking. NanOS has no swap and eagerly backs every mapping, so pages are ALWAYS resident —
+ * mlock/mlockall are correct success no-ops (the pages the caller wants pinned already are). Used by
+ * OpenSSL's secure heap (Node's bundled OpenSSL) and by libuv. */
+#define MCL_CURRENT 1
+#define MCL_FUTURE  2
+int   mlock(const void* addr, size_t len);
+int   munlock(const void* addr, size_t len);
+int   mlockall(int flags);
+int   munlockall(void);
+
+/* memfd_create(2): an anonymous, frame-backed fd whose mmap(MAP_SHARED) is real cross-process shared
+ * memory. Implemented as a real SYS_memfd_create wrapper in libc-glue/syscalls.c. */
 int   memfd_create(const char* name, unsigned int flags);
 
 #ifdef __cplusplus

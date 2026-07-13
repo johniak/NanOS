@@ -1,0 +1,13 @@
+diff --git a/deps/v8/third_party/abseil-cpp/absl/strings/internal/str_format/arg.cc b/deps/v8/third_party/abseil-cpp/absl/strings/internal/str_format/arg.cc
+index eeb21081..aa3423db 100644
+--- a/deps/v8/third_party/abseil-cpp/absl/strings/internal/str_format/arg.cc
++++ b/deps/v8/third_party/abseil-cpp/absl/strings/internal/str_format/arg.cc
+@@ -545,7 +545,7 @@ StringPtrConvertResult FormatConvertImpl(const wchar_t* v,
+   if (v == nullptr) {
+     len = 0;
+   } else if (conv.precision() < 0) {
+-    len = std::wcslen(v);
++    len = ::wcslen  /* NanOS: libstdc++ <cwchar> hides std::wcslen; global is fine */(v);
+   } else {
+     // If precision is set, we look for the NUL-terminator on the valid range.
+     len = static_cast<size_t>(std::find(v, v + conv.precision(), L'\0') - v);
