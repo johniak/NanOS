@@ -61,7 +61,9 @@ git clone git@github.com:NanOS-labs/qemu-nanos.git && sh qemu-nanos/nanos/build-
 ```
 
 Point the Makefile at the result with `QEMU_GL=/path/to/qemu-system-x86_64` (default:
-`$(SDK_WORK)/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64`). Note the brew-tap dylibs lose
+`$(SDK_WORK)/qemu-fork-build/qemu-src/build/qemu-system-x86_64` — the from-source build above,
+which also has the slirp `user` netdev, so `run64-gl*` get the same NAT network + host
+port-forwards as `run64`; a slirp-less binary needs `QEMU_GL_NET=''`). Note the brew-tap dylibs lose
 their code signature on bottle relocation; the `run64-gl*` targets re-sign them ad hoc
 (`codesign --force --sign -`).
 

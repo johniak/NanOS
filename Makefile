@@ -1192,7 +1192,11 @@ run64: image64
 # root/nanos (or jan/jan on the graphics VT F7), and the nwm desktop renders GPU-accelerated.
 # Override the binary path with QEMU_GL=/path/to/qemu-system-x86_64 if the fork moved. The fork is
 # validated single-vCPU (MTTCG-SMP + virgl is flaky), so this pins -smp 1 regardless of NCPU64.
-QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-system-x86_64
+# Default = the from-source qemu-nanos build (qemu-fork-build): same brew virglrenderer/libepoxy
+# stack as the old kosmickrisp prefix binary, PLUS the slirp 'user' netdev — so the GL desktop
+# gets the same network as run64. The slirp-less kosmickrisp binary still works via
+# QEMU_GL=.../qemu-virgl-kosmickrisp/bin/qemu-system-x86_64 QEMU_GL_NET=''.
+QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-fork-build/qemu-src/build/qemu-system-x86_64
 # Use the PURE virtio-gpu-gl device, NOT virtio-vga-gl: virtio-vga-gl also exposes a legacy VGA
 # output that QEMU displays by DEFAULT, so the cocoa gl=es window shows the (black, unused) VGA
 # surface and the virtio-gpu scanout — the actual desktop — never appears. virtio-gpu-gl-pci has no
@@ -1204,10 +1208,10 @@ QEMU_GL     ?= $(HOME)/Projects/nanos-sdk-work/qemu-virgl-kosmickrisp/bin/qemu-s
 # never displays. `-vga none` makes the GPU console idx 0 and the unmodified dispatch path fires.
 # (Isolated-window screencapture A/B-proven with the from-source fork; see plan-1 STATUS, 2026-07-03.)
 QEMU_GL_VGA ?= -device virtio-gpu-gl-pci -vga none -display cocoa,gl=es,zoom-to-fit=on
-# No NIC by default: the kosmickrisp fork is built WITHOUT the slirp ('user') network backend, so
-# passing NIC_NET aborts it ("network backend 'user' is not compiled into this binary"). GL bring-up
-# needs no network. To add one anyway, build the fork with slirp and run `make run64-gl QEMU_GL_NET='...'`.
-QEMU_GL_NET ?=
+# Same user-mode network as run64 (slirp + the hostfwd set). The default QEMU_GL above has slirp
+# compiled in; a slirp-less binary (the old kosmickrisp prefix build) aborts on -netdev user
+# ("network backend 'user' is not compiled into this binary") — run it with QEMU_GL_NET=''.
+QEMU_GL_NET ?= $(NIC_NET)
 .PHONY: run64-gl
 run64-gl: image64
 	@test -x "$(QEMU_GL)" || { echo "run64-gl: no virgl QEMU at $(QEMU_GL) — build the kosmickrisp fork or set QEMU_GL=..."; exit 1; }
@@ -1574,6 +1578,13 @@ _image64: _all _userland64 _kext
 	for f in resolv.conf hosts nsswitch.conf protocols services inetd.conf shells profile; do \
 	  printf "rm /nanos/config/etc/$$f\nwrite config/etc/$$f /nanos/config/etc/$$f\n" | debugfs -w "$(IMAGE64_PART)"; \
 	done
+	# DHCP: the udhcpc action helper (compiled .nxe; udhcpc exec()s it) -> /nanos/config/udhcpc.script,
+	# plus the busybox udhcpc client itself -> /nanos/bin (only if `make udhcpc` staged it). Mirrors
+	# the retired i686 _image DHCP population.
+	printf "rm /nanos/config/udhcpc.script\nwrite $(BINFOLDER)dhcpcfg.nxe /nanos/config/udhcpc.script\nset_inode_field /nanos/config/udhcpc.script mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"
+	if [ -f $(BINFOLDER)udhcpc.nxe ]; then \
+	  printf "rm /nanos/bin/udhcpc.nxe\nwrite $(BINFOLDER)udhcpc.nxe /nanos/bin/udhcpc.nxe\nset_inode_field /nanos/bin/udhcpc.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	fi
 	# Per-user interactive bash config: seed jan's ~/.bashrc from config/skel (Linux /etc/skel).
 	printf "rm /users/jan/.bashrc\nwrite config/skel/.bashrc /users/jan/.bashrc\nset_inode_field /users/jan/.bashrc uid 1000\nset_inode_field /users/jan/.bashrc gid 1000\n" | debugfs -w "$(IMAGE64_PART)"
 	# GNU bash (optional): installed as an /apps/bash bundle + a /bin/bash.nxe symlink ONLY if
@@ -1590,10 +1601,10 @@ _image64: _all _userland64 _kext
 	# grep + bzip2 (optional, external): system utilities -> /nanos/bin, installed only if
 	# `make ARCH=x86_64 grep|bzip2` staged them. Mirrors the retired i686 _image population.
 	if [ -f $(BINFOLDER)grep.nxe ]; then \
-	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /nanos/bin/grep.nxe\nwrite $(BINFOLDER)grep.nxe /nanos/bin/grep.nxe\nset_inode_field /nanos/bin/grep.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	if [ -f $(BINFOLDER)bzip2.nxe ]; then \
-	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /nanos/bin/bzip2.nxe\nwrite $(BINFOLDER)bzip2.nxe /nanos/bin/bzip2.nxe\nset_inode_field /nanos/bin/bzip2.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# htop (optional, external): interactive process monitor built by `make ARCH=x86_64 htop` (the
 	# nanos-sdk port), staged into bin/htop.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
@@ -1646,7 +1657,7 @@ _image64: _all _userland64 _kext
 	# port), staged into bin/openssl.nxe. A system utility (flat in /nanos/bin). Skipped if absent.
 	# Mirrors the retired i686 _image population.
 	if [ -f $(BINFOLDER)openssl.nxe ]; then \
-	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "rm /nanos/bin/openssl.nxe\nwrite $(BINFOLDER)openssl.nxe /nanos/bin/openssl.nxe\nset_inode_field /nanos/bin/openssl.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# CA trust store + config (Mozilla bundle): OpenSSL's compiled OPENSSLDIR is /disks/main/nanos/ssl;
 	# ship cert.pem + openssl.cnf there so the TLS clients can verify chains without a per-command
@@ -1663,9 +1674,47 @@ _image64: _all _userland64 _kext
 	# location). Mirrors the retired i686 _image dropbear population. The host reaches sshd via hostfwd 2222->22.
 	if [ -f $(BINFOLDER)dropbear.nxe ]; then \
 	  for b in dropbear dropbearkey dbclient; do \
-	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\n" | debugfs -w "$(IMAGE64_PART)"; \
+	    test -f $(BINFOLDER)$$b.nxe && printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\nset_inode_field /nanos/bin/$$b.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
 	  done; \
 	  printf "mkdir /root\nmkdir /root/.ssh\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	fi
+	# GNU git (optional, external): installed ONLY if `make git` staged bin/git.nxe. The single
+	# binary goes to TWO places: /nanos/bin/git.nxe (the shell runs `git` -> .nxe by name) AND
+	# /nanos/libexec/git-core/git.nxe — git's compiled exec-path, where run-command self-execs
+	# git-<cmd> for forked subcommands (git gc -> git pack-objects). Mirrors the retired i686 _image.
+	if [ -f $(BINFOLDER)git.nxe ]; then \
+	  printf "rm /nanos/bin/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/bin/git.nxe\nset_inode_field /nanos/bin/git.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "mkdir /nanos/libexec\nmkdir /nanos/libexec/git-core\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /nanos/libexec/git-core/git.nxe\nwrite $(BINFOLDER)git.nxe /nanos/libexec/git-core/git.nxe\nset_inode_field /nanos/libexec/git-core/git.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  for c in gc repack pack-objects pack-refs prune prune-packed reflog rerere worktree maintenance commit-graph multi-pack-index fsck update-server-info upload-pack receive-pack; do \
+	    printf "rm /nanos/libexec/git-core/git-%s.nxe\nln /nanos/libexec/git-core/git.nxe /nanos/libexec/git-core/git-%s.nxe\n" "$$c" "$$c" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  done; \
+	  echo "  installed git -> /nanos/bin/git.nxe + /nanos/libexec/git-core/{git,git-<cmd>}.nxe"; fi
+	# wget (optional, external): GNU wget built by `make wget`, staged into bin/wget.nxe. A system
+	# utility (flat in /nanos/bin). Skipped if absent. Mirrors the retired i686 _image population.
+	if [ -f $(BINFOLDER)wget.nxe ]; then \
+	  printf "rm /nanos/bin/wget.nxe\nwrite $(BINFOLDER)wget.nxe /nanos/bin/wget.nxe\nset_inode_field /nanos/bin/wget.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	fi
+	# inetd + telnetd (optional, external): GNU inetutils services built by `make inetd`. telnetd is
+	# launched by inetd from /etc/inetd.conf (execs nanologin -> the user's shell over a kernel pty).
+	if [ -f $(BINFOLDER)inetd.nxe ]; then \
+	  printf "rm /nanos/bin/inetd.nxe\nwrite $(BINFOLDER)inetd.nxe /nanos/bin/inetd.nxe\nset_inode_field /nanos/bin/inetd.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	fi
+	if [ -f $(BINFOLDER)telnetd.nxe ]; then \
+	  printf "rm /nanos/bin/telnetd.nxe\nwrite $(BINFOLDER)telnetd.nxe /nanos/bin/telnetd.nxe\nset_inode_field /nanos/bin/telnetd.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	fi
+	# inetutils diagnostic clients: telnet / ifconfig / traceroute -> /nanos/bin. Skipped if absent.
+	for b in telnet ifconfig traceroute; do \
+	  if [ -f $(BINFOLDER)$$b.nxe ]; then \
+	    printf "rm /nanos/bin/$$b.nxe\nwrite $(BINFOLDER)$$b.nxe /nanos/bin/$$b.nxe\nset_inode_field /nanos/bin/$$b.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  fi; \
+	done
+	# darkhttpd (optional, external): single-file HTTP server -> /nanos/bin, plus its document
+	# root /apps/www (the served site: index.html). Skipped if the binary is absent.
+	if [ -f $(BINFOLDER)darkhttpd.nxe ]; then \
+	  printf "rm /nanos/bin/darkhttpd.nxe\nwrite $(BINFOLDER)darkhttpd.nxe /nanos/bin/darkhttpd.nxe\nset_inode_field /nanos/bin/darkhttpd.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "mkdir /apps/www\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/www/index.html\nwrite disk-content/www/index.html /apps/www/index.html\n" | debugfs -w "$(IMAGE64_PART)"; \
 	fi
 	# vim (optional, external): an /apps/vim bundle + a /bin/vim.nxe symlink + its runtime
 	# defaults.vim, only if `make ARCH=x86_64 vim` staged it. Mirrors the retired i686 _image bundle.
@@ -2217,7 +2266,7 @@ X64_GUI_PROGS=nwm greeter
 X64_GUI_APPS=rsexp settings about notepad viewer properties form terminal nwbench
 X64_GUI_LIBS=libnw.ndl libnwui.ndl
 X64_USER_PROGS=init $(X64_SYS_PROGS) $(X64_GUI_PROGS) $(X64_GUI_APPS)
-_userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS))
+_userland64: $(addprefix $(BINFOLDER),$(addsuffix .nxe,$(X64_USER_PROGS))) $(BINFOLDER)libc.ndl $(addprefix $(BINFOLDER),$(X64_GUI_LIBS)) $(BINFOLDER)dhcpcfg.nxe
 
 # ----------------------------------------------------------------------------
 # Kernel modules (nkext): loadable drivers built SEPARATELY from kernel.bin, shipped to
