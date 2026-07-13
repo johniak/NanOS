@@ -85,16 +85,20 @@ while time.time() < deadline:
 else:
     raise SystemExit(1)
 time.sleep(8)                        # let the desktop settle
-for run_try in range(3):             # open Cmd+R Run, launch nwbench
+started = False
+for run_try in range(4):             # open Cmd+R Run, launch nwbench
     cmd("sendkey meta_l-r"); time.sleep(2)
-    typ("nwbench"); time.sleep(6)
-    if "nwbench:" in serial():
-        break
+    typ("nwbench")
+    lim = time.time() + 25           # TCG spawn+first-report can crawl: wait, don't re-type
+    while time.time() < lim:
+        if "nwbench:" in serial(): started = True; break
+        time.sleep(2)
+    if started: break
     print("run-dialog attempt %d: no nwbench output yet" % (run_try+1))
-if "nwbench:" not in serial():
+if not started:
     print("FATAL: nwbench never started"); raise SystemExit(1)
-print("nwbench running, waiting up to %ds for the report" % (SECS+120))
-stop = time.time() + SECS + 120
+print("nwbench running, waiting up to %ds for the report" % (SECS+240))
+stop = time.time() + SECS + 240
 while time.time() < stop and "nwbench: done" not in serial():
     time.sleep(5)
 if "nwbench: done" not in serial():

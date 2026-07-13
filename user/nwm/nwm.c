@@ -396,6 +396,38 @@ static int drain_client(int slot)
 	return 1;
 }
 
+/* ---- shared-memory window surfaces (core hooks over /dev/nwshm) ------------------------
+ * Clients allocate their double buffers there and announce the tokens (NW_REQ_SHM_SURFACE);
+ * the core calls these to map the SAME physical pages into the compositor. The compositor
+ * owns freeing accepted surfaces (window destroy / surface replacement). */
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+
+static int g_shmfd = -2;                  /* -2 = not tried, -1 = unavailable */
+
+void *nw_shm_map(uint64_t token, unsigned bytes)
+{
+	if (g_shmfd == -2)
+		g_shmfd = open("/dev/nwshm", O_RDWR);
+	if (g_shmfd < 0 || !token || !bytes)
+		return 0;
+	void *p = mmap(0, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, g_shmfd, (int64_t) token);
+	return (p == (void *) -1) ? 0 : p;
+}
+
+void nw_shm_unmap(void *p, unsigned bytes)
+{
+	if (p) munmap(p, bytes);
+}
+
+void nw_shm_free(uint64_t token)
+{
+	if (g_shmfd < 0 || !token)
+		return;
+	struct nwshm_ioc io = { 0, token };
+	ioctl(g_shmfd, NWSHM_IOC_FREE, &io);
+}
+
 /* bind freshly created windows to a pixel buffer; free buffers of destroyed windows */
 static void reconcile_buffers(void)
 {

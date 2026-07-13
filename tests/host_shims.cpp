@@ -152,3 +152,20 @@ unsigned sysMemFreeKb()  { return 120000; }
 unsigned sysHeapTotalKb() { return 5120; }
 unsigned sysHeapFreeKb()  { return 5000; }
 }
+
+// nwm_core.c's shared-memory surface hooks (nw_shm_*) are implemented by the compositor's
+// I/O shell over /dev/nwshm, which has no host equivalent. Returning NULL from nw_shm_map
+// makes the core reject every NW_REQ_SHM_SURFACE, so the tests exercise the pipe path.
+#include <stdint.h>
+// Host: back each "mapping" with calloc (there is no /dev/nwshm), and count frees so the
+// nwm_core tests can assert surface lifetime. Distinct maps of one token are distinct blocks —
+// fine for the tests, which reach the compositor-side pointer via s.win[i].shm_map.
+int g_nw_shm_frees = 0;
+void *nw_shm_map(uint64_t token, unsigned bytes) {
+	if (!token) return nullptr;
+	void* p = __builtin_malloc(bytes);
+	if (p) __builtin_memset(p, 0, bytes);
+	return p;
+}
+void  nw_shm_unmap(void* p, unsigned) { __builtin_free(p); }
+void  nw_shm_free(uint64_t) { g_nw_shm_frees++; }

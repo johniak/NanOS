@@ -507,6 +507,10 @@ static unsigned g_render_gen;
 
 void nw_render_dirty_frames(struct nw_server *s)
 {
+	/* shared-memory commits deferred their pixel copy to compose time — land them first so
+	 * the frame render below sees current content (one copy per composed frame, however fast
+	 * the client commits) */
+	nw_flush_shm_commits(s);
 	for (int i = 0; i < NW_MAX_WINDOWS; i++) {
 		struct nw_window *w = &s->win[i];
 		if (!w->used || !w->frame || !w->frame_dirty)

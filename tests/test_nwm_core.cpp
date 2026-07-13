@@ -734,3 +734,112 @@ TEST_CASE("system auth dialog: clicking Authenticate submits, Cancel dismisses")
 	CHECK(s2.auth_open == 0);
 	CHECK(nw_auth_take(&s2, c, a, p, 8) == 0);
 }
+
+/* ---- shared-memory window surfaces (NW_REQ_SHM_SURFACE / NW_REQ_COMMIT_SHM) ---- */
+
+extern int g_nw_shm_frees;   // host_shims.cpp: counts nw_shm_free calls
+
+static void shm_announce(nw_server& s, uint32_t id, int w, int h,
+                         uint64_t t0 = 0x11000, uint64_t t1 = 0x22000) {
+	unsigned char pay[16];
+	uint64_t tok[2] = { t0, t1 };
+	for (int i = 0; i < 2; i++)
+		for (int b = 0; b < 8; b++)
+			pay[i * 8 + b] = (unsigned char) (tok[i] >> (b * 8));
+	nw_msg m{}; m.type = NW_REQ_SHM_SURFACE; m.window = id; m.a = w; m.b = h; m.length = 16;
+	nw_client_msg(&s, 0, &m, pay);
+}
+static void shm_commit(nw_server& s, uint32_t id, int x, int y, int w, int h, int idx) {
+	// the buffer index rides in the TYPE (length is the wire payload count and must stay 0)
+	nw_msg m{}; m.type = idx ? NW_REQ_COMMIT_SHM1 : NW_REQ_COMMIT_SHM; m.window = id;
+	m.a = x; m.b = y; m.c = w; m.d = h; m.length = 0;
+	nw_client_msg(&s, 0, &m, nullptr);
+}
+
+TEST_CASE("shm surface: announce maps both buffers; empty announce releases back to pipe") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	uint32_t id = create_win(s, 0, 100, 80, "w");
+	int wi = s.focus;
+	shm_announce(s, id, 100, 80);
+	CHECK(s.win[wi].shm_map[0] != nullptr);
+	CHECK(s.win[wi].shm_map[1] != nullptr);
+	CHECK(s.win[wi].shm_w == 100);
+	CHECK(s.win[wi].shm_h == 80);
+
+	int frees0 = g_nw_shm_frees;
+	nw_msg rel{}; rel.type = NW_REQ_SHM_SURFACE; rel.window = id; rel.a = 100; rel.b = 80;
+	nw_client_msg(&s, 0, &rel, nullptr);            // empty payload = release
+	CHECK(s.win[wi].shm_map[0] == nullptr);
+	CHECK(g_nw_shm_frees == frees0 + 2);            // both tokens returned to the pool
+	shm_commit(s, id, 0, 0, 10, 10, 0);             // stale commit after release: ignored
+	CHECK(s.win[wi].shm_pend == 0);
+}
+
+TEST_CASE("shm commit: defers the copy, unions damage, copies once at flush, releases buffer") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	uint32_t id = create_win(s, 0, 100, 80, "w");
+	int wi = s.focus;
+	static uint32_t backing[100 * 80];
+	s.win[wi].buf = backing;                        // shell would bind this
+	shm_announce(s, id, 100, 80);
+
+	// draw a pattern into the shm buffer the compositor mapped
+	uint32_t* shm0 = s.win[wi].shm_map[0];
+	for (int i = 0; i < 100 * 80; i++) shm0[i] = 0xAABBCCDDu;
+
+	shm_commit(s, id, 2, 3, 10, 10, 0);
+	CHECK(s.win[wi].shm_pend == 1);
+	CHECK(backing[5 * 100 + 5] == 0u);              // NOT copied yet (deferred)
+	shm_commit(s, id, 50, 40, 8, 8, 0);             // second commit unions the rect
+	CHECK(s.win[wi].shm_rect.x == 2);
+	CHECK(s.win[wi].shm_rect.y == 3);
+	CHECK(s.win[wi].shm_rect.w == 56);              // 2..58
+	CHECK(s.win[wi].shm_rect.h == 45);              // 3..48
+
+	drain(s, 0);                                    // discard events so far
+	nw_flush_shm_commits(&s);
+	CHECK(s.win[wi].shm_pend == 0);
+	CHECK(backing[5 * 100 + 5] == 0xAABBCCDDu);     // inside the union: copied
+	CHECK(backing[70 * 100 + 90] == 0u);            // outside: untouched
+	auto ev = drain(s, 0);
+	CHECK(count(ev, NW_EVT_BUFFER_RELEASE) == 1);   // wl_buffer.release equivalent
+	CHECK(last(ev, NW_EVT_BUFFER_RELEASE)->m.a == 0);
+}
+
+TEST_CASE("shm commit racing a shrink clamps instead of overrunning; supersede releases early") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	uint32_t id = create_win(s, 0, 100, 80, "w");
+	int wi = s.focus;
+	static uint32_t backing2[100 * 80];
+	memset(backing2, 0, sizeof backing2);
+	s.win[wi].buf = backing2;
+	shm_announce(s, id, 100, 80);
+	for (int i = 0; i < 100 * 80; i++) s.win[wi].shm_map[1][i] = 0x11223344u;
+
+	shm_commit(s, id, 0, 0, 100, 80, 0);            // pending in buffer 0
+	drain(s, 0);
+	shm_commit(s, id, 0, 0, 100, 80, 1);            // supersedes -> buffer 0 released NOW
+	auto ev = drain(s, 0);
+	CHECK(count(ev, NW_EVT_BUFFER_RELEASE) == 1);
+	CHECK(last(ev, NW_EVT_BUFFER_RELEASE)->m.a == 0);
+
+	s.win[wi].cw = 40; s.win[wi].ch = 30;           // resize landed: content shrank
+	nw_flush_shm_commits(&s);                       // copy clamps to min(shm, content)
+	CHECK(backing2[29 * 40 + 39] == 0x11223344u);   // last clamped pixel (buf strides by cw=40)
+	CHECK(backing2[30 * 40 + 0] == 0u);             // first row past the clamp: untouched
+	CHECK(s.win[wi].shm_pend == 0);
+}
+
+TEST_CASE("shm surface: destroy_window returns both buffers to the pool") {
+	nw_server s; nw_server_init(&s, 800, 600);
+	std::vector<unsigned char> ob(8192); nw_client_connect(&s, 0, ob.data(), ob.size());
+	uint32_t id = create_win(s, 0, 64, 64, "w");
+	shm_announce(s, id, 64, 64);
+	int frees0 = g_nw_shm_frees;
+	nw_msg m{}; m.type = NW_REQ_DESTROY_WINDOW; m.window = id;
+	nw_client_msg(&s, 0, &m, nullptr);
+	CHECK(g_nw_shm_frees == frees0 + 2);
+}

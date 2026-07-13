@@ -35,6 +35,21 @@ enum {
 	NW_REQ_DRAG_BEGIN     = 10,  /* payload=drag data (e.g. a file path); server arbitrates  */
 	                             /*   the drag: routes DRAG_MOTION/LEAVE to the window under  */
 	                             /*   the cursor and DROP (with this payload) on release.     */
+	NW_REQ_SHM_SURFACE    = 11,  /* window; a=w b=h; payload = two little-endian u64 /dev/nwshm
+	                              *   tokens (the window's double buffer). Declares that pixels
+	                              *   live in shared memory: commits switch to NW_REQ_COMMIT_SHM
+	                              *   and carry coordinates only. Replaces a previous pair (the
+	                              *   server unmaps + ioctl-frees the old tokens); an EMPTY
+	                              *   payload releases the surface (back to pipe commits).      */
+	NW_REQ_COMMIT_SHM     = 12,  /* window; a=x b=y c=w d=h; NO payload (length MUST be 0 — on
+	                              *   the wire `length` is the payload byte count, so it cannot
+	                              *   carry data; a nonzero value desyncs the stream decoder).
+	                              *   The frame is in shm buffer 0. The server defers the copy
+	                              *   out of the buffer to its next compose, so a fast client
+	                              *   costs one copy per composed frame, not one per commit.    */
+	NW_REQ_COMMIT_SHM1    = 13,  /* as NW_REQ_COMMIT_SHM, but the frame is in shm buffer 1 —
+	                              *   the buffer index is encoded in the TYPE for exactly the
+	                              *   wire reason above.                                        */
 
 	/* server -> client */
 	NW_EVT_CONFIGURE      = 64,  /* window; a=w b=h (assigned size, incl. first map)        */
@@ -47,7 +62,12 @@ enum {
 	NW_EVT_MENU           = 71,  /* window; a=top-menu index b=item index (app menu chosen) */
 	NW_EVT_DRAG_MOTION    = 72,  /* window under cursor; a=x b=y (rel) c=mods (bit0 shift,1 ctrl) */
 	NW_EVT_DRAG_LEAVE     = 73,  /* window the drag just left (clear any drop highlight)       */
-	NW_EVT_DROP           = 74   /* window; a=x b=y (rel) c=mods; payload=the dragged data     */
+	NW_EVT_DROP           = 74,  /* window; a=x b=y (rel) c=mods; payload=the dragged data     */
+	NW_EVT_BUFFER_RELEASE = 75   /* window; a=shm buffer index the server is DONE reading —
+	                              *   the client may draw into it again (wl_buffer.release /
+	                              *   MIT-SHM ShmCompletion equivalent). Consumed inside libnw
+	                              *   (never surfaced to the app); with two buffers this also
+	                              *   paces a free-running client to the compose rate.          */
 };
 
 /* Drag modifier bits carried in NW_EVT_DRAG_MOTION/DROP `c`. */
@@ -62,6 +82,12 @@ enum {
 	NW_STYLE_GLASS_CLIENT = 1,   /* client pixels are 0xAARRGGBB: top byte = ink alpha over glass */
 	NW_STYLE_DARK         = 2    /* dark slab tint (formal form of the "\x01" title prefix)       */
 };
+
+/* /dev/nwshm ioctl ABI (kernel side: drivers/NwShmDevice.h) — the shared window-surface pool
+ * behind NW_REQ_SHM_SURFACE. Both ends of the pipeline (libnw clients, the compositor) use it. */
+#define NWSHM_IOC_ALLOC 0x4E5701u   /* arg = struct nwshm_ioc{bytes in; token out} */
+#define NWSHM_IOC_FREE  0x4E5702u   /* arg = struct nwshm_ioc{token in}            */
+struct nwshm_ioc { uint64_t bytes, token; };
 
 /* Largest COMMIT payload a client may send in one message. A full-window repaint of a big
  * window (e.g. 560x360x4 = 806 KB) exceeds the compositor's per-client reassembly buffer, so

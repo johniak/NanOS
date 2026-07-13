@@ -16,6 +16,7 @@
 #include "RamFs.h"
 #include "Fbdev.h"
 #include "Fb0Device.h"
+#include "NwShmDevice.h"
 #include "KeyboardDevice.h"
 #include "Pty.h"
 #include "KernelExports.h"   // kernel symbols exported to loadable modules (nkext)
@@ -568,6 +569,12 @@ void Kernel::start() {
 		root->addChar(root->dev(), "fb0", new Fb0Device(info), 0666);
 		okEnd();
 	}
+
+	// Shared pixel buffers for the nanowm window pipeline (/dev/nwshm): clients allocate
+	// their window surfaces here and commits carry coordinates only, not pixels.
+	okBegin("Window shm device /dev/nwshm");
+	root->addChar(root->dev(), "nwshm", new NwShmDevice(), 0666);
+	okEnd();
 
 	// Expose the keyboard as Linux-style /dev/input0 (evdev): the PS/2 IRQ feeds it
 	// scancodes, it queues key down/up events, programs read() them. The arch input path

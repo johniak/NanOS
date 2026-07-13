@@ -2,6 +2,7 @@
  * nwm_core.c — implementation of the pure compositor core (see nwm_core.h). No I/O.
  */
 #include "nwm_core.h"
+#include <stdio.h>    /* NWSHM_TRACE diagnostics (first few shm commits/flushes) */
 #include <string.h>
 
 /* ---- frame geometry --------------------------------------------------------------- */
@@ -157,10 +158,27 @@ static int find_by_id(const struct nw_server *s, uint32_t id)
 			return i;
 	return -1;
 }
+/* Drop a window's shared-memory surface: unmap both buffers and return them to the kernel
+ * pool. Safe on a window that never had one (all fields zero). */
+static void shm_release(struct nw_window *w)
+{
+	for (int i = 0; i < 2; i++) {
+		if (w->shm_map[i]) nw_shm_unmap(w->shm_map[i], w->shm_bytes);
+		if (w->shm_tok[i]) nw_shm_free(w->shm_tok[i]);
+		w->shm_map[i] = 0;
+		w->shm_tok[i] = 0;
+	}
+	w->shm_bytes = 0;
+	w->shm_w = w->shm_h = 0;
+	w->shm_front = 0;
+	w->shm_pend = 0;
+}
+
 static void destroy_window(struct nw_server *s, int idx)
 {
 	damage_frame(s, idx);          /* the area it occupied must be repainted */
 	z_remove(s, idx);
+	shm_release(&s->win[idx]);
 	s->win[idx].used = 0;
 	s->win[idx].buf  = 0;       /* the shell frees the backing buffer it allocated */
 	s->win[idx].minimized = 0;
@@ -935,6 +953,74 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 		       m->c, m->d);
 		break;
 	}
+	case NW_REQ_SHM_SURFACE: {
+		int idx = find_by_id(s, m->window);
+		if (idx < 0 || s->win[idx].client != client)
+			break;
+		struct nw_window *w = &s->win[idx];
+		shm_release(w);                     /* replace (or plain release on empty payload) */
+		if (m->length < 16 || !payload || m->a <= 0 || m->b <= 0)
+			break;                          /* released: back to pipe commits */
+		uint64_t tok[2];
+		for (int i = 0; i < 2; i++) {
+			tok[i] = 0;
+			for (int b = 0; b < 8; b++)
+				tok[i] |= (uint64_t) payload[i * 8 + b] << (b * 8);
+		}
+		unsigned bytes = (unsigned) (((uint64_t) m->a * m->b * 4 + 0xFFFu) & ~0xFFFull);
+		w->shm_map[0] = (uint32_t *) nw_shm_map(tok[0], bytes);
+		w->shm_map[1] = (uint32_t *) nw_shm_map(tok[1], bytes);
+		if (!w->shm_map[0] || !w->shm_map[1]) {
+			/* can't map: drop what we mapped but DON'T free the tokens — ownership never
+			 * transferred, the client still holds its mappings and falls back to the pipe */
+			if (w->shm_map[0]) nw_shm_unmap(w->shm_map[0], bytes);
+			if (w->shm_map[1]) nw_shm_unmap(w->shm_map[1], bytes);
+			w->shm_map[0] = w->shm_map[1] = 0;
+			break;
+		}
+		w->shm_tok[0] = tok[0]; w->shm_tok[1] = tok[1];
+		w->shm_bytes = bytes;
+		w->shm_w = m->a; w->shm_h = m->b;
+		w->shm_front = 0;
+		w->shm_pend = 0;
+		break;
+	}
+	case NW_REQ_COMMIT_SHM:
+	case NW_REQ_COMMIT_SHM1: {
+		int idx = find_by_id(s, m->window);
+		if (idx < 0 || s->win[idx].client != client)
+			break;
+		struct nw_window *w = &s->win[idx];
+		int bi = (m->type == NW_REQ_COMMIT_SHM1);
+		if (!w->shm_map[bi] || m->c <= 0 || m->d <= 0)
+			break;
+		/* a still-pending older commit in the OTHER buffer is superseded (this frame contains
+		 * its damage too — the client copies presented damage forward): it will never be read,
+		 * release it immediately so the client can draw its next frame into it */
+		if (w->shm_pend && w->shm_front != bi)
+			emit_win(s, idx, NW_EVT_BUFFER_RELEASE, w->shm_front, 0, 0, 0, 0, 0);
+		w->shm_front = bi;
+		/* union into the pending rect; the copy itself is deferred to the next compose */
+		if (!w->shm_pend) {
+			w->shm_rect.x = m->a; w->shm_rect.y = m->b;
+			w->shm_rect.w = m->c; w->shm_rect.h = m->d;
+			w->shm_pend = 1;
+		} else {
+			int x1 = w->shm_rect.x + w->shm_rect.w, y1 = w->shm_rect.y + w->shm_rect.h;
+			if (m->a < w->shm_rect.x) w->shm_rect.x = m->a;
+			if (m->b < w->shm_rect.y) w->shm_rect.y = m->b;
+			if (m->a + m->c > x1) x1 = m->a + m->c;
+			if (m->b + m->d > y1) y1 = m->b + m->d;
+			w->shm_rect.w = x1 - w->shm_rect.x;
+			w->shm_rect.h = y1 - w->shm_rect.y;
+		}
+		w->frame_dirty = 1;
+		damage(s, w->x + NW_BORDER + m->a, w->y + NW_TITLEBAR_H + m->b, m->c, m->d);
+		{	static int trace;   /* first few only: prove the commit->flush->release chain live */
+			if (trace < 4) { trace++; printf("nwm: shm commit win=%u idx=%d\n", w->id, bi); }
+		}
+		break;
+	}
 	case NW_REQ_SET_MENU: {
 		int idx = -1;                              /* the client's window (clients have one) */
 		for (int i = 0; i < NW_MAX_WINDOWS; i++)
@@ -1022,6 +1108,36 @@ struct nw_window *nw_window_needs_buffer(struct nw_server *s)
 		if (s->win[i].used && !s->win[i].buf)
 			return &s->win[i];
 	return 0;
+}
+
+void nw_flush_shm_commits(struct nw_server *s)
+{
+	for (int i = 0; i < NW_MAX_WINDOWS; i++) {
+		struct nw_window *w = &s->win[i];
+		if (!w->used || !w->shm_pend || !w->buf || !w->shm_map[w->shm_front & 1])
+			continue;
+		const uint32_t *src = w->shm_map[w->shm_front & 1];
+		/* clamp the union rect against BOTH geometries: the surface's (source stride) and the
+		 * window's current content size (a commit can race a resize; the replacing surface is
+		 * already on the pipe behind it) */
+		int x0 = w->shm_rect.x, y0 = w->shm_rect.y;
+		int x1 = x0 + w->shm_rect.w, y1 = y0 + w->shm_rect.h;
+		if (x0 < 0) x0 = 0;
+		if (y0 < 0) y0 = 0;
+		if (x1 > w->shm_w) x1 = w->shm_w;
+		if (y1 > w->shm_h) y1 = w->shm_h;
+		if (x1 > w->cw) x1 = w->cw;
+		if (y1 > w->ch) y1 = w->ch;
+		for (int y = y0; y < y1; y++)
+			memcpy(w->buf + (long) y * w->cw + x0,
+			       src + (long) y * w->shm_w + x0, (size_t) (x1 - x0) * 4);
+		w->shm_pend = 0;
+		/* done reading: hand the buffer back (wl_buffer.release equivalent) */
+		emit_win(s, i, NW_EVT_BUFFER_RELEASE, w->shm_front, 0, 0, 0, 0, 0);
+		{	static int trace;
+			if (trace < 4) { trace++; printf("nwm: shm flush win=%u idx=%d\n", w->id, w->shm_front); }
+		}
+	}
 }
 
 const unsigned char *nw_outq_peek(struct nw_server *s, int client, uint32_t *len)

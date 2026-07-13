@@ -91,6 +91,19 @@ struct nw_window {
 	int       bd_lw, bd_lh;/* lo-res cache dimensions                                        */
 	nw_rect   bd_rect;     /* the cache_rect (screen coords) bd_blur was computed for         */
 	int       bd_dirty;    /* 1 => backdrop must be rebuilt next compose                      */
+	/* shared-memory surface (NW_REQ_SHM_SURFACE): the client's pixels live in two /dev/nwshm
+	 * buffers mapped here by the I/O shell (nw_shm_map). tok[0]==0 => legacy pipe commits.
+	 * COMMIT_SHM only records the latest front index + unions damage; the actual copy into
+	 * `buf` is deferred to nw_render_dirty_frames — one copy per composed frame no matter how
+	 * fast the client commits. shm_w/h are the surface's own dimensions, kept separate from
+	 * cw/ch so commits that race a resize clamp instead of overrunning. */
+	uint64_t  shm_tok[2];
+	uint32_t *shm_map[2];
+	unsigned  shm_bytes;
+	int       shm_w, shm_h;
+	int       shm_front;   /* buffer index of the latest COMMIT_SHM */
+	int       shm_pend;    /* a deferred shm->buf copy is pending   */
+	nw_rect   shm_rect;    /* union of pending damage (content coordinates) */
 	int       minimized;   /* hidden from the scene (taskbar button stays); restored from the taskbar */
 	int       maximized;   /* filling the work area (between menu bar and taskbar)                    */
 	int       sx, sy, scw, sch;   /* geometry saved before maximizing, restored on un-maximize        */
@@ -198,6 +211,16 @@ void nw_client_msg(struct nw_server *s, int client, const struct nw_msg *m,
 /* Next used window still lacking a pixel buffer (the shell allocates cw*ch then sets ->buf).
  * Returns NULL when all windows are backed. */
 struct nw_window *nw_window_needs_buffer(struct nw_server *s);
+/* Shared-memory window surfaces: the core calls these (implemented by the I/O shell over
+ * /dev/nwshm; host tests stub them returning 0/no-op) to map/unmap a client's buffer tokens
+ * and to return a freed surface's backing store to the kernel pool. A NULL from nw_shm_map
+ * makes the core reject the surface — the client keeps committing pixels through the pipe. */
+void *nw_shm_map(uint64_t token, unsigned bytes);
+void  nw_shm_unmap(void *p, unsigned bytes);
+void  nw_shm_free(uint64_t token);
+/* Copy every window's pending shm damage into its content buffer (one copy per composed frame).
+ * The shell/compose paths run this right before nw_render_dirty_frames. */
+void nw_flush_shm_commits(struct nw_server *s);
 /* Drain one client's output: peek the contiguous readable span, write it, then ack n bytes. */
 const unsigned char *nw_outq_peek(struct nw_server *s, int client, uint32_t *len);
 void nw_outq_ack(struct nw_server *s, int client, uint32_t n);
