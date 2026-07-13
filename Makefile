@@ -344,21 +344,27 @@ wget: bin/libc.ndl bin/libc.ndl.a
 # never depends on this. Requires `make build` first (refreshes the pthread-enabled libc.ndl).
 GIT_PORT    := $(SDK_WORK)/git-port
 git: bin/libc.ndl bin/libc.ndl.a
-	@test -d "$(SDK_TC)/i686-nanos/include" || { echo "nanos-sdk toolchain not found at $(SDK_TC)"; exit 1; }
+	@test -d "$(SDK_TC)/$(PING_TRIPLE)/include" || { echo "nanos-sdk $(PING_TRIPLE) toolchain not found at $(SDK_TC)"; exit 1; }
 	@test -f "$(GIT_PORT)/nxport.toml"      || { echo "git port not found at $(GIT_PORT)/nxport.toml"; exit 1; }
-	cp -R user/libc-glue/include/. "$(SDK_TC)/i686-nanos/include/"
-	cp kernel/SyscallNr.h          "$(SDK_TC)/i686-nanos/include/SyscallNr.h"
-	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/i686-nanos/lib/libc.a"
-	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/i686-nanos/lib/libc.ndl"
+	@test -f "$(SDK_TC)/$(PING_TRIPLE)/lib/libz.a" || { echo "libz.a not in the $(PING_TRIPLE) sysroot — run 'make ARCH=$(ARCH) zlib' first"; exit 1; }
+	# ARCH-AWARE via the PING_* variables; the nxport.toml passes AR/RANLIB/ZLIB_PATH keyed on
+	# $${NX_HOST}, and nanos-port's CC=<host>-gcc beats the committed config.mak's i686 CC.
+	$(PING_PREREQ)
+	cp -R user/libc-glue/include/. "$(SDK_TC)/$(PING_TRIPLE)/include/"
+	cp kernel/SyscallNr.h          "$(SDK_TC)/$(PING_TRIPLE)/include/SyscallNr.h"
+	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(PING_TRIPLE)/include/nx-dllimport.h"
+	cp $(BINFOLDER)libc.ndl.a      "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.a"
+	cp $(BINFOLDER)libc.ndl        "$(SDK_TC)/$(PING_TRIPLE)/lib/libc.ndl"
 	# Refresh the startup objects too: crt0.o carries the main-thread TLS bootstrap
-	# (__nx_init_tls -> set_thread_area), so a stale crt0 leaves %gs:0 unset and the first
-	# errno access faults (cr2=0x1c). The sysroot copy must track this checkout's crt0/nxhdr.
-	cp $(BINFOLDER)crt0.o          "$(SDK_TC)/i686-nanos/lib/crt0.o"
-	cp $(BINFOLDER)nxhdr.o         "$(SDK_TC)/i686-nanos/lib/nxhdr.o"
+	# (__nx_init_tls -> set_thread_area), so a stale crt0 leaves the TCB unset and the first
+	# errno access faults. The sysroot copy must track this checkout's crt0/nxhdr.
+	cp $(BINFOLDER)crt0.o          "$(SDK_TC)/$(PING_TRIPLE)/lib/crt0.o"
+	cp $(BINFOLDER)nxhdr.o         "$(SDK_TC)/$(PING_TRIPLE)/lib/nxhdr.o"
+	$(PING_STARTUP)
 	docker run --rm \
 	  -v "$(SDK_TC)":/work/toolchain -v "$(GIT_PORT)":/work/port -v "$(NANOS_SDK)":/sdk \
-	  -e SDK=/sdk -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-	  -w /work/port nanos-sdk-dev:latest python3 /sdk/port/nanos-port /work/port
+	  -e SDK=/sdk $(PING_PORT_ENV) $(NXPORT_XCFLAGS) -e PATH="/work/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	  -w /work/port nanos-sdk-dev:latest sh -c '$(PING_PRECMD) python3 /sdk/port/nanos-port /work/port'
 	cp "$(GIT_PORT)/git.nxe" $(BINFOLDER)git.nxe
 	@echo "staged $(BINFOLDER)git.nxe — run 'make image' to install it into /nanos/bin (+ /nanos/libexec/git-core)"
 
@@ -896,7 +902,7 @@ externals:
 	@n=0; \
 	for spec in "bash:$(BASH_FORK)/nanos/bash.nxe" \
 	            "vim:$(SDK_WORK)/vim/src/vim.nxe" \
-	            "grep:$(SDK_WORK)/grep-3.11/src/grep.nxe" \
+	            "grep:$(SDK_WORK)/grep-3.11/grep.nxe" \
 	            "bzip2:$(SDK_WORK)/bzip2-1.0.8/bzip2.nxe" \
 	            "ping:$(SDK_WORK)/inetutils-port/ping.nxe" \
 	            "wget:$(SDK_WORK)/wget-port/wget.nxe" \
