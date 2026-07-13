@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>          /* read/close (the fail-after fault-injection knob) */
+#include <time.h>            /* clock_gettime (per-stage frame profile) */
 #include <GLES2/gl2.h>
 
 /* ---- window geometry (mirror nw_compose.c's frame_w/frame_h) ---------------------------------- */
@@ -398,6 +399,54 @@ static struct nw_surface g_chrome_surf;
 static int g_chrome_ready = 0;                  /* the chrome texture holds at least one real render */
 static int g_wall_dirty  = 1;                   /* the wallpaper texture must be (re)uploaded */
 
+/* Per-stage frame profile (always on, serial, one line per 30 dirty frames — same spirit as nwm.c's
+ * nwm-gl 30-frame telemetry). Sums µs per stage so the 60fps work can see WHERE a dirty frame goes:
+ * window-texture uploads (incl. their glFinish), glass blur passes, window draws, bar snapshots,
+ * chrome CPU render, chrome upload (incl. glFinish), final blit and glkms_swap. */
+static long prof_now_us(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (long) t.tv_sec * 1000000L + t.tv_nsec / 1000L;
+}
+static long g_pf_upload, g_pf_blur, g_pf_draw, g_pf_bars, g_pf_chrender, g_pf_chup,
+            g_pf_blit, g_pf_swap, g_pf_frames, g_pf_uploads;
+
+/* Chrome fingerprint: FNV-1a over EVERY server field draw_chrome() reads (panel: menu state +
+ * focused window's app-menu spec/title + clock; taskbar: per-slot used/minimized/title + focus;
+ * dropdown: hover; Run + Auth modals). The chrome overlay is re-rendered and re-uploaded (a
+ * ~12 ms CPU render + 4 MB glTexImage2D + glFinish on TCG) ONLY when this changes — the same
+ * damage rule the windows follow. If draw_chrome ever grows a new input, add it HERE or the
+ * overlay goes stale until the next unrelated chrome change. */
+static uint64_t g_chrome_fp;   /* 0 = never rendered (fp of a real state is never 0: seeded basis) */
+static uint64_t chrome_fp(const struct nw_server *s)
+{
+	uint64_t h = 1469598103934665603ull;              /* FNV offset basis */
+#define FP_BYTE(b) do { h ^= (uint8_t) (b); h *= 1099511628211ull; } while (0)
+#define FP_INT(v)  do { int fp_i_ = (v); for (int k = 0; k < 4; k++) FP_BYTE(fp_i_ >> (k * 8)); } while (0)
+#define FP_STR(p)  do { for (const char *fp_p_ = (p); *fp_p_; fp_p_++) FP_BYTE(*fp_p_); FP_BYTE(0); } while (0)
+	FP_INT(s->focus);
+	FP_INT(s->menu_open); FP_INT(s->menu_which); FP_INT(s->menu_hover); FP_INT(s->menu_from_start);
+	FP_STR(s->clock);
+	if (s->focus >= 0 && s->win[s->focus].used) {
+		FP_STR(s->win[s->focus].title);
+		FP_STR(s->win[s->focus].menu);
+	}
+	for (int i = 0; i < NW_MAX_WINDOWS; i++) {        /* the taskbar buttons, in slot order */
+		const struct nw_window *w = &s->win[i];
+		FP_INT(w->used ? (1 + 2 * w->minimized) : 0);
+		if (w->used) FP_STR(w->title);
+	}
+	FP_INT(s->run_open);
+	if (s->run_open) { FP_INT(s->run_len); for (int i = 0; i < s->run_len; i++) FP_BYTE(s->run_text[i]); }
+	FP_INT(s->auth_open);
+	if (s->auth_open) { FP_STR(s->auth_cmd); FP_INT(s->auth_passlen); FP_INT(s->auth_hover); }
+#undef FP_BYTE
+#undef FP_INT
+#undef FP_STR
+	return h ? h : 1;                                 /* keep 0 = "never rendered" unambiguous */
+}
+
 static GLuint compile(GLenum type, const char *src)
 {
 	GLuint s = glCreateShader(type);
@@ -747,16 +796,27 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 					up_src = solid_px;
 				}
 			}
-			if (realloced || !interacting || g_win_gen[idx] != w->frame_gen) {
+			/* Damage-gated upload (the Wayland rule: content travels only on a NEW commit).
+			 * frame_gen is bumped by every actual frame re-render (commit/focus/create), so an
+			 * unchanged window re-uses its resident texture — measured at ~9 ms per skipped
+			 * glTexImage2D+glFinish on TCG+virgl, and every window used to re-upload EVERY dirty
+			 * frame whenever the desktop was idle-but-animating (the old `!interacting` term). */
+			if (realloced || g_win_gen[idx] != w->frame_gen) {
+				long pt = prof_now_us();
 				glBindTexture(GL_TEXTURE_2D, g_win_tex[idx]);
 				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fw, fh, 0, GL_RGBA, GL_UNSIGNED_BYTE, up_src);
 				glFinish();
 				g_win_gen[idx] = w->frame_gen;
+				g_pf_upload += prof_now_us() - pt; g_pf_uploads++;
 			}
 
 			int glass = (w->glass && !g_no_glass);
-			if (glass)                               /* blur the scene beneath into g_blurB's fw×fh corner */
+			if (glass) {                             /* blur the scene beneath into g_blurB's fw×fh corner */
+				long pt = prof_now_us();
 				blur_backdrop(w->x, w->y, fw, fh);   /* leaves us back on g_scene_fbo, full viewport, blend on */
+				g_pf_blur += prof_now_us() - pt;
+			}
+			long pt_draw = prof_now_us();
 
 			if (glass) {                       /* soft SDF shadow under the slab, drawn before it */
 				glUseProgram(p_shadow.id);
@@ -789,6 +849,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			glUniform1i(u_win_sharp, 2);
 			glActiveTexture(GL_TEXTURE0);
 			quad(&p_win, (float) w->x, (float) w->y, (float) fw, (float) fh);
+			g_pf_draw += prof_now_us() - pt_draw;
 		}
 
 		/* modal desktop-dim (auth): a full-screen translucent black quad over the windows */
@@ -811,6 +872,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 		 * textures/FBOs) — to snapshot each bar's rect at its OWN screen position (not the corner-
 		 * packed window-grab convention), so FS_BAR's plain spx/u_screen sampling maps 1:1. */
 		if (!g_no_glass) {
+			long pt = prof_now_us();
 			int topbar_h = NW_PANEL_H, taskbar_h = NW_TASK_H;
 			glBindTexture(GL_TEXTURE_2D, g_grab);
 			glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, g_sh - topbar_h, 0, g_sh - topbar_h,
@@ -824,6 +886,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			quad(&p_bar, 0.0f, 0.0f, (float) g_sw, (float) topbar_h);
 			glUniform1f(u_bar_topline, 1.0f);             /* taskbar: hairline at its top edge */
 			quad(&p_bar, 0.0f, (float) (g_sh - taskbar_h), (float) g_sw, (float) taskbar_h);
+			g_pf_bars += prof_now_us() - pt;
 		}
 
 		/* chrome overlay: CPU-rendered panel/taskbar/dropdown/modals, keyed on BLACK (the transparent
@@ -834,8 +897,11 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 		 * full-screen overlay ONLY when NOT interacting: during a drag/resize the panel & taskbar can't
 		 * change, so we reuse the resident chrome texture (zero CPU render, zero 4 MB upload). Always
 		 * upload once so the first frame — or a drag that begins before any idle frame — has real chrome. */
-		if (!interacting || !g_chrome_ready) {
+		if ((!interacting && chrome_fp(s) != g_chrome_fp) || !g_chrome_ready) {
+			long pt = prof_now_us();
+			g_chrome_fp = chrome_fp(s);
 			nw_compose_chrome(s, &g_chrome_surf);
+			g_pf_chrender += prof_now_us() - pt; pt = prof_now_us();
 			glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
 			/* glTexImage2D + glFinish, same fenced recipe as the wallpaper/windows: an un-fenced
 			 * glTexSubImage2D can land the fork's one-per-frame transfer glitch on the chrome's top
@@ -844,6 +910,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_sw, g_sh, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_chrome_px);
 			glFinish();
 			g_chrome_ready = 1;
+			g_pf_chup += prof_now_us() - pt;
 		}
 		glUseProgram(p_keyed.id);
 		glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, g_chrome_tex);
@@ -853,6 +920,7 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 	}
 
 	/* present: blit the (cursor-free) scene to the default framebuffer, then draw the cursor on top */
+	long pt_blit = prof_now_us();
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, (int) g_kms.mode_w, (int) g_kms.mode_h);
 	glDisable(GL_BLEND);
@@ -872,7 +940,20 @@ int nw_gl_frame(const struct nw_server *s, const struct nw_surface *wall, int sc
 
 	if (glGetError() != GL_NO_ERROR) return -1;
 	if (dbgf) { glkms_diag("nw_gl_frame: pre-swap #%d\n", g_dbgf); g_dbgf++; }
-	return glkms_swap(&g_kms);
+	g_pf_blit += prof_now_us() - pt_blit;
+	long pt_swap = prof_now_us();
+	int src = glkms_swap(&g_kms);
+	g_pf_swap += prof_now_us() - pt_swap;
+	if (scene_dirty && ++g_pf_frames >= 30) {
+		printf("nw_gl prof: 30 dirty | up %ldms/%ld blur %ldms draw %ldms bars %ldms "
+		       "chR %ldms chU %ldms blit %ldms swap %ldms\n",
+		       g_pf_upload / 1000, g_pf_uploads, g_pf_blur / 1000, g_pf_draw / 1000,
+		       g_pf_bars / 1000, g_pf_chrender / 1000, g_pf_chup / 1000,
+		       g_pf_blit / 1000, g_pf_swap / 1000);
+		g_pf_upload = g_pf_blur = g_pf_draw = g_pf_bars = g_pf_chrender = 0;
+		g_pf_chup = g_pf_blit = g_pf_swap = g_pf_frames = g_pf_uploads = 0;
+	}
+	return src;
 }
 
 /* Build the cursor texture once from the CPU arrow bitmap (magenta-keyed background). Called by
@@ -906,7 +987,7 @@ void nw_gl_shutdown_wedged(void)
 	if (g_ok) glkms_close_wedged(&g_kms);
 	if (g_chrome_px) { free(g_chrome_px); g_chrome_px = 0; }   /* plain malloc — safe to free */
 	g_ok = 0; g_sw = g_sh = 0;
-	g_chrome_ready = 0; g_wall_dirty = 1;
+	g_chrome_ready = 0; g_wall_dirty = 1; g_chrome_fp = 0;
 }
 
 void nw_gl_shutdown(void)
@@ -916,7 +997,7 @@ void nw_gl_shutdown(void)
 		if (g_win_tex[i]) { glDeleteTextures(1, &g_win_tex[i]); g_win_tex[i] = 0; }
 		g_win_tw[i] = g_win_th[i] = 0; g_win_gen[i] = 0;
 	}
-	g_chrome_ready = 0; g_wall_dirty = 1;
+	g_chrome_ready = 0; g_wall_dirty = 1; g_chrome_fp = 0;
 	if (g_grab)   { glDeleteTextures(1, &g_grab);   g_grab = 0; }
 	if (g_blurA)  { glDeleteTextures(1, &g_blurA);  g_blurA = 0; }
 	if (g_blurB)  { glDeleteTextures(1, &g_blurB);  g_blurB = 0; }
