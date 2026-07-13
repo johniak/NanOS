@@ -54,6 +54,18 @@ void AddressSpace::unmap(uint64_t va) {
 		*pte = 0;
 }
 
+// Change protection flags on an already-mapped page without touching its physical frame:
+// *pte = (*pte & ~clearFlags) | setFlags. Used by mprotect (RW<->RX flip for V8's W^X). Returns
+// false if the page is not mapped (mprotect skips those — see arch::mmuProtectUser). The caller
+// is responsible for the TLB flush/shootdown after a batch of these.
+bool AddressSpace::protect(uint64_t va, uint64_t setFlags, uint64_t clearFlags) {
+	uint64_t* pte = walk(va, false);
+	if (!pte || !entryPresent(*pte))
+		return false;
+	*pte = (*pte & ~clearFlags) | setFlags;
+	return true;
+}
+
 bool AddressSpace::mapRangeHuge(uint64_t va, uint64_t pa, uint64_t len, uint64_t flags) {
 	if (!m_topPhys)
 		return false;
@@ -75,6 +87,22 @@ bool AddressSpace::mapRange(uint64_t va, uint64_t pa, uint64_t len, uint64_t fla
 		if (!map(va + p * FRAME_SIZE, pa + p * FRAME_SIZE, flags))
 			return false;
 	return true;
+}
+
+// Raw leaf page-table entry (physical base OR-ed with the flag bits), or 0 if the VA is not mapped.
+// Read-only descent like translate(); returns the 2 MiB PD entry for a huge mapping. Lets callers
+// and tests inspect protection bits (PTE_RW etc.) after mprotect without exposing walk().
+uint64_t AddressSpace::leafEntry(uint64_t va) const {
+	AddressSpace* self = const_cast<AddressSpace*>(this);
+	uint64_t* p4 = self->top();
+	uint64_t* p3 = self->nextTable(p4, pml4Index(va), false); if (!p3) return 0;
+	uint64_t* p2 = self->nextTable(p3, pdptIndex(va), false); if (!p2) return 0;
+	uint64_t pde = p2[pdIndex(va)];
+	if (!entryPresent(pde)) return 0;
+	if (pde & PTE_PS) return pde;                                       // 2 MiB huge leaf
+	uint64_t* p1 = self->nextTable(p2, pdIndex(va), false); if (!p1) return 0;
+	uint64_t pte = p1[ptIndex(va)];
+	return entryPresent(pte) ? pte : 0;
 }
 
 uint64_t AddressSpace::translate(uint64_t va) const {

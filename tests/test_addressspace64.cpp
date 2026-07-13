@@ -70,6 +70,24 @@ TEST_CASE("map then translate round-trips, preserving the page offset") {
 	CHECK(as.translate(0x400123) == 0xAB123u);  // same page, offset preserved
 }
 
+TEST_CASE("protect toggles PTE_RW while preserving the physical page (V8 W^X flip)") {
+	FakeMem* m = makeMem();
+	AddressSpace as(envOf(m));
+	CHECK(as.map(0x400000, 0xCD000, PTE_PRESENT | PTE_RW));   // start writable
+	CHECK((as.leafEntry(0x400000) & PTE_RW) != 0u);
+	// RW -> RX: clear PTE_RW (mprotect PROT_READ|PROT_EXEC). Phys + present unchanged.
+	CHECK(as.protect(0x400000, /*set*/0, /*clear*/PTE_RW));
+	CHECK((as.leafEntry(0x400000) & PTE_RW) == 0u);           // now read-only
+	CHECK((as.leafEntry(0x400000) & PTE_PRESENT) != 0u);      // still present
+	CHECK(as.translate(0x400000) == 0xCD000u);               // same frame
+	// RX -> RW: set PTE_RW again (mprotect PROT_READ|PROT_WRITE).
+	CHECK(as.protect(0x400000, /*set*/PTE_RW, /*clear*/0));
+	CHECK((as.leafEntry(0x400000) & PTE_RW) != 0u);
+	CHECK(as.translate(0x400000) == 0xCD000u);
+	// protect on an unmapped VA reports false (mprotect skips such pages).
+	CHECK(as.protect(0x900000, 0, PTE_RW) == false);
+}
+
 TEST_CASE("first map allocates PDPT+PD+PT; a neighbour reuses them") {
 	FakeMem* m = makeMem();
 	AddressSpace as(envOf(m));

@@ -420,7 +420,7 @@ int fsetxattr(int fd, const char* n, const void* v, size_t s, int f) { (void)fd;
  * sudo calls it only as a hardening measure (making its policy memory read-only); report success
  * so sudo proceeds — the memory simply stays as mapped. */
 #include <sys/mman.h>
-int mprotect(void* addr, size_t len, int prot) { (void) addr; (void) len; (void) prot; return 0; }
+/* mprotect now calls the real SYS_mprotect (RW<->RX flip for V8 W^X); see syscalls.c. */
 
 /* open_memstream: a GNU growable-buffer output stream. picolibc's tinystdio has no custom-stream
  * primitive (no fopencookie/funopen), so a faithful growable FILE* cannot be built here. Report

@@ -147,7 +147,7 @@ or the emptiness that proves the row).
 
 | Feature | Status | Evidence | Consumer |
 |---|---|---|---|
-| `mprotect` RW↔RX flip | **missing-required** | `posixstubs.c:423` — no-op stub `return 0`, "userland cannot change page protections" | **V8 W^X code gen (Task 1.3)** |
+| `mprotect` RW↔RX flip | implemented | `arch::mmuProtectUser` + `AddressSpace::protect` (toggles PTE_RW + TLB shootdown); `SYS_mprotect`; `scripts/smoke-mprotect.sh` (mmapexectest) PASS | V8 W^X code gen. NX not enabled, so PROT_EXEC is a no-op and write-protection is via PTE_RW; absent pages skipped (no ENOMEM) to not regress guard-page callers |
 | `madvise` | implemented (advisory no-op) | `include/sys/mman.h:42` | V8 GC hints |
 | `mincore` | implemented (all pages resident; no reclaim) | `posixstubs.c:466` | Chromium |
 | `memfd_create` | implemented (file-backed under RamFs `/tmp`, no seals) | `posixstubs.c` (~397) | Chromium shared memory |

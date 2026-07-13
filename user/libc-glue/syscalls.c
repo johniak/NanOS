@@ -470,6 +470,12 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event* event) {
 int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
 	return reterr(sys4(SYS_epoll_wait, epfd, (int) events, maxevents, timeout));
 }
+
+/* mprotect(2): real page-protection change (was a no-op stub). The kernel flips PTE_RW across the
+ * range per PROT_WRITE — the RW<->RX transition V8 needs for W^X JIT code. */
+int mprotect(void* addr, size_t len, int prot) {
+	return reterr(sys3(SYS_mprotect, (int) addr, (int) len, prot));
+}
 /* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the
  * monotonic tick count. Real per-process CPU accounting, not a 0 stub. */
 int times(void* b)                      { return sys3(SYS_times, (int) b, 0, 0); }

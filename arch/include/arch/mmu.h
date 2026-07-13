@@ -141,4 +141,9 @@ int mmuMapAnon(AddressSpace*, uint32_t base, uint32_t bytes, int writable);
 // kernel-CR3 trap as mmuMapAnon — freeing frames touches arbitrary RAM by identity.
 void mmuUnmapAnon(AddressSpace*, uint32_t base, uint32_t bytes);
 
+// mprotect(2): flip the PTE_RW bit across [base, base+bytes) per PROT_WRITE and shoot down every
+// CPU's TLB. The RW<->RX transition V8 uses for W^X JIT code. Present pages only; absent pages are
+// skipped (no-op, like the old userland stub). Always returns 0. See arch/x86_64/mm/mmu_x86_64.cpp.
+int mmuProtectUser(AddressSpace*, uint32_t base, uint32_t bytes, int prot);
+
 }

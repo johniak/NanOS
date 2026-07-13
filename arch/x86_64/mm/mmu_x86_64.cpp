@@ -322,4 +322,30 @@ void mmuUnmapAnon(AddressSpace* s, uint32_t base, uint32_t bytes) {
 	kernel::loadCr3(saved);
 }
 
+// mprotect(2) for user pages: toggle the PTE_RW bit across [base, base+bytes) per PROT_WRITE, then
+// flush every CPU's TLB so the new permissions take effect. This is the RW<->RX flip V8 needs for
+// its W^X code generation (write JIT bytes to an RW page, flip to read-only+executable, run it).
+// NX is not enabled on this kernel, so pages are always executable — PROT_EXEC needs no action and
+// the "cannot write executable code" guarantee is enforced purely by clearing PTE_RW.
+// Not-present pages in the range are silently skipped (mprotect stays a no-op there, exactly like
+// the previous userland stub), so this never regresses callers that protect partly/never-mapped
+// ranges (e.g. pthread guard regions). Returns 0 always. Runs under the kernel directory (where the
+// page tables are reachable), like mmuMapAnon; the trailing loadCr3(saved) flushes THIS CPU's TLB
+// and smpTlbShootdown flushes the others.
+int mmuProtectUser(AddressSpace* s, uint32_t base, uint32_t bytes, int prot) {
+	if (bytes == 0) return 0;
+	uint64_t start = (uint64_t) base & ~0xFFFull;
+	uint64_t end_  = ((uint64_t) base + bytes + 0xFFFu) & ~0xFFFull;
+	bool writable  = (prot & 0x2) != 0;                       // PROT_WRITE
+	uint64_t setF  = writable ? kernel::PTE_RW : 0;
+	uint64_t clrF  = writable ? 0 : kernel::PTE_RW;
+	uint64_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	for (uint64_t va = start; va < end_; va += 0x1000)
+		s->impl.protect(va, setF, clrF);                     // present pages flipped; absent ones skipped
+	arch::smpTlbShootdown(s->impl.directoryPhys());          // permissions changed -> flush every CPU's TLB
+	kernel::loadCr3(saved);                                   // reloading CR3 flushes THIS CPU's TLB too
+	return 0;
+}
+
 }  // namespace arch

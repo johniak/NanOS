@@ -1032,6 +1032,18 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		ret = (long) va;   // return the full user VA (Plan 3 widens the mmap window to 64-bit)
 		break;
 	}
+	case SYS_mprotect: {
+		// mprotect(addr, len, prot): a0=addr (page-aligned), a1=len, a2=prot. Flip PTE_RW across the
+		// current process's user pages per PROT_WRITE — the RW<->RX transition V8 uses for W^X JIT
+		// code. Present pages only; absent pages are skipped (no-op, as the old stub was).
+		unsigned addr = (unsigned) a0;
+		unsigned length = (unsigned) a1;
+		if (addr & 0xFFFu) { ret = -22; break; }        // -EINVAL: unaligned address (like Linux)
+		if (length == 0) { ret = 0; break; }             // zero length: POSIX no-op success
+		Process* p = ProcTable::current();
+		ret = arch::mmuProtectUser((arch::AddressSpace*) p->space, addr, length, (int) a2);
+		break;
+	}
 	case SYS_munmap: {
 		// munmap(addr, length): a0 = addr (must be page-aligned), a1 = length (rounded up).
 		// Only ranges inside the anonymous/file mmap window [mmuMmapBase, mmuMmapMax) are

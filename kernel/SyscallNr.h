@@ -22,6 +22,7 @@
 #define SYS_mmap 9          /* x86_64 has ONE mmap (no mmap2); off is in BYTES */
 #define SYS_mmap2 SYS_mmap  /* libc-glue calls SYS_mmap2 by name — alias to the real number */
 #define SYS_munmap 11
+#define SYS_mprotect 10     /* real RW<->RX flip for user pages (V8 W^X); was a userland no-op */
 #define SYS_brk 12
 #define SYS_rt_sigaction 13
 #define SYS_rt_sigprocmask 14
