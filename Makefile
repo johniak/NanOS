@@ -1,6 +1,6 @@
 # Architecture selection: machine-dependent knobs come from arch/$(ARCH)/arch.mk
 # (CROSS, ARCH_VPATH, ARCH_INCLUDES, ARCH_LINKER, ARCH_SOURCES).
-ARCH ?= x86
+ARCH ?= x86_64
 include arch/$(ARCH)/arch.mk
 
 # Machine-independent objects (portable across architectures).
@@ -2959,33 +2959,24 @@ doom: $(BINFOLDER)doom.nxe
 # memory_manager/string_funcs); Console is stubbed by tests/host_shims.cpp.
 # ----------------------------------------------------------------------------
 HOST_CXX=g++
-# AddressSpace + its paging headers are arch-specific (2-level i686 vs 4-level x86_64).
-# Host-test the variant matching ARCH: the include path picks the right Paging.h/AddressSpace.h,
-# the matching .cpp is compiled, and the OTHER arch's tests are filtered out (their uint32_t vs
-# uint64_t API would not compile against the swapped header). Default ARCH=x86 is unchanged.
-ifeq ($(ARCH),x86_64)
+# AddressSpace + its paging headers: x86_64 4-level paging (the only arch since the i686
+# retirement, docs/superpowers/plans/2026-07-13-i686-retirement.md).
 ARCH_MM_INC=-Iarch/x86_64/mm
 ARCH_ADDRSPACE=arch/x86_64/mm/AddressSpace.cpp
-ARCH_PAGING_TESTS_EXCL=tests/test_addressspace.cpp tests/test_paging.cpp
-else
-ARCH_MM_INC=-Iarch/x86/mm
-ARCH_ADDRSPACE=arch/x86/mm/AddressSpace.cpp
-ARCH_PAGING_TESTS_EXCL=tests/test_addressspace64.cpp tests/test_paging64.cpp
-endif
 # Host include path: code dirs only, deliberately WITHOUT -Iinclude so that
 # <string.h> resolves to libc (not the freestanding include/string.h).
-HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Ikext/virtio_gpu -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue -Ilinuxkpi/include -Ilinuxkpi
+HINCLUDES=-Iarch/include -Ikernel -Idrivers -Ifs -Imm -Ilib -Inet -Iusb -Iarch/x86_64/boot $(ARCH_MM_INC) -Iarch/x86_64/cpu -Ikext/mouse -Ikext/e1000 -Ikext/i219 -Ikext/virtio_gpu -Iuser/libnw -Iuser/nwm -Iuser/libnwui -Iuser/term -Iuser/third_party/stb -Iuser/libc-glue -Ilinuxkpi/include -Ilinuxkpi
 # The host is LP64 (arm64/x86_64) but does not define __x86_64__, so force the v4 64-bit
 # .nx format (nxaddr_t = uint64_t) across the whole host test build. This exercises the
 # x86_64 loader path (R_X86_64_64 fixups, 8-byte IAT slots) and keeps every TU's view of
 # NxFormat.h consistent (NxeLoader.cpp + its test must agree on the loadImage signature).
 HOST_CXXFLAGS=-std=c++17 -O0 -g $(HINCLUDES) -Wall --coverage -DNX_FORCE64=1 -DNANOS_HOST_TEST=1
 TEST_BIN=/tmp/nanos_tests
-TEST_SRCS=$(filter-out $(ARCH_PAGING_TESTS_EXCL),$(wildcard tests/*.cpp))
+TEST_SRCS=$(wildcard tests/*.cpp)
 # Modules under test (grown as layers are added). Header-only modules contribute
 # coverage via the .h patterns below.
 TEST_MODULES=drivers/RamBlockDevice.cpp drivers/DeviceManager.cpp drivers/Console.cpp fs/Vfs.cpp fs/ExtFilesystem.cpp fs/SynthFs.cpp fs/RamFs.cpp fs/ext/Crc32c.cpp fs/ext/BlockCache.cpp fs/ext/ExtCsum.cpp fs/ext/ExtAllocator.cpp fs/ext/Journal.cpp kernel/Syscall.cpp kernel/Cred.cpp kernel/NxeLoader.cpp kernel/KeyDecoder.cpp kernel/Scheduler.cpp kernel/Process.cpp kernel/Signal.cpp kernel/Futex.cpp kernel/Csprng.cpp kernel/Acpi.cpp kernel/Bkl.cpp lib/String.cpp
-TEST_MODULES+= arch/x86/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp $(ARCH_ADDRSPACE)
+TEST_MODULES+= arch/x86_64/boot/MultibootMmap.cpp mm/FrameAllocator.cpp mm/Heap.cpp $(ARCH_ADDRSPACE)
 TEST_MODULES+= arch/x86_64/cpu/lapic_x86_64.cpp   # pure-logic half: MSI vector pool (arch half #ifdef'd out under NANOS_HOST_TEST)
 TEST_MODULES+= drivers/Framebuffer.cpp drivers/Font8x16.cpp drivers/FbConsole.cpp drivers/Fbdev.cpp drivers/KeyboardDevice.cpp drivers/Pty.cpp
 TEST_MODULES+= drivers/DrmDevice.cpp   # /dev/dri forwarder — pure ioctl/mmap-offset dispatch (test_drm_node.cpp)
@@ -3021,7 +3012,7 @@ TEST_MODULES+= kernel/PartitionTable.cpp        # MI MBR+GPT root-partition disc
 # Not in COV_PATTERNS (not gated), just compiled + exercised by tests/test_linuxkpi_*.
 TEST_MODULES+= linuxkpi/kpi_slab.c linuxkpi/kpi_print.c linuxkpi/kpi_idr.c linuxkpi/kpi_sort.c linuxkpi/kpi_time.c linuxkpi/kpi_irq.c linuxkpi/kpi_kthread.c linuxkpi/kpi_firmware.c linuxkpi/kpi_shrinker.c linuxkpi/kpi_rcu.c
 # lcov patterns selecting the modules whose coverage is gated (String is support).
-COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/Cred.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Acpi.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nw_settings.*" "*/nwm_core.*" "*/nw_compose.*" "*/nw_backdrop.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/MsiRouter.*" "*/lapic_x86_64.*" "*/e1000_core.*" "*/i219_phy.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*" "*/UsbCore.*" "*/UsbHid.*" "*/UsbMsc.*" "*/UsbMscBlockDevice.*" "*/PartitionTable.*" "*/GdtBase.*"
+COV_PATTERNS="*/RamBlockDevice.*" "*/DeviceManager.*" "*/Vfs.*" "*/ExtFilesystem.*" "*/Ext2Filesystem.*" "*/Ext4Filesystem.*" "*/ExtAllocator.*" "*/BlockCache.*" "*/ExtCsum.*" "*/Crc32c.*" "*/Journal.*" "*/SynthFs.*" "*/RamFs.*" "*/Syscall.*" "*/Cred.*" "*/NxeLoader.*" "*/KeyDecoder.*" "*/Process.*" "*/Signal.*" "*/Futex.*" "*/Csprng.*" "*/Acpi.*" "*/Framebuffer.*" "*/FbConsole.*" "*/Fbdev.*" "*/KeyboardDevice.*" "*/Pty.*" "*/MouseDevice.*" "*/MultibootMmap.*" "*/FrameAllocator.*" "*/Heap.*" "*/AddressSpace.*" "*/nwproto.*" "*/nw_gfx.*" "*/nw_settings.*" "*/nwm_core.*" "*/nw_compose.*" "*/nw_backdrop.*" "*/nwui_core.*" "*/vt.*" "*/Pci.*" "*/MsiRouter.*" "*/lapic_x86_64.*" "*/e1000_core.*" "*/i219_phy.*" "*/Net.*" "*/NetBuf.*" "*/NetDevice.*" "*/Loopback.*" "*/Ether.*" "*/Arp.*" "*/Ip.*" "*/Route.*" "*/Icmp.*" "*/Socket.*" "*/Udp.*" "*/Raw.*" "*/Tcp.*" "*/Packet.*" "*/Unix.*" "*/NetProc.*" "*/NetStats.*" "*/resolv_parse.*" "*/crypt.*" "*/UsbCore.*" "*/UsbHid.*" "*/UsbMsc.*" "*/UsbMscBlockDevice.*" "*/PartitionTable.*"
 COV_INFO=/tmp/cov.info
 COV_MIN=90
 # The repo is bind-mounted from a case-insensitive macOS FS, which makes
