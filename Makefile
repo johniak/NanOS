@@ -816,6 +816,7 @@ world: docker-image
 	$(MAKE) toybox sudo grep bzip2
 	$(MAKE) ping wget inetd httpd udhcpc dropbear
 	$(MAKE) vim htop git sqlite bash
+	$(MAKE) doom
 	$(MAKE) libpng libjpeg
 	@test -x "$(MESA_PORT)/tools/intel_clc" || $(MAKE) mesa-intel-clc
 	$(MAKE) libdrm mesa gles2info glkms nwm-gl
@@ -2533,7 +2534,7 @@ _kext: $(addprefix $(BINFOLDER),$(addsuffix .nkext,$(KEXTS)))
 # code paths; -lm for the renderer's trig/sqrt. Our platform layer (doomgeneric_nanos.c)
 # replaces the shipped backends. Built as the `doom` program (staged by `make doom`).
 DOOM_DIR=user/third_party/doomgeneric
-DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
+DOOM_CFLAGS=-ffreestanding -isystem $(PICOLIBC)/include -iquote kernel -Iuser -Iuser/libc-glue/include -I$(DOOM_DIR) -D_DEFAULT_SOURCE -DNORMALUNIX -DLINUX -include user/libc-glue/compat-decls.h -include user/libc-glue/nx-dllimport.h -w -fcommon -fno-pic -fno-stack-protector $(USER_ARCHFLAGS) $(UOPTFLAGS)
 DOOM_OBJS=$(patsubst $(DOOM_DIR)/%.c,$(BINFOLDER)%.o,$(wildcard $(DOOM_DIR)/*.c))
 
 # Per-object rules (with -MMD header tracking) so only CHANGED Doom sources recompile

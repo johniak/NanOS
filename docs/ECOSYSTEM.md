@@ -30,6 +30,7 @@ make zlib openssl ncurses                # library layer
 make toybox sudo grep bzip2              # base userland
 make ping wget inetd httpd udhcpc dropbear   # network layer
 make vim htop git sqlite bash            # apps
+make doom                                # in-tree doomgeneric (/apps/doom + shareware IWAD)
 make libpng libjpeg                      # image codecs
 make mesa-intel-clc                      # first run only (host tool for iris)
 make libdrm mesa gles2info glkms nwm-gl  # GL userspace
