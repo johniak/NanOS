@@ -51,6 +51,11 @@ or NanOS platform-gap plans.
 - **Use the existing NanOS stack first.** Display/input should target NanWM/DRM through existing
   devices and libraries where possible; add kernel APIs only when Chromium/Electron actually needs
   a Linux-compatible primitive.
+- **Every change or addition ships with written tests — no exceptions.** Any new kernel API,
+  syscall, libc-glue function, script, or build target lands in the same commit as its tests:
+  host unit tests in `tests/` where the logic is host-testable, a `user/<name>.c` microtest plus
+  QEMU smoke for kernel/runtime behavior, and a smoke script for every new gate command. A change
+  without a test that fails before it and passes after it is not done.
 - **Headless gates before GUI gates.** Node tests and Chromium content smoke must pass before
   trying Electron, and Electron hello-world must pass before MarkText.
 - **Every child plan has a runnable smoke.** Junior implementers should always know the next command

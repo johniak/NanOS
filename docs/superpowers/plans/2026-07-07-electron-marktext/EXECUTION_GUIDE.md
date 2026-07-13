@@ -136,6 +136,11 @@ Do not edit code until Task 0 from `00-platform-contract.md` is complete.
 Every work package must end with these artifacts:
 
 - source files or docs changed;
+- **written tests for every change or addition** — this is mandatory, not optional: host unit
+  tests in `tests/` for host-testable logic, a `user/<name>.c` microtest + QEMU smoke for
+  kernel/syscall/device behavior, a smoke script for any new gate command. Verify the test fails
+  without your change (or on deliberately broken input) and passes with it. A doc-only package is
+  the sole exemption;
 - one gate command and its result;
 - one status entry in `status.md`;
 - notes for limitations or skipped tests.
@@ -306,4 +311,6 @@ The final PR is acceptable only if:
 - [ ] no source version is floating.
 - [ ] every disabled Electron/MarkText feature is documented.
 - [ ] no new kernel API is untested.
+- [ ] every change and addition in the PR has written tests (host unit test, user microtest, or
+      smoke) landed alongside it — none deferred to "later".
 - [ ] all status rows are up to date.
