@@ -1009,6 +1009,12 @@ smoke-resv: image64
 smoke-tls: image64
 	bash scripts/smoke-tls.sh
 
+# `smoke-mallocstorm` is the sbrk-batching gate: mallocstorm times N growing malloc()s against N raw
+# getpid() syscalls. A 1:1 sbrk->brk mapping makes each malloc a kernel brk (heavier than getpid) so
+# the storm is >= the baseline; batching makes it many times faster. Guards node/V8 startup cost.
+smoke-mallocstorm: image64
+	bash scripts/smoke-mallocstorm.sh
+
 # `smoke-procself` is the /proc/self gate (plan 01 Task 1.4): exe readlink + fd listing + cwd.
 smoke-procself: image64
 	bash scripts/smoke-procself.sh
@@ -1122,7 +1128,7 @@ smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-resv smoke-tls smoke-procself smoke-memfd smoke-shmshare smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-resv smoke-tls smoke-mallocstorm smoke-procself smoke-memfd smoke-shmshare smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
 	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + i915 (link/load/harness) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
@@ -2186,6 +2192,7 @@ $(BINFOLDER)epolltest.nxe: $(DYN_DEPS) $(BINFOLDER)epolltest.o
 $(BINFOLDER)mmapexectest.nxe: $(DYN_DEPS) $(BINFOLDER)mmapexectest.o
 $(BINFOLDER)resvtest.nxe: $(DYN_DEPS) $(BINFOLDER)resvtest.o
 $(BINFOLDER)tlstest.nxe: $(DYN_DEPS) $(BINFOLDER)tlstest.o
+$(BINFOLDER)mallocstorm.nxe: $(DYN_DEPS) $(BINFOLDER)mallocstorm.o
 $(BINFOLDER)procselftest.nxe: $(DYN_DEPS) $(BINFOLDER)procselftest.o
 $(BINFOLDER)shmdualtest.nxe: $(DYN_DEPS) $(BINFOLDER)shmdualtest.o
 $(BINFOLDER)memfdtest.nxe: $(DYN_DEPS) $(BINFOLDER)memfdtest.o
@@ -2377,7 +2384,7 @@ $(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest eventfdtest epolltest mmapexectest resvtest tlstest procselftest shmdualtest memfdtest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest eventfdtest epolltest mmapexectest resvtest tlstest mallocstorm procselftest shmdualtest memfdtest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter

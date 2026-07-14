@@ -85,6 +85,21 @@ static int sys_gettid(void) {
 	return r;
 }
 
+/* The recursive libc mutex (below) is acquired by EVERY malloc/free (picolibc routes __malloc_lock
+ * through __lock___libc_recursive_mutex), and it needs the caller's tid to detect re-entry. Doing a
+ * gettid SYSCALL per acquire made malloc-heavy startups (V8/node) pay one syscall per allocation on
+ * top of the sbrk/brk cost — measured as ~1 gettid per malloc in the node trace. A thread's tid never
+ * changes, so cache it in TLS: the first acquire per thread does the one syscall, the rest read a
+ * word. Safe because each thread has its own zero-initialized TLS (so it self-populates with its OWN
+ * unique tid) and fork() collapses to a single thread (a stale-but-consistent cached value can never
+ * collide with a concurrent thread). Sentinel 0 is never a real tid (tids start at 1 = init). */
+static int cached_tid(void) {
+	static __thread int tid_cache;   /* .tbss => 0 = not cached yet */
+	int t = tid_cache;
+	if (__builtin_expect(t == 0, 0)) { t = sys_gettid(); tid_cache = t; }
+	return t;
+}
+
 /* struct __lock completes picolibc's incomplete type. futex: 0 = unlocked, 1 = locked (no waiters),
  * 2 = locked (maybe waiters). owner/recur are used only by the recursive variants. */
 struct __lock { int futex; int owner; int recur; };
@@ -152,7 +167,7 @@ void __retarget_lock_release(_LOCK_T lock) {
  * means THIS thread owns it. recur is touched only under the lock, so it needs no atomicity. */
 void __retarget_lock_acquire_recursive(_LOCK_T lock) {
 	if (!lock) return;               /* uninitialized lock -> no-op (see note above) */
-	int self = sys_gettid();
+	int self = cached_tid();
 	if (__atomic_load_n(&lock->owner, __ATOMIC_RELAXED) == self) {
 		lock->recur++;
 		return;

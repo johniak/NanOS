@@ -849,13 +849,46 @@ int munmap(void* addr, size_t length) {
  * it and returns the resulting break (the OLD break on failure). sbrk tracks the break in
  * userland and grows/shrinks via brk. picolibc's malloc sits directly on top of this. */
 static char* nx_brk(char* addr) { return (char*) sys3(SYS_brk, (int) addr, 0, 0); }
+
+/* sbrk BATCHING: nano-malloc calls sbrk once per un-satisfiable allocation, so a naive 1:1 sbrk->brk
+ * mapping fires one kernel brk syscall per malloc. On NanOS each brk both eagerly maps/zeroes frames
+ * AND does two CR3 reloads (a full TLB flush) -> tens of thousands of these dominate V8/node startup
+ * (measured: node's heap grew ~54 bytes per brk, one syscall each). We keep TWO breaks: `cur` is the
+ * logical break handed back to malloc, `top` is the real kernel break with the invariant cur <= top.
+ * A grow past `top` extends the kernel break GEOMETRICALLY (by ~the current heap size, capped at 1 MiB,
+ * floored at the request) so reaching an N-byte heap costs O(log N) syscalls up to the cap then O(N/1MiB)
+ * -- vs O(allocations) before. A shrink just lowers `cur` and keeps the frames mapped for reuse (nano-
+ * malloc reclaims from its own free list; avoiding brk/unmap churn). The slack for a small program is
+ * bounded by its first request rounded to a page, so `true`/`ls` don't pay node's 1 MiB. */
+#define NX_SBRK_CAP (1u << 20)   /* max over-allocation slack per grow: 1 MiB */
 void* sbrk(int incr) {
-	static char* cur = 0;
-	if (!cur)
-		cur = nx_brk(0);                   /* learn the initial break (NX_BRK_BASE) */
+	static char* base = 0;   /* initial break (heap start) */
+	static char* cur  = 0;   /* logical break returned to malloc */
+	static char* top  = 0;   /* actual kernel break; cur <= top always */
+	if (!base) {
+		base = nx_brk(0);                  /* learn the initial break (NX_BRK_BASE) */
+		cur = base; top = base;
+	}
+	if (incr == 0) return cur;
 	char* want = cur + incr;
-	char* got = nx_brk(want);
-	if (got != want) { errno = ENOMEM; return (void*) -1; }
+	if (incr > 0 && want > top) {
+		size_t need   = (size_t) (want - top);
+		size_t heapsz = (size_t) (cur - base);
+		size_t grow   = heapsz;                          /* geometric: grow by ~current heap size */
+		if (grow > NX_SBRK_CAP) grow = NX_SBRK_CAP;      /* but never over-allocate more than the cap */
+		if (grow < need)        grow = need;             /* always cover the actual request */
+		grow = (grow + 0xFFFu) & ~(size_t) 0xFFF;        /* page-align the kernel break */
+		char* newtop = top + grow;
+		char* got = nx_brk(newtop);
+		if (got != newtop) {                             /* near brkMax: fall back to exactly `want` */
+			got = nx_brk(want);
+			if (got != want) { errno = ENOMEM; return (void*) -1; }
+			top = want;
+		} else {
+			top = newtop;
+		}
+	}
+	/* incr < 0 (shrink): lower the logical break only; keep [want, top) mapped for the next grow. */
 	char* prev = cur;
 	cur = want;
 	return prev;
