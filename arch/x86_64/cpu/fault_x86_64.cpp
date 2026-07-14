@@ -20,6 +20,10 @@ namespace kernel {
 // Filled by the scheduler's stack-overflow canary (Scheduler.cpp); persisted here so an overflowed
 // task that goes on to fault names itself on the durable sink. Empty ("\0") when no overflow was seen.
 extern char g_kstackOverflowNote[];
+// Last-syscall diagnostic ring (defined in SyscallDispatch.cpp) — dumped on a kernel-mode fault.
+struct SyscallTrace { long nr; unsigned long a0, a1; char comm[16]; };
+extern volatile SyscallTrace g_syscallRing[16];
+extern volatile unsigned g_syscallRingHead;
 }
 
 namespace {
@@ -134,6 +138,21 @@ void faultHandler(kernel::Registers* r) {
     kernel::Console::write(" rdi=");
     kernel::Console::writeHex((unsigned long) r->rdi);
     kernel::Console::writeLine(" ***");
+    // Last-syscall ring: a kernel derail triggered mid-syscall (e.g. a user process hitting a bug in
+    // a syscall handler) is best explained by the last few syscalls that ran. Print them newest-last:
+    // nr + first two args + comm. Read-only global (SyscallDispatch.cpp); safe from any fault context.
+    {
+        unsigned head = kernel::g_syscallRingHead;
+        kernel::Console::writeLine("    last syscalls (nr a0 a1 comm), newest last:");
+        for (int i = 8; i >= 1; i--) {
+            unsigned idx = (head - (unsigned) i) & 15;
+            kernel::Console::write("      nr="); kernel::Console::writeHex((unsigned long) kernel::g_syscallRing[idx].nr);
+            kernel::Console::write(" a0="); kernel::Console::writeHex(kernel::g_syscallRing[idx].a0);
+            kernel::Console::write(" a1="); kernel::Console::writeHex(kernel::g_syscallRing[idx].a1);
+            kernel::Console::write(" "); kernel::Console::write((const char*) kernel::g_syscallRing[idx].comm);
+            kernel::Console::writeLine("");
+        }
+    }
     // Backtrace: scan the stack upward for values that fall inside the i915 kext's runtime .text
     // window and print them — a #GP/#PF in the driver then names its full call chain (map each via
     // the boot-log delta: link = runtime - 0x29aa1000). Cheap and read-only; the loader stack is

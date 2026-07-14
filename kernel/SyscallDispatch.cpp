@@ -455,12 +455,31 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 	}
 }
 
+// Last-syscall ring (diagnostic): the arch fault handler dumps it on a kernel-mode fault so a
+// derail triggered mid-syscall names the last few syscalls (nr + first two args + comm) that ran.
+// A single global ring — node dominates syscall traffic while it runs, so SMP noise is negligible.
+// (We are already inside namespace kernel here, so these are kernel::g_syscallRing{,Head}.)
+struct SyscallTrace { long nr; unsigned long a0, a1; char comm[16]; };
+volatile SyscallTrace g_syscallRing[16];
+volatile unsigned g_syscallRingHead = 0;
+
 // MI syscall dispatch: map a syscall number + args to the Syscalls core. The
 // arch trap (int 0x80 on x86) decodes registers and calls this.
 long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t a3,
 		uintptr_t a4, uintptr_t a5, arch::TrapFrame* tf) {
 	long ret = -38;   // -ENOSYS
 	Syscalls* g_sys = ProcTable::current()->sys;   // the running process's syscall state
+	{
+		unsigned h = kernel::g_syscallRingHead++ & 15;
+		kernel::g_syscallRing[h].nr = nr;
+		kernel::g_syscallRing[h].a0 = (unsigned long) a0;
+		kernel::g_syscallRing[h].a1 = (unsigned long) a1;
+		if (Process* cp = ProcTable::current()) {
+			int i = 0;
+			for (; i < 15 && cp->comm[i]; i++) kernel::g_syscallRing[h].comm[i] = cp->comm[i];
+			kernel::g_syscallRing[h].comm[i] = 0;
+		}
+	}
 	switch (nr) {
 	case SYS_exit:
 		// A non-last thread of a multithreaded process exits just THIS thread (CLEARTID wake +

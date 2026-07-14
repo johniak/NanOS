@@ -186,6 +186,12 @@ node:
 	cp -R user/libc-glue/include/. "$(SDK_TC)/$(NODE_TRIPLE)/include/"
 	cp kernel/SyscallNr.h            "$(SDK_TC)/$(NODE_TRIPLE)/include/SyscallNr.h"
 	cp user/libc-glue/nx-dllimport.h "$(SDK_TC)/$(NODE_TRIPLE)/include/nx-dllimport.h"
+	# nx-node.ld = the default nx.ld + a bracketed .ctors/.init_array collection: node's toolchain
+	# emits legacy .ctors, and the stock nx.ld leaves them unbracketed so crt0 runs no C++ static
+	# constructor (V8 globals stay null -> #PF in bootstrap). Staged AS the default script (the gcc
+	# spec's %{!T:-T nx.ld}) rather than injected via -Wl,-T, because ld resets the collected
+	# section's LMA to the base under -T but not as the default script. See ports/node/nx-node.ld.
+	cp ports/node/nx-node.ld         "$(SDK_TC)/$(NODE_TRIPLE)/lib/nx.ld"
 	cp $(BINFOLDER)libc.ndl.a        "$(SDK_TC)/$(NODE_TRIPLE)/lib/libc.a"
 	cp $(BINFOLDER)libc.ndl          "$(SDK_TC)/$(NODE_TRIPLE)/lib/libc.ndl"
 	cp $(BINFOLDER)crt0.o            "$(SDK_TC)/$(NODE_TRIPLE)/lib/crt0.o"

@@ -195,6 +195,12 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	new->tsd          = tsd;                 /* per-thread pthread_setspecific storage (zeroed) */
 	new->detach_state = (attr._a_detach == PTHREAD_CREATE_DETACHED) ? DT_DETACHED : DT_JOINABLE;
 	new->tid          = -1;                  /* kernel overwrites via PARENT/CHILD_SETTID */
+	/* Self-point the robust-mutex list head (musl's __pthread_create does the same). pthread_mutex
+	 * lock/unlock splice each held mutex onto self->robust_list; the empty-list sentinel is the head
+	 * pointing at itself. Left 0 by the memset above, the first mutex lock on this thread writes
+	 * head->prev at -0x8(NULL) and #PFs (cr2=-8) — the main thread is fine because nx_tls.c sets it,
+	 * but every V8/node worker thread created here hit this on its first std::mutex lock. */
+	new->robust_list.head = &new->robust_list.head;
 
 	stargs->start_func = entry;
 	stargs->start_arg  = arg;
