@@ -65,6 +65,11 @@
 #define SIOCADDRT      0x890B
 #define SIOCDELRT      0x890C
 
+/* extern "C" so C++ ports (node/V8, libuv tty) reference the unmangled ioctl libc-glue defines with
+ * C linkage — otherwise the C++ call mangles to _Z5ioctlimz and links to address 0. */
+#ifdef __cplusplus
+extern "C"
+#endif
 int ioctl(int fd, unsigned long request, ...);
 
 #endif /* _NANOS_SYS_IOCTL_H */

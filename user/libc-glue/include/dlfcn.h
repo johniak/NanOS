@@ -4,6 +4,12 @@
 #ifndef _NANOS_DLFCN_H
 #define _NANOS_DLFCN_H
 
+/* extern "C" so C++ ports (node/V8 native-addon glue) reference the unmangled dl* symbols libc-glue
+ * defines with C linkage — without this the C++ call mangles to _Z6dlopen... and links to address 0. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define RTLD_LAZY   0x1
 #define RTLD_NOW    0x2
 #define RTLD_LOCAL  0x0
@@ -27,5 +33,9 @@ typedef struct {
 	void*       dli_saddr;   /* nearest symbol address */
 } Dl_info;
 int dladdr(const void* addr, Dl_info* info);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

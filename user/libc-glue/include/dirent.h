@@ -11,6 +11,12 @@
 
 #include <sys/types.h>
 
+/* extern "C" so C++ ports (node/V8) reference the unmangled readdir/closedir/dirfd/fdopendir/scandir
+ * libc-glue defines with C linkage — otherwise the C++ calls mangle and link to address 0. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct dirent {
 	unsigned long d_ino;
 	unsigned char d_type;
@@ -45,5 +51,9 @@ long telldir(DIR* dir);
 int scandir(const char* dir, struct dirent*** namelist,
             int (*sel)(const struct dirent*),
             int (*cmp)(const struct dirent**, const struct dirent**));
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _NX_DIRENT_H */

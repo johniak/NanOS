@@ -7,7 +7,18 @@
  */
 #pragma once
 
+/* syscall() is a C-linkage libc symbol (posixstubs.c). It MUST be declared extern "C" so C++ ports
+ * (node/V8) reference the unmangled `syscall`, not the C++-mangled `_Z7syscalllz` — the latter is
+ * undefined and links to address 0, so the first C++ `syscall(...)` call jumps to 0 and #PFs at
+ * rip=0 (node_credentials HasOnly → syscall(SYS_capget) was the first hit). C ports are unaffected
+ * either way; the guard just makes the declaration correct for both languages. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 long syscall(long number, ...);
+#ifdef __cplusplus
+}
+#endif
 
 /* The kernel's Linux-x86_64 SYS_* numbers (its __x86_64__ section applies here). Staged into the
  * sysroot include by the port's sysroot-refresh step. */

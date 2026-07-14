@@ -300,6 +300,19 @@ ssize_t writev(int fd, const struct iovec* iov, int n) {
 	}
 	return total;
 }
+/* readv: scatter-gather read emulated over read() — the mirror of writev above. libuv reads pipe
+ * and socket payloads through readv; fill each iov in turn, stop at a short read/EOF. */
+ssize_t readv(int fd, const struct iovec* iov, int n) {
+	ssize_t total = 0;
+	for (int i = 0; i < n; i++) {
+		if (iov[i].iov_len == 0) continue;
+		int r = read(fd, iov[i].iov_base, (int) iov[i].iov_len);
+		if (r < 0) return total ? total : r;
+		total += r;
+		if (r < (int) iov[i].iov_len) break;   // short read / EOF
+	}
+	return total;
+}
 /* raise(3): defined here (not pulled from picolibc) because picolibc's signal.c bundles
  * raise WITH signal, which we override — so importing raise would drag a conflicting signal.
  * As a glue symbol it is auto-excluded from the picolibc auto-export. */

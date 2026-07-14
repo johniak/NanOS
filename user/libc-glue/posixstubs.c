@@ -701,3 +701,144 @@ int clock_nanosleep(clockid_t clk, int flags, const struct timespec *req, struct
 	}
 	return nanosleep(&rel, rem) == 0 ? 0 : errno;
 }
+
+/* ==== Node/V8 + libuv port: GLOBAL (strong) libc symbols node calls that picolibc/libc-glue lacked.
+ * node links with unresolved symbols left at address 0 (weak V8 hooks like pkey_ and _ITM_ are
+ * guarded by the caller and safely stay 0); a STRONG symbol node actually calls must be defined or
+ * the call jumps to 0 and #PFs at rip=0. These fill that set. ============================== */
+#include <dirent.h>
+#include <stdint.h>
+
+/* dup3(2): dup2 + atomically set O_CLOEXEC on the new fd. libuv uses it to relocate its io fds with
+ * close-on-exec. NanOS has no atomic dup3 syscall, so dup2 then fcntl — close enough (single-thread
+ * fd table on the hot path). Unlike dup2, dup3 requires oldfd != newfd (EINVAL otherwise). */
+int dup3(int oldfd, int newfd, int flags) {
+	if (oldfd == newfd) { errno = EINVAL; return -1; }
+	if (dup2(oldfd, newfd) < 0) return -1;
+	if (flags & O_CLOEXEC) fcntl(newfd, F_SETFD, FD_CLOEXEC);
+	return newfd;
+}
+
+/* pipe2(2): pipe + apply O_NONBLOCK/O_CLOEXEC. libuv creates every internal pipe this way. */
+int pipe2(int fds[2], int flags) {
+	if (pipe(fds) < 0) return -1;
+	if (flags & O_NONBLOCK) {
+		fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
+		fcntl(fds[1], F_SETFL, fcntl(fds[1], F_GETFL, 0) | O_NONBLOCK);
+	}
+	if (flags & O_CLOEXEC) {
+		fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+		fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+	}
+	return 0;
+}
+
+/* madvise(2): every NanOS mapping is eagerly backed and never reclaimed, so all advice (DONTNEED,
+ * FREE, WILLNEED, ...) is a safe no-op. V8's heap and libuv pass advice for pages they no longer
+ * need; honouring it is optional. */
+int madvise(void* addr, size_t length, int advice) { (void) addr; (void) length; (void) advice; return 0; }
+
+/* inotify: file-change notification is OFF by decision (electron-platform.md — launchers set
+ * CHOKIDAR_USEPOLLING=1). Report ENOSYS so libuv's fs-event backend cleanly reports "unsupported"
+ * and callers fall back to polling; nothing on node's startup path opens a watch. */
+int inotify_init1(int flags) { (void) flags; errno = ENOSYS; return -1; }
+int inotify_add_watch(int fd, const char* path, uint32_t mask) { (void) fd; (void) path; (void) mask; errno = ENOSYS; return -1; }
+int inotify_rm_watch(int fd, int wd) { (void) fd; (void) wd; errno = ENOSYS; return -1; }
+
+/* scandir(3): read a directory into a malloc'd, optionally-filtered+sorted array (over opendir/
+ * readdir). NanOS's struct dirent is a fixed 256-byte record, so each entry is a flat copy. */
+int scandir(const char* dirp, struct dirent*** namelist,
+            int (*sel)(const struct dirent*),
+            int (*cmp)(const struct dirent**, const struct dirent**)) {
+	DIR* d = opendir(dirp);
+	if (!d) return -1;
+	struct dirent** list = 0; size_t cap = 0, n = 0; struct dirent* ent;
+	while ((ent = readdir(d)) != 0) {
+		if (sel && !sel(ent)) continue;
+		if (n == cap) {
+			size_t ncap = cap ? cap * 2 : 16;
+			struct dirent** nl = (struct dirent**) realloc(list, ncap * sizeof *nl);
+			if (!nl) goto oom;
+			list = nl; cap = ncap;
+		}
+		struct dirent* copy = (struct dirent*) malloc(sizeof *copy);
+		if (!copy) goto oom;
+		memcpy(copy, ent, sizeof *copy);
+		list[n++] = copy;
+	}
+	closedir(d);
+	if (cmp) qsort(list, n, sizeof *list, (int (*)(const void*, const void*)) cmp);
+	*namelist = list;
+	return (int) n;
+oom:
+	closedir(d);
+	for (size_t i = 0; i < n; i++) free(list[i]);
+	free(list);
+	errno = ENOMEM;
+	return -1;
+}
+
+/* getgrgid_r/getgrnam_r: reentrant wrappers over the non-reentrant getgrgid/getgrnam (grp_shadow.c),
+ * packing the result into the caller's buffer (mirrors getpwuid_r in pwd_grp.c). node reads the
+ * group db for os.userInfo()/process.getgroups(). "Not found" is `return 0` with *result=NULL. */
+static int gr_copy(struct group* src, struct group* grp, char* buf, size_t buflen, struct group** result) {
+	*result = 0;
+	if (!src) return 0;   /* not found — POSIX: success with NULL result */
+	int nmem = 0;
+	if (src->gr_mem) while (src->gr_mem[nmem]) nmem++;
+	const char* name = src->gr_name   ? src->gr_name   : "";
+	const char* pass = src->gr_passwd ? src->gr_passwd : "";
+	size_t need = ((size_t) nmem + 1) * sizeof(char*) + strlen(name) + 1 + strlen(pass) + 1;
+	for (int i = 0; i < nmem; i++) need += strlen(src->gr_mem[i]) + 1;
+	if (need > buflen) return ERANGE;
+	char* p = buf;
+	char** mem = (char**) p; p += ((size_t) nmem + 1) * sizeof(char*);
+	size_t l;
+	grp->gr_name = p; l = strlen(name) + 1; memcpy(p, name, l); p += l;
+	grp->gr_passwd = p; l = strlen(pass) + 1; memcpy(p, pass, l); p += l;
+	for (int i = 0; i < nmem; i++) { l = strlen(src->gr_mem[i]) + 1; memcpy(p, src->gr_mem[i], l); mem[i] = p; p += l; }
+	mem[nmem] = 0;
+	grp->gr_mem = mem;
+	grp->gr_gid = src->gr_gid;
+	*result = grp;
+	return 0;
+}
+int getgrgid_r(gid_t gid, struct group* grp, char* buf, size_t buflen, struct group** result) {
+	return gr_copy(getgrgid(gid), grp, buf, buflen, result);
+}
+int getgrnam_r(const char* name, struct group* grp, char* buf, size_t buflen, struct group** result) {
+	return gr_copy(getgrnam(name), grp, buf, buflen, result);
+}
+
+/* pthread_atfork: NanOS runs no registered fork handlers (documented pthread limitation). Accept and
+ * ignore — node registers handlers for its own bookkeeping; not running them is benign here. */
+int pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void)) {
+	(void) prepare; (void) parent; (void) child; return 0;
+}
+
+/* __cxa_pure_virtual: the C++ ABI handler invoked if a pure-virtual method is called (a program
+ * bug). libstdc++ normally provides it; it is weak-undefined in the node link, so define it so such
+ * a call aborts cleanly instead of jumping to address 0. */
+void __cxa_pure_virtual(void) { abort(); }
+
+/* libstdc++.a was compiled against an EARLIER NanOS sysroot whose <sys/ioctl.h>/<dirent.h> lacked
+ * extern "C", so std::__basic_file<char> (ioctl FIONREAD) and std::filesystem::_Dir (readdir/
+ * closedir/dirfd/fdopendir) reference the C++-MANGLED spellings of these C libc functions and would
+ * otherwise link to address 0. The headers are now fixed, so a freshly-built libstdc++ links the
+ * unmangled names and these wrappers go unused — but the shipped libstdc++.a still needs them. Each
+ * is a thin, signature-identical forwarder EXPORTED under the mangled name via a GCC asm-label (a
+ * real STT_FUNC symbol so mknx --export-all publishes it; a cross-object `.set` alias does not link
+ * because the target lives in another object). Safe to remove once libstdc++ is rebuilt. */
+struct dirent* nx__alias_readdir(DIR* d)   __asm__("_Z7readdirP11__dirstream");
+struct dirent* nx__alias_readdir(DIR* d)   { return readdir(d); }
+int            nx__alias_closedir(DIR* d)  __asm__("_Z8closedirP11__dirstream");
+int            nx__alias_closedir(DIR* d)  { return closedir(d); }
+int            nx__alias_dirfd(DIR* d)     __asm__("_Z5dirfdP11__dirstream");
+int            nx__alias_dirfd(DIR* d)     { return dirfd(d); }
+DIR*           nx__alias_fdopendir(int fd) __asm__("_Z9fdopendiri");
+DIR*           nx__alias_fdopendir(int fd) { return fdopendir(fd); }
+/* std::__basic_file only ever calls ioctl(fd, FIONREAD, &n) — a single pointer arg (passed in rdx,
+ * exactly where a fixed 3rd parameter lands), so forwarding one arg is ABI-correct for that caller. */
+extern int     ioctl(int fd, unsigned long request, ...);   /* defined in syscalls.c */
+int            nx__alias_ioctl(int fd, unsigned long req, void* arg) __asm__("_Z5ioctlimz");
+int            nx__alias_ioctl(int fd, unsigned long req, void* arg) { return ioctl(fd, req, arg); }

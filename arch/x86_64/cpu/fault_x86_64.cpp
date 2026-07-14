@@ -52,6 +52,22 @@ void faultHandler(kernel::Registers* r) {
         if (kernel::Process* cp = kernel::ProcTable::current()) {
             kernel::Console::write(" proc="); kernel::Console::write(cp->comm);
         }
+        // Caller trace for a NULL indirect call (`call *0` faults with rip=0): the CPU pushed the
+        // return address onto the stack BEFORE the jump to 0 faulted, so [rsp] is a live, mapped word
+        // naming the caller site (addr2line it against the .nxe). Safe to deref: we only touch words
+        // in rsp's OWN page (which must be present — the CPU just wrote to it) and only when rsp sits
+        // in the user VA window, so a corrupt rsp can never fault the kernel from inside this handler.
+        {
+            unsigned long sp = (unsigned long) r->rsp;
+            if (sp >= 0x800000UL && sp < 0x10000000UL && (sp & 7) == 0) {
+                unsigned long pageEnd = (sp | 0xFFFUL) + 1;
+                kernel::Console::write(" stk=");
+                for (int i = 0; i < 4 && sp + 8 <= pageEnd; i++, sp += 8) {
+                    kernel::Console::writeHex(*(const unsigned long*) sp);
+                    kernel::Console::write(",");
+                }
+            }
+        }
         kernel::Console::writeLine("]");
         // Tee the same line to the persistent panic sink so the nwm-death mask (a user #PF while nwm
         // owns the graphics VT — the fbcon text above is NOT scanned out) leaves cr2/rip/comm on the
@@ -69,6 +85,11 @@ void faultHandler(kernel::Registers* r) {
                 panicAppend(line, sizeof line, &pos, "cr2=", (unsigned long) kernel::readCr2());
             panicAppend(line, sizeof line, &pos, "rip=", (unsigned long) r->rip);
             panicAppend(line, sizeof line, &pos, "rsp=", (unsigned long) r->rsp);
+            {   // caller site for a NULL indirect call (see the screen-print rationale above)
+                unsigned long sp = (unsigned long) r->rsp;
+                if (sp >= 0x800000UL && sp < 0x10000000UL && (sp & 7) == 0)
+                    panicAppend(line, sizeof line, &pos, "ret=", *(const unsigned long*) sp);
+            }
             if (kernel::Process* cp = kernel::ProcTable::current()) {
                 for (const char* s = "comm="; *s && pos < (int) sizeof line - 1; s++) line[pos++] = *s;
                 for (const char* s = cp->comm; *s && pos < (int) sizeof line - 2; s++) line[pos++] = *s;

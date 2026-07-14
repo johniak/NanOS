@@ -21,6 +21,11 @@ struct dl_phdr_info {
 	Elf64_Half         dlpi_phnum;   /* number of program headers */
 };
 
+/* extern "C" so C++ ports (node/V8) reference the unmangled dl_iterate_phdr libc-glue defines with C
+ * linkage — otherwise the C++ call mangles and links to address 0. */
+#ifdef __cplusplus
+extern "C"
+#endif
 int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *info, size_t size, void *data),
                     void *data);
 

@@ -4,6 +4,21 @@
 set -u
 : "${NX_BASE:=x86_64-nanos-g++}"
 
+# NanOS ctor bracketing: the target link must use a script that collects .ctors/.init_array
+# contiguously and defines __nx_{init_array,ctors}_{start,end} — the symbols user/crt064.S reads to
+# run C++ static constructors. gyp's default link leaves node's .ctors unbracketed, so NONE of V8/
+# node's static initializers run (per_process::system_environment stays null -> #PF in bootstrap).
+# We inject -T only on a LINK (no -c), and only for a target link (this wrapper is the target CXX;
+# host tools like torque/mksnapshot use the host compiler, so they never reach here).
+NX_LDSCRIPT="$(cd "$(dirname "$0")" && pwd)/nx-node.ld"
+
+is_link=1
+for a in "$@"; do
+	case "$a" in
+		-c|-E|-S|-M|-MM) is_link=0 ;;
+	esac
+done
+
 args=()
 for a in "$@"; do
 	case "$a" in
@@ -12,4 +27,8 @@ for a in "$@"; do
 		*) args+=("$a") ;;
 	esac
 done
+
+if [ "$is_link" = 1 ] && [ -f "$NX_LDSCRIPT" ]; then
+	exec "$NX_BASE" "${args[@]}" -Wl,-T,"$NX_LDSCRIPT"
+fi
 exec "$NX_BASE" "${args[@]}"
