@@ -159,9 +159,22 @@ Before marking success:
 - [ ] Window close leaves no zombie processes (`ps` in guest).
 - [ ] Idle MarkText does not consume runaway CPU.
 
+## Stage Demo
+
+Demo app: **MarkText itself** — the acceptance app is the demo. Demo scenario, using only
+already-existing desktop pieces plus the new stack: stage this repo's
+`docs/superpowers/plans/2026-07-07-electron-marktext/README.md` on the image as
+`/disks/main/home/jan/Documents/electron-plan.md`, map `.md` → MarkText in
+`/disks/main/nanos/config/associations.conf` (existing mechanism, see `docs/en/windowing.md`),
+double-click the file in the Files app, edit a line, save, reopen — the OS editing its own plan.
+Covered by `scripts/smoke-marktext.sh` + the Task 6.7 manual checklist (the association-launch
+path is already its first item); take one screenshot for `docs/en/marktext.md`.
+
 ## Gate
 
 - [ ] `make marktext` builds + packages reproducibly.
+- [ ] Stage demo done: `.md` association opens MarkText from the Files app; screenshot saved for
+  `docs/en/marktext.md`.
 - [ ] `scripts/smoke-marktext.sh` green (and proven able to fail).
 - [ ] Manual checklist all ticked.
 - [ ] All MarkText-specific limitations documented in `ports/marktext/NANOS_NOTES.md`.

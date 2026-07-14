@@ -415,10 +415,32 @@ Electron/Chromium has a Linux sandbox model NanOS does not provide.
 - [ ] The flag lives in runtime launch defaults (plan 05 launcher), never per-app.
 - [ ] Create a follow-up note (one line in the doc) for a real NanOS sandbox later.
 
+## Stage Demo
+
+Demo app: **uv-echo** — the canonical libuv TCP echo-server example running on NanOS.
+
+Why libuv: it is open source, it is the exact first consumer of the new primitives (epoll +
+eventfd; timers via `epoll_wait` timeout, matching the Decisions), and plan 02 builds the same
+pinned libuv inside Node anyway — nothing here is throwaway. It reuses only existing pieces
+(SDK port flow, TCP/IP stack, nsh) plus this stage's new syscalls.
+
+- [ ] Build libuv from the pinned Node checkout (`$SDK_WORK/node-src/deps/uv`) as a static lib in
+  the SDK container; link its `tcp-echo-server` example plus a 1 s `uv_timer` heartbeat into a
+  single `uvdemo.nxe` (`--server` / `--client` modes).
+- [ ] Demo scenario: start the server, run the client from a second guest process, see
+  `uv-echo: RTT OK` plus timer ticks on screen — the new event-loop syscalls visibly driving
+  Node's own event loop library.
+- [ ] Test: `scripts/smoke-uvdemo.sh` (house style) asserting the OK marker + timer marker,
+  proven able to fail.
+- [ ] Fallback (only if standalone libuv turns out to need real porting work, which would be
+  duplicated in plan 02): an in-tree `user/epollechod.c` echo server (~150 lines) exercising
+  epoll+eventfd the same way; record the reason in the status row.
+
 ## Gate
 
 - [ ] Gap matrix complete: every row has status + evidence; no `TBD` cells.
 - [ ] `eventfdtest`, `epolltest`, `mmapexectest`, `procselftest`, `shmdualtest` all print PASS in
   QEMU.
+- [ ] Stage demo green (`scripts/smoke-uvdemo.sh` or the recorded fallback).
 - [ ] `make test64` passes.
 - [ ] `status.md`: `M1 Platform Gap Matrix` checked, log row added.

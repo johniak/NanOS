@@ -106,10 +106,25 @@ Full Electron builds are too heavy for every PR:
 - [ ] Cache keys derive from `manifest/electron-stack.lock` content hash (any pin change =
   full rebuild). Document in `docs/en/electron-platform.md`.
 
+## Stage Demo
+
+Demo app: **electron-2048** — this IS the "third trivial app" of Task 7.5's fresh-eyes test, not
+extra work. Build it entirely from parts that already exist: the 2048 assets pinned and staged in
+plan 03 plus a ~10-line `main.js` opening a `BrowserWindow` on `index.html`, packaged with
+`package-app.sh` while following ONLY `docs/en/electron-apps.md`. It proves the packager is
+generic with essentially zero new code and leaves the desktop an open-source game.
+
+- [ ] `examples/electron-2048/` references the plan-03 staged assets (no forked copy).
+- [ ] Test (tests-for-everything rule): a minimal smoke — window opens, page-title/console marker
+  asserted, clean exit — either as `scripts/smoke-electron-2048.sh` or folded into
+  `make verify-electron`; record which.
+- [ ] Any place `docs/en/electron-apps.md` made you stumble gets fixed in the same commit.
+
 ## Final Acceptance
 
 - [ ] `make verify-electron` passes end to end.
 - [ ] MarkText launches and passes open/edit/save/reopen.
 - [ ] `electron-notes-smoke` proves the stack is generic.
-- [ ] Documentation lets a junior package a third Electron app (validated in Task 7.5).
+- [ ] Documentation lets a junior package a third Electron app (validated in Task 7.5 via the
+  `electron-2048` stage demo).
 - [ ] `status.md` all milestones checked; `docs/superpowers/plans/README.md` updated to completed.

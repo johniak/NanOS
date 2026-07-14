@@ -42,6 +42,22 @@ execution protocol, entry criteria, and per-subplan gates.
 **External work dirs:**
 - `$(SDK_WORK)/chromium-src/` (checkout; build dir is `out/NanOS` inside it)
 
+## Stage Demo
+
+Demo app: **2048** (gabrielecirulli/2048, MIT — plain HTML/CSS/JS, no build step) playable in the
+NanOS content shell. It exercises rendering, JavaScript, CSS animation, and keyboard input through
+the new Ozone/nanos backend in one visible app, and needs nothing beyond static file loading.
+
+- [ ] Pin the 2048 repo (exact commit + sha256) in `manifest/electron-stack.lock`; stage its
+  files under `/disks/main/apps/2048/` (staging rule like `disk-content/www`).
+- [ ] Demo scenario: `content_shell.nxe --no-sandbox file:///apps/2048/index.html` opens a NanWM
+  window; arrow keys play the game.
+- [ ] Test: an assertable marker (a one-line staged wrapper page that `console.log`s a marker and
+  embeds/links the game, or the page title) added to `scripts/smoke-chromium-content.sh`; plus
+  one screenshot for `docs/en/chromium-port.md`.
+- [ ] Reuse forward: the same staged assets become plan 07's `electron-2048` third-app demo —
+  do not fork them.
+
 ## Plan-Level Gate (all subplans complete)
 
 - [ ] `gn gen` and `ninja` are reproducible from a clean checkout.
@@ -50,6 +66,7 @@ execution protocol, entry criteria, and per-subplan gates.
 - [ ] Window/input/rendering path is NanOS-owned (Ozone/nanos), documented, and not
   MarkText-specific.
 - [ ] `scripts/smoke-chromium-content.sh` is green and proven able to fail.
+- [ ] Stage demo green: 2048 loads and reacts to arrow keys (marker asserted, screenshot taken).
 - [ ] `status.md`: `M3 Chromium Content` checked, log row added.
 
 ## Coordinator Checklist

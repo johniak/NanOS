@@ -51,6 +51,12 @@ or NanOS platform-gap plans.
 - **Use the existing NanOS stack first.** Display/input should target NanWM/DRM through existing
   devices and libraries where possible; add kernel APIs only when Chromium/Electron actually needs
   a Linux-compatible primitive.
+- **Every stage ends with a visible demo.** Each child plan has a `Stage Demo` section naming one
+  small application — newly written or an existing open-source one — that shows that stage's layer
+  working. A demo may use only what NanOS already has plus the pieces this stage adds; it must
+  never depend on later stages or require significant extra work. The demo (and its smoke
+  assertion) is part of the stage gate. The chosen demos are summarized in the Stage Demos table
+  below.
 - **Every change or addition ships with written tests — no exceptions.** Any new kernel API,
   syscall, libc-glue function, script, or build target lands in the same commit as its tests:
   host unit tests in `tests/` where the logic is host-testable, a `user/<name>.c` microtest plus
@@ -120,6 +126,22 @@ Parallelism allowed:
 | M5 Packager | A second trivial Electron app packages without runtime changes. |
 | M6 MarkText Build | MarkText JS bundle and native/runtime bundle build reproducibly. |
 | M7 MarkText Run | MarkText launches, opens/edits/saves markdown, and restart preserves the file. |
+
+## Stage Demos
+
+One per stage; details live in each child plan's `Stage Demo` section. Every demo uses only
+already-existing NanOS pieces plus that stage's new layer.
+
+| Stage | Demo | Existing pieces it reuses |
+|---|---|---|
+| 00 Contract | `scripts/electron/show-stack.sh` prints + hash-verifies the pinned stack | shell, `$SDK_WORK` |
+| 01 Platform gaps | **uv-echo**: libuv (open source, Node's own event loop) TCP echo server + timer on the new epoll/eventfd | SDK port flow, TCP/IP stack, nsh |
+| 02 Node/V8 | **http-server** (npm, pure JS) on `node.nxe` serving `disk-content/www`, browsed with the existing NetSurf | network stack, NetSurf, www assets |
+| 03 Chromium content | **2048** (gabrielecirulli/2048, MIT, plain HTML/JS) playable in the content shell | NanWM window/input, image staging |
+| 04 Electron runtime | **electron-hello** (Task 4.3) showing `process.versions` in its window | libnw/NanWM, `/tmp`, serial log |
+| 05 Packager | **electron-notes-smoke** (Task 5.5): type a note, relaunch, note survives | packager only — that is the point |
+| 06 MarkText | **MarkText** opening this repo's staged `README.md` from the Files app via `.md` association | Files app (rsexp), `associations.conf` |
+| 07 Verification | **electron-2048**: the plan-03 2048 assets wrapped as the "third app" using only `docs/en/electron-apps.md` | 2048 assets, `package-app.sh`, docs |
 
 ## Definition Of Done
 

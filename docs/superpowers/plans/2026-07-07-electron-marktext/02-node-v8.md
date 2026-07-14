@@ -229,8 +229,26 @@ Expected output: `42`.
 - [ ] `child_process`: verify `node.nxe -e "require('child_process').execSync('ls /')"` prints a
   listing (fork/exec exist; this mostly tests libuv spawn on NanOS). Record result.
 
+## Stage Demo
+
+Demo app: **http-server** (npm, pure JavaScript, MIT) running on `node.nxe`, browsed with the
+already-ported NetSurf — NanOS serves itself a web page.
+
+- [ ] Pin an exact `http-server` version (version + integrity hashes via a committed
+  `package-lock.json` under `ports/node/demo/`; hashes referenced from
+  `manifest/electron-stack.lock`). Install `node_modules` on the host, stage under
+  `/disks/main/apps/node-httpd/` (staging rule like `disk-content/www`).
+- [ ] Demo scenario: in the guest run
+  `node.nxe /apps/node-httpd/node_modules/.bin/http-server -p 8080 /disks/main/www`, then open
+  `http://127.0.0.1:8080` in NetSurf — the existing www page renders, served by Node on the same
+  machine. If loopback proves unsupported, use the guest `wget` against the NIC address instead
+  and record that in the status row.
+- [ ] Test: extend `scripts/smoke-node.sh` (or add `scripts/smoke-node-httpd.sh`, house style)
+  with a guest `wget http://127.0.0.1:8080` asserting a body marker from the served page.
+
 ## Gate
 
+- [ ] Stage demo green (http-server serves, wget/NetSurf fetch asserted).
 - [ ] `make node` builds `node.nxe` reproducibly from a clean `$SDK_WORK/node-src`.
 - [ ] `node.nxe -e "console.log(1 + 2)"` prints `3` on NanOS.
 - [ ] `scripts/smoke-node.sh` passes (and failed once on a deliberate bad marker).

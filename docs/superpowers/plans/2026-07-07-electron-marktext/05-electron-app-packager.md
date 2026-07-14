@@ -193,9 +193,17 @@ contextBridge.exposeInMainWorld('notes', {
   modes (with triage-script pointers).
 - [ ] Link from `docs/en/writing-apps.md`.
 
+## Stage Demo
+
+Demo app: **electron-notes-smoke** (Task 5.5) is this stage's demo — a real, tiny notes app a
+user can launch from the desktop, type into, and whose note survives relaunch. No extra app.
+`scripts/smoke-electron-packager.sh` is its test. For the milestone record, take one screenshot
+of the reloaded note after app restart (the round-trip made visible) for `docs/en/electron-apps.md`.
+
 ## Gate
 
 - [ ] `electron-hello` AND `electron-notes-smoke` both package with the generic packager.
+- [ ] Stage demo screenshot (note reloaded after restart) saved for `docs/en/electron-apps.md`.
 - [ ] `scripts/smoke-electron-packager.sh` green (and proven able to fail).
 - [ ] No packager code mentions MarkText except in examples/docs.
 - [ ] A junior can follow `docs/en/electron-apps.md` to package a third tiny app.

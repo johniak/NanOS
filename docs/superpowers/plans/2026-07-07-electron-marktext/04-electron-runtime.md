@@ -168,9 +168,19 @@ Unsupported Electron APIs" with the runtime behavior (silent no-op forbidden —
 - [ ] Gate: a deliberate `process.crash()` in a test app produces a readable artifact and does
   not wedge the desktop (NanWM keeps running, window disappears).
 
+## Stage Demo
+
+Demo app: **electron-hello** (Task 4.3) is this stage's demo — do not create anything extra.
+One demo-only touch: render `process.versions.electron/chrome/node` (exposed via the existing
+preload bridge) under the status line in `index.html`, so the milestone screenshot literally shows
+which Electron/Chromium/Node run on NanOS. Covered by `scripts/smoke-electron-hello.sh` (add one
+assertion that the versions line is non-empty); no separate demo test needed.
+
 ## Gate
 
 - [ ] `electron.nxe --version` works under NanOS.
+- [ ] Stage demo: screenshot of electron-hello showing the versions line, saved for
+  `docs/en/electron-runtime.md`.
 - [ ] `scripts/smoke-electron-hello.sh` green (window + IPC + file write + clean exit).
 - [ ] Runtime install is shared and app-independent; no MarkText references anywhere in
   `ports/electron/`.

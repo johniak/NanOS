@@ -197,6 +197,18 @@ Expected behavior:
 - [ ] Create `scripts/electron/README.md`: one paragraph saying these scripts are the
   Electron-stack build entry points and that big sources live in `$SDK_WORK` (never the repo).
 
+## Stage Demo
+
+This stage is paper-only, so the demo makes the paper visible and checkable:
+
+- [ ] `scripts/electron/show-stack.sh` — reads `manifest/electron-stack.lock` and prints a
+  human-readable table (`component | version | commit | sha256`), and for every source archive
+  already present in `$SDK_WORK` re-verifies its SHA256. No network access.
+- [ ] Paste its output into the Source Pins section of `docs/en/electron-platform.md` so the
+  pinned stack is readable without opening the lock file.
+- [ ] Test (tests-for-everything rule): against a lock with one corrupted hash it must exit
+  non-zero; prove this once and note it in the commit message.
+
 ## Gate
 
 Run these; all must succeed:

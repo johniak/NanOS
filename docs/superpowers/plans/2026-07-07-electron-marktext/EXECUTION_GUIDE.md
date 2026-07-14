@@ -106,7 +106,9 @@ the same commit that lands your change.
 - File associations live at `/disks/main/nanos/config/associations.conf`, edited in
   Settings → Default Apps (see `docs/en/windowing.md`). There is **no** `config/etc/associations.conf`.
 - Example Electron apps live in the repo under `examples/` (`examples/electron-hello/`,
-  `examples/electron-notes-smoke/`); smoke pages under `disk-content/`.
+  `examples/electron-notes-smoke/`, `examples/electron-2048/` — plan 07's stage demo); smoke
+  pages under `disk-content/`. Every child plan also names a **Stage Demo** (see the README
+  table) that is part of its gate.
 
 ## First Session Checklist
 
