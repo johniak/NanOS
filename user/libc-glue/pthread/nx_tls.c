@@ -130,8 +130,13 @@ void *__nx_init_main_tls(void *image, size_t filesz, size_t memsz, size_t align)
 	 * the program's TLS path needs a per-thread locale here.) */
 	td->robust_list.head = &td->robust_list.head;
 	td->next = td->prev  = td;
-	{ long tid; __asm__ __volatile__("syscall" : "=a"(tid) : "a"((long)224) : "rcx","r11","memory");
-	  td->tid = (int)tid; }                /* SYS_gettid (x86_64) */
+	{ long tid; __asm__ __volatile__("syscall" : "=a"(tid) : "a"((long)186) : "rcx","r11","memory");
+	  td->tid = (int)tid; }                /* SYS_gettid — x86_64 = 186 (NOT 224, which is i386's
+	                                        * gettid). 224 returned -ENOSYS, so the main thread's tid
+	                                        * was -38; a non-NORMAL mutex (libuv ERRORCHECK) then saw
+	                                        * own=(tid&0x3fffffff) != self->tid and returned EPERM, so
+	                                        * uv_mutex_unlock abort()ed. Normal mutexes skip the owner
+	                                        * check, which is why the pthread port passed with 224. */
 
 	if (__set_thread_area(td) < 0) return 0;
 	return td;
