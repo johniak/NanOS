@@ -164,7 +164,7 @@ static void stageMarkUsable(void*, uint64_t base, uint64_t len) {
 // it into the process's private USER frames at the same VA. STAGE_CAP matches kernel/Exec.cpp (32
 // MiB) and the 32 MiB staging band reserved in mmu_x86_64.cpp.
 static const unsigned STAGE_BASE = 0x800000;
-static const unsigned STAGE_CAP  = 0x2000000;  // 32 MiB
+static const unsigned STAGE_CAP  = 0x8000000;  // 128 MiB (matches kernel/Exec.cpp + the mmu band)
 
 // Minimal staged fd table for init.nxe. 0/1/2 are the console; >= 3 are files open on the Vfs.
 struct StageFd { bool used; String path; unsigned off; };

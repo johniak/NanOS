@@ -56,6 +56,27 @@ int pthread_attr_getstacksize(const pthread_attr_t *a, size_t *size)
 	return 0;
 }
 
+/* pthread_attr_setstack/getstack — set/read the explicit stack base+size (V8 reads a thread's stack
+ * bounds via pthread_getattr_np + pthread_attr_getstack for its overflow checks). Same fields as the
+ * *stacksize pair. `stackaddr` is the LOW end of the stack region, per POSIX. */
+int pthread_attr_setstack(pthread_attr_t *a, void *stackaddr, size_t size)
+{
+	if (size < PTHREAD_STACK_MIN)
+		return EINVAL;
+	a->_a_stackaddr = (size_t) stackaddr + size;   /* musl stores the HIGH end internally */
+	a->_a_stacksize = size;
+	return 0;
+}
+
+int pthread_attr_getstack(const pthread_attr_t *a, void **stackaddr, size_t *size)
+{
+	if (!a->_a_stackaddr)
+		return EINVAL;                             /* no explicit stack set */
+	*size = a->_a_stacksize;
+	*stackaddr = (void *) (a->_a_stackaddr - a->_a_stacksize);  /* back to the LOW end */
+	return 0;
+}
+
 int pthread_attr_setguardsize(pthread_attr_t *a, size_t size)
 {
 	if (size > SIZE_MAX/8)

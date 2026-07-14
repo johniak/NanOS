@@ -63,9 +63,9 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 	// Re-reserve the windows the frame pool must never hand out.
 	fa.markRangeUsed(0, 0x100000);                                   // low mem + VGA
 	fa.markRangeUsed(0x100000, (uint64_t) (uintptr_t) &end - 0x100000); // kernel image
-	fa.markRangeUsed(VA_USER_BASE, 0x2000000);                     // exec staging window (32 MiB — must
-	                                                               // cover the largest staged .nxe; see
-	                                                               // kernel/Exec.cpp STAGE_CAP)
+	fa.markRangeUsed(VA_USER_BASE, 0x8000000);                     // exec staging window (128 MiB — must
+	                                                               // cover the largest staged .nxe, e.g.
+	                                                               // node ~61 MiB; see kernel/Exec.cpp STAGE_CAP)
 	// Kernel byte heap: carve ~25% off RAM, clamped to [8 MiB, 256 MiB]. It is laid out + first
 	// touched (heapInit, then `new AddressSpace` below) while ONLY the loader's temporary 1 GiB
 	// identity map is live, so the heap MUST sit within that first 1 GiB. Place it at the top of

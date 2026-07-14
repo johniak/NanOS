@@ -11,6 +11,7 @@
 #include "PagingControl.h"
 #include "FrameAllocator.h"
 #include "Interrupt64.h"        // kernel::Registers (x86_64 TrapFrame)
+#include "memory_manager.h"     // malloc/free (the 8 MiB stack's frame-tracking array)
 #include <string.h>
 #include <stdint.h>
 
@@ -19,11 +20,11 @@ extern "C" void bklExit();   // kernel/Bkl.cpp — drop the BKL on the one-way r
 
 namespace {
 // User window: image at loadBase=0x800000 growing up; stack at the top of the user window
-// (VA_USER_END, now 64 MiB — see arch/mmu.h). The 512 KiB stack stays within buildUserStack64's
-// stackFrames[128] (128 pages); the larger window only gives the IMAGE more room (big 64-bit
-// .nxe like NetSurf), not the stack.
+// (VA_USER_END, now 256 MiB — see arch/mmu.h). The stack is 8 MiB (V8's parser/compiler recurse
+// deeply, and pthread_getattr_np reports 8 MiB to callers) — too many pages for a kernel-stack
+// array, so archLoadUser tracks the frames on the heap.
 const uint64_t USER_STACK_TOP = arch::VA_USER_END;
-const uint64_t USER_STACK_BOT = arch::VA_USER_END - 0x80000;   // 512 KiB stack
+const uint64_t USER_STACK_BOT = arch::VA_USER_END - 0x800000;  // 8 MiB stack
 
 const uint32_t IA32_FS_BASE = 0xC0000100;
 inline void wrmsr(uint32_t msr, uint64_t v) {
@@ -64,8 +65,12 @@ uintptr_t archLoadUser(AddressSpace* space, uintptr_t loadBase, uintptr_t bssEnd
 		memcpy((void*) f, (void*) va, 0x1000);
 		mmuMap(space, va, f, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
 	}
-	uint64_t stackFrames[128];
-	int sfi = 0;
+	// The 8 MiB stack is 2048 pages — too many for a kernel-stack array, so track the frames on the
+	// heap. buildUserStack64 only writes near the TOP (argv/envp), but we map + track all of them so
+	// the whole stack is resident (NanOS has no demand paging).
+	uint64_t stackPages = (USER_STACK_TOP - USER_STACK_BOT) >> 12;
+	uint64_t* stackFrames = (uint64_t*) malloc(stackPages * sizeof(uint64_t));
+	uint64_t sfi = 0;
 	for (uint64_t va = USER_STACK_BOT; va < USER_STACK_TOP; va += 0x1000) {
 		uint64_t f = kernel::g_frames.alloc();
 		memset((void*) f, 0, 0x1000);
@@ -75,11 +80,13 @@ uintptr_t archLoadUser(AddressSpace* space, uintptr_t loadBase, uintptr_t bssEnd
 	auto stackPhys = [&](uint64_t va) -> uint64_t {
 		return stackFrames[(va - USER_STACK_BOT) >> 12] + (va & 0xFFFull);
 	};
-	return (uintptr_t) buildUserStack64(USER_STACK_TOP, argv, argc, envp, envc,
+	uintptr_t rsp = (uintptr_t) buildUserStack64(USER_STACK_TOP, argv, argc, envp, envc,
 		[&](uint64_t va, const void* src, unsigned len) {
 			const unsigned char* s = (const unsigned char*) src;
 			for (unsigned i = 0; i < len; i++) *(unsigned char*) stackPhys(va + i) = s[i];
 		});
+	free(stackFrames);
+	return rsp;
 }
 
 void archLoadModule(AddressSpace* space, uintptr_t base, const void* img, uintptr_t bytes) {

@@ -68,10 +68,11 @@ static const unsigned STAGE_BASE = 0x800000;
 // Lock order: g_execLock -> {VFS, frame allocator} (it reaches into them); nothing takes it inversely.
 static kernel::Spinlock g_execLock;
 #if defined(__x86_64__)
-// x86_64: 32 MiB. A 64-bit .nxe is ~2x its i686 size, so big apps (NetSurf ~16 MiB image+bss,
-// file ~8.3 MiB) overflowed 8 MiB. The mmu reserves a matching 32 MiB staging band at VA_USER_BASE
-// (arch/x86_64/mm/mmu_x86_64.cpp) and the user VA window was widened to 64 MiB (arch/mmu.h).
-static const unsigned STAGE_CAP  = 0x2000000;  // 32 MiB
+// x86_64: 128 MiB. A huge C++ .nxe like node/V8 is ~61 MiB on disk and overflowed the old 32 MiB
+// staging window. The mmu reserves a matching 128 MiB staging band at VA_USER_BASE
+// (arch/x86_64/mm/mmu_x86_64.cpp) and the user VA window is 256 MiB (arch/mmu.h). Keep the three
+// STAGE_CAP values (here, KernelStage64.cpp, the markRangeUsed reservation) in lockstep.
+static const unsigned STAGE_CAP  = 0x8000000;  // 128 MiB
 #else
 static const unsigned STAGE_CAP  = 0x800000;   // 8 MiB: matches the i686 per-process user window
 #endif

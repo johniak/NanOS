@@ -38,27 +38,32 @@ struct rusage {
 
 int getrusage(int who, struct rusage* usage);
 
+/* The rlimit + priority surface. In the normal userland build this is already provided by
+ * user/libc-glue/compat-decls.h (force-included), which defines RLIMIT_CPU — so this whole block is
+ * skipped there to avoid a redefinition. Values match compat-decls.h / the SDK sysroot. The node
+ * cross build does NOT force-include compat-decls.h, so it gets the surface from here. */
+#ifndef RLIMIT_CPU
 typedef unsigned long rlim_t;
 struct rlimit { rlim_t rlim_cur; rlim_t rlim_max; };
+#ifndef RLIM_INFINITY
 #define RLIM_INFINITY (~0UL)
+#endif
 #define RLIMIT_CPU     0
 #define RLIMIT_FSIZE   1
 #define RLIMIT_DATA    2
 #define RLIMIT_STACK   3
 #define RLIMIT_CORE    4
-#define RLIMIT_NOFILE  5
-#define RLIMIT_AS      6
-#define RLIMIT_NPROC   7
+#define RLIMIT_RSS     5
+#define RLIMIT_NPROC   6
+#define RLIMIT_NOFILE  7
 #define RLIMIT_MEMLOCK 8
-#define RLIMIT_RSS     9    /* resident set size (node_report iterates rlimits) */
+#define RLIMIT_AS      9
 #define RLIMIT_LOCKS   10
 #define RLIMIT_SIGPENDING 11
 #define RLIMIT_MSGQUEUE 12
 #define RLIMIT_NICE    13
 #define RLIMIT_RTPRIO  14
 #define RLIM_NLIMITS   15
-/* No rlim_t typedef: autoconf apps #define their own when missing, and the struct uses unsigned long
- * directly, so we avoid clashing with that. */
 int getrlimit(int, struct rlimit*);
 int setrlimit(int, const struct rlimit*);
 #define PRIO_PROCESS 0
@@ -66,6 +71,7 @@ int setrlimit(int, const struct rlimit*);
 #define PRIO_USER    2
 int getpriority(int, int);
 int setpriority(int, int, int);
+#endif /* !RLIMIT_CPU */
 
 #ifdef __cplusplus
 }

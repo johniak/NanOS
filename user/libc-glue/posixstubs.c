@@ -176,6 +176,7 @@ long syscall(long number, ...) {
  * zero (NanOS has no load-average/swap accounting). libuv uses this for uv_get_total_memory /
  * uv_get_free_memory / uv_uptime. mem_unit = 1 so totalram is already in bytes. */
 #include <sys/sysinfo.h>
+#include <fcntl.h>
 static unsigned long meminfo_kb(const char* key) {
 	int fd = open("/proc/meminfo", 0 /*O_RDONLY*/);
 	if (fd < 0) return 0;

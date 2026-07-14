@@ -1757,6 +1757,14 @@ _image64: _all _userland64 _kext
 	    printf "rm /nanos/libexec/git-core/git-%s.nxe\nln /nanos/libexec/git-core/git.nxe /nanos/libexec/git-core/git-%s.nxe\n" "$$c" "$$c" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
 	  done; \
 	  echo "  installed git -> /nanos/bin/git.nxe + /nanos/libexec/git-core/{git,git-<cmd>}.nxe"; fi
+	# Node.js (optional, external): node.nxe built by `make node`, staged into bin/node.nxe. Installed
+	# to /nanos/bin (the shell runs `node` -> .nxe by name) plus the acceptance oracle at
+	# /apps/node-smoke/node-smoke.js (plan 02). Skipped if absent.
+	if [ -f $(BINFOLDER)node.nxe ]; then \
+	  printf "rm /nanos/bin/node.nxe\nwrite $(BINFOLDER)node.nxe /nanos/bin/node.nxe\nset_inode_field /nanos/bin/node.nxe mode 0100755\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  printf "mkdir /apps/node-smoke\n" | debugfs -w "$(IMAGE64_PART)" 2>/dev/null; \
+	  printf "rm /apps/node-smoke/node-smoke.js\nwrite scripts/electron/node-smoke.js /apps/node-smoke/node-smoke.js\n" | debugfs -w "$(IMAGE64_PART)"; \
+	  echo "  installed node -> /nanos/bin/node.nxe + /apps/node-smoke/node-smoke.js"; fi
 	# wget (optional, external): GNU wget built by `make wget`, staged into bin/wget.nxe. A system
 	# utility (flat in /nanos/bin). Skipped if absent. Mirrors the retired i686 _image population.
 	if [ -f $(BINFOLDER)wget.nxe ]; then \

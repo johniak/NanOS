@@ -69,6 +69,9 @@ int   munlockall(void);
 
 /* memfd_create(2): an anonymous, frame-backed fd whose mmap(MAP_SHARED) is real cross-process shared
  * memory. Implemented as a real SYS_memfd_create wrapper in libc-glue/syscalls.c. */
+#define MFD_CLOEXEC       0x0001
+#define MFD_ALLOW_SEALING 0x0002
+#define MFD_HUGETLB       0x0004
 int   memfd_create(const char* name, unsigned int flags);
 
 #ifdef __cplusplus
