@@ -102,7 +102,32 @@ pthread was **already in `libc.ndl`** (an earlier "0 symbols" reading was a stal
 empty `libdl.a`/`librt.a`/`libpthread.a` stubs were added to the sysroot so `-ldl`/`-lrt`/`-lpthread`
 resolve (those live in libc on NanOS).
 
-## Status
+## Status — node.nxe builds, links, LOADS, and EXECUTES on NanOS
+
+The full cross build completes: `node` (a 61 MiB x86_64-nanos ELF) links, converts to `node.nxe`
+(mknx-clean), stages into the image, and under QEMU it **loads and starts executing** — it reaches
+early process init and then faults at `rip=0x0` (a null function-pointer call, `rsp` still near the
+stack top, so very early in crt0/static-init).
+
+Kernel/arch changes that got it to load (all boot-verified; `make test64` still 912/912):
+- `VA_USER_END` 64 MiB → 256 MiB — node's image ends at ~`0x4025000`, past the old 64 MiB window.
+- user main stack 512 KiB → **8 MiB** (frame array moved to the heap); matches `pthread_getattr_np`.
+- exec staging window 32 MiB → **128 MiB** (`STAGE_CAP` in `Exec.cpp` + `KernelStage64.cpp` + the mmu
+  `markRangeUsed` band) — the 61 MiB `.nxe` overflowed the old 32 MiB staging.
+- libstdc++ rebuilt with `-include nx-dllimport.h` (stdio/errno DATA → `__imp_` IAT); `in6addr_any`
+  defined locally + linked via the sysroot `libdl.a`; `pthread_attr_setstack/getstack` implemented.
+
+### NEXT: the `rip=0x0` early-init crash — likely TLS relocations mknx doesn't apply
+
+`x86_64-nanos-readelf -r node` shows the binary needs **`R_X86_64_TPOFF32` (900×)** and
+**`R_X86_64_GOTTPOFF` (162×)** — thread-local-storage relocations — which `tools/mknx.c` does NOT
+handle (it applies only `R_X86_64_64/32/32S`; `PC32/PLT32` are RIP-relative). node/V8 use
+`thread_local` pervasively (the `.tbss/.tdata` sections). If those TLS offsets/GOT slots aren't
+resolved, an early `thread_local`-backed indirect call lands at 0. The lead to chase: teach mknx to
+apply the TLS relocations (and verify the crt0 `__nx_init_tls_tpl` sizes node's large TLS block), or
+dump the faulting caller (kernel fault handler → return address) to confirm the exact call site.
+
+## Build detail — configure/compile history
 
 `configure` OK · **OpenSSL target OK** · **abseil OK** · **v8_libbase / v8_libplatform OK** ·
 **openssl/zlib/llhttp/ncrypto/histogram/cares/libuv targets OK** · **torque (host tool) building** →
