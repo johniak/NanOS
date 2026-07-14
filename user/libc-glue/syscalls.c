@@ -60,6 +60,24 @@ static inline int sys3(int nr, int a, int b, int c) {
 	return r;
 }
 
+/* 3-arg syscall with a FULL 64-bit first argument (an address). mprotect/munmap need this: the
+ * reserve-without-backing window V8 uses lives at a HIGH VA (>= 4 GiB), so casting the address to
+ * int (the old bug) truncated it — the kernel then acted on a bogus low address and the real high
+ * pages were never committed/freed. Returns a long (the kernel's full return value). */
+static inline long sys3l(long nr, unsigned long a, unsigned long b, long c) {
+#if defined(__x86_64__)
+	long rr;
+	__asm__ __volatile__("syscall" : "=a"(rr)
+		: "a"(nr), "D"(a), "S"(b), "d"((long) c)
+		: "rcx", "r11", "memory");
+	return rr;
+#else
+	int r;
+	__asm__ __volatile__("int $0x80" : "=a"(r) : "a"((int) nr), "b"((int) a), "c"((int) b), "d"((int) c) : "memory");
+	return r;
+#endif
+}
+
 /* 4-arg form (i386: nr=eax, a=ebx, b=ecx, c=edx, d=esi; x86_64: 4th arg in r10). Needed by
  * the rt_sig* calls, whose 4th argument is the sigsetsize. */
 static inline int sys4(int nr, int a, int b, int c, int d) {
@@ -501,7 +519,7 @@ int epoll_pwait(int epfd, struct epoll_event* events, int maxevents, int timeout
 /* mprotect(2): real page-protection change (was a no-op stub). The kernel flips PTE_RW across the
  * range per PROT_WRITE — the RW<->RX transition V8 needs for W^X JIT code. */
 int mprotect(void* addr, size_t len, int prot) {
-	return reterr(sys3(SYS_mprotect, (int) addr, (int) len, prot));
+	return reterr((int) sys3l(SYS_mprotect, (unsigned long) addr, (unsigned long) len, prot));
 }
 /* times(): the kernel fills the struct tms (utime/stime, child times 0) and returns the
  * monotonic tick count. Real per-process CPU accounting, not a 0 stub. */
@@ -784,19 +802,21 @@ static inline int sys5(int nr, int a, int b, int c, int d, int e) {
  * = 1<<20 pages), so casting the offset to int (the old bug) stripped the high bits and the
  * kernel's drm_vma_offset lookup missed — the mapping silently fell back to anonymous zero pages,
  * so guest GPU-buffer writes never reached the resource backing (virgl draws rendered nothing). */
-static inline long sys_mmap(int nr, long a, long b, long c, long d, long e) {
+static inline long sys_mmap(int nr, long a, long b, long c, long d, long e, long f) {
 #if defined(__x86_64__)
 	long rr;
 	register long r10 __asm__("r10") = d;
 	register long r8  __asm__("r8")  = e;
+	register long r9  __asm__("r9")  = f;
 	__asm__ __volatile__("syscall" : "=a"(rr)
-		: "a"((long) nr), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+		: "a"((long) nr), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
 		: "rcx", "r11", "memory");
 	return rr;
 #else
 	int r;
 	__asm__ __volatile__("int $0x80"
 		: "=a"(r) : "a"(nr), "b"((int)a), "c"((int)b), "d"((int)c), "S"((int)d), "D"((int)e) : "memory");
+	(void) f;
 	return r;
 #endif
 }
@@ -806,8 +826,10 @@ static inline long sys_mmap(int nr, long a, long b, long c, long d, long e) {
  * (regular-file fd, eagerly loaded). `addr` is advisory and ignored (the kernel picks the VA).
  * The offset is passed 64-bit-wide (see sys_mmap). Returns MAP_FAILED ((void*)-1) on error. */
 void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
-	(void) addr; (void) flags;
-	long r = sys_mmap(SYS_mmap2, (long) length, prot, flags, fd, (long) offset);
+	/* Real Linux x86_64 mmap ABI (addr, length, prot, flags, fd, offset). `addr` is a hint the kernel
+	 * ignores UNLESS MAP_FIXED is set — V8's DecommitPages issues mmap(addr, ..., MAP_FIXED|PROT_NONE)
+	 * to release committed pages of a reserved subspace, which needs addr to reach the kernel. */
+	long r = sys_mmap(SYS_mmap2, (long) addr, (long) length, prot, flags, fd, (long) offset);
 	if (r < 0 && r >= -4095) { errno = (int) -r; return (void*) -1; }
 	return (void*) r;
 }
@@ -817,7 +839,7 @@ void* mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
  * VA reclaim is what lets long-lived thread create/join churn keep recycling stacks). The
  * kernel only acts on ranges inside its anonymous mmap window; anything else is a no-op. */
 int munmap(void* addr, size_t length) {
-	int r = sys3(SYS_munmap, (int) addr, (int) length, 0);
+	int r = (int) sys3l(SYS_munmap, (unsigned long) addr, (unsigned long) length, 0);
 	if (r < 0) { errno = -r; return -1; }
 	return 0;
 }

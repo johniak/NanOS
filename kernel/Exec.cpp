@@ -135,6 +135,7 @@ int execProgram(Vfs* vfs, const char* path) {
 	ProcTable::current()->mmapFreeCount = 0;     // and no stale reclaim ranges
 	ProcTable::current()->fbNext = 0;            // device/GEM window likewise starts empty
 	ProcTable::current()->fbFreeCount = 0;
+	ProcTable::current()->resvNext = 0;          // reserve-without-backing window starts empty too
 	ProcTable::setCommand(ProcTable::current(), argv, 1);
 	// init (this process) is the console's controlling session leader: seed the console's
 	// foreground process group with its pgrp, exactly as a tty's pgrp is set when a session
@@ -285,6 +286,7 @@ int execve(Vfs* vfs, const char* path, const char* const* argv, int argc,
 	p->mmapFreeCount = 0;                    // old image's bump pointer / stale reclaim ranges)
 	p->fbNext = 0;                           // device/GEM window likewise starts empty
 	p->fbFreeCount = 0;
+	p->resvNext = 0;                         // reserve-without-backing window starts empty too
 	ProcTable::setCommand(p, argv, argc);
 	ProcTable::setExe(p, (char*) pp);        // resolved image path -> /proc/<pid>/exe target
 	p->execed = true;                        // POSIX: a child cannot be setpgid'd after exec
@@ -337,6 +339,10 @@ int forkProcess(arch::TrapFrame* tf) {
 	// Same story for the device/GEM window: mmuCopyAddressSpace duplicated the mapped PDEs,
 	// so the child resumes the bump pointer; its reclaim list starts empty (zeroed by alloc).
 	child->fbNext = parent->fbNext;
+	// And the reserve-without-backing window: mmuCopyAddressSpace duplicated its committed pages
+	// (reserved-but-uncommitted VA is just an unmapped hole the child re-bumps past), so the child
+	// resumes the bump pointer; the reclaim list starts empty (zeroed by alloc).
+	child->resvNext = parent->resvNext;
 	child->sys = new Syscalls(*parent->sys);   // dup the parent's fd table
 	child->cred = parent->cred;                // inherit credentials
 	child->sys->setCred(&child->cred);         // point at the CHILD's canonical Process::cred

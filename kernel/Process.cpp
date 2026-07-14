@@ -169,6 +169,7 @@ Process* ProcTable::alloc(int parent) {
 			p->mmapFreeCount = 0;    // empty reclaim list (no munmap'd ranges yet)
 			p->fbNext = 0;           // device/GEM window: same lazy init + empty reclaim
 			p->fbFreeCount = 0;
+			p->resvNext = 0;         // reserve-without-backing window: lazy init on first mmap
 			p->execed = false;
 			p->task = 0;
 			p->space = 0;

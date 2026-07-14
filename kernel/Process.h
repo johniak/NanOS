@@ -126,6 +126,14 @@ struct Process {
 	MmapFree fbFree[NFBFREE];
 	int      fbFreeCount;
 
+	// Reserve-without-backing window (arch mmuResvBase..mmuResvMax, a HIGH 64-bit VA above RAM):
+	// mmap(PROT_NONE)/MAP_NORESERVE hands out VA here WITHOUT backing frames — V8's SegmentedTable
+	// pointer tables reserve a huge subspace and commit only 64 KiB segments on demand via mprotect.
+	// Bump-only (64-bit VA, so no MmapFree free-list): V8 makes a handful of big reservations for the
+	// process lifetime, and its alignment trims (~60 KiB each) are a negligible VA leak in a 768 MiB
+	// window. munmap still frees the committed FRAMES; only the VA is left behind. 0 until first use.
+	uint64_t resvNext;
+
 	// Sessions + process groups (job control). A new process is its own group+session
 	// leader; fork inherits both; setpgid/setsid change them. The tty's foreground process
 	// group (TIOCSPGRP) is the one that receives terminal-generated signals (Ctrl+C).

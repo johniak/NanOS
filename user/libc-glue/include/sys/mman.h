@@ -22,8 +22,11 @@ extern "C" {
 #define MAP_FIXED     0x10
 #define MAP_ANONYMOUS 0x20
 #define MAP_ANON      MAP_ANONYMOUS
-/* MAP_NORESERVE: don't reserve swap. NanOS has no swap and backs mappings eagerly, so it is a no-op
- * hint (V8 uses it when reserving large address-space regions it won't fully commit). */
+/* MAP_NORESERVE: don't reserve swap. With PROT_NONE, NanOS routes the mapping to the reserve-without-
+ * backing window — VA is handed out with NO frames, and a later mprotect(PROT_READ|WRITE) or MAP_FIXED
+ * anon over-map commits individual pages on demand. This is how V8's SegmentedTable pointer tables
+ * reserve a large subspace they only partially commit (NanOS has no demand paging, so a plain eager
+ * anon mmap of that size would OOM). Without PROT_NONE it is still a no-op hint (eager backing). */
 #define MAP_NORESERVE 0x4000
 #define MAP_POPULATE  0x8000   /* prefault pages — NanOS already backs eagerly, so it's a no-op hint */
 #define MAP_STACK     0x20000  /* advisory; no-op on NanOS */

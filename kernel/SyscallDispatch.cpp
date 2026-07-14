@@ -983,22 +983,64 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		ret = g_sys->fcntl((int) a0, (int) a1, (int) a2);
 		break;
 	case SYS_mmap2: {
-		// ABI (libc mmap wrapper): a0 = length, a1 = prot, a2 = flags, a3 = fd, a4 = offset.
-		// Three kinds: a device region (e.g. /dev/fb0) mapped to its physical pages; an
-		// anonymous mapping (fd < 0) of fresh zeroed pages; and a file-backed mapping (a
-		// regular-file fd) of zeroed pages eagerly filled from the file. Returns the user VA.
-		unsigned length = (unsigned) a0;
-		int prot = (int) a1;
-		int fd = (int) a3;
+		// Real Linux x86_64 mmap(2) ABI: a0 = addr, a1 = length, a2 = prot, a3 = flags, a4 = fd,
+		// a5 = offset. (The libc-glue mmap() wrapper AND the generic syscall(SYS_mmap,...) multiplexer
+		// both pass this register order; the kernel previously decoded a0 as length, which silently
+		// misread every raw syscall(SYS_mmap) — fixed here.) Four kinds: a device region (e.g.
+		// /dev/fb0) mapped to its physical pages; an anonymous mapping (fd < 0) of fresh zeroed pages;
+		// a file-backed mapping (regular-file fd) of zeroed pages eagerly filled from the file; and a
+		// reserve-without-backing mapping (PROT_NONE + MAP_NORESERVE, or a MAP_FIXED anon over-map of
+		// the reserve window) for V8's SegmentedTable pointer tables. Returns the user VA.
+		uintptr_t addr = a0;
+		unsigned length = (unsigned) a1;
+		int prot = (int) a2;
+		int flags = (int) a3;
+		int fd = (int) a4;
 		// offset is BYTES here (NanOS libc-glue passes byte offsets, not mmap2 page counts) and
 		// must stay 64-bit: DRM GEM fake offsets are >= 0x100000000, so truncating to 32 bits
 		// (the old bug) would collide distinct BOs and misroute the mapping.
-		uint64_t offset = (uint64_t) a4;
+		uint64_t offset = (uint64_t) a5;
 		Process* p = ProcTable::current();
 		arch::AddressSpace* space = (arch::AddressSpace*) p->space;
+		// Reserve-without-backing window (V8 SegmentedTable). Anonymous only; never disturbs the
+		// device/file/shm paths or a plain PROT_NONE anon mmap (musl pthread guard stacks) — those
+		// carry neither MAP_NORESERVE nor a MAP_FIXED addr in the reserve window.
+		if (fd < 0) {
+			uint64_t rBase = arch::mmuResvBase(), rMax = arch::mmuResvMax();
+			// (a) MAP_FIXED anon over-map inside the reserve window = V8 DecommitPages/FreeShared
+			//     (mmap(addr, len, PROT_NONE, MAP_FIXED|ANON|PRIVATE)): drop the committed frames but
+			//     KEEP the VA reserved, returning the same addr. A non-PROT_NONE MAP_FIXED here would be
+			//     a re-commit (V8 doesn't do it, but stay correct).
+			if ((flags & 0x10 /*MAP_FIXED*/) && addr >= rBase && addr < rMax) {
+				if (length == 0) { ret = -22; break; }
+				uint64_t a = (uint64_t) addr & ~0xFFFull;
+				uint64_t bytes = ((uint64_t) length + 0xFFFu) & ~0xFFFull;
+				if (bytes == 0 || a + bytes > rMax) { ret = -22; break; }
+				if (prot == 0)
+					arch::mmuDecommitResv(space, a, bytes);          // decommit: free frames, VA reserved
+				else if (arch::mmuCommitResv(space, a, bytes, (prot & 2) != 0) != 0) { ret = -12; break; }
+				ret = (long) a;
+				break;
+			}
+			// (b) A reservation: PROT_NONE + MAP_NORESERVE (V8's SegmentedTable subspace) -> bump-carve
+			//     VA in the reserve window with NO frames. The VA is above the identity map, so it is
+			//     unmapped by construction: an access faults until a later mprotect(RW)/MAP_FIXED commit.
+			if ((flags & 0x4000 /*MAP_NORESERVE*/) && prot == 0) {
+				if (length == 0) { ret = -22; break; }
+				uint64_t bytes = ((uint64_t) length + 0xFFFu) & ~0xFFFull;
+				if (bytes == 0) { ret = -22; break; }                // round-up overflow
+				if (p->resvNext == 0)
+					p->resvNext = rBase;
+				if (p->resvNext + bytes > rMax) { ret = -12; break; }   // window full
+				uint64_t va = p->resvNext;
+				p->resvNext = va + bytes;
+				ret = (long) va;                                     // reserved, unbacked
+				break;
+			}
+		}
 		if (fd >= 0) {                          // memfd MAP_SHARED? -> map the object's own frames
 			kernel::Shm* shm = g_sys->shmAt(fd);
-			if (shm && (a2 & 0x1 /*MAP_SHARED*/)) {
+			if (shm && (flags & 0x1 /*MAP_SHARED*/)) {
 				// Real cross-process shared memory: map the Shm's frames (the SAME physical pages every
 				// other mapper sees) into a private VA in the fb window. That window's munmap drops PTEs
 				// without freeing frames, and PTE_SHARED makes teardown/fork leave the frames to the Shm —
@@ -1099,12 +1141,22 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		// mprotect(addr, len, prot): a0=addr (page-aligned), a1=len, a2=prot. Flip PTE_RW across the
 		// current process's user pages per PROT_WRITE — the RW<->RX transition V8 uses for W^X JIT
 		// code. Present pages only; absent pages are skipped (no-op, as the old stub was).
-		unsigned addr = (unsigned) a0;
+		// The reserve window is a HIGH 64-bit VA, so keep addr 64-bit for its check; the low 32-bit
+		// user windows fit uint32_t as before (mmuProtectUser takes uint32_t).
+		uint64_t addr64 = a0;
 		unsigned length = (unsigned) a1;
-		if (addr & 0xFFFu) { ret = -22; break; }        // -EINVAL: unaligned address (like Linux)
+		if (addr64 & 0xFFFull) { ret = -22; break; }     // -EINVAL: unaligned address (like Linux)
 		if (length == 0) { ret = 0; break; }             // zero length: POSIX no-op success
 		Process* p = ProcTable::current();
-		ret = arch::mmuProtectUser((arch::AddressSpace*) p->space, addr, length, (int) a2);
+		// Reserve-without-backing window: mprotect(RW) is V8's segment COMMIT — back the reserved
+		// pages with frames on demand (mmuProtectUser would no-op them, being absent). Present pages
+		// just have PTE_RW adjusted. -ENOMEM on frame exhaustion.
+		if (addr64 >= arch::mmuResvBase() && addr64 < arch::mmuResvMax()) {
+			ret = arch::mmuCommitResv((arch::AddressSpace*) p->space, addr64, length, (a2 & 0x2) != 0);
+			if (ret != 0) ret = -12;
+			break;
+		}
+		ret = arch::mmuProtectUser((arch::AddressSpace*) p->space, (unsigned) addr64, length, (int) a2);
 		break;
 	}
 	case SYS_munmap: {
@@ -1112,6 +1164,22 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 		// Only ranges inside the anonymous/file mmap window [mmuMmapBase, mmuMmapMax) are
 		// actually torn down — that is where pthread stacks live. A munmap of the brk window
 		// or anything else is a benign no-op (return 0) so we never corrupt other regions.
+		// Reserve-without-backing window first: a HIGH 64-bit VA (above the identity map). Free any
+		// COMMITTED frames in the range (uncommitted pages are unmapped holes mmuDecommitResv skips)
+		// and leave the VA reserved (bump-only — the ~60 KiB reservation-alignment trims V8 munmaps
+		// here are a negligible VA leak in a 768 MiB window; the frames are what matter). Handled
+		// before the 32-bit truncation below, since a ≥4 GiB addr does not fit `unsigned`.
+		if ((uint64_t) a0 >= arch::mmuResvBase() && (uint64_t) a0 < arch::mmuResvMax()) {
+			uint64_t raddr = (uint64_t) a0, rlen = (uint64_t) a1;
+			if (raddr & 0xFFFull) { ret = -22; break; }                 // -EINVAL: unaligned
+			if (rlen == 0) { ret = -22; break; }                        // -EINVAL: zero length
+			rlen = (rlen + 0xFFFu) & ~0xFFFull;
+			if (rlen == 0 || raddr + rlen > arch::mmuResvMax()) { ret = -22; break; }
+			Process* rp = ProcTable::current();
+			arch::mmuDecommitResv((arch::AddressSpace*) rp->space, raddr, rlen);
+			ret = 0;
+			break;
+		}
 		unsigned addr = (unsigned) a0;
 		unsigned length = (unsigned) a1;
 		if (addr & 0xFFFu) { ret = -22; break; }       // -EINVAL: unaligned address (like Linux)
@@ -1140,6 +1208,8 @@ long kernelSyscall(long nr, uintptr_t a0, uintptr_t a1, uintptr_t a2, uintptr_t 
 			ret = 0;
 			break;
 		}
+		// (The reserve-without-backing window is a HIGH 64-bit VA handled at the top of this case,
+		// before addr was truncated to 32 bits for the low windows below.)
 		unsigned base = arch::mmuMmapBase(), top = arch::mmuMmapMax();
 		if (addr < base || addr >= top || addr + len > top) { ret = 0; break; }  // outside: no-op
 		Process* p = ProcTable::current();

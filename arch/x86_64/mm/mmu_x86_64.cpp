@@ -47,6 +47,19 @@ uint64_t g_kernelDirPhys = 0;
 // where topOfRam exceeds those MMIO addresses; QEMU (512 MiB) put them above the map, hiding it.
 uint64_t g_identityTop = 0;
 
+// Reserve-without-backing window (V8 SegmentedTable). A HIGH VA span above the identity-mapped RAM and
+// above the sub-4 GiB MMIO hole, so it aliases neither the kernel byte heap (physical [~0x20000000,
+// 0x40000000), identity-accessed under the process CR3) nor any device MMIO. Set once by mmuInitKernel
+// from topOfRam; 0 until then. WINDOW = 768 MiB comfortably holds V8's tables + alignment trims.
+uint64_t g_resvBase = 0;
+uint64_t g_resvMax  = 0;
+// 2 GiB. V8 reserves several large PROT_NONE subspaces at isolate startup — the WasmCodePointerTable
+// (128 MiB), the JSDispatchTable (up to 256 MiB), and the CodeRange cage (up to 256 MiB) — and its
+// aligned reservations over-allocate (size + alignment) then trim; with the bump-only allocator the
+// trimmed VA is not reclaimed, so the window must comfortably exceed the summed footprint. VA above
+// RAM is free, so this is generous headroom, not RAM.
+const uint64_t RESV_WINDOW = 0x80000000;   // 2 GiB
+
 }  // namespace
 
 namespace arch {
@@ -94,6 +107,15 @@ void mmuInitKernel(kernel::FrameAllocator& fa, uint64_t topOfRam) {
 	uint64_t mapTop = (topOfRam + 0x1FFFFF) & ~0x1FFFFFull;
 	g_kspace->mapRangeHuge(0, 0, mapTop, kernel::PTE_PRESENT | kernel::PTE_RW);
 	g_identityTop = mapTop;   // MMIO below this is already mapped (see g_identityTop note)
+	// Reserve-without-backing window: 1 GiB above the top of the identity map (rounded to 1 GiB),
+	// floored to 4 GiB so it clears the conventional sub-4 GiB PCI/MMIO hole. Above RAM => unmapped in
+	// every process => a reserved page faults until committed; no identity map to drop. Above 4 GiB =>
+	// VA here is 64-bit (see mmuResvBase). Machines with RAM at/above the base would collide, but the
+	// 32-bit frame allocator caps usable RAM well below it (Plan 7 revisits >4 GiB).
+	uint64_t rb = ((mapTop + 0x40000000ull) + 0x3FFFFFFFull) & ~0x3FFFFFFFull;   // topOfRam + 1 GiB, ↑1 GiB
+	if (rb < 0x100000000ull) rb = 0x100000000ull;                                // floor at 4 GiB
+	g_resvBase = rb;
+	g_resvMax  = rb + RESV_WINDOW;
 	g_kernelDirPhys = g_kspace->directoryPhys();
 
 	__asm__ __volatile__("cli");
@@ -167,6 +189,7 @@ static void dropUserWindows(AddressSpace* s) {
 // Free every user window's leaf PT + pages (the private PDPTs/PDs are freed afterwards by freeUserTables).
 static void freeUserWindowsAll(AddressSpace* s) {
 	for (uint64_t va = VA_USER_BASE;   va < VA_USER_END;   va += PD_SPAN) s->impl.freeUserWindow(va);
+	for (uint64_t va = g_resvBase;     va < g_resvMax;     va += PD_SPAN) s->impl.freeUserWindow(va);
 	for (uint64_t va = VA_MODULE_BASE; va < VA_MODULE_MAX; va += PD_SPAN) s->impl.freeUserWindow(va);
 	for (uint64_t va = VA_HEAP_BASE;   va < VA_HEAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
 	for (uint64_t va = VA_MMAP_BASE;   va < VA_MMAP_MAX;   va += PD_SPAN) s->impl.freeUserWindow(va);
@@ -205,6 +228,7 @@ AddressSpace* mmuCopyAddressSpace(AddressSpace* src) {
 	dropUserWindows(s);
 	bool ok = true;
 	for (uint64_t va = VA_USER_BASE;   ok && va < VA_USER_END;   va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
+	for (uint64_t va = g_resvBase;     ok && va < g_resvMax;     va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint64_t va = VA_HEAP_BASE;   ok && va < VA_HEAP_MAX;   va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint64_t va = VA_MODULE_BASE; ok && va < VA_MODULE_MAX; va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
 	for (uint64_t va = VA_MMAP_BASE;   ok && va < VA_MMAP_MAX;   va += PD_SPAN) ok = s->impl.copyUserWindowFrom(src->impl, va);
@@ -354,6 +378,54 @@ void mmuUnmapAnon(AddressSpace* s, uint32_t base, uint32_t bytes) {
 	uint64_t saved = kernel::readCr3();
 	kernel::loadCr3(g_kernelDirPhys);
 	unmapRangeAndFree(s, base, end_);   // unmap -> cross-CPU TLB shootdown -> free (see helper)
+	kernel::loadCr3(saved);
+}
+
+uint64_t mmuResvBase() { return g_resvBase; }
+uint64_t mmuResvMax()  { return g_resvMax; }
+
+// Commit (back with frames) a sub-range of the reserve-without-backing window. V8 reserves a big
+// PROT_NONE subspace via mmap then commits 64 KiB table segments with mprotect(RW) (or a MAP_FIXED
+// anon over-map). Absent pages get a fresh zeroed USER frame; present pages just have PTE_RW flipped
+// per `writable` (so a re-commit, or a genuine mprotect on already-committed pages, is idempotent and
+// never leaks a frame). Runs under the kernel directory (frame alloc/zero + page-table edits touch
+// RAM by identity), like mmuMapAnon; the trailing shootdown + CR3 reload publish the new PTEs. base is
+// 64-bit — the window is above 4 GiB.
+int mmuCommitResv(AddressSpace* s, uint64_t base, uint64_t bytes, int writable) {
+	if (bytes == 0) return 0;
+	uint64_t start = base & ~0xFFFull;
+	uint64_t end_  = (base + bytes + 0xFFFu) & ~0xFFFull;
+	uint64_t flags = kernel::PTE_PRESENT | kernel::PTE_USER | (writable ? kernel::PTE_RW : 0);
+	uint64_t setF  = writable ? kernel::PTE_RW : 0;
+	uint64_t clrF  = writable ? 0 : kernel::PTE_RW;
+	uint64_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	int rc = 0;
+	for (uint64_t va = start; va < end_; va += 0x1000) {
+		if (s->impl.translate(va) != 0xFFFFFFFFFFFFFFFFULL) {
+			s->impl.protect(va, setF, clrF);     // already committed: just adjust the write bit
+			continue;
+		}
+		uint32_t f = g_fa->alloc();
+		if (!f) { rc = -1; break; }
+		memset((void*) (uintptr_t) f, 0, 0x1000);
+		if (!s->impl.map(va, f, flags)) { g_fa->free(f); rc = -1; break; }
+	}
+	arch::smpTlbShootdown(s->impl.directoryPhys());
+	kernel::loadCr3(saved);
+	return rc;
+}
+
+// Decommit a sub-range of the reserve-without-backing window: drop the PTEs and free the backing
+// frames (via unmapRangeAndFree: unmap -> cross-CPU shootdown -> free), leaving the VA reserved
+// (unmapped, so a later access faults until re-committed). base is 64-bit.
+void mmuDecommitResv(AddressSpace* s, uint64_t base, uint64_t bytes) {
+	if (bytes == 0) return;
+	uint64_t start = base & ~0xFFFull;
+	uint64_t end_  = (base + bytes + 0xFFFu) & ~0xFFFull;
+	uint64_t saved = kernel::readCr3();
+	kernel::loadCr3(g_kernelDirPhys);
+	unmapRangeAndFree(s, start, end_);   // unmap -> cross-CPU TLB shootdown -> free (see helper)
 	kernel::loadCr3(saved);
 }
 

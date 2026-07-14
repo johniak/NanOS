@@ -146,6 +146,28 @@ uint32_t mmuModuleStride();
 uint32_t mmuMmapBase();
 uint32_t mmuMmapMax();
 int mmuMapAnon(AddressSpace*, uint32_t base, uint32_t bytes, int writable);
+
+// Reserve-without-backing window for V8's SegmentedTable pointer tables (wasm code-pointer 128 MiB,
+// JS-dispatch up to 256 MiB): they reserve a large PROT_NONE virtual subspace up front and commit only
+// 64 KiB segments on demand. NanOS has no demand paging, so a normal anon mmap of that size would
+// eagerly back every page with a frame and OOM. mmap(PROT_NONE + MAP_NORESERVE) hands out VA in this
+// window with NO frames; a later mprotect(RW) — or a MAP_FIXED anon over-map — commits pages.
+//
+// The window sits at a HIGH VA *above* the identity-mapped RAM (and above the sub-4 GiB MMIO hole),
+// set at boot from topOfRam by mmuInitKernel. It CANNOT reuse the low VA gap below VA_MODULE_BASE: the
+// kernel byte heap lives at physical [~0x20000000, 0x40000000) and is identity-accessed under the
+// process CR3, so that range must keep its identity map. A high VA above RAM is unmapped in every
+// process by construction (nothing to drop), so a reserved page faults until committed. Because the
+// base is above 4 GiB on every machine, VA here is 64-bit — do NOT truncate it to uint32_t.
+uint64_t mmuResvBase();
+uint64_t mmuResvMax();
+// Commit (back with frames) [base, base+bytes): absent pages get a fresh zeroed USER frame (RW when
+// writable); present pages just have PTE_RW flipped per `writable` (idempotent). Returns 0, or -1 on
+// OOM. Runs under the kernel directory (page-table edits + frame zeroing touch RAM by identity).
+int mmuCommitResv(AddressSpace*, uint64_t base, uint64_t bytes, int writable);
+// Decommit [base, base+bytes): drop the PTEs and free the backing frames, leaving the VA reserved
+// (unmapped). Used by SYS_munmap and by V8's MAP_FIXED-PROT_NONE over-map (DecommitPages).
+void mmuDecommitResv(AddressSpace*, uint64_t base, uint64_t bytes);
 // Tear down a mmap'd range: clear the PTE AND return each backing frame to the frame
 // allocator, for [base, base+bytes) (page-rounded). The inverse of mmuMapAnon; used by
 // SYS_munmap to reclaim physical RAM (the VA reuse is bookkept by the MI free-list). Same
