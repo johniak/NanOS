@@ -385,8 +385,24 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 	case FUTEX_WAIT_BITSET: {
 		unsigned bitset = (cmd == FUTEX_WAIT_BITSET) ? val3 : 0;
 		if (cmd == FUTEX_WAIT_BITSET && bitset == 0) return -EINVAL;   // empty mask is invalid
-		// Atomic compare-and-enqueue: re-test *uaddr and park, interrupts off, so a concurrent
-		// wake cannot land between the test and the enqueue (uniprocessor: cli is sufficient).
+		// Park SMP-safely. The old code enqueued, released g_futexLock, and THEN called block()/
+		// sleepUntil() to flip TASK_BLOCKED — leaving a window on multiprocessor: a FUTEX_WAKE on
+		// another CPU could dequeue us and call Scheduler::wake() before we were BLOCKED, and wake()
+		// is a NO-OP on a not-yet-BLOCKED task, so the wakeup was lost and block() slept forever
+		// (deadlocked V8's worker<->main futex handshake; only reproduced at -smp>1). "uniprocessor:
+		// cli is sufficient" no longer holds. Fix: flip BLOCKED via armBlockCurrent (takes g_rqLock)
+		// WHILE STILL HOLDING g_futexLock — the waker must take g_futexLock to dequeue us, so by the
+		// time it runs wake() we are already BLOCKED and the wakeup lands. NULL timeout blocks
+		// forever; a timespec arms a relative tick deadline. (Linux makes WAIT_BITSET absolute; we
+		// approximate as relative — best-effort.)
+		bool timed = (timeout != 0);
+		unsigned deadline = 0;
+		if (timed) {
+			const unsigned* ts = (const unsigned*) timeout;        // {tv_sec, tv_nsec} (i386 layout)
+			unsigned ms = ts[0] * 1000u + (ts[1] + 999999u) / 1000000u;
+			deadline = Scheduler::ticks() + ms;
+			if (deadline == 0) deadline = 1;                       // 0 is the "no timer armed" sentinel
+		}
 		unsigned long f = arch::cpuIrqSave();
 		g_futexLock.lock();
 		if (futexWaitPrecheck((volatile const unsigned*) uaddr, val) != 0) {
@@ -398,22 +414,12 @@ static int futexSyscall(uintptr_t uaddr, int op, unsigned val, uintptr_t timeout
 		w.task = Scheduler::current();
 		w.bitset = bitset;
 		g_futex.enqueue(space, ua, &w);
-		g_futexLock.unlock();      // release before the block below (never sleep holding a spinlock)
+		// BLOCKED is set here, under g_futexLock, closing the SMP lost-wakeup window (see above).
+		bool willBlock = Scheduler::armBlockCurrent(timed ? deadline : 0);
+		g_futexLock.unlock();      // release before descheduling (never sleep holding a spinlock)
 		arch::cpuIrqRestore(f);
-
-		// Block until woken. NULL timeout (timeout==0) blocks forever; otherwise treat the user
-		// timespec* as a relative wait and arm a tick deadline so the wait can never hang. (Linux
-		// makes WAIT_BITSET's timeout absolute; we approximate it as relative — best-effort.)
-		bool timed = (timeout != 0);
-		unsigned deadline = 0;
-		if (timed) {
-			const unsigned* ts = (const unsigned*) timeout;        // {tv_sec, tv_nsec} (i386)
-			unsigned ms = ts[0] * 1000u + (ts[1] + 999999u) / 1000000u;
-			deadline = Scheduler::ticks() + ms;
-			Scheduler::sleepUntil(deadline);
-		} else {
-			Scheduler::block();
-		}
+		if (willBlock)
+			Scheduler::schedule();   // deschedule; if a racing wake already flipped us READY, schedule repicks us
 
 		// Cancel our waiter (idempotent: a wake already unlinked it; on timeout/signal it is
 		// still queued and this removes it) before deciding the outcome.

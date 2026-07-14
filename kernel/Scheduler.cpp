@@ -595,6 +595,22 @@ void Scheduler::block() {
 	schedule();
 }
 
+// Arm-to-block without scheduling (see Scheduler.h). The caller (futex WAIT) already holds its
+// wait-queue lock (g_futexLock) with IRQs off; we only take g_rqLock (order g_futexLock -> g_rqLock,
+// matching the waker's futexWakeNLocked -> Scheduler::wake), flip BLOCKED + optional wake deadline,
+// and return. Because the BLOCKED flip happens while the caller still holds g_futexLock, a cross-CPU
+// FUTEX_WAKE (which must take g_futexLock to dequeue the waiter, then calls wake() -> g_rqLock) can
+// never run wake() on a not-yet-BLOCKED task and lose the wakeup. `tick`==0 => block forever.
+bool Scheduler::armBlockCurrent(unsigned tick) {
+	if (hasPendingSignalCurrent()) return false;   // signal pending: caller must not deschedule
+	g_rqLock.lock();
+	Task* me = curTask();
+	me->wakeAt = tick;                              // 0 = no timer (block forever); else tick deadline
+	me->state  = TASK_BLOCKED;
+	g_rqLock.unlock();
+	return true;
+}
+
 void Scheduler::wake(Task* t) {
 	// Only a BLOCKED task may be woken. Waking unconditionally could resurrect a TASK_ZOMBIE
 	// or TASK_DONE (e.g. procExit waking a not-yet-reaped zombie parent), turning it runnable

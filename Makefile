@@ -1127,8 +1127,16 @@ smoke-smp-stress: image64
 smoke-smp-netstress: image64
 	bash scripts/smoke-smp-netstress.sh
 
+# `smoke-futexpp` is the SMP futex LOST-WAKEUP gate: at -smp 4, futexpp ping-pongs a token through a
+# condition variable (FUTEX_WAIT/FUTEX_WAKE). If a cross-CPU wake can fire on a not-yet-BLOCKED waiter
+# the wakeup is lost and one thread parks forever -> no PASS. This is the exact race that hung V8/node
+# in JIT mode at -smp>1 (single core worked). Provably-can-fail: revert the BLOCKED-under-g_futexLock
+# fix and this deadlocks.
+smoke-futexpp: image64
+	bash scripts/smoke-futexpp.sh
+
 # `verify64` = the full x86_64 gate: host tests + BIOS + UEFI + big-RAM + e1000e MSI-X + live-USB + SMP smokes.
-verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-resv smoke-tls smoke-mallocstorm smoke-procself smoke-memfd smoke-shmshare smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
+verify64: test64 smoke-x86_64 smoke-uefi smoke-bigmem smoke-e1000e smoke-usb smoke-usb-smp smoke-usb-dmawindow smoke-usb-storm smoke-evidence smoke-fpu smoke-eventfd smoke-mprotect smoke-resv smoke-tls smoke-mallocstorm smoke-futexpp smoke-procself smoke-memfd smoke-shmshare smoke-vt smoke-virtio-gpu smoke-i915 smoke-kpi-irq smoke-kpi-wq smoke-smp smoke-smp-speedup smoke-smp-stress smoke-smp-netstress
 	@echo "x86_64 verify: host tests + BIOS + UEFI + big-RAM + e1000e MSI + live-USB + live-USB+SMP + VT switch + virtio-gpu (unmodified DRM) + i915 (link/load/harness) + SMP boot + SMP speedup + SMP data-race (stress/netstress) gates all passed."
 
 clean:
@@ -2198,6 +2206,7 @@ $(BINFOLDER)shmdualtest.nxe: $(DYN_DEPS) $(BINFOLDER)shmdualtest.o
 $(BINFOLDER)memfdtest.nxe: $(DYN_DEPS) $(BINFOLDER)memfdtest.o
 $(BINFOLDER)pthrtest.nxe: $(DYN_DEPS) $(BINFOLDER)pthrtest.o
 $(BINFOLDER)pthrstress.nxe: $(DYN_DEPS) $(BINFOLDER)pthrstress.o
+$(BINFOLDER)futexpp.nxe:   $(DYN_DEPS) $(BINFOLDER)futexpp.o
 $(BINFOLDER)pfract.nxe:    $(DYN_DEPS) $(BINFOLDER)pfract.o
 $(BINFOLDER)smptorture.nxe: $(DYN_DEPS) $(BINFOLDER)smptorture.o
 $(BINFOLDER)nettorture.nxe: $(DYN_DEPS) $(BINFOLDER)nettorture.o
@@ -2384,7 +2393,7 @@ $(BINFOLDER)libnwui.ndl.a: $(BINFOLDER)libnwui.elf $(MKNX_TOOL)
 # pthread/net stress tools) is NOT built here — those are later ports; this is the first
 # interactive 64-bit milestone (a working shell + ls/cat). init goes to /nanos/core, the
 # rest to /nanos/bin (see _image64). free is a system util like the coreutils.
-X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest eventfdtest epolltest mmapexectest resvtest tlstest mallocstorm procselftest shmdualtest memfdtest
+X64_SYS_PROGS=nsh open nanosu cat ls mkdir rmdir pwd touch rm ln cp mv chmod wc head tail true false env basename dirname free chsh pfract pthrstress futexpp smptorture nettorture usbstorm fputorture drmtest glpix i915test malloctest eventfdtest epolltest mmapexectest resvtest tlstest mallocstorm procselftest shmdualtest memfdtest
 # nanowm compositor (nwm) is a system GUI program; the NetSurf libnsfb backend (and future GUI
 # clients) link the libnw/libnwui import libs at load, so those .ndl ship to /nanos/lib too.
 X64_GUI_PROGS=nwm greeter

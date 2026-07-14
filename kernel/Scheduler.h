@@ -97,6 +97,12 @@ public:
 	static bool timedWakeReady(unsigned now, unsigned wakeAt);
 	static bool shouldResched(unsigned sliceTicks, unsigned quantum, bool wokeSleeper);
 	static void block();                           // current -> BLOCKED, then schedule
+	// Arm the current task to block WITHOUT scheduling: flip it to BLOCKED (and, if tick != 0, a
+	// wake deadline) under g_rqLock, so a caller still holding a *separate* wait-queue lock (e.g. the
+	// futex table lock) makes "enqueue + go-to-sleep" atomic against a cross-CPU waker serialized on
+	// that same lock. Returns false WITHOUT arming if a signal is pending (caller must not block).
+	// The caller then drops its lock, restores IRQs, and calls schedule() to actually deschedule.
+	static bool armBlockCurrent(unsigned tick);
 	static void wake(Task* t);                     // BLOCKED -> READY (IRQ-safe: just a flag)
 	static void resume(Task* t);                   // STOPPED -> READY (job-control SIGCONT/KILL)
 	static void sleepOn(WaitQueue* q);             // park current on q until wakeAll/signal
