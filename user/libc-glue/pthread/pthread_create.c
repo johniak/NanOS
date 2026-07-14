@@ -44,12 +44,20 @@
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_CHILD_SETTID   0x01000000
 
-/* A single shared, never-dereferenced empty dtv. NanOS userland has no __thread TLS image
- * (no .tdata modules in the .nxe loader), so __tls_get_addr is never called; the slot only has
- * to be a valid, non-NULL pointer so musl's TCB invariants hold. (tsd, by contrast, must be a
- * real PER-THREAD array — pthread_get/setspecific index self->tsd[key] for key<PTHREAD_KEYS_MAX
- * — so each thread gets its own zeroed tsd[] carved out of its mapping below, not a shared one.) */
+/* Empty dtv for programs with NO __thread TLS image (main thread took the bare-TCB path in tls.c, so
+ * libc.tls_size == 0). __tls_get_addr is never called for local-exec TLS, so the slot only has to be a
+ * valid non-NULL pointer for musl's TCB invariants. When the program DOES have TLS (V8/node), each
+ * worker gets a real per-thread block from __copy_tls (below) with its own dtv instead. (tsd is always
+ * a real PER-THREAD array — pthread_get/setspecific index self->tsd[key] — carved from the mapping.) */
 static uintptr_t dummy_dtv[1];
+
+/* musl __copy_tls (vendored in nx_tls.c, x86_64 variant II): builds [dtv | tls data | struct pthread]
+ * in a libc.tls_size-byte region and returns the TCB, copying the .tdata template + zeroing .tbss from
+ * libc.tls_head (set up by the main thread's __nx_init_main_tls). Worker threads need this so every
+ * thread_local resolves to real per-thread storage — without it V8's assert-scope
+ * current_per_thread_assert_data (a non-zero-initialised .tdata thread_local) reads garbage and its
+ * AllowHeapAllocationInRelease CHECK aborts node during heap bring-up. */
+void *__copy_tls(unsigned char *mem);
 
 /* The argument block handed to the child's entry trampoline, placed in the new thread's own
  * mapping (shared via CLONE_VM) just below its TCB. */
@@ -166,32 +174,59 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 	guard   = (guard   + 4095) & ~(size_t)4095;
 	stacksz = (stacksz + 4095) & ~(size_t)4095;
 
-	/* One mapping holds, high to low: [TCB][start_args][tsd[]][stack ... grows down][guard].
-	 * NanOS has no page-permission guard (mprotect is best-effort), so the guard is just
-	 * reserved address space below the stack. The tsd[] block is this thread's private
-	 * pthread_setspecific storage (PTHREAD_KEYS_MAX void*), zero by virtue of MAP_ANONYMOUS. */
+	/* One mapping holds, high to low: [tsd[]][TLS block][start_args][stack ... grows down][guard].
+	 * NanOS has no page-permission guard (mprotect is best-effort), so the guard is just reserved
+	 * address space below the stack. The tsd[] block is this thread's private pthread_setspecific
+	 * storage (PTHREAD_KEYS_MAX void*), zero by virtue of MAP_ANONYMOUS.
+	 *
+	 * TLS block: when the program has real __thread data (libc.tls_size != 0; V8/node does), __copy_tls
+	 * lays out [dtv | tls data | struct pthread] and returns the TCB (near the top of the block, just
+	 * below tsd[]). The whole block is libc.tls_size bytes; start_args must go BELOW it (the TCB lives
+	 * INSIDE the block, so placing start_args just below the TCB would overlap the tls data). Programs
+	 * with no TLS keep the bare TCB (dummy_dtv) — no behaviour change for existing threaded apps. */
 	size_t tsd_size = sizeof(void *) * PTHREAD_KEYS_MAX;
-	size_t total = guard + stacksz + tsd_size + sizeof(struct start_args)
-	             + sizeof(struct pthread) + 64;
+	size_t tls_size = libc.tls_size;
+	size_t total = guard + stacksz + sizeof(struct start_args) + tls_size
+	             + tsd_size + sizeof(struct pthread) + 128;
 
 	unsigned char *map = mmap(0, total, PROT_READ | PROT_WRITE,
 	                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (map == MAP_FAILED)
 		return EAGAIN;
 
-	struct pthread    *new    = ALIGN_DOWN(map + total - sizeof(struct pthread), 16);
-	struct start_args *stargs = ALIGN_DOWN((unsigned char *)new - sizeof(struct start_args), 16);
-	void             **tsd    = (void **)ALIGN_DOWN((unsigned char *)stargs - tsd_size, 16);
-	unsigned char     *stack_top = ALIGN_DOWN((unsigned char *)tsd, 16);
+	struct pthread    *new;
+	struct start_args *stargs;
+	void             **tsd;
+	unsigned char     *stack_top;
+	if (tls_size) {
+		/* TLS program (V8/node): [tsd[]][TLS block: dtv..tls data..TCB][start_args][stack ↓][guard].
+		 * __copy_tls builds the block in [tsd-tls_size, tsd) and returns the TCB (INSIDE the block, near
+		 * the top). start_args goes BELOW the whole block (below the TCB would overlap the tls data). The
+		 * block is zeroed by MAP_ANONYMOUS and __copy_tls set new->dtv, so do NOT memset the struct. */
+		tsd = (void **)ALIGN_DOWN(map + total - tsd_size, 16);
+		unsigned char *tls_base = (unsigned char *)tsd - tls_size;
+		new = (struct pthread *)__copy_tls(tls_base);
+		stargs = ALIGN_DOWN(tls_base - sizeof(struct start_args), 16);
+		stack_top = ALIGN_DOWN((unsigned char *)stargs, 16);
+	} else {
+		/* No __thread data (every existing NanOS threaded app): the ORIGINAL bare-TCB layout, byte for
+		 * byte — [TCB][start_args][tsd[]][stack ↓][guard]. Left unchanged so this path cannot regress
+		 * (reordering it wedged smptorture's heavy-contention phase). dtv is the shared empty dtv. */
+		new    = ALIGN_DOWN(map + total - sizeof(struct pthread), 16);
+		stargs = ALIGN_DOWN((unsigned char *)new - sizeof(struct start_args), 16);
+		tsd    = (void **)ALIGN_DOWN((unsigned char *)stargs - tsd_size, 16);
+		stack_top = ALIGN_DOWN((unsigned char *)tsd, 16);
+		memset(new, 0, sizeof *new);
+		new->dtv = dummy_dtv;
+	}
 
-	memset(new, 0, sizeof *new);
-	new->self         = new;                 /* %gs:0 -> self */
+	new->self         = new;                 /* %fs:0 -> self */
 	new->map_base     = map;
 	new->map_size     = total;
 	new->stack        = stack_top;
 	new->stack_size   = (size_t)(stack_top - (map + guard));
 	new->guard_size   = guard;
-	new->dtv          = dummy_dtv;
+	/* dtv is already set: dummy_dtv (no-TLS branch) or the real per-thread dtv (__copy_tls). */
 	new->tsd          = tsd;                 /* per-thread pthread_setspecific storage (zeroed) */
 	new->detach_state = (attr._a_detach == PTHREAD_CREATE_DETACHED) ? DT_DETACHED : DT_JOINABLE;
 	new->tid          = -1;                  /* kernel overwrites via PARENT/CHILD_SETTID */
