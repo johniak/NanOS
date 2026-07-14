@@ -14,6 +14,10 @@
 #ifndef TIOCSCTTY
 #define TIOCSCTTY  0x540E
 #endif
+#ifndef TIOCGPTN
+#define TIOCGPTN   0x80045430   /* get the pty slave number (libuv openpty) */
+#define TIOCSPTLCK 0x40045431   /* (un)lock the pty slave */
+#endif
 #ifndef TIOCNOTTY
 #define TIOCNOTTY  0x5422
 #endif

@@ -1,0 +1,17 @@
+diff --git a/deps/v8/third_party/highway/src/hwy/detect_targets.h b/deps/v8/third_party/highway/src/hwy/detect_targets.h
+index 175efee2..256e0ba2 100644
+--- a/deps/v8/third_party/highway/src/hwy/detect_targets.h
++++ b/deps/v8/third_party/highway/src/hwy/detect_targets.h
+@@ -20,6 +20,12 @@
+ 
+ #include "hwy/detect_compiler_arch.h"
+ 
++// NanOS port: the aarch64 build HOST hits a gcc-14 overload-ambiguity bug in highway's SVE ops.
++// Host tools do not need SIMD, so force scalar-only on aarch64. The x86_64-nanos TARGET is unaffected.
++#if defined(__aarch64__) && !defined(HWY_COMPILE_ONLY_SCALAR)
++#define HWY_COMPILE_ONLY_SCALAR
++#endif
++
+ //------------------------------------------------------------------------------
+ // Optional configuration
+ 

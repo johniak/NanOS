@@ -77,31 +77,44 @@ rejects, forwarding everything else. Each stripped flag is a deliberate porting 
 | `0001-abseil-direct-mmap-use-libc-mmap` | abseil's `DirectMmap` issues a raw Linux `mmap` syscall (addr as arg0); NanOS's `mmap`/`mmap2` ABI takes no addr, so route NanOS (`__NANOS__`) to the portable libc-`mmap()` branch. |
 | `0002-abseil-wcslen-global` | The nanos libstdc++ `<cwchar>` hides `std::wcslen` (see below); use global `::wcslen`. |
 
-## BLOCKER — libstdc++ has no threading model (toolchain rebuild needed)
+## The threads wall — RESOLVED (SDK toolchain rebuilt with posix threads)
 
-The build reaches deep into V8 (openssl done; abseil compiling) and then hits a hard wall that is **not**
-a per-file patch:
+The build reached deep into V8 and hit a hard wall that was **not** a per-file patch: the SDK's
+libstdc++ was `--enable-threads=single`, so `_GLIBCXX_HAS_GTHREADS` was `#undef` and
+**`std::mutex`/`thread`/`condition_variable` did not exist** (abseil `stdcpp_waiter.h`, and V8/Node,
+require them). Root cause was one level deeper than the libstdc++ config: the **compiler itself** was
+built `thread model: single` (`--without-headers`), which libstdc++ inherits.
 
-- The SDK's libstdc++ was configured `--enable-threads=single`: `_GLIBCXX_HAS_GTHREADS` is `#undef` in
-  `x86_64-nanos/bits/c++config.h`, so **`std::mutex`, `std::condition_variable`, `std::thread`,
-  `std::call_once`, `std::shared_mutex` do not exist**. abseil's `stdcpp_waiter.h` (and, later, Node
-  and V8 themselves) require them.
-- Independently, the base `libc.a` in the SDK sysroot contains **zero pthread symbols** — the NanOS
-  pthread implementation (musl-pthread port) is built separately and is not part of the sysroot the
-  cross toolchain links against.
+**Fix (done):**
+1. Rebuilt GCC with `--enable-threads=posix --with-build-sysroot=<nanos sysroot>` (`build-gcc-posix`),
+   `make all-gcc` + `install-gcc` (skipped `libgcc` — the `--with-build-sysroot` limits.h wrapper
+   breaks its build, and `gthr-posix` is header-inline so the existing thread-agnostic libgcc is fine).
+   The toolchain is backed up at `$SDK_WORK/toolchain.bak`.
+2. Restored the conftest-strict wrapper that `install-gcc` clobbers; restored the backup's
+   `gcc/include/limits.h` (the rebuild's chained version double-`include_next`s with the sysroot's own
+   limits.h wrapper and breaks — the backup's minimal one is what worked).
+3. Generated the posix `gthr-default.h` from `gthr-posix.h` (GCC's own sed transform) into the source
+   `libgcc/` — the standalone libstdc++ build's gthreads probe needs it and it is normally a libgcc
+   build artifact — then re-ran `cxx-port/build-libstdcxx.sh`. Result: **`_GLIBCXX_HAS_GTHREADS 1`**,
+   `std::mutex`/`thread`/`condition_variable` present.
 
-**Resolution (next phase):** rebuild the SDK's libstdc++ with `--enable-threads=posix` on top of the
-NanOS pthread port, and stage `pthread.h` + the pthread objects into the `x86_64-nanos` sysroot so
-`node.nxe` can link them. GCC's `gthr-posix` maps directly onto the pthread API the port already
-provides; `pthread.h` is already in the sysroot. This is a toolchain rebuild (the `build-gcc` tree is
-present at `$SDK_WORK/build-gcc`), and it modifies the shared SDK toolchain, so it is called out as a
-distinct step rather than folded into the source-level porting above.
+pthread was **already in `libc.ndl`** (an earlier "0 symbols" reading was a stale sysroot copy);
+empty `libdl.a`/`librt.a`/`libpthread.a` stubs were added to the sysroot so `-ldl`/`-lrt`/`-lpthread`
+resolve (those live in libc on NanOS).
 
 ## Status
 
-`configure` OK · libuv host tools OK · **OpenSSL target OK** · **V8/abseil compiling** → blocked at
-the libstdc++-threads wall above. ~13 source-level porting issues resolved (wrappers, libc-glue APIs,
-headers, defines, 2 abseil patches). The remaining work is gated on the toolchain rebuild.
+`configure` OK · **OpenSSL target OK** · **abseil OK** · **v8_libbase / v8_libplatform OK** ·
+**openssl/zlib/llhttp/ncrypto/histogram/cares/libuv targets OK** · **torque (host tool) building** →
+now compiling **V8 core**. ~30 source-level porting issues resolved on top of the toolchain rebuild:
+compiler-flag wrappers; a large libc-glue POSIX surface (generic `syscall`, `mlock`/`prctl`/`sendfile`
+/`mremap`/`getifaddrs`/`recvmmsg`/`sendmmsg`, sched + pthread affinity/getattr/getname stubs, full
+`struct rusage`); many headers (`<linux/futex.h>`, `<sys/ucontext.h>`, `<ucontext.h>`, `<linux/auxvec.h>`,
+`<ifaddrs.h>`, `<sys/sendfile.h>`, IPv6 macros/options, `TIOCGPTN`, `MSG_CMSG_CLOEXEC`, `SSIZE_MAX`,
+`rlim_t`, ...); build defines (`__linux__`, `_GNU_SOURCE`, `__LINUX_ERRNO_EXTENSIONS__`,
+`__TM_GMTOFF`/`__TM_ZONE`, ...); and 4 source patches (abseil ×2, highway aarch64-host scalar-only,
+V8 platform ru_maxrss). Remaining: finish V8 core, link `node`, mknx → `node.nxe`, QEMU `--jitless`
+then JIT gate.
 
 ## Toolchain-shim fixes triggered by C++
 

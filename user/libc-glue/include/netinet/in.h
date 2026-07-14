@@ -47,6 +47,22 @@ extern const struct in6_addr in6addr_any;
 	 ((const uint32_t*)(a))[1]==((const uint32_t*)(b))[1] && \
 	 ((const uint32_t*)(a))[2]==((const uint32_t*)(b))[2] && \
 	 ((const uint32_t*)(a))[3]==((const uint32_t*)(b))[3])
+/* IPv6 address-scope tests (c-ares getnameinfo, and general resolver code). The scope lives in the
+ * first byte(s) of the address: fe80::/10 link-local, fec0::/10 site-local, ff00::/8 multicast (with
+ * the low nibble of byte 1 selecting the multicast scope), ::ffff:0:0/96 v4-mapped. */
+#define IN6_IS_ADDR_LINKLOCAL(a) \
+	((((const unsigned char*)(a))[0]==0xfe) && ((((const unsigned char*)(a))[1]&0xc0)==0x80))
+#define IN6_IS_ADDR_SITELOCAL(a) \
+	((((const unsigned char*)(a))[0]==0xfe) && ((((const unsigned char*)(a))[1]&0xc0)==0xc0))
+#define IN6_IS_ADDR_MULTICAST(a)     (((const unsigned char*)(a))[0]==0xff)
+#define IN6_IS_ADDR_MC_LINKLOCAL(a)  (IN6_IS_ADDR_MULTICAST(a) && ((((const unsigned char*)(a))[1]&0x0f)==0x02))
+#define IN6_IS_ADDR_V4MAPPED(a) \
+	(((const uint32_t*)(a))[0]==0 && ((const uint32_t*)(a))[1]==0 && \
+	 ((const uint32_t*)(a))[2]==htonl(0xffff))
+#define IN6_IS_ADDR_V4COMPAT(a) \
+	(((const uint32_t*)(a))[0]==0 && ((const uint32_t*)(a))[1]==0 && \
+	 ((const uint32_t*)(a))[2]==0 && ((const uint32_t*)(a))[3]!=0 && \
+	 ((const uint32_t*)(a))[3]!=htonl(1))
 #endif
 
 #define INADDR_ANY        ((in_addr_t) 0x00000000)
@@ -77,6 +93,47 @@ extern const struct in6_addr in6addr_any;
 #define IP_HDRINCL  3
 #define IP_RECVERR  11
 #define IP_MTU_DISCOVER 10
+
+/* IPv4 multicast socket options + membership request structs (Linux values). libuv joins/leaves
+ * multicast groups; NanOS treats the ioctls as benign no-ops but the source must compile. */
+#define IP_MULTICAST_IF   32
+#define IP_MULTICAST_TTL  33
+#define IP_MULTICAST_LOOP 34
+#define IP_ADD_MEMBERSHIP 35
+#define IP_DROP_MEMBERSHIP 36
+#define IP_UNBLOCK_SOURCE 37
+#define IP_BLOCK_SOURCE   38
+#define IP_ADD_SOURCE_MEMBERSHIP 39
+#define IP_DROP_SOURCE_MEMBERSHIP 40
+struct ip_mreq {
+	struct in_addr imr_multiaddr;
+	struct in_addr imr_interface;
+};
+struct ip_mreqn {
+	struct in_addr imr_multiaddr;
+	struct in_addr imr_address;
+	int            imr_ifindex;
+};
+struct ip_mreq_source {
+	struct in_addr imr_multiaddr;
+	struct in_addr imr_interface;
+	struct in_addr imr_sourceaddr;
+};
+struct ipv6_mreq {
+	struct in6_addr ipv6mr_multiaddr;
+	unsigned int    ipv6mr_interface;
+};
+
+/* IPv6-level setsockopt (Linux values). libuv probes these; benign no-ops in the kernel. */
+#define IPV6_UNICAST_HOPS   16
+#define IPV6_MULTICAST_IF   17
+#define IPV6_MULTICAST_HOPS 18
+#define IPV6_MULTICAST_LOOP 19
+#define IPV6_ADD_MEMBERSHIP 20
+#define IPV6_DROP_MEMBERSHIP 21
+#define IPV6_V6ONLY         26
+#define IPV6_RECVERR        25
+#define IPV6_TCLASS         67
 
 /* Byte order (host is little-endian i686): swap for the 'n' (network) forms. Defined here so
  * they're available wherever <netinet/in.h> is included, exactly as on Linux. */

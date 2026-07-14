@@ -168,6 +168,16 @@ int pthread_attr_getdetachstate(const pthread_attr_t *, int *);
 int pthread_attr_setdetachstate(pthread_attr_t *, int);
 int pthread_attr_getstack(const pthread_attr_t *__restrict, void **__restrict, size_t *__restrict);
 int pthread_attr_setstack(pthread_attr_t *, void *, size_t);
+/* Minimum usable thread stack, and the GNU extension that fills an attr with a running thread's
+ * actual stack + guard (V8 uses it to find its stack bounds for overflow checks). */
+#ifndef PTHREAD_STACK_MIN
+#define PTHREAD_STACK_MIN 16384
+#endif
+int pthread_getattr_np(pthread_t, pthread_attr_t *);
+/* GNU thread extensions (libuv): CPU affinity (single-CPU no-op on NanOS) and thread naming. */
+int pthread_setaffinity_np(pthread_t, size_t, const cpu_set_t *);
+int pthread_getaffinity_np(pthread_t, size_t, cpu_set_t *);
+int pthread_getname_np(pthread_t, char *, size_t);
 int pthread_attr_getscope(const pthread_attr_t *__restrict, int *__restrict);
 int pthread_attr_setscope(pthread_attr_t *, int);
 int pthread_attr_getschedpolicy(const pthread_attr_t *__restrict, int *__restrict);

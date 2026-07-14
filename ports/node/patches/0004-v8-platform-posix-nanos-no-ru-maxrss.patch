@@ -1,0 +1,14 @@
+diff --git a/deps/v8/src/base/platform/platform-posix.cc b/deps/v8/src/base/platform/platform-posix.cc
+index 5c93b3aa..92d46242 100644
+--- a/deps/v8/src/base/platform/platform-posix.cc
++++ b/deps/v8/src/base/platform/platform-posix.cc
+@@ -906,6 +906,9 @@ int OS::GetPeakMemoryUsageKb() {
+ #elif defined(V8_OS_ZOS)
+   // TODO(v8:342445981): zos - rusage struct doesn't yet include ru_maxrss
+   return -1;
++#elif defined(__NANOS__)
++  // NanOS: picolibc's struct rusage has no ru_maxrss; peak RSS is unavailable here.
++  return -1;
+ #else
+   struct rusage usage;
+   if (getrusage(RUSAGE_SELF, &usage) < 0) return -1;

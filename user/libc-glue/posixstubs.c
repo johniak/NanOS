@@ -172,6 +172,121 @@ long syscall(long number, ...) {
 	return r;
 }
 
+/* sendfile(2): NanOS has no kernel zero-copy path, so copy in userland (read -> write). Honours the
+ * optional *offset (reads from there, advances it) exactly like Linux. Used by libuv uv_fs_sendfile. */
+#include <sys/sendfile.h>
+#include <unistd.h>
+ssize_t sendfile(int out_fd, int in_fd, off_t* offset, size_t count) {
+	if (offset && lseek(in_fd, *offset, 0 /*SEEK_SET*/) < 0) return -1;
+	char buf[65536];
+	size_t done = 0;
+	while (done < count) {
+		size_t want = count - done; if (want > sizeof buf) want = sizeof buf;
+		ssize_t r = read(in_fd, buf, want);
+		if (r < 0) return -1;
+		if (r == 0) break;
+		ssize_t w = 0;
+		while (w < r) {
+			ssize_t x = write(out_fd, buf + w, (size_t) (r - w));
+			if (x < 0) return -1;
+			w += x;
+		}
+		done += (size_t) r;
+	}
+	if (offset) *offset += (off_t) done;
+	return (ssize_t) done;
+}
+
+/* getifaddrs(3): enumerate local interface addresses. NanOS returns an EMPTY list for now (success,
+ * *ifap == NULL) — c-ares/node fall back to other source selection, and DNS works via /etc/hosts +
+ * the resolver. A real enumeration (loopback + eth0 via SIOCGIFADDR) is a follow-up. */
+#include <ifaddrs.h>
+int getifaddrs(struct ifaddrs **ifap) { if (ifap) *ifap = 0; return 0; }
+void freeifaddrs(struct ifaddrs *ifa) { (void) ifa; }
+
+/* mremap(2): NanOS has no in-place remap, so always fail with ENOMEM — V8 falls back to an
+ * allocate/copy/free when growing a mapping. */
+#include <sys/mman.h>
+#include <pthread.h>
+void *mremap(void *old_addr, size_t old_size, size_t new_size, int flags, ...) {
+	(void) old_addr; (void) old_size; (void) new_size; (void) flags;
+	errno = ENOMEM;
+	return MAP_FAILED;
+}
+
+/* pthread_getattr_np: fill `attr` with a best-effort view of the calling thread's stack (V8 reads it
+ * to bound its stack-overflow checks). NanOS does not expose exact per-thread stack limits here, so
+ * we report an 8 MiB window ending near the current stack pointer — approximate but monotone, which
+ * is all V8's limit check needs for a first bring-up. */
+int pthread_getattr_np(pthread_t t, pthread_attr_t *attr) {
+	(void) t;
+	if (pthread_attr_init(attr) != 0) return -1;
+	unsigned long sp;
+#if defined(__x86_64__)
+	__asm__ __volatile__("mov %%rsp, %0" : "=r"(sp));
+#else
+	sp = (unsigned long) &attr;
+#endif
+	size_t size = 8UL * 1024 * 1024;
+	unsigned long top = (sp + 0xFFFUL) & ~0xFFFUL;   /* page-align above the current frame */
+	void *base = (void *) (top - size);              /* low end of the window */
+	pthread_attr_setstack(attr, base, size);
+	return 0;
+}
+
+/* pthread CPU-affinity + naming (GNU extensions, libuv). NanOS does not pin threads to CPUs, so
+ * set-affinity is a no-op and get-affinity reports CPU 0 only; get-name returns an empty name. */
+#include <sched.h>
+int pthread_setaffinity_np(pthread_t t, size_t sz, const cpu_set_t *set) { (void) t; (void) sz; (void) set; return 0; }
+int pthread_getaffinity_np(pthread_t t, size_t sz, cpu_set_t *set) {
+	(void) t; (void) sz;
+	if (set) { CPU_ZERO(set); CPU_SET(0, set); }
+	return 0;
+}
+int pthread_getname_np(pthread_t t, char *name, size_t len) { (void) t; if (name && len) name[0] = 0; return 0; }
+
+/* recvmmsg/sendmmsg: NanOS has no batch socket syscall, so loop over recvmsg/sendmsg. recvmmsg
+ * returns after the first would-block (like Linux without MSG_WAITFORONE semantics we don't model). */
+#include <sys/socket.h>
+int recvmmsg(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags, struct timespec *timeout) {
+	(void) timeout;
+	unsigned int i;
+	for (i = 0; i < vlen; i++) {
+		ssize_t r = recvmsg(fd, &msgvec[i].msg_hdr, flags);
+		if (r < 0) return i ? (int) i : -1;
+		msgvec[i].msg_len = (unsigned int) r;
+	}
+	return (int) vlen;
+}
+int sendmmsg(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags) {
+	unsigned int i;
+	for (i = 0; i < vlen; i++) {
+		ssize_t r = sendmsg(fd, &msgvec[i].msg_hdr, flags);
+		if (r < 0) return i ? (int) i : -1;
+		msgvec[i].msg_len = (unsigned int) r;
+	}
+	return (int) vlen;
+}
+
+/* POSIX scheduling parameters. NanOS has one scheduling policy and no thread priorities, so the
+ * getters report a constant (SCHED_OTHER, priority 0) and the setters are success no-ops. abseil/V8
+ * read a thread's priority for idle detection (pthread_getschedparam) — a constant is fine. */
+#include <sched.h>
+#include <pthread.h>
+int sched_get_priority_max(int policy) { (void) policy; return 0; }
+int sched_get_priority_min(int policy) { (void) policy; return 0; }
+int sched_getparam(int pid, struct sched_param *param) { (void) pid; if (param) param->sched_priority = 0; return 0; }
+int sched_setscheduler(int pid, int policy, const struct sched_param *param) { (void) pid; (void) policy; (void) param; return 0; }
+int pthread_getschedparam(pthread_t t, int *policy, struct sched_param *param) {
+	(void) t;
+	if (policy) *policy = SCHED_OTHER;
+	if (param) param->sched_priority = 0;
+	return 0;
+}
+int pthread_setschedparam(pthread_t t, int policy, const struct sched_param *param) {
+	(void) t; (void) policy; (void) param; return 0;
+}
+
 /* prctl(2): NanOS's kernel has no prctl handler, so forward through the generic syscall() (which
  * returns -ENOSYS). Callers use it only for advisory VMA naming (abseil labelling V8 arenas) and
  * ignore the result. SYS_prctl is the Linux x86_64 number. */

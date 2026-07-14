@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <stdio.h>
 #include "resolv_parse.h"
 
@@ -333,6 +334,24 @@ struct servent* getservbyport(int port, const char* proto) {
 	for (unsigned i = 0; i < sizeof(g_servs) / sizeof(g_servs[0]); i++)
 		if (g_servs[i].port == h && (!proto || strcmp(g_servs[i].proto, proto) == 0))
 			return fill_servent(g_servs[i].name, g_servs[i].port, g_servs[i].proto);
+	return 0;
+}
+/* Reentrant getservbyport (c-ares getnameinfo). Copies the resolved entry into the caller's buffers;
+ * on a miss it sets *result NULL and returns 0 (glibc convention), ERANGE if buf is too small. */
+int getservbyport_r(int port, const char* proto, struct servent* rbuf, char* buf, size_t buflen,
+                    struct servent** result) {
+	static char* noaliases[1] = { 0 };
+	struct servent* se = getservbyport(port, proto);
+	if (!se) { if (result) *result = 0; return 0; }
+	size_t nl = strlen(se->s_name) + 1;
+	size_t pl = se->s_proto ? strlen(se->s_proto) + 1 : 0;
+	if (buflen < nl + pl) { if (result) *result = 0; return ERANGE; }
+	char* p = buf;
+	memcpy(p, se->s_name, nl); rbuf->s_name = p; p += nl;
+	rbuf->s_port = se->s_port;
+	if (se->s_proto) { memcpy(p, se->s_proto, pl); rbuf->s_proto = p; } else rbuf->s_proto = 0;
+	rbuf->s_aliases = noaliases;
+	if (result) *result = rbuf;
 	return 0;
 }
 

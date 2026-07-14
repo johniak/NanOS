@@ -1,9 +1,22 @@
 /* sched.h — CPU affinity set for ports that size thread pools via sched_getaffinity/CPU_COUNT
- * (Mesa's u_cpu_detect). NanOS reports a single schedulable CPU here (libstdc++ threads are off),
- * so pools stay single-threaded. */
+ * (Mesa's u_cpu_detect) + the POSIX scheduling parameter/policy surface (abseil/V8/pthread read a
+ * thread's priority). NanOS has one scheduling policy and no thread priorities, so the scheduling
+ * bits are constant. */
 #ifndef _NANOS_SCHED_H
 #define _NANOS_SCHED_H
 #include <stddef.h>
+
+/* Scheduling policies + parameter block. NanOS has a single policy and does not honour priorities;
+ * struct sched_param exists so <pthread.h>'s *schedparam declarations complete, and the getters
+ * report a constant (priority 0, SCHED_OTHER). */
+#define SCHED_OTHER 0
+#define SCHED_FIFO  1
+#define SCHED_RR    2
+struct sched_param { int sched_priority; };
+int sched_get_priority_max(int policy);
+int sched_get_priority_min(int policy);
+int sched_getparam(int pid, struct sched_param *param);
+int sched_setscheduler(int pid, int policy, const struct sched_param *param);
 #define CPU_SETSIZE 1024
 #define __NCPUBITS (8 * sizeof(unsigned long))
 typedef struct { unsigned long __bits[CPU_SETSIZE / __NCPUBITS]; } cpu_set_t;

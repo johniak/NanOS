@@ -13,6 +13,12 @@ long syscall(long number, ...);
  * sysroot include by the port's sysroot-refresh step. */
 #include <SyscallNr.h>
 
+/* Some ports reference the __NR_<name> spelling (V8 uses syscall(__NR_gettid)); alias to the SYS_
+ * names the kernel header defines. */
+#ifndef __NR_gettid
+#define __NR_gettid SYS_gettid
+#endif
+
 /* kcmp(2), KCMP_FILE only — the one number syscall() actually forwards to the kernel. Mesa's
  * os_same_file_description() uses it to prove two DRM fds share a GEM handle namespace (iris
  * would otherwise fall back to a dma-buf PRIME roundtrip NanOS doesn't support). Must match

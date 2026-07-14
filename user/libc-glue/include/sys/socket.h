@@ -72,6 +72,7 @@ typedef unsigned short sa_family_t;
 #define MSG_EOR       0x80
 #define MSG_WAITALL   0x100
 #define MSG_NOSIGNAL  0x4000
+#define MSG_CMSG_CLOEXEC 0x40000000   /* set O_CLOEXEC on fds received via SCM_RIGHTS (libuv) */
 
 /* shutdown(2). */
 #define SHUT_RD   0
@@ -144,6 +145,16 @@ ssize_t sendto(int fd, const void* buf, size_t len, int flags, const struct sock
 ssize_t recvfrom(int fd, void* buf, size_t len, int flags, struct sockaddr* addr, socklen_t* alen);
 ssize_t sendmsg(int fd, const struct msghdr* msg, int flags);
 ssize_t recvmsg(int fd, struct msghdr* msg, int flags);
+
+/* Multi-message send/recv (Linux batch syscalls). libuv's UDP path uses them; NanOS has no batch
+ * syscall, so libc-glue loops over sendmsg/recvmsg. struct timespec* timeout is accepted, ignored. */
+struct mmsghdr {
+	struct msghdr msg_hdr;
+	unsigned int  msg_len;
+};
+struct timespec;
+int recvmmsg(int fd, struct mmsghdr* msgvec, unsigned int vlen, int flags, struct timespec* timeout);
+int sendmmsg(int fd, struct mmsghdr* msgvec, unsigned int vlen, int flags);
 
 #ifdef __cplusplus
 }

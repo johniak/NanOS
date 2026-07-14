@@ -90,6 +90,8 @@ void endprotoent(void);
 
 struct servent* getservbyname(const char* name, const char* proto);
 struct servent* getservbyport(int port, const char* proto);
+int getservbyport_r(int port, const char* proto, struct servent* result_buf, char* buf,
+                    size_t buflen, struct servent** result);
 
 extern int h_errno;
 #define HOST_NOT_FOUND 1

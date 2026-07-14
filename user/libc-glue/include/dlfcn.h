@@ -8,6 +8,10 @@
 #define RTLD_NOW    0x2
 #define RTLD_LOCAL  0x0
 #define RTLD_GLOBAL 0x100
+/* Pseudo-handles for dlsym: search the default global scope / the next object. NanOS has no runtime
+ * loader (dlsym returns 0), so these are only used as the handle argument. */
+#define RTLD_DEFAULT ((void*) 0)
+#define RTLD_NEXT    ((void*) -1)
 
 void* dlopen(const char* file, int mode);
 void* dlsym(void* handle, const char* name);
