@@ -172,6 +172,44 @@ long syscall(long number, ...) {
 	return r;
 }
 
+/* sysinfo(2): fill the memory fields from /proc/meminfo and uptime from /proc/uptime; the rest are
+ * zero (NanOS has no load-average/swap accounting). libuv uses this for uv_get_total_memory /
+ * uv_get_free_memory / uv_uptime. mem_unit = 1 so totalram is already in bytes. */
+#include <sys/sysinfo.h>
+static unsigned long meminfo_kb(const char* key) {
+	int fd = open("/proc/meminfo", 0 /*O_RDONLY*/);
+	if (fd < 0) return 0;
+	char buf[4096]; int n = (int) read(fd, buf, sizeof buf - 1); close(fd);
+	if (n <= 0) return 0;
+	buf[n] = 0;
+	char* p = strstr(buf, key);
+	if (!p) return 0;
+	p += strlen(key);
+	while (*p == ' ' || *p == ':' || *p == '\t') p++;
+	return strtoul(p, 0, 10);
+}
+int sysinfo(struct sysinfo* info) {
+	if (!info) { errno = EFAULT; return -1; }
+	memset(info, 0, sizeof *info);
+	info->mem_unit = 1;
+	info->totalram = meminfo_kb("MemTotal") * 1024UL;
+	unsigned long freek = meminfo_kb("MemAvailable");
+	if (!freek) freek = meminfo_kb("MemFree");
+	info->freeram = freek * 1024UL;
+	int fd = open("/proc/uptime", 0);
+	if (fd >= 0) { char b[64]; int n = (int) read(fd, b, sizeof b - 1); close(fd); if (n > 0) { b[n] = 0; info->uptime = (long) strtoul(b, 0, 10); } }
+	info->procs = 1;
+	return 0;
+}
+int get_nprocs(void)      { return (int) sysconf(_SC_NPROCESSORS_ONLN); }
+int get_nprocs_conf(void) { return (int) sysconf(_SC_NPROCESSORS_CONF); }
+
+/* getauxval(3): NanOS exposes no ELF auxiliary vector to userland. Return 0 for every key — Node
+ * reads AT_SECURE (0 = not set-uid, correct: every process runs as root) and V8 reads AT_HWCAP (0
+ * makes it fall back to CPUID on x86_64). */
+#include <sys/auxv.h>
+unsigned long getauxval(unsigned long type) { (void) type; return 0; }
+
 /* sendfile(2): NanOS has no kernel zero-copy path, so copy in userland (read -> write). Honours the
  * optional *offset (reads from there, advances it) exactly like Linux. Used by libuv uv_fs_sendfile. */
 #include <sys/sendfile.h>
@@ -244,6 +282,10 @@ int pthread_getaffinity_np(pthread_t t, size_t sz, cpu_set_t *set) {
 	return 0;
 }
 int pthread_getname_np(pthread_t t, char *name, size_t len) { (void) t; if (name && len) name[0] = 0; return 0; }
+/* pthread_kill: V8's sampling profiler sends SIGPROF to sampled threads. NanOS's pthread port has no
+ * per-thread signal delivery here, so this is a no-op success (profiling collects no samples but
+ * nothing crashes); a sig==0 existence check also reports "alive". */
+int pthread_kill(pthread_t t, int sig) { (void) t; (void) sig; return 0; }
 
 /* recvmmsg/sendmmsg: NanOS has no batch socket syscall, so loop over recvmsg/sendmsg. recvmmsg
  * returns after the first would-block (like Linux without MSG_WAITFORONE semantics we don't model). */

@@ -178,6 +178,7 @@ int pthread_getattr_np(pthread_t, pthread_attr_t *);
 int pthread_setaffinity_np(pthread_t, size_t, const cpu_set_t *);
 int pthread_getaffinity_np(pthread_t, size_t, cpu_set_t *);
 int pthread_getname_np(pthread_t, char *, size_t);
+int pthread_kill(pthread_t, int);
 int pthread_attr_getscope(const pthread_attr_t *__restrict, int *__restrict);
 int pthread_attr_setscope(pthread_attr_t *, int);
 int pthread_attr_getschedpolicy(const pthread_attr_t *__restrict, int *__restrict);

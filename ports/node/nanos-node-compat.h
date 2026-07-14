@@ -8,6 +8,19 @@
 #ifndef NANOS_NODE_COMPAT_H
 #define NANOS_NODE_COMPAT_H
 
+/* BSD <sys/param.h> rounding macros picolibc omits (postject / SEA uses roundup). Force-included so
+ * they're defined before the consumer includes <sys/param.h>; #ifndef-guarded so a header that does
+ * define them wins. */
+#ifndef roundup
+#define roundup(x, y)   ((((x) + ((y) - 1)) / (y)) * (y))
+#endif
+#ifndef rounddown
+#define rounddown(x, y) (((x) / (y)) * (y))
+#endif
+#ifndef powerof2
+#define powerof2(x)     ((((x) - 1) & (x)) == 0)
+#endif
+
 /* SIGSEGV */
 #ifndef SEGV_MAPERR
 #define SEGV_MAPERR 1

@@ -1,0 +1,13 @@
+diff --git a/src/node_report.cc b/src/node_report.cc
+index ba2dd7e6..2520300c 100644
+--- a/src/node_report.cc
++++ b/src/node_report.cc
+@@ -539,7 +539,7 @@ static void PrintJavaScriptErrorStack(JSONWriter* writer,
+     while (line != -1) {
+       l = ss.substr(0, line);
+       l.erase(l.begin(), std::ranges::find_if(l, [](int ch) {
+-                return !std::iswspace(ch);
++                return !::iswspace(ch);  // NanOS: libstdc++ wchar disabled -> no std::iswspace, global is fine
+               }));
+       writer->json_element(l);
+       ss = ss.substr(line + 1);

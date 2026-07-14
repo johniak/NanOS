@@ -478,6 +478,12 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event* event) {
 int epoll_wait(int epfd, struct epoll_event* events, int maxevents, int timeout) {
 	return reterr(sys4(SYS_epoll_wait, epfd, (int) events, maxevents, timeout));
 }
+/* epoll_pwait: NanOS has no per-wait signal-mask swap, so ignore sigmask and behave as epoll_wait
+ * (libuv passes NULL; the base wait semantics are identical). */
+int epoll_pwait(int epfd, struct epoll_event* events, int maxevents, int timeout, const void* sigmask) {
+	(void) sigmask;
+	return reterr(sys4(SYS_epoll_wait, epfd, (int) events, maxevents, timeout));
+}
 
 /* mprotect(2): real page-protection change (was a no-op stub). The kernel flips PTE_RW across the
  * range per PROT_WRITE — the RW<->RX transition V8 needs for W^X JIT code. */

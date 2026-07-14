@@ -50,7 +50,13 @@ struct rlimit { rlim_t rlim_cur; rlim_t rlim_max; };
 #define RLIMIT_AS      6
 #define RLIMIT_NPROC   7
 #define RLIMIT_MEMLOCK 8
-#define RLIM_NLIMITS   9
+#define RLIMIT_RSS     9    /* resident set size (node_report iterates rlimits) */
+#define RLIMIT_LOCKS   10
+#define RLIMIT_SIGPENDING 11
+#define RLIMIT_MSGQUEUE 12
+#define RLIMIT_NICE    13
+#define RLIMIT_RTPRIO  14
+#define RLIM_NLIMITS   15
 /* No rlim_t typedef: autoconf apps #define their own when missing, and the struct uses unsigned long
  * directly, so we avoid clashing with that. */
 int getrlimit(int, struct rlimit*);

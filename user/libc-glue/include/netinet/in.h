@@ -123,6 +123,22 @@ struct ipv6_mreq {
 	struct in6_addr ipv6mr_multiaddr;
 	unsigned int    ipv6mr_interface;
 };
+/* Protocol-independent multicast (RFC 3678) — libuv's source-specific multicast path. */
+#define MCAST_JOIN_GROUP         42
+#define MCAST_BLOCK_SOURCE       43
+#define MCAST_UNBLOCK_SOURCE     44
+#define MCAST_LEAVE_GROUP        45
+#define MCAST_JOIN_SOURCE_GROUP  46
+#define MCAST_LEAVE_SOURCE_GROUP 47
+struct group_req {
+	unsigned int            gr_interface;
+	struct sockaddr_storage gr_group;
+};
+struct group_source_req {
+	unsigned int            gsr_interface;
+	struct sockaddr_storage gsr_group;
+	struct sockaddr_storage gsr_source;
+};
 
 /* IPv6-level setsockopt (Linux values). libuv probes these; benign no-ops in the kernel. */
 #define IPV6_UNICAST_HOPS   16

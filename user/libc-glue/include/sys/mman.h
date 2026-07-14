@@ -25,6 +25,8 @@ extern "C" {
 /* MAP_NORESERVE: don't reserve swap. NanOS has no swap and backs mappings eagerly, so it is a no-op
  * hint (V8 uses it when reserving large address-space regions it won't fully commit). */
 #define MAP_NORESERVE 0x4000
+#define MAP_POPULATE  0x8000   /* prefault pages — NanOS already backs eagerly, so it's a no-op hint */
+#define MAP_STACK     0x20000  /* advisory; no-op on NanOS */
 
 #define MAP_FAILED ((void*) -1)
 
